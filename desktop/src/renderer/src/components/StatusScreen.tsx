@@ -1,3 +1,4 @@
+import BrandMark from './BrandMark'
 import React, { useCallback, useEffect, useState } from 'react'
 import { t } from '../i18n'
 import { product } from '@product'
@@ -53,7 +54,7 @@ const StatusScreen: React.FC<StatusScreenProps> = ({ status, error, code, path, 
             <product.slots.StatusLogo />
           </div>
         ) : (
-          <img src="./logo.jpg" alt="Agent" className="w-16 h-16 rounded-2xl mx-auto shadow-lg shadow-primary-500/20" />
+          <BrandMark className="w-16 h-16 p-3 rounded-2xl mx-auto bg-white dark:bg-[#1c1c1f] border border-slate-200 dark:border-white/10" />
         )}
 
         {status === 'connecting' && (

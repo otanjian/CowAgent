@@ -1,9 +1,9 @@
 ---
 title: Web Console
-description: Use CowAgent through the Web Console
+description: Use 容大AI through the Web Console
 ---
 
-The Web Console is CowAgent's default channel. It runs automatically once started, letting you chat with the Agent in a browser and manage models, skills, memory, channels, and other configuration online.
+The Web Console is 容大AI's default channel. It runs automatically once started, letting you chat with the Agent in a browser and manage models, skills, memory, channels, and other configuration online.
 
 ## Configuration
 
@@ -31,6 +31,54 @@ The Web Console is CowAgent's default channel. It runs automatically once starte
 
 Once a password is configured, you must enter it to log in when accessing the console. The login session is kept for 30 days by default, so restarting the service during that period does not require re-login. The password can also be changed online from the "Configuration" page in the console.
 
+### Instance Branding
+
+The Web Console can carry your own branding: the brand name, a short logo
+description, and a custom logo (plus a derived browser favicon). Branding is
+instance-scoped (single Web deploy), untouched by the desktop client or the
+documentation site.
+
+Open **System settings → Branding** after logging in to edit and save. No
+separate feature switch is required; the old `branding_enabled` setting is ignored.
+
+- **Scope**: Instance-wide. Brand data lives under `<data_root>/branding/`; it is
+  never written into `config.json`.
+- **Password prerequisite**: Because the logo is served to unauthenticated
+  visitors, editing is only allowed when `web_password` is set. With no password
+  the settings page is read-only and explains why.
+- **Identity mode**: Writes currently require single-instance `identity_mode=legacy`.
+  Database and other identity modes cannot save or reset until platform authorization
+  and auditing are integrated; a legacy shared password cannot bypass this gate.
+- **API authentication**: Writes accept verified Authorization Bearer or login cookies,
+  never a URL token alone. Cookie clients obtain `csrf_token` from `/api/branding`
+  and send it as `X-Branding-CSRF` on same-origin save/reset requests. The UI does this automatically.
+- **Damaged settings**: Missing or damaged published metadata is a read-only recovery
+  preview. An explicit restore preserves the original in `branding/corrupt/` and
+  allocates a new revision. Retain the `.revision.json` ledger in the brand directory.
+- **Fields / limits**: brand name `1–32` chars, logo description `0–100` chars
+  (single line, no control characters), image `PNG / JPG / WebP`, `≤ 2 MiB`,
+  `32–4096` px per side, `≤ 16,000,000` px total, no animated images. Uploaded
+  images are normalized (EXIF applied, metadata stripped) to a safe PNG and a
+  `32×32` favicon is derived.
+- **Publish model**: Saving or "Restore all defaults" publishes an atomic new
+  revision. Concurrent edits from another tab/browser are detected and reported
+  as a conflict rather than silently overwritten.
+- **Restore defaults**: The "Restore all defaults" action resets name,
+  description, logo and favicon to the built-in defaults and raises the
+  revision, after a confirmation prompt.
+- **Backup / rollback**: The `cow backup` command stores the current branded
+  snapshot and its referenced images; `cow restore` re-publishes them into the
+  target data root under a fresh revision. An archive without a branding segment
+  never deletes an existing brand — on a fresh instance it falls back to the
+  built-in defaults. To roll back an application version, back up the brand
+  directory first; old code does not
+  consume the new branding data.
+
+<Note>
+  The logo served on the login page and sidebar is a public asset, so only
+  include content you are comfortable showing to unauthenticated visitors.
+</Note>
+
 ## Access URL
 
 After starting the project, visit:
@@ -47,11 +95,11 @@ After starting the project, visit:
 Set `external_api_token` to enable `POST /v1/chat/completions`. This token is
 independent from `web_password` and Web Console login sessions.
 
-The first release accepts text messages and uses CowAgent's configured Agent and
+The first release accepts text messages and uses 容大AI's configured Agent and
 model. The request `model` is required for OpenAI client compatibility and is
-echoed in the response; it does not select a CowAgent model. The latest non-empty
+echoed in the response; it does not select a 容大AI model. The latest non-empty
 user message is submitted to the Agent. Set `conversation_id`, or `user` as a
-fallback, to reuse a stable CowAgent session across requests. Requests without
+fallback, to reuse a stable 容大AI session across requests. Requests without
 either field use an isolated session.
 
 Non-streaming request:
@@ -67,7 +115,7 @@ curl http://localhost:9899/v1/chat/completions \
   }'
 ```
 
-The standard response is returned in `choices[0].message.content`. CowAgent adds
+The standard response is returned in `choices[0].message.content`. 容大AI adds
 `reasoning_content` and `tool_trace` to the message when those traces are
 available.
 
@@ -111,7 +159,7 @@ The API returns `400` for invalid requests, `401` for invalid credentials, and
 `503` when `external_api_token` is not configured. Non-streaming Agent failures
 return a structured JSON `500` response.
 
-For streaming requests, CowAgent waits up to 30 seconds for the Agent to produce
+For streaming requests, 容大AI waits up to 30 seconds for the Agent to produce
 the first event. An Agent failure before the first event returns a structured
 JSON `500` response because the SSE response has not started. If no first event
 arrives within 30 seconds, the API cancels only that request's in-flight Agent and
@@ -124,6 +172,63 @@ followed by a terminal chunk with `finish_reason=error` and then
 
 ## Features
 
+### Account Menu
+
+After signing in with an individual account (identity mode `database`), the card
+at the bottom left of the sidebar shows an avatar, your display name (or
+username), and `@username`. It stays visible as you scroll the navigation, and
+switching tenants keeps the same account identity.
+
+Click the card to open its six-entry menu upward. Each item opens without
+leaving the current page:
+
+- **Personal profile** — a read-only drawer showing your name, login username,
+  platform-identity flag, and the current tenant's member name, roles,
+  department and position. Global account and tenant-member fields are shown
+  separately; the member name never overwrites the account card. Empty values
+  show **Not set**, and a user with no tenant shows **Not a member of any
+  tenant**. When the profile cannot be read, a retry is offered while keeping
+  your confirmed login and the password/logout entries.
+- **Change password** — a modal with current, new and confirm password fields.
+  On success the session is revoked and you are asked to log in again; a note
+  explains that other logged-in sessions also expire. If your account is
+  flagged to change password (first login / temporary password), the same form
+  is shown as a gate before tenant selection and business data load, and you
+  can only finish the change or log out.
+- **Interface preferences** — light/dark theme and Simplified/Traditional
+  Chinese/English, applied locally in the current browser only and kept in
+  sync with the header toggle. A personal choice never writes the instance
+  default; if browser storage is unavailable the change applies to this page
+  and the limitation is shown.
+- **Switch tenant** — lists only the tenants you are an effective member of and
+  marks the current one. With zero tenants it reports **Not a member of any
+  tenant**; with one it shows the current name; with several you can choose.
+  Switching reloads the page and the new page validates the target before
+  committing, so cancelling leaves the old page unchanged and an invalid
+  target never silently enters another tenant.
+- **About current brand** — shows the current brand and version and opens the
+  original release-notes link.
+- **Log out** — ends the current login session and returns to the login page,
+  with single-flight submission and a retry if logout is not confirmed.
+
+Press Escape or click outside to close the menu; the drawer/modal closes return
+focus to the card trigger. On mobile and in short viewports the entries stay
+reachable and the hidden menu never receives focus.
+
+With legacy access, the card shows **Local access**:
+
+- **Password protected**: you can log out from the menu, and only the
+  interface-preferences, about and logout entries apply.
+- **No login required**: the preferences and about entries remain; there is no
+  logout action and no personal password entry.
+
+If the initial login check fails, select **Check again** on the login screen.
+If account information becomes unavailable inside the console, open the card
+and select **Check again**; your current page and draft are preserved. When your
+login is confirmed but your profile cannot be displayed, **Log out** remains
+available. If you see **Logout not confirmed**, use **Retry logout** or
+**Check again** to recover.
+
 ### Chat Interface
 
 Supports streaming output with real-time display of the Agent's reasoning process and tool calls, providing intuitive observation of the Agent's decision-making. Deep thinking can be toggled via configuration or the "Agent Configuration" switch in the console.
@@ -134,10 +239,11 @@ Supports streaming output with real-time display of the Agent's reasoning proces
 
 The chat interface supports multi-session management. All session records are persistently stored in the database:
 
-- **Session List**: Click the history icon on the left to expand/collapse the session list panel, with scroll-to-load support for all historical sessions
+- **Session List**: Open **Workbench → Session History** to view all accessible past sessions, with scroll-to-load support and project/date grouping
+- **Search Sessions**: Enter a title keyword in the search box above the list to search all accessible session history, including sessions not yet loaded. Chinese and English text are supported, and letter case is ignored. Clear the search box to return to the full list
 - **AI-Generated Titles**: After the first exchange in a new session, the model is automatically called to generate a short summary title
-- **New Session**: Click the "New Chat" button at the top of the session list or the `+` button in the input area to create a new session
-- **Delete Session**: Click the delete button on a session item and confirm to permanently delete the session and all its messages
+- **New Session**: Click the "New Chat" button at the top of the session history page or the `+` button in the input area to create a new session
+- **Session Actions**: Click the **⋯** button on a session item to pin or unpin, rename, or delete it. Deleting requires confirmation and permanently removes the session and all its messages
 - **Clear Context**: Click the clear button in the input area to insert a divider in the current session. Messages above the divider are still displayed but no longer included as context for the model
 - **Workspace / Model / Permission**: Set a workspace, model, and permission mode for the current session below the input box. When you work across several projects, past sessions are grouped by project automatically. See [Architecture - Project Workspace](/intro/architecture#project-workspace)
 
@@ -152,6 +258,18 @@ Each session can run under its own permission mode, controlling how far the Agen
 <Frame caption="Per-session permission modes: read-only, workspace-write, full-access">
   <img src="https://cdn.jsdelivr.net/gh/zhayujie/cowagent-assets@main/screenshots/en/web-console-access-mode.png" style={{ maxWidth: "600px" }} />
 </Frame>
+
+#### Agents
+
+"Agents" has two entry points: **Management → Agent Configuration** (management mode) and **Workbench → Agents** (usage mode).
+
+- **Workbench → Agents (usage page)**: shows a read-only card gallery of **saved and enabled** Agents, marking the default one and listing a `Start chat` action per card. Clicking a card opens a new chat bound to that Agent: it shows the Agent's name and avatar, focuses the input, and uses that Agent's default workspace without inheriting other project/session settings. The entry is only offered when the Agent can run in the current mode. The `view=workbench` read is a whitelisted projection and never exposes workspace paths, channel instances, core files, or other management data.
+
+<Frame caption="Workbench → Agents: pick an Agent from a card gallery and start a chat">
+  <img src="https://cdn.link-ai.tech/doc/20260227180120.png" style={{ maxWidth: "800px" }} />
+</Frame>
+
+- **Management → Agent Configuration (management mode)**: fully editable CRUD for Agents (name, responsibilities, avatar, model, knowledge base, core files, etc.), backed by the same data source as Workbench → Agents. Here you can edit; the usage page is read-only. Concurrent edits are detected via the roster revision and surfaced as a conflict rather than silently overwritten.
 
 ### Model Management
 

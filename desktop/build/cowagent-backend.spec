@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec for the CowAgent desktop backend (onedir).
+PyInstaller spec for the 容大AI desktop backend (onedir).
 
 Produces a self-contained `cowagent-backend` folder that the Electron app
 spawns directly, so end users don't need Python installed.

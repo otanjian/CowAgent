@@ -1,11 +1,634 @@
 /* =====================================================================
-   CowAgent Console - Main Application Script
+   容大AI Console - Main Application Script
    ===================================================================== */
 
 // =====================================================================
 // Version — fetched from backend (single source: /VERSION file)
 // =====================================================================
+const PRODUCT_NAME = '容大AI';
 let APP_VERSION = '';
+
+// Startup reads must not stop the UI when browser storage is unavailable.
+// Business writes and authentication storage keep their existing behavior.
+function readStartupPreference(key) {
+    try { return localStorage.getItem(key); } catch (_) { return null; }
+}
+
+// Task 3.7 — user/tenant-scoped storage partition for the Agent/session
+// selection keys. In database identity mode the keys are namespaced by the
+// confirmed user and tenant so a different account or tenant on the same
+// browser never restores the wrong context. Legacy mode keeps the original
+// keys untouched (no migration, no bulk rewrite). The namespace is only
+// computable once the identity and the effective tenant are known, so callers
+// that restore these identifiers must wait for authentication + tenant select.
+function _cowUserTenantKey(key) {
+    if (_identityMode() !== 'database') return key;
+    const uid = (_accountState && _accountState.username) ? _accountState.username : '';
+    const tid = sessionStorage.getItem('cow_tenant_id') || '';
+    if (!uid && !tid) return key;      // not confirmed yet -> legacy fallback
+    return `${key}::u=${encodeURIComponent(uid)}::t=${encodeURIComponent(tid)}`;
+}
+
+// Read a user/tenant-scoped selection key, falling back to the legacy key when
+// the current context is not yet confirmed (database) or in legacy mode.
+function readScopedPreference(key) {
+    try {
+        const scoped = _cowUserTenantKey(key);
+        const v = localStorage.getItem(scoped);
+        if (v !== null) return v;
+        // Database mode: do NOT carry the old unpartitioned value into a new
+        // context (spec: 旧未分区的 database 选择不得带入). But before the
+        // context is confirmed we may still be reading for the very first time,
+        // in which case the legacy key is allowed as the initial value.
+        if (_identityMode() === 'database' && _accountState && _accountState.authenticated) {
+            return null;
+        }
+        return localStorage.getItem(key);
+    } catch (_) { return null; }
+}
+
+function writeScopedPreference(key, value) {
+    const scoped = _cowUserTenantKey(key);
+    try { localStorage.setItem(scoped, value); } catch (_) {}
+}
+
+function removeScopedPreference(key) {
+    const scoped = _cowUserTenantKey(key);
+    try { localStorage.removeItem(scoped); } catch (_) {}
+}
+
+// Sidebar account state
+// UI-only identity: never retain the login response (which contains a token).
+let _identityModeState = 'unknown';
+let _accountState = { phase: 'loading', mode: 'unknown', authRequired: null,
+    authenticated: null, username: '', displayName: '', mustChangePassword: false };
+let _authEpoch = 0;
+let _accountCheckSeq = 0;
+let _accountCheckRequest = null;
+let _accountWritePending = null;
+let _accountIdentityKey = null;
+let _accountAppVisible = false;
+let _accountEntryRequest = null;
+let _pendingTenantPicker = false;
+let _accountMenuOpen = false;
+let _forcedPassword = false;   // must_change_password: block tenant/business until set
+
+function _accountText(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value;
+}
+
+function _accountHidden(id, hidden) {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', hidden);
+}
+
+function _emptyAccount(phase) {
+    return { phase, mode: _identityModeState, authRequired: null,
+        authenticated: null, username: '', displayName: '', mustChangePassword: false };
+}
+
+function renderAccountVersion() {
+    _accountText('sidebar-version', [effectiveBrandName(), APP_VERSION].filter(Boolean).join(' '));
+}
+
+function _renderSidebarAccount() {
+    const active = document.activeElement;
+    const state = _accountState;
+    const hasUser = state.phase !== 'loading' && state.authenticated === true && !!state.username;
+    const local = state.phase === 'ready' && state.mode === 'legacy';
+    const leaving = state.phase === 'logout_pending';
+    const logoutError = state.phase === 'logout_error';
+    const canLogout = (state.authRequired === true && state.authenticated === true) || logoutError || leaving;
+    let name = t('account_loading'), subtitle = '';
+    if (hasUser) {
+        name = state.displayName || state.username;
+        subtitle = '@' + state.username;
+    } else if (local) {
+        name = t('account_local');
+        subtitle = t(state.authRequired ? 'account_password_mode' : 'account_public_mode');
+    } else if (leaving || logoutError) {
+        name = t(leaving ? 'account_logging_out' : 'account_logout_unconfirmed');
+        subtitle = logoutError ? t('account_retry_hint') : '';
+    } else if (state.phase === 'error') {
+        name = t('account_unavailable');
+        subtitle = t('account_retry_hint');
+    } else if (state.phase === 'unauthenticated') {
+        name = t('account_login');
+    }
+    _accountText('sidebar-account-name', name);
+    _accountText('sidebar-account-subtitle', subtitle);
+    const trigger = document.getElementById('sidebar-account-toggle');
+    if (trigger) trigger.title = [name, subtitle].filter(Boolean).join('\n');
+    _accountText('sidebar-account-avatar', hasUser ? Array.from(name.trim())[0] || '' : '');
+    _accountHidden('sidebar-account-avatar', !hasUser);
+    _accountHidden('sidebar-account-avatar-icon', hasUser);
+    _accountText('account-menu-name', hasUser ? name : '');
+    _accountText('account-menu-username', hasUser ? '@' + state.username : '');
+    _accountHidden('account-menu-identity', !hasUser);
+    document.getElementById('account-menu-status')?.classList.remove('opacity-0');
+    _accountText('account-menu-status', hasUser || local ? '' : name);
+    _accountHidden('account-menu-status', hasUser || local || state.phase === 'unauthenticated');
+    _accountHidden('account-menu-retry', !['error', 'logout_error', 'loading'].includes(state.phase));
+    _accountHidden('account-menu-logout', !canLogout);
+    _accountText('account-menu-logout', t(leaving ? 'account_logging_out' : logoutError ? 'account_retry_logout' : 'account_logout'));
+    _accountHidden('logout-btn-header', !canLogout);
+    // Six-item menu (database identity mode, authenticated account). The items
+    // are only available to a real database user; legacy/error/logout states
+    // hide the whole group.
+    const dbUser = hasUser && state.mode === 'database';
+    ['account-menu-profile', 'account-menu-password', 'account-menu-tenant'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = !!_accountWritePending;
+        _accountHidden(id, !dbUser);
+    });
+    ['account-menu-prefs', 'account-menu-about'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = !!_accountWritePending;
+        _accountHidden(id, !(dbUser || local));
+    });
+    ['account-menu-logout', 'logout-btn-header'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = !!_accountWritePending;
+    });
+    ['account-menu-retry', 'auth-check-retry'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = state.phase === 'loading' || !!_accountWritePending;
+    });
+    if (!_accountAppVisible && state.phase !== 'unauthenticated' && !_pendingTenantPicker) {
+        _accountText('login-subtitle', '');
+        _accountText('auth-check-message', t(state.phase === 'error' ? 'account_unavailable' : 'account_loading'));
+        _accountHidden('auth-check-retry', state.phase !== 'error');
+    } else if (!_accountAppVisible) {
+        _accountText('login-subtitle', t('account_login_hint'));
+        _accountText('login-btn', t(_pendingTenantPicker ? 'login_enter_tenant' : 'account_login'));
+    }
+    renderAccountVersion();
+    // A retry may disappear once data arrives. Keep focus inside the open
+    // popover, instead of losing it to the page or focusing the chat input.
+    if (_accountMenuOpen && active && ['account-menu-retry', 'account-menu-logout'].includes(active.id)
+            && (active.disabled || active.classList.contains('hidden'))) {
+        document.getElementById('sidebar-version')?.focus();
+    }
+}
+
+function _accountMenuOutside(event) {
+    if (!document.getElementById('sidebar-account-footer')?.contains(event.target)) closeAccountMenu();
+}
+
+function _accountMenuKey(event) {
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeAccountMenu(true);
+    }
+}
+
+function closeAccountMenu(returnFocus = false) {
+    if (!_accountMenuOpen) return;
+    _accountMenuOpen = false;
+    _accountHidden('sidebar-account-menu', true);
+    document.getElementById('sidebar-account-toggle')?.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', _accountMenuOutside, true);
+    document.removeEventListener('focusin', _accountMenuOutside);
+    document.removeEventListener('keydown', _accountMenuKey, true);
+    if (returnFocus && _accountAppVisible) document.getElementById('sidebar-account-toggle')?.focus();
+}
+
+function toggleAccountMenu() {
+    if (_accountMenuOpen) { closeAccountMenu(); return; }
+    if (!_accountAppVisible) return;
+    const menu = document.getElementById('sidebar-account-menu');
+    if (!menu) return;
+    ['lang-menu', 'tenant-menu'].forEach(id => _accountHidden(id, true));
+    _renderSidebarAccount();
+    _accountMenuOpen = true;
+    _accountHidden('sidebar-account-menu', false);
+    document.getElementById('sidebar-account-toggle')?.setAttribute('aria-expanded', 'true');
+    const footer = document.getElementById('sidebar-account-footer');
+    if (footer && menu.style) menu.style.maxHeight = Math.max(0, footer.getBoundingClientRect().top - 12) + 'px';
+    document.addEventListener('pointerdown', _accountMenuOutside, true);
+    document.addEventListener('focusin', _accountMenuOutside);
+    document.addEventListener('keydown', _accountMenuKey, true);
+    const first = Array.from(menu.querySelectorAll('button, a')).find(el => !el.disabled && !el.classList.contains('hidden'));
+    if (first) first.focus();
+}
+
+function _clearTenantPicker() {
+    _pendingTenantPicker = false;
+    const btn = document.getElementById('login-btn');
+    if (btn) { btn.onclick = null; btn.type = 'submit'; }
+    const select = document.getElementById('login-tenant-select');
+    if (select) select.replaceChildren();
+    _accountHidden('login-tenant-group', true);
+    const form = document.getElementById('login-form');
+    if (form) form.onsubmit = _submitAccountLogin;
+}
+
+function _invalidateAccountIdentity(phase) {
+    ++_authEpoch;
+    ++_accountCheckSeq;
+    _accountCheckRequest = null;
+    _accountIdentityKey = null;
+    _accountEntryRequest = null;
+    _accountState = _emptyAccount(phase);
+    if (_forcedPassword) _closeForcedPasswordModal();
+    _clearTenantPicker();
+    closeAccountMenu();
+}
+
+function _normalizeAccountCheck(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data) || data.status !== 'success'
+            || typeof data.auth_required !== 'boolean') throw new Error('Invalid authentication response');
+    const mode = data.identity_mode === undefined ? 'legacy' : data.identity_mode;
+    if (!['legacy', 'database'].includes(mode)
+            || (data.identity_mode === undefined && _identityModeState === 'database')
+            || (mode === 'database' && !data.auth_required)
+            || (data.auth_required && typeof data.authenticated !== 'boolean')) {
+        throw new Error('Invalid authentication mode');
+    }
+    const authenticated = data.auth_required ? data.authenticated : false;
+    const user = mode === 'database' && authenticated && data.user;
+    const username = user && typeof user.username === 'string' && user.username.trim() ? user.username : '';
+    const displayName = user && typeof user.display_name === 'string' && user.display_name.trim() ? user.display_name : '';
+    const mustChangePassword = mode === 'database' && authenticated
+        ? Boolean(data.must_change_password) : false;
+    return { mode, authRequired: data.auth_required, authenticated, username, displayName,
+        mustChangePassword,
+        phase: data.auth_required && !authenticated ? 'unauthenticated'
+            : mode === 'database' && !username ? 'error' : 'ready' };
+}
+
+function _acceptAccountIdentity(next, newLogin = false) {
+    const previous = _accountIdentityKey;
+    if (!previous || newLogin || previous.mode !== next.mode || previous.authRequired !== next.authRequired
+            || (previous.username && next.username && previous.username !== next.username)) ++_authEpoch;
+    // A missing profile is not a new session: in-flight current-session 401s
+    // must still take effect after a profile-only retry.
+    _accountIdentityKey = { mode: next.mode, authRequired: next.authRequired,
+        username: next.username || previous?.username || '' };
+    _identityModeState = next.mode;
+    _accountState = next;
+    _renderSidebarAccount();
+}
+
+function _showAccountCheckGate() {
+    _accountHidden('login-overlay', false);
+    _accountHidden('app', true);
+    _accountHidden('login-form', true);
+    _accountHidden('auth-check-panel', false);
+    _renderSidebarAccount();
+}
+
+function _enterAccountApp() {
+    if (_accountAppVisible) return Promise.resolve();
+    if (_accountEntryRequest) return _accountEntryRequest;
+    const epoch = _authEpoch;
+    const current = () => epoch === _authEpoch && !_forcedPassword;
+    _showAccountCheckGate();
+    const request = Promise.resolve()
+        // Authentication has established the mode before a tenant switch is
+        // resolved. No business request may run until membership is confirmed.
+        .then(() => current() ? _resolveOneShotTenantSwitch() : false)
+        .then(() => current() ? _ensureTenantSelected() : false)
+        .then(ready => {
+            if (!current() || ready === false) return;
+            // A platform administrator with no active tenant membership is a
+            // pending-assignment account: per the member-tenant continuity rule
+            // it must NOT enter the workbench or a normal management page, and
+            // must NOT initialize any tenant consumer. Show the restricted
+            // recovery gate ("待分配说明 + 重试") instead of the old no-tenant
+            // platform direct branch. The administrator completes assignment
+            // and retries; the server independently denies normal APIs.
+            if (ready === 'platform') {
+                _accountState = { ..._accountState, phase: 'error' };
+                _showAccountCheckGate();
+                _accountText('auth-check-message', t('account_assign_pending'));
+                _accountHidden('auth-check-retry', false);
+                _accountHidden('login-form', true);
+                return;
+            }
+            // Platform administration does not require tenant membership.
+            // Keep its navigation available without starting tenant consumers.
+            return Promise.resolve(initApp()).then(() => {
+                if (!current()) return;
+                _accountHidden('login-overlay', true);
+                _accountHidden('auth-check-panel', true);
+                _accountHidden('app', false);
+                // Reflect the validated layout-only navigation presentation
+                // switch (classic|split) on the app root. This is a CSS/layout
+                // hook only; it never changes authorization or consumer state.
+                const appEl = document.getElementById('app');
+                if (appEl) appEl.setAttribute('data-nav-mode', _navigationMode());
+                _accountAppVisible = true;
+                _renderSidebarAccount();
+                // Gate permission-sensitive sidebar entries (platform/audit)
+                // once the self profile is known; refresh /auth/me so the
+                // current-tenant admin qualification is accurate.
+                fetchAccountSelf().then(function (self) {
+                    if (current()) _applySidebarPermissions(self);
+                });
+                if (_identityMode() === 'database') _setupHeaderTenantSelector();
+                chatInput.focus();
+            });
+        })
+        .catch(error => {
+            if (!current()) return;
+            _accountState = { ..._accountState, phase: 'error' };
+            _showAccountCheckGate();
+            if (error.code === 'no_tenants') {
+                _accountText('auth-check-message', t('account_tenant_no_available'));
+            }
+        })
+        .finally(() => {
+            if (_accountEntryRequest === request) _accountEntryRequest = null;
+        });
+    _accountEntryRequest = request;
+    return request;
+}
+
+// --- forced password change gate ---------------------------------------
+// A database account flagged must_change_password must set a new password
+// before tenant selection or any tenant-scoped business load. Show the change
+// password modal as a full-screen gate; the restricted user may only complete
+// the password change or log out. Closing/closing without setting a password is
+// disallowed after a forced prompt.
+function _enterForcedPassword() {
+    _forcedPassword = true;
+    _accountHidden('app', true);
+    _accountHidden('auth-check-panel', true);
+    // Keep the login overlay as a backdrop; the password modal is elevated so
+    // it sits above the overlay (network gating remains until password is set).
+    _accountHidden('login-overlay', false);
+    _renderSidebarAccount();
+    _openForcedPasswordModal();
+}
+
+function _openForcedPasswordModal() {
+    _setAccountPanel('password');
+    const modal = document.getElementById('account-password-modal');
+    if (modal) {
+        modal.classList.remove('hidden');
+        // Elevate above the login overlay backdrop so the gate is interactable.
+        modal.style.zIndex = '210';
+    }
+    // Repurpose the modal title/note for the forced flow; restore on close.
+    const title = document.getElementById('account-password-title');
+    if (title) title.textContent = t('account_password_forced_title');
+    const note = document.querySelector('#account-password-modal .account-password-note');
+    if (note) note.textContent = t('account_password_forced_note');
+    // A restricted account cannot dismiss the gate: hide the close X and change
+    // the cancel action to offer logout instead.
+    const closeBtn = document.getElementById('account-password-close');
+    if (closeBtn) closeBtn.classList.add('hidden');
+    const cancelBtn = document.querySelector('#account-password-modal .agent-modal-foot button[type="button"]');
+    if (cancelBtn) cancelBtn.textContent = t('account_logout');
+    const status = document.getElementById('account-password-status');
+    if (status) status.classList.add('hidden');
+    // Clear any leftover password input.
+    ['ap-old-password', 'ap-new-password', 'ap-confirm-password'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.value = ''; delete el.dataset.dirty; }
+    });
+    focusAccountPanel('account-password-modal');
+}
+
+function _closeForcedPasswordModal() {
+    _forcedPassword = false;
+    // Restore normal modal semantics.
+    const title = document.getElementById('account-password-title');
+    if (title) title.textContent = t('account_password_title');
+    const note = document.querySelector('#account-password-modal .account-password-note');
+    if (note) note.textContent = t('account_password_note');
+    const closeBtn = document.getElementById('account-password-close');
+    if (closeBtn) closeBtn.classList.remove('hidden');
+    const cancelBtn = document.querySelector('#account-password-modal .agent-modal-foot button[type="button"]');
+    if (cancelBtn) cancelBtn.textContent = t('cancel');
+    const modal = document.getElementById('account-password-modal');
+    if (modal) modal.style.zIndex = '';
+    _accountHidden('account-password-modal', true);
+    _setAccountPanel(null);
+}
+
+function refreshAccountIdentity() {
+    if (_accountWritePending || _pendingTenantPicker) return Promise.resolve();
+    if (_accountCheckRequest) return _accountCheckRequest;
+    const epoch = _authEpoch, seq = ++_accountCheckSeq;
+    const current = () => epoch === _authEpoch && seq === _accountCheckSeq;
+    _accountState = _emptyAccount('loading');
+    if (!_accountAppVisible) _showAccountCheckGate();
+    else _renderSidebarAccount();
+    const request = Promise.resolve().then(async () => {
+        try {
+            // Global identity is independent of the selected tenant. Do not
+            // use the tenant-admin request helper or cache a credentials body.
+            const response = await fetch('/auth/check', { credentials: 'same-origin', cache: 'no-store' });
+            if (!current()) return;
+            if (response.status === 401 && _identityModeState !== 'unknown') { showLoginScreen(); return; }
+            if (!response.ok) throw new Error('Authentication check failed');
+            const data = await response.json();
+            if (!current()) return;
+            const next = _normalizeAccountCheck(data);
+            if (next.phase === 'unauthenticated') {
+                _identityModeState = next.mode;
+                showLoginScreen();
+                return;
+            }
+            _acceptAccountIdentity(next);
+            if (next.mustChangePassword) _enterForcedPassword();
+            else if (!_accountAppVisible) _enterAccountApp();
+        } catch (_) {
+            if (!current()) return;
+            _accountState = _emptyAccount('error');
+            if (!_accountAppVisible) _showAccountCheckGate();
+            else _renderSidebarAccount();
+        } finally {
+            if (_accountCheckRequest === request) _accountCheckRequest = null;
+        }
+    });
+    _accountCheckRequest = request;
+    return request;
+}
+// End sidebar account state
+
+// Normalize the previous default while an existing backend is still running.
+// Instance-specific titles remain intact.
+function productTitle(title) {
+    if (title && /^cowagent$/i.test(title.trim())) return 'RongAI';
+    return !title || /^ai assistant$/i.test(title.trim()) ? PRODUCT_NAME : title;
+}
+
+function productTitleHTML(title) {
+    const name = productTitle(title);
+    return name === PRODUCT_NAME ? '容大<span class="brand-ai">AI</span>' : escapeHtml(name);
+}
+
+/* ---- Instance brand (branding) state --------------------------------------
+   Single source for the console brand. Populated from /api/branding/public.
+   Every painted brand position (sidebar, login, welcome, browser title,
+   favicon, default agent avatar) consumes the SAME snapshot so a save updates
+   them all without a reload. Falls back to the bundled default brand. */
+const DEFAULT_BRAND = {
+    enabled: false,
+    revision: 0,
+    brand_name: '容大AI',
+    logo_description: '控制台',
+    logo_url: '/assets/rongda-ai-mark.svg',
+    favicon_url: '/assets/favicon.ico',
+};
+let brandState = { ...DEFAULT_BRAND };
+let brandLoaded = false;
+// Monotonic fetch generation + an explicit "save epoch" so a late read response
+// can never overwrite a newer published version shown by a save.
+let brandFetchSeq = 0;
+let brandSaveEpoch = 0;
+// Per-tab guard list used by navigateTo / beforeunload.
+let brandingDirty = false;
+
+function publicBrand() {
+    return brandState;
+}
+
+function isBrandEnabled() {
+    return !!brandState.enabled;
+}
+
+function effectiveBrandName() {
+    return brandState.brand_name || DEFAULT_BRAND.brand_name;
+}
+
+function effectiveLogoUrl() {
+    return brandState.logo_url || DEFAULT_BRAND.logo_url;
+}
+
+function effectiveFaviconUrl() {
+    return brandState.favicon_url || DEFAULT_BRAND.favicon_url;
+}
+
+function effectiveLogoDescription() {
+    return brandState.logo_description || '';
+}
+
+/* Description allowed on the welcome hero. The built-in default ("控制台") is
+   still styled into the sidebar caption and (historically) the login brand
+   area, but on the welcome hero it's redundant with the eyebrow
+   ("容大AI · 你的工作助手"), so we only surface a customized description. */
+function welcomeHeroDescription() {
+    const desc = effectiveLogoDescription();
+    const isDefault = (desc || '').trim() === DEFAULT_BRAND.logo_description;
+    return (desc && desc.trim() && !isDefault) ? desc : '';
+}
+
+/* Render the brand name into a brand-styled wordmark. When the brand name is
+   the built-in default we keep the special "容大<span>AI</span>" mark; any
+   other name is escaped as plain text. */
+function brandWordmarkHTML(name) {
+    const value = productTitle(name || DEFAULT_BRAND.brand_name);
+    return value === PRODUCT_NAME ? '容大<span class="brand-ai">AI</span>' : escapeHtml(value);
+}
+
+/* One-shot image fallback: if a brand logo/favicon fails to load, swap it for
+   the built-in default ONCE so a transient asset error doesn't leave an empty
+   slot and doesn't loop. Attached at set-src time; `{ once: true }` removes the
+   listener after the first failure so a bad network blip is a single swap. */
+function _brandArmFallback(img, url) {
+    if (!img) return;
+    img.dataset.brandFallbackArmed = '1';
+    img.src = url;
+    img.addEventListener('error', function onErr() {
+        img.removeEventListener('error', onErr);
+        if (img.dataset.brandFallbackArmed === '1') {
+            img.dataset.brandFallbackArmed = '0';
+            img.src = '/assets/rongda-ai-mark.svg';
+        }
+    }, { once: true });
+}
+
+/* Apply the brand snapshot to every static DOM position. Re-painted on save,
+   on public revalidation and on view entry. idempotent w.r.t. brandState. */
+function applyBrandToDocument() {
+    renderAccountVersion();
+    const name = effectiveBrandName();
+    const logoUrl = effectiveLogoUrl();
+    const desc = effectiveLogoDescription();
+    const logoAlt = (desc || '').trim() || name;
+
+    // Sidebar brand mark + wordmark + caption
+    document.querySelectorAll('.sidebar-brand .brand-mark[src]').forEach(img => {
+        _brandArmFallback(img, logoUrl);
+    });
+    const sidebarWordmark = document.getElementById('sidebar-brand-name');
+    if (sidebarWordmark) { sidebarWordmark.innerHTML = brandWordmarkHTML(name); sidebarWordmark.title = name; }
+    const sidebarCaption = document.getElementById('sidebar-brand-caption');
+    if (sidebarCaption) {
+        const hasDesc = !!(desc && desc.trim());
+        sidebarCaption.textContent = hasDesc ? desc : '';
+        sidebarCaption.classList.toggle('hidden', !hasDesc);
+        sidebarCaption.title = hasDesc ? desc : '';
+    }
+
+    // Login brand area
+    document.querySelectorAll('#login-overlay .brand-mark[src], .login-brand-mark').forEach(img => {
+        _brandArmFallback(img, logoUrl);
+    });
+    const loginWordmark = document.getElementById('login-brand-name');
+    if (loginWordmark) loginWordmark.innerHTML = brandWordmarkHTML(name);
+
+    // Welcome screen (both the static initial hero and any rebuilt new-chat DOM)
+    document.querySelectorAll('#welcome-screen .brand-mark[src]').forEach(img => {
+        _brandArmFallback(img, logoUrl);
+    });
+    const welcomeTitle = document.getElementById('welcome-title');
+    if (welcomeTitle) welcomeTitle.innerHTML = brandWordmarkHTML(name);
+    // Welcome hero only surfaces a customized description; the built-in default
+    // stays hidden here (redundant with the eyebrow) but still shows elsewhere.
+    const heroDesc = welcomeHeroDescription();
+    document.querySelectorAll('#welcome-screen [data-brand-desc]').forEach(el => {
+        const hasDesc = !!(heroDesc && heroDesc.trim());
+        el.textContent = hasDesc ? heroDesc : '';
+        el.classList.toggle('hidden', !hasDesc);
+    });
+    // Rebuilt welcome DOM inside other containers uses these hooks.
+    document.querySelectorAll('[data-brand-slot="name"]').forEach(el => {
+        el.innerHTML = brandWordmarkHTML(name);
+    });
+    document.querySelectorAll('[data-brand-slot="logo"]').forEach(img => {
+        _brandArmFallback(img, logoUrl);
+    });
+    document.querySelectorAll('[data-brand-slot="desc"]').forEach(el => {
+        const isWelcomePreview = !!el.closest('[data-preview="welcome"]');
+        const isDefault = (desc || '').trim() === DEFAULT_BRAND.logo_description;
+        const hasDesc = isWelcomePreview
+            ? !!(desc && desc.trim() && !isDefault)
+            : !!(desc && desc.trim());
+        el.textContent = hasDesc ? desc : '';
+        el.classList.toggle('hidden', !hasDesc);
+        el.title = hasDesc ? desc : '';
+    });
+    document.querySelectorAll('[data-brand-slot="caption"]').forEach(el => {
+        const hasDesc = !!(desc && desc.trim());
+        el.textContent = hasDesc ? desc : '';
+        el.classList.toggle('hidden', !hasDesc);
+        el.title = hasDesc ? desc : '';
+    });
+
+    // Browser title: "<brand_name> 控制台" (控制台 localized)
+    const consoleLabel = t('branding_browser_title') || '控制台';
+    document.title = `${name} ${consoleLabel}`.trim();
+
+    // Favicon (derived PNG served by the backend; falls back to the built-in)
+    const favUrl = effectiveFaviconUrl();
+    document.querySelectorAll('link[rel="icon"]').forEach(link => {
+        link.href = `${favUrl}?v=${brandFetchSeq}`;
+    });
+}
+
+/* Refresh the default-agent avatar fallback (uses the product logo). */
+function applyBrandToAgentAvatars() {
+    document.querySelectorAll('.agent-avatar-brand').forEach(img => {
+        _brandArmFallback(img, effectiveLogoUrl());
+    });
+}
 
 // =====================================================================
 // i18n
@@ -13,9 +636,156 @@ let APP_VERSION = '';
 const I18N = {
     zh: {
         console: '控制台',
-        nav_chat: '对话', nav_manage: '管理', nav_monitor: '监控',
-        menu_chat: '对话', menu_agents: '智能体', menu_config: '配置', menu_skills: '技能',
-        agents_page_title: '智能体团队', agents_page_desc: '管理团队中的智能体成员',
+        nav_chat: '工作台', nav_manage: '管理', nav_monitor: '监控', nav_system: '系统设置',
+        nav_workbench: '工作台', nav_admin_console: '管理控制台',
+        nav_group_agent_dev: '智能体开发', nav_group_model_access: '模型与接入',
+        nav_group_org_perm: '组织与权限', nav_group_platform_ops: '平台运维',
+        menu_chat: '对话', menu_agents: '智能体', menu_config: '模型服务', menu_agent_config: '智能体管理', menu_skills: '工具与技能',
+        menu_platform: '系统设置', menu_tenant: '租户管理', menu_system_user: '成员管理',
+        menu_roles: '角色权限', menu_org: '组织架构', menu_branding: '品牌设置',
+        menu_audit: '审计', menu_backup: '备份升级', menu_open_api: '开放 API',
+        nav_unavailable: '功能尚未开放',
+        nav_unavailable_hint: '该功能正在筹备或尚未在当前配置开放，请返回其他可用页面。',
+        nav_go_back: '返回可用页面',
+        branding_title: '品牌设置',
+        branding_subtitle: '设置控制台的品牌标识与说明',
+        branding_instance: '当前实例',
+        branding_brand_info: '品牌信息',
+        branding_preview: '实时预览',
+        branding_logo: 'Logo',
+        branding_upload_logo: '上传 Logo',
+        branding_use_default_logo: '使用默认 Logo',
+        branding_logo_hint: 'PNG / JPG / WebP，最大 2MB',
+        branding_brand_name: '品牌名称',
+        branding_logo_desc: 'Logo 描述',
+        branding_logo_desc_placeholder: '品牌标识旁或下方展示的短说明，可留空',
+        branding_logo_desc_hint: '可留空，最多 100 字',
+        branding_name_placeholder: '品牌名称，1～32 字',
+        branding_sidebar: '侧边栏',
+        branding_login: '登录页',
+        branding_welcome: '对话欢迎页',
+        branding_light: '浅色',
+        branding_dark: '深色',
+        branding_preview_hint: '预览效果，保存后生效',
+        branding_cancel: '取消更改',
+        branding_save: '保存设置',
+        branding_reset_all: '恢复全部默认',
+        branding_reset_logo: '恢复默认 Logo',
+        branding_saved: '品牌设置已保存',
+        branding_unsaved: '有未保存更改',
+        branding_saved_state: '已保存',
+        branding_readonly: '只读',
+        branding_readonly_reason: '请先设置访问密码后方可编辑品牌',
+        branding_enterprise_unavailable: '企业品牌授权与审计尚未接入，暂不可修改',
+        branding_storage_corrupt: '品牌配置损坏，当前显示恢复预览。请重新读取，或明确恢复全部默认；原件将保留。',
+        branding_loading: '加载中…',
+        branding_retry: '重试',
+        branding_load_failed: '加载失败',
+        branding_conflict: '品牌设置已被其他人修改',
+        branding_reload: '重新读取已发布值',
+        branding_save_failed: '保存失败',
+        login_select_tenant: '选择租户',
+        login_enter_tenant: '进入',
+        // identity-admin views (task 3.6)
+        tenant_title: '租户管理',
+        tenant_create: '创建租户',
+        tenant_search_placeholder: '搜索租户名称 / 编码',
+        tenant_loading: '加载中…',
+        tenant_empty: '暂无租户',
+        tenant_version_label: '版本',
+        users_title: '用户管理',
+        member_create: '新建成员',
+        member_search_placeholder: '搜索账号 / 姓名',
+        member_empty: '暂无成员',
+        roles_title: '角色权限',
+        role_create: '新建角色',
+        role_empty: '暂无角色',
+        role_permissions_label: '权限',
+        org_title: '组织架构',
+        dept_create: '新建部门',
+        org_empty: '暂无部门',
+        load_error: '加载失败',
+        active: '启用',
+        inactive: '停用',
+        unsaved_changes_warning: '有未保存的更改，确定离开？',
+        create_not_available: '该操作暂未开放',
+        // identity-admin CRUD forms (task: wire create/edit/delete)
+        admin_save: '保存', admin_create: '创建', admin_edit: '编辑', admin_delete: '删除', admin_saved: '已保存',
+        admin_deleted: '已删除', admin_save_failed: '保存失败',
+        admin_permissions_load_failed: '权限目录加载失败，请重新打开重试',
+        admin_required_field: '请填写必填字段',
+        admin_conflict: '已被他人修改，已刷新列表，请重试',
+        admin_field_code: '编码', admin_field_code_hint: '小写字母/数字/连字符，创建后不可改',
+        admin_field_name: '名称',
+        admin_field_shared_root: '共享根目录', admin_field_shared_root_hint: '租户数据目录的绝对路径',
+        admin_field_admin_username: '管理员账号',
+        admin_field_admin_display: '管理员显示名',
+        admin_field_admin_password: '管理员密码', admin_field_password_hint: '至少 8 位，避免使用弱密码',
+        admin_field_recent_password: '当前密码确认', admin_field_recent_password_hint: '重新输入你的登录密码以授权本次操作',
+        admin_field_active: '启用',
+        admin_field_username: '账号', admin_field_username_hint: '3-64 位字母/数字/._-',
+        admin_field_display_name: '显示名',
+        admin_field_temp_password: '临时密码',
+        admin_field_roles: '角色', admin_field_roles_hint: '默认勾选成员',
+        admin_field_roles_edit_hint: '未勾选时将重置为默认成员（当前角色未加载）',
+        admin_field_department: '部门', admin_field_department_hint: '可选', admin_field_department_none: '无部门',
+        admin_field_position: '职位',
+        admin_field_parent: '上级部门', admin_field_parent_none: '无（根目录）',
+        admin_field_sort_order: '排序',
+        admin_field_permissions: '权限', admin_field_permissions_hint: '从目录中选择权限点',
+        admin_field_platform_admin: '平台管理员',
+        admin_field_admin_user_id: '管理员账号 ID', admin_field_admin_user_id_hint: '已有有效账号的用户 ID',
+        admin_tenant_admin: '管理员',
+        admin_tenant_admin_edit: '配置租户管理员',
+        admin_reset: '重置密码', admin_reset_do: '确认重置', admin_reset_confirm: '确定重置「{name}」的密码？',
+        admin_reset_temp_result: '一次性临时密码', admin_forbidden: '无权限',
+        admin_prev: '上一页', admin_next: '下一页',
+        admin_total_label: '共', admin_page_label: '第',
+        filter_all: '全部', filter_restricted: '待改密',
+        platform_title: '平台账号', platform_admin_only: '仅平台管理员可见',
+        platform_search_placeholder: '搜索平台账号',
+        platform_user_empty: '暂无平台账号',
+        platform_user_edit_title: '编辑平台账号',
+        platform_admin_badge: '平台管理员',
+        admin_tab_members: '租户成员', admin_tab_platform: '平台账号',
+        tenant_edit_title: '编辑租户',
+        member_edit_title: '编辑成员',
+        role_edit_title: '编辑角色',
+        dept_edit_title: '编辑部门',
+        admin_delete_confirm_role: '确定删除角色「{name}」吗？',
+        admin_delete_confirm_dept: '确定删除部门「{name}」吗？',
+        role_builtin: '内置',
+        role_members_label: '成员',
+        role_view_members: '查看成员',
+        role_copy: '复制', role_copy_title: '复制角色',
+        org_cycle_rejected: '组织关系存在回环，操作被拒绝',
+        audit_title: '身份审计',
+        audit_scope_hint: '平台管理员查看全部，租户管理员仅当前租户',
+        audit_actor_placeholder: '操作者',
+        audit_action_placeholder: '动作',
+        audit_apply: '筛选',
+        audit_empty: '暂无审计记录',
+        audit_result_success: '成功',
+        audit_result_denied: '拒绝',
+        branding_reset_confirm_title: '恢复全部默认设置',
+        branding_reset_confirm_body: '将重置 Logo、品牌名称和 Logo 描述为内置默认值，确认操作？',
+        branding_reset_confirm_ok: '确认恢复',
+        branding_reset_confirm_cancel: '取消',
+        branding_dirty_leave_title: '存在未保存更改',
+        branding_dirty_leave_body: '品牌设置尚未保存，将要离开此页，是否放弃更改？',
+        branding_dirty_leave_ok: '放弃更改并离开',
+        branding_dirty_leave_cancel: '留在此页',
+        branding_unsaved_warn: '品牌设置还有未保存的更改',
+        branding_save_pending: '保存结果未确认',
+        branding_save_pending_body: '未能确认服务端是否已发布，请重新读取已发布品牌后重试。',
+        branding_save_pending_ok: '重新读取',
+        branding_added: '已添加新品牌',
+        branding_image_too_large: '图片不能超过 2MB',
+        branding_invalid_image: '图片无效',
+        branding_asset_fallback: '品牌图片无法加载',
+        branding_browser_title: '控制台',
+        branding_logo_alt: '品牌 Logo',
+        agents_page_title: '智能体配置', agents_page_desc: '管理团队中的智能体成员',
         agents_create: '创建智能体',
         agents_name_placeholder: '智能体名称',
         agents_name_required: '请填写名称',
@@ -36,6 +806,20 @@ const I18N = {
         agents_default: '默认',
         agents_archived: '已归档',
         agents_chat: '开始对话',
+        start_chat: '开始对话',
+        agent_workbench_title: '智能体',
+        agent_workbench_desc: '选择已配置的智能体开始对话',
+        agent_workbench_refresh: '刷新',
+        agent_workbench_loading: '加载中…',
+        agent_workbench_empty: '暂无可用智能体',
+        agent_workbench_failed: '加载失败',
+        agent_workbench_retry: '重试',
+        agent_unavailable: '暂不可用',
+        agent_cannot_run: '当前不可运行',
+        agent_target_unavailable: '该智能体已不可用，请刷新列表后重试',
+        agent_starting: '正在进入…',
+        agent_start_failed: '暂时无法开始对话，请重试',
+        agent_runtime_not_enabled: '当前版本尚未开放对话',
         agents_delete: '删除',
         agents_delete_title: '删除智能体',
         agents_delete_confirm: '确定删除智能体「{name}」吗？其工作空间和会话将一并移除，且无法恢复。',
@@ -78,8 +862,8 @@ const I18N = {
         settings_tab_basic: '基础配置',
         settings_tab_models: '模型配置',
         knowledge_shared_hint: '知识库默认全员共享，在侧栏「知识」查看和编辑。',
-        menu_memory: '记忆', menu_knowledge: '知识', menu_channels: '通道', menu_tasks: '定时',
-        menu_logs: '日志',
+        menu_memory: '记忆管理', menu_knowledge: '知识库', menu_channels: '消息渠道', menu_tasks: '定时任务',
+        menu_logs: '运行日志', menu_todo: '我的待办', menu_scenarios: '场景应用',
         models_title: '模型管理',
         models_desc: '统一管理对话、图像、语音、向量、搜索能力',
         models_section_vendors: '厂商凭据',
@@ -254,7 +1038,7 @@ const I18N = {
         memory_loading: '加载记忆文件中...', memory_loading_desc: '记忆文件将显示在此处',
         memory_back: '返回列表',
         memory_col_name: '文件名', memory_col_type: '类型', memory_col_size: '大小', memory_col_updated: '更新时间',
-        channels_title: '通道管理', channels_desc: '管理已接入的消息通道',
+        channels_title: '消息渠道', channels_desc: '管理已接入的消息通道',
         channels_add: '接入通道', channels_disconnect: '断开',
         channels_save: '保存配置', channels_saved: '已保存', channels_save_error: '保存失败',
         channels_restarted: '已保存并重启',
@@ -288,6 +1072,34 @@ const I18N = {
         feishu_sdk_downloading_tip: '首次启用需要下载，约 1MB，稍后自动继续',
         feishu_mode_scan: '扫码创建', feishu_mode_manual: '手动填写',
         tasks_title: '定时任务', tasks_desc: '查看和管理定时任务',
+        todo_title: '待办事项', todo_subtitle: '处理需要你跟进的事项',
+        todo_add_btn: '新建待办', todo_save: '保存', todo_cancel: '取消',
+        todo_filter_all: '全部', todo_filter_open: '未完成', todo_filter_pending: '待处理', todo_filter_progress: '处理中', todo_filter_done: '已完成', todo_filter_cancel: '已取消',
+        todo_only_overdue: '只看逾期', todo_search_placeholder: '搜索待办…', todo_clear_due: '清空',
+        todo_status_all: '全部', todo_status_open: '未完成', todo_status_pending: '待处理', todo_status_in_progress: '处理中', todo_status_completed: '已完成', todo_status_cancelled: '已取消',
+        todo_kind_general: '普通事项', todo_kind_input_required: '补充资料', todo_kind_confirmation: '方案确认', todo_kind_review: '结果验收',
+        todo_priority_low: '低', todo_priority_normal: '普通', todo_priority_high: '高',
+        todo_edit_title: '编辑待办', todo_create_title: '新建待办',
+        todo_field_title: '标题', todo_field_desc: '说明', todo_field_kind: '分类', todo_field_priority: '优先级', todo_field_due: '截止时间',
+        todo_by: '创建于', todo_updated: '更新于', todo_completed: '完成于', todo_created_by: '来源',
+        todo_empty_open: '暂无未完成的待办', todo_empty_pending: '暂无待处理事项', todo_empty_progress: '暂无处理中的事项',
+        todo_empty_done: '暂无已完成事项', todo_empty_cancel: '暂无已取消事项', todo_empty_all: '还没有待办事项',
+        todo_empty_search: '没有匹配的待办', todo_empty_overdue: '暂无逾期事项',
+        todo_disabled_banner: '待办功能未开启，可在配置中启用 todo_enabled。',
+        todo_unauthorized_banner: '请先登录后再使用待办功能。',
+        todo_load_failed: '加载失败，请稍后重试。',
+        todo_banner_disabled: '待办功能未开启', todo_banner_unauthorized: '未认证',
+        todo_empty_title: '待办标题', todo_empty_subtitle: '为空时自动填充',
+        todo_confirm_discard: '有未保存的修改，确定要放弃吗？',
+        todo_confirm_complete: '确定标记为已完成？', todo_confirm_cancel: '确定取消该待办？', todo_confirm_reopen: '确定重新打开？',
+        todo_saved: '已保存', todo_save_failed: '保存失败', todo_created: '已创建',
+        todo_action_start: '开始处理', todo_action_complete: '完成', todo_action_cancel: '取消', todo_action_reopen: '重新打开', todo_action_edit: '编辑', todo_action_events: '处理历史',
+        todo_detail_title: '待办详情', todo_detail_source: '来源', todo_detail_history: '处理历史', todo_detail_history_empty: '暂无处理记录',
+        todo_detail_note: '处理说明', todo_detail_note_empty: '无说明',
+        todo_due_overdue: '已逾期', todo_due_soon: '即将到期', todo_due_none: '无截止时间',
+        todo_pagination_prev: '上一页', todo_pagination_next: '下一页',
+        todo_source_manual: '手动创建', todo_source_conversation: '会话来源',
+        todo_load_error: '加载失败', todo_retry: '重试',
         tasks_coming: '即将推出', tasks_coming_desc: '定时任务管理功能即将在此提供',
         task_add_btn: '新增任务',
         task_edit_title: '编辑定时任务',
@@ -318,7 +1130,7 @@ const I18N = {
         task_run_confirm_msg: '该任务会立即向已配置的通道和接收者发送内容。是否继续？',
         task_run_started: '已开始执行',
         task_run_failed: '执行失败',
-        logs_title: '日志', logs_desc: '实时日志输出 (run.log)',
+        logs_title: '运行日志', logs_desc: '实时日志输出 (run.log)',
         logs_live: '实时', logs_coming_msg: '日志流即将在此提供。将连接 run.log 实现类似 tail -f 的实时输出。',
         new_chat: '新对话',
         new_team_chat: '多智能体对话',
@@ -326,7 +1138,23 @@ const I18N = {
         new_team_chat_owner: '默认',
         new_team_chat_start: '开始对话',
         new_team_chat_min: '至少选择两个智能体',
-        session_history: '历史会话',
+        session_history: '历史对话',
+        history_desc: '找到之前的对话，接着聊',
+        history_search_placeholder: '搜索会话标题',
+        history_search_clear: '清空搜索',
+        history_search_loading: '正在搜索…',
+        history_search_empty: '没有匹配的会话，试试其他标题关键词',
+        history_search_count: '找到 {count} 个会话',
+        history_search_limit: '搜索词最多 100 个字符',
+        history_search_unsupported: '当前服务暂不支持标题搜索，请更新服务后重试',
+        history_refresh: '刷新历史会话',
+        history_current: '当前会话',
+        history_more: '更多操作',
+        session_history_loading: '加载历史会话中…',
+        session_history_empty: '暂无历史会话',
+        session_history_failed: '加载失败，请重试',
+        session_history_retry: '重试',
+        session_history_not_enabled: '历史会话功能当前未开放',
         ws_toggle: '工作空间', ws_tab_preview: '预览', ws_tab_files: '文件',
         ws_default_workspace: '默认空间', ws_sel_title: '选择工作空间',
         ws_sel_default_hint: '使用默认工作空间（~/cow）', ws_sel_recents: '最近使用',
@@ -418,19 +1246,200 @@ const I18N = {
         confirm_yes: '确认',
         confirm_cancel: '取消',
         error_send: '发送失败，请稍后再试。', error_timeout: '请求超时，请再试一次。',
+        error_login_required: '登录已失效，请重新登录后发送。',
+        error_tenant_required: '请先选择当前账号所属的租户，再发送消息。',
+        error_chat_forbidden: '当前账号没有此租户的对话权限，请联系管理员。',
+        error_password_required: '请先修改初始密码，再发送消息。',
         thinking_in_progress: '思考中...', thinking_done: '已深度思考', thinking_duration: '耗时',
         edit_message: '编辑消息',
         regenerate_response: '重新生成',
         edit_save: '保存并发送',
         edit_cancel: '取消',
+        account_loading: '账号信息加载中', account_unavailable: '账号信息暂不可用',
+        account_local: '本地访问', account_password_mode: '密码保护', account_public_mode: '免登录模式',
+        account_retry: '重新检查', account_retry_hint: '请重新检查', account_logout: '退出登录',
+        account_logging_out: '正在退出…', account_logout_unconfirmed: '退出未确认', account_retry_logout: '重试退出',
+        account_login: '登录', account_login_hint: '请输入登录信息以访问控制台',
+        account_credentials_error: '登录信息有误，请重试', account_login_failed: '登录未完成，请重试',
+        account_menu_profile: '个人资料', account_menu_password: '账号安全', account_menu_prefs: '个人偏好',
+        account_menu_about: '帮助与关于',
+        account_profile_title: '个人资料', account_profile_global: '全局账号',
+        account_profile_member: '当前租户成员', account_profile_display_name: '姓名',
+        account_profile_username: '登录账号', account_profile_platform: '平台身份',
+        account_profile_tenant: '当前租户', account_profile_member_name: '成员姓名',
+        account_profile_role: '实际角色', account_profile_department: '部门',
+        account_profile_position: '岗位', account_profile_empty: '未设置',
+        account_profile_no_tenant: '未加入任何租户', account_profile_error: '资料读取失败',
+        account_password_title: '修改密码', account_password_note: '修改成功后，其他已登录会话也会失效，需要重新登录。',
+        account_password_old: '原密码', account_password_new: '新密码', account_password_confirm: '确认新密码',
+        account_password_submit: '提交修改', account_password_invalid_old: '原密码错误',
+        account_password_weak: '新密码不符合要求，请重试', account_password_mismatch: '两次输入的新密码不一致',
+        account_password_unknown: '操作未完成，请重试', account_password_done: '密码已修改，请重新登录',
+        account_password_forced_title: '请设置新密码', account_password_forced_note: '首次登录/临时密码需先设置新密码，完成后才能使用其他功能。',
+        account_password_forced_required: '请先完成密码设置', account_password_forced_logout: '需先设置新密码才能继续。确定退出登录吗？',
+        account_prefs_title: '界面偏好', account_prefs_note: '偏好仅在当前浏览器生效，不写入实例配置。',
+        account_prefs_theme: '主题', account_prefs_lang: '语言', account_prefs_light: '浅色',
+        account_prefs_dark: '深色', account_prefs_zh: '简体', account_prefs_hant: '繁體', account_prefs_en: 'EN',
+        account_prefs_storage_fail: '浏览器存储不可用，本次修改仅在本页生效',
+        account_tenant_title: '切换租户', account_tenant_none: '未加入', account_tenant_current: '当前',
+        account_tenant_no_available: '未加入任何租户', account_tenant_invalid: '目标租户已失效，请重新选择',
+        account_assign_pending: '账号尚未分配到任何启用的租户，暂时无法进入工作台或管理页面。请联系管理员完成租户分配后点击重试。',
+        account_tenant_single: '当前租户', account_about_title: '关于', account_about_version_unknown: '版本未获取',
         logout: '退出',
+        close: '关闭',
     },
     'zh-Hant': {
 
         console: '控制台',
-        nav_chat: '對話', nav_manage: '管理', nav_monitor: '監控',
-        menu_chat: '對話', menu_agents: '智慧體', menu_config: '設定', menu_skills: '技能',
-        agents_page_title: '智慧體團隊', agents_page_desc: '管理團隊中的智慧體成員',
+        nav_chat: '工作台', nav_manage: '管理', nav_monitor: '監控', nav_system: '系統設定',
+        nav_workbench: '工作台', nav_admin_console: '管理控制台',
+        nav_group_agent_dev: '智能體開發', nav_group_model_access: '模型與接入',
+        nav_group_org_perm: '組織與權限', nav_group_platform_ops: '平台維運',
+        menu_chat: '對話', menu_agents: '智慧體', menu_config: '模型服務', menu_agent_config: '智慧體管理', menu_skills: '工具與技能',
+        menu_platform: '系統設定', menu_tenant: '租戶管理', menu_system_user: '成員管理',
+        menu_roles: '角色權限', menu_org: '組織架構', menu_branding: '品牌設定',
+        menu_audit: '稽核', menu_backup: '備份升級', menu_open_api: '開放 API',
+        nav_unavailable: '功能尚未開放',
+        nav_unavailable_hint: '該功能正在籌備或尚未在當前配置開放，請返回其他可用頁面。',
+        nav_go_back: '返回可用頁面',
+        branding_title: '品牌設定',
+        branding_subtitle: '設定控制台的品牌標識與說明',
+        branding_instance: '目前實例',
+        branding_brand_info: '品牌資訊',
+        branding_preview: '即時預覽',
+        branding_logo: 'Logo',
+        branding_upload_logo: '上傳 Logo',
+        branding_use_default_logo: '使用預設 Logo',
+        branding_logo_hint: 'PNG / JPG / WebP，最大 2MB',
+        branding_brand_name: '品牌名稱',
+        branding_logo_desc: 'Logo 描述',
+        branding_logo_desc_placeholder: '品牌標識旁或下方展示的簡短說明，可留空',
+        branding_logo_desc_hint: '可留空，最多 100 字',
+        branding_name_placeholder: '品牌名稱，1～32 字',
+        branding_sidebar: '側邊欄',
+        branding_login: '登入頁',
+        branding_welcome: '對話歡迎頁',
+        branding_light: '淺色',
+        branding_dark: '深色',
+        branding_preview_hint: '預覽效果，儲存後生效',
+        branding_cancel: '取消變更',
+        branding_save: '儲存設定',
+        branding_reset_all: '恢復全部預設',
+        branding_reset_logo: '恢復預設 Logo',
+        branding_saved: '品牌設定已儲存',
+        branding_unsaved: '有未儲存變更',
+        branding_saved_state: '已儲存',
+        branding_readonly: '唯讀',
+        branding_readonly_reason: '請先設定存取密碼後方可編輯品牌',
+        branding_enterprise_unavailable: '企業品牌授權與審計尚未接入，暫不可修改',
+        branding_storage_corrupt: '品牌設定損壞，目前顯示復原預覽。請重新讀取，或明確恢復全部預設；原件將保留。',
+        branding_loading: '載入中…',
+        branding_retry: '重試',
+        branding_load_failed: '載入失敗',
+        branding_conflict: '品牌設定已被其他人修改',
+        branding_reload: '重新讀取已發佈值',
+        branding_save_failed: '儲存失敗',
+        login_select_tenant: '選擇租戶',
+        login_enter_tenant: '進入',
+        tenant_title: '租戶管理',
+        tenant_create: '建立租戶',
+        tenant_search_placeholder: '搜尋租戶名稱 / 編碼',
+        tenant_loading: '載入中…',
+        tenant_empty: '暫無租戶',
+        tenant_version_label: '版本',
+        users_title: '用戶管理',
+        member_create: '新增成員',
+        member_search_placeholder: '搜尋帳號 / 姓名',
+        member_empty: '暫無成員',
+        roles_title: '角色權限',
+        role_create: '新增角色',
+        role_empty: '暫無角色',
+        role_permissions_label: '權限',
+        org_title: '組織架構',
+        dept_create: '新增部門',
+        org_empty: '暫無部門',
+        load_error: '載入失敗',
+        active: '啟用',
+        inactive: '停用',
+        unsaved_changes_warning: '有未儲存的變更，確定離開？',
+        create_not_available: '該操作暫未開放',
+        // identity-admin CRUD forms (task: wire create/edit/delete)
+        admin_save: '儲存', admin_create: '建立', admin_edit: '編輯', admin_delete: '刪除', admin_saved: '已儲存',
+        admin_deleted: '已刪除', admin_save_failed: '儲存失敗',
+        admin_permissions_load_failed: '權限目錄載入失敗，請重新開啟重試',
+        admin_required_field: '請填寫必填欄位',
+        admin_conflict: '已被他人修改，已重新整理清單，請重試',
+        admin_field_code: '編碼', admin_field_code_hint: '小寫字母/數字/連字號，建立後不可改',
+        admin_field_name: '名稱',
+        admin_field_shared_root: '共用根目錄', admin_field_shared_root_hint: '租戶資料目錄的絕對路徑',
+        admin_field_admin_username: '管理員帳號',
+        admin_field_admin_display: '管理員顯示名稱',
+        admin_field_admin_password: '管理員密碼', admin_field_password_hint: '至少 8 位，避免使用弱密碼',
+        admin_field_recent_password: '目前密碼確認', admin_field_recent_password_hint: '重新輸入你的登入密碼以授權本次操作',
+        admin_field_active: '啟用',
+        admin_field_username: '帳號', admin_field_username_hint: '3-64 位字母/數字/._-',
+        admin_field_display_name: '顯示名稱',
+        admin_field_temp_password: '臨時密碼',
+        admin_field_roles: '角色', admin_field_roles_hint: '預設勾選成員',
+        admin_field_roles_edit_hint: '未勾選時將重設為預設成員（目前角色未載入）',
+        admin_field_department: '部門', admin_field_department_hint: '可選', admin_field_department_none: '無部門',
+        admin_field_position: '職位',
+        admin_field_parent: '上級部門', admin_field_parent_none: '無（根目錄）',
+        admin_field_sort_order: '排序',
+        admin_field_permissions: '權限', admin_field_permissions_hint: '從目錄中選擇權限點',
+        admin_field_platform_admin: '平台管理員',
+        admin_field_admin_user_id: '管理員帳號 ID', admin_field_admin_user_id_hint: '已有有效帳號的使用者 ID',
+        admin_tenant_admin: '管理員',
+        admin_tenant_admin_edit: '設定租戶管理員',
+        admin_reset: '重設密碼', admin_reset_do: '確認重設', admin_reset_confirm: '確定重設「{name}」的密碼？',
+        admin_reset_temp_result: '一次性臨時密碼', admin_forbidden: '無權限',
+        admin_prev: '上一頁', admin_next: '下一頁',
+        admin_total_label: '共', admin_page_label: '第',
+        filter_all: '全部', filter_restricted: '待改密',
+        platform_title: '平台帳號', platform_admin_only: '僅平台管理員可見',
+        platform_search_placeholder: '搜尋平台帳號',
+        platform_user_empty: '暫無平台帳號',
+        platform_user_edit_title: '編輯平台帳號',
+        platform_admin_badge: '平台管理員',
+        admin_tab_members: '租戶成員', admin_tab_platform: '平台帳號',
+        tenant_edit_title: '編輯租戶',
+        member_edit_title: '編輯成員',
+        role_edit_title: '編輯角色',
+        dept_edit_title: '編輯部門',
+        admin_delete_confirm_role: '確定刪除角色「{name}」嗎？',
+        admin_delete_confirm_dept: '確定刪除部門「{name}」嗎？',
+        role_builtin: '內建',
+        role_members_label: '成員',
+        role_view_members: '查看成員',
+        role_copy: '複製', role_copy_title: '複製角色',
+        org_cycle_rejected: '組織關係存在迴圈，操作被拒絕',
+        audit_title: '身分稽核',
+        audit_scope_hint: '平台管理員查看全部，租戶管理員僅目前租戶',
+        audit_actor_placeholder: '操作者',
+        audit_action_placeholder: '動作',
+        audit_apply: '篩選',
+        audit_empty: '暫無稽核記錄',
+        audit_result_success: '成功',
+        audit_result_denied: '拒絕',
+        branding_reset_confirm_title: '恢復全部預設設定',
+        branding_reset_confirm_body: '將重設 Logo、品牌名稱和 Logo 描述為內建預設值，確認操作？',
+        branding_reset_confirm_ok: '確認恢復',
+        branding_reset_confirm_cancel: '取消',
+        branding_dirty_leave_title: '存在未儲存變更',
+        branding_dirty_leave_body: '品牌設定尚未儲存，將要離開此頁，是否放棄變更？',
+        branding_dirty_leave_ok: '放棄變更並離開',
+        branding_dirty_leave_cancel: '留在本頁',
+        branding_unsaved_warn: '品牌設定還有未儲存的變更',
+        branding_save_pending: '儲存結果未確認',
+        branding_save_pending_body: '無法確認伺服器是否已發佈，請重新讀取已發佈品牌後重試。',
+        branding_save_pending_ok: '重新讀取',
+        branding_added: '已新增新品牌',
+        branding_image_too_large: '圖片不能超過 2MB',
+        branding_invalid_image: '圖片無效',
+        branding_asset_fallback: '品牌圖片無法載入',
+        branding_browser_title: '控制台',
+        branding_logo_alt: '品牌 Logo',
+        agents_page_title: '智慧體設定', agents_page_desc: '管理團隊中的智慧體成員',
         agents_create: '建立智慧體',
         agents_name_placeholder: '智慧體名稱',
         agents_name_required: '請填寫名稱',
@@ -451,6 +1460,20 @@ const I18N = {
         agents_default: '預設',
         agents_archived: '已封存',
         agents_chat: '開始對話',
+        start_chat: '開始對話',
+        agent_workbench_title: '智慧體',
+        agent_workbench_desc: '選擇已設定的智慧體開始對話',
+        agent_workbench_refresh: '重新整理',
+        agent_workbench_loading: '載入中…',
+        agent_workbench_empty: '暫無可用智慧體',
+        agent_workbench_failed: '載入失敗',
+        agent_workbench_retry: '重試',
+        agent_unavailable: '暫不可用',
+        agent_cannot_run: '目前不可運行',
+        agent_target_unavailable: '該智慧體已不可用，請重新整理清單後重試',
+        agent_starting: '正在進入…',
+        agent_start_failed: '暫時無法開始對話，請重試',
+        agent_runtime_not_enabled: '目前版本尚未開放對話',
         agents_delete: '刪除',
         agents_delete_title: '刪除智慧體',
         agents_delete_confirm: '確定刪除智慧體「{name}」嗎？其工作空間與會話將一併移除，且無法復原。',
@@ -493,8 +1516,8 @@ const I18N = {
         settings_tab_basic: '基礎設定',
         settings_tab_models: '模型設定',
         knowledge_shared_hint: '知識庫預設全員共享，在側欄「知識」查看和編輯。',
-        menu_memory: '記憶', menu_knowledge: '知識', menu_channels: '管道', menu_tasks: '定時',
-        menu_logs: '日誌',
+        menu_memory: '記憶管理', menu_knowledge: '知識庫', menu_channels: '訊息管道', menu_tasks: '定時任務',
+        menu_logs: '執行日誌', menu_todo: '我的待辦', menu_scenarios: '場景應用',
         models_title: '模型管理',
         models_desc: '統一管理對話、影像、語音、向量、搜尋能力',
         models_section_vendors: '廠商憑據',
@@ -669,7 +1692,7 @@ const I18N = {
         memory_loading: '載入記憶檔案中...', memory_loading_desc: '記憶檔案將顯示在此處',
         memory_back: '返回列表',
         memory_col_name: '檔名', memory_col_type: '型別', memory_col_size: '大小', memory_col_updated: '更新時間',
-        channels_title: '管道管理', channels_desc: '管理已接入的訊息管道',
+        channels_title: '訊息管道', channels_desc: '管理已接入的訊息管道',
         channels_add: '接入管道', channels_disconnect: '斷開',
         channels_save: '儲存設定', channels_saved: '已儲存', channels_save_error: '儲存失敗',
         channels_restarted: '已儲存並重啟',
@@ -703,6 +1726,34 @@ const I18N = {
         feishu_sdk_downloading_tip: '首次啟用需要下載，約 1MB，稍後自動繼續',
         feishu_mode_scan: '掃碼建立', feishu_mode_manual: '手動填寫',
         tasks_title: '定時任務', tasks_desc: '檢視和管理定時任務',
+        todo_title: '待辦事項', todo_subtitle: '處理需要你跟進的事項',
+        todo_add_btn: '新增待辦', todo_save: '儲存', todo_cancel: '取消',
+        todo_filter_all: '全部', todo_filter_open: '未完成', todo_filter_pending: '待處理', todo_filter_progress: '處理中', todo_filter_done: '已完成', todo_filter_cancel: '已取消',
+        todo_only_overdue: '只看逾期', todo_search_placeholder: '搜尋待辦…', todo_clear_due: '清空',
+        todo_status_all: '全部', todo_status_open: '未完成', todo_status_pending: '待處理', todo_status_in_progress: '處理中', todo_status_completed: '已完成', todo_status_cancelled: '已取消',
+        todo_kind_general: '普通事項', todo_kind_input_required: '補充資料', todo_kind_confirmation: '方案確認', todo_kind_review: '結果驗收',
+        todo_priority_low: '低', todo_priority_normal: '普通', todo_priority_high: '高',
+        todo_edit_title: '編輯待辦', todo_create_title: '新增待辦',
+        todo_field_title: '標題', todo_field_desc: '說明', todo_field_kind: '分類', todo_field_priority: '優先級', todo_field_due: '截止時間',
+        todo_by: '建立於', todo_updated: '更新於', todo_completed: '完成於', todo_created_by: '來源',
+        todo_empty_open: '暫無未完成的待辦', todo_empty_pending: '暫無待處理事項', todo_empty_progress: '暫無處理中的事項',
+        todo_empty_done: '暫無已完成事項', todo_empty_cancel: '暫無已取消事項', todo_empty_all: '還沒有待辦事項',
+        todo_empty_search: '沒有符合的待辦', todo_empty_overdue: '暫無逾期事項',
+        todo_disabled_banner: '待辦功能未開啟，可在設定中啟用 todo_enabled。',
+        todo_unauthorized_banner: '請先登入後再使用待辦功能。',
+        todo_load_failed: '載入失敗，請稍後重試。',
+        todo_banner_disabled: '待辦功能未開啟', todo_banner_unauthorized: '未認證',
+        todo_empty_title: '待辦標題', todo_empty_subtitle: '為空時自動填充',
+        todo_confirm_discard: '有未儲存的修改，確定要放棄嗎？',
+        todo_confirm_complete: '確定標記為已完成？', todo_confirm_cancel: '確定取消該待辦？', todo_confirm_reopen: '確定重新開啟？',
+        todo_saved: '已儲存', todo_save_failed: '儲存失敗', todo_created: '已建立',
+        todo_action_start: '開始處理', todo_action_complete: '完成', todo_action_cancel: '取消', todo_action_reopen: '重新開啟', todo_action_edit: '編輯', todo_action_events: '處理歷史',
+        todo_detail_title: '待辦詳情', todo_detail_source: '來源', todo_detail_history: '處理歷史', todo_detail_history_empty: '暫無處理記錄',
+        todo_detail_note: '處理說明', todo_detail_note_empty: '無說明',
+        todo_due_overdue: '已逾期', todo_due_soon: '即將到期', todo_due_none: '無截止時間',
+        todo_pagination_prev: '上一頁', todo_pagination_next: '下一頁',
+        todo_source_manual: '手動建立', todo_source_conversation: '會話來源',
+        todo_load_error: '載入失敗', todo_retry: '重試',
         tasks_coming: '即將推出', tasks_coming_desc: '定時任務管理功能即將在此提供',
         task_add_btn: '新增任務',
         task_edit_title: '編輯定時任務',
@@ -733,7 +1784,7 @@ const I18N = {
         task_run_confirm_msg: '該任務會立即向已設定的通道和接收者傳送內容。是否繼續？',
         task_run_started: '已開始執行',
         task_run_failed: '執行失敗',
-        logs_title: '日誌', logs_desc: '實時日誌輸出 (run.log)',
+        logs_title: '執行日誌', logs_desc: '實時日誌輸出 (run.log)',
         logs_live: '實時', logs_coming_msg: '日誌流即將在此提供。將連線 run.log 實現類似 tail -f 的實時輸出。',
         new_chat: '新對話',
         new_team_chat: '多智慧體對話',
@@ -741,7 +1792,23 @@ const I18N = {
         new_team_chat_owner: '預設',
         new_team_chat_start: '開始對話',
         new_team_chat_min: '至少選擇兩個智慧體',
-        session_history: '歷史會話',
+        session_history: '歷史對話',
+        history_desc: '找到之前的對話，接著聊',
+        history_search_placeholder: '搜尋會話標題',
+        history_search_clear: '清空搜尋',
+        history_search_loading: '正在搜尋…',
+        history_search_empty: '沒有符合的會話，試試其他標題關鍵詞',
+        history_search_count: '找到 {count} 個會話',
+        history_search_limit: '搜尋詞最多 100 個字元',
+        history_search_unsupported: '目前服務尚未支援標題搜尋，請更新服務後重試',
+        history_refresh: '重新整理歷史會話',
+        history_current: '目前會話',
+        history_more: '更多操作',
+        session_history_loading: '載入歷史會話中…',
+        session_history_empty: '暫無歷史會話',
+        session_history_failed: '載入失敗，請重試',
+        session_history_retry: '重試',
+        session_history_not_enabled: '歷史會話功能目前未開放',
         ws_toggle: '工作空間', ws_tab_preview: '預覽', ws_tab_files: '檔案',
         ws_default_workspace: '預設空間', ws_sel_title: '選擇工作空間',
         ws_sel_default_hint: '使用預設工作空間（~/cow）', ws_sel_recents: '最近使用',
@@ -829,18 +1896,199 @@ const I18N = {
         confirm_yes: '確認',
         confirm_cancel: '取消',
         error_send: '傳送失敗，請稍後再試。', error_timeout: '請求超時，請再試一次。',
+        error_login_required: '登入已失效，請重新登入後傳送。',
+        error_tenant_required: '請先選擇目前帳號所屬的租戶，再傳送訊息。',
+        error_chat_forbidden: '目前帳號沒有此租戶的對話權限，請聯絡管理員。',
+        error_password_required: '請先修改初始密碼，再傳送訊息。',
         thinking_in_progress: '思考中...', thinking_done: '已深度思考', thinking_duration: '耗時',
         edit_message: '編輯訊息',
         regenerate_response: '重新生成',
         edit_save: '儲存併傳送',
         edit_cancel: '取消',
+        account_loading: '帳號資訊載入中', account_unavailable: '帳號資訊暫不可用',
+        account_local: '本機存取', account_password_mode: '密碼保護', account_public_mode: '免登入模式',
+        account_retry: '重新檢查', account_retry_hint: '請重新檢查', account_logout: '登出',
+        account_logging_out: '正在登出…', account_logout_unconfirmed: '登出未確認', account_retry_logout: '重試登出',
+        account_login: '登入', account_login_hint: '請輸入登入資訊以存取控制台',
+        account_credentials_error: '登入資訊有誤，請重試', account_login_failed: '登入未完成，請重試',
+        account_menu_profile: '個人資料', account_menu_password: '帳號安全', account_menu_prefs: '個人偏好',
+        account_menu_about: '幫助與關於',
+        account_profile_title: '個人資料', account_profile_global: '全域帳號',
+        account_profile_member: '目前租戶成員', account_profile_display_name: '姓名',
+        account_profile_username: '登入帳號', account_profile_platform: '平台身分',
+        account_profile_tenant: '目前租戶', account_profile_member_name: '成員姓名',
+        account_profile_role: '實際角色', account_profile_department: '部門',
+        account_profile_position: '崗位', account_profile_empty: '未設定',
+        account_profile_no_tenant: '未加入任何租戶', account_profile_error: '資料讀取失敗',
+        account_password_title: '修改密碼', account_password_note: '修改成功後，其他已登入會話也會失效，需要重新登入。',
+        account_password_old: '原密碼', account_password_new: '新密碼', account_password_confirm: '確認新密碼',
+        account_password_submit: '提交修改', account_password_invalid_old: '原密碼錯誤',
+        account_password_weak: '新密碼不符合要求，請重試', account_password_mismatch: '兩次輸入的新密碼不一致',
+        account_password_unknown: '操作未完成，請重試', account_password_done: '密碼已修改，請重新登入',
+        account_password_forced_title: '請設定新密碼', account_password_forced_note: '首次登入/臨時密碼需先設定新密碼，完成後才能使用其他功能。',
+        account_password_forced_required: '請先完成密碼設定', account_password_forced_logout: '需先設定新密碼才能繼續。確定登出嗎？',
+        account_prefs_title: '介面偏好', account_prefs_note: '偏好僅在目前瀏覽器生效，不寫入實例設定。',
+        account_prefs_theme: '主題', account_prefs_lang: '語言', account_prefs_light: '淺色',
+        account_prefs_dark: '深色', account_prefs_zh: '簡體', account_prefs_hant: '繁體', account_prefs_en: 'EN',
+        account_prefs_storage_fail: '瀏覽器儲存不可用，本次修改僅在本頁生效',
+        account_tenant_title: '切換租戶', account_tenant_none: '未加入', account_tenant_current: '目前',
+        account_tenant_no_available: '未加入任何租戶', account_tenant_invalid: '目標租戶已失效，請重新選擇',
+        account_assign_pending: '帳號尚未分配到任何啟用的租戶，暫時無法進入工作台或管理頁面。請聯絡管理員完成租戶分配後點擊重試。',
+        account_tenant_single: '目前租戶', account_about_title: '關於', account_about_version_unknown: '版本未取得',
         logout: '登出',
+        close: '關閉',
         },
     en: {
         console: 'Console',
-        nav_chat: 'Chat', nav_manage: 'Management', nav_monitor: 'Monitor',
-        menu_chat: 'Chat', menu_agents: 'Agents', menu_config: 'Config', menu_skills: 'Skills',
-        agents_page_title: 'Agent Team', agents_page_desc: 'Manage the Agents on your team',
+        nav_chat: 'Workbench', nav_manage: 'Management', nav_monitor: 'Monitor', nav_system: 'System Settings',
+        nav_workbench: 'Workbench', nav_admin_console: 'Admin Console',
+        nav_group_agent_dev: 'Agent Development', nav_group_model_access: 'Model & Access',
+        nav_group_org_perm: 'Org & Permissions', nav_group_platform_ops: 'Platform Ops',
+        menu_chat: 'Chat', menu_agents: 'Agents', menu_config: 'Model Services', menu_agent_config: 'Agent Management', menu_skills: 'Tools & Skills',
+        menu_platform: 'System Settings', menu_tenant: 'Tenant Management', menu_system_user: 'Members',
+        menu_roles: 'Roles & Permissions', menu_org: 'Organization', menu_branding: 'Branding',
+        menu_audit: 'Audit', menu_backup: 'Backup & Upgrade', menu_open_api: 'Open API',
+        nav_unavailable: 'Feature not available yet',
+        nav_unavailable_hint: 'This feature is in preparation or is not enabled in the current configuration. Please return to another available page.',
+        nav_go_back: 'Back to available pages',
+        branding_title: 'Branding',
+        branding_subtitle: 'Customize the console brand identity and description',
+        branding_instance: 'Current instance',
+        branding_brand_info: 'Brand Info',
+        branding_preview: 'Live Preview',
+        branding_logo: 'Logo',
+        branding_upload_logo: 'Upload Logo',
+        branding_use_default_logo: 'Use default logo',
+        branding_logo_hint: 'PNG / JPG / WebP, max 2MB',
+        branding_brand_name: 'Brand name',
+        branding_logo_desc: 'Logo description',
+        branding_logo_desc_placeholder: 'A short caption shown next to or below the logo, optional',
+        branding_logo_desc_hint: 'Optional, up to 100 characters',
+        branding_name_placeholder: 'Brand name, 1-32 characters',
+        branding_sidebar: 'Sidebar',
+        branding_login: 'Login page',
+        branding_welcome: 'Chat welcome',
+        branding_light: 'Light',
+        branding_dark: 'Dark',
+        branding_preview_hint: 'Preview only; takes effect after saving',
+        branding_cancel: 'Discard changes',
+        branding_save: 'Save settings',
+        branding_reset_all: 'Restore all defaults',
+        branding_reset_logo: 'Restore default logo',
+        branding_saved: 'Branding saved',
+        branding_unsaved: 'Unsaved changes',
+        branding_saved_state: 'Saved',
+        branding_readonly: 'Read-only',
+        branding_readonly_reason: 'Set a console password before editing the brand',
+        branding_enterprise_unavailable: 'Brand editing is unavailable until enterprise authorization and auditing are connected',
+        branding_storage_corrupt: 'Brand settings are damaged. This is a recovery preview. Reload or explicitly restore all defaults; the original file will be preserved.',
+        branding_loading: 'Loading…',
+        branding_retry: 'Retry',
+        branding_load_failed: 'Failed to load',
+        branding_conflict: 'Branding was changed by someone else',
+        branding_reload: 'Reload published values',
+        branding_save_failed: 'Save failed',
+        login_select_tenant: 'Select tenant',
+        login_enter_tenant: 'Enter',
+        tenant_title: 'Tenants',
+        tenant_create: 'Create tenant',
+        tenant_search_placeholder: 'Search tenant name / code',
+        tenant_loading: 'Loading…',
+        tenant_empty: 'No tenants',
+        tenant_version_label: 'Version',
+        users_title: 'Users',
+        member_create: 'New member',
+        member_search_placeholder: 'Search account / name',
+        member_empty: 'No members',
+        roles_title: 'Roles & Permissions',
+        role_create: 'New role',
+        role_empty: 'No roles',
+        role_permissions_label: 'Permissions',
+        org_title: 'Organization',
+        dept_create: 'New department',
+        org_empty: 'No departments',
+        load_error: 'Load failed',
+        active: 'Active',
+        inactive: 'Inactive',
+        unsaved_changes_warning: 'You have unsaved changes. Leave anyway?',
+        create_not_available: 'This action is not available yet',
+        // identity-admin CRUD forms (task: wire create/edit/delete)
+        admin_save: 'Save', admin_create: 'Create', admin_edit: 'Edit', admin_delete: 'Delete', admin_saved: 'Saved',
+        admin_deleted: 'Deleted', admin_save_failed: 'Save failed',
+        admin_permissions_load_failed: 'Could not load permissions. Please reopen to retry.',
+        admin_required_field: 'Please fill in the required fields',
+        admin_conflict: 'Changed by someone else. List refreshed, please retry.',
+        admin_field_code: 'Code', admin_field_code_hint: 'Lowercase letters/digits/hyphens; fixed once created',
+        admin_field_name: 'Name',
+        admin_field_shared_root: 'Shared root', admin_field_shared_root_hint: 'Absolute path to the tenant data directory',
+        admin_field_admin_username: 'Admin username',
+        admin_field_admin_display: 'Admin display name',
+        admin_field_admin_password: 'Admin password', admin_field_password_hint: 'At least 8 chars; avoid weak passwords',
+        admin_field_recent_password: 'Confirm current password', admin_field_recent_password_hint: 'Re-enter your login password to authorize this action',
+        admin_field_active: 'Active',
+        admin_field_username: 'Username', admin_field_username_hint: '3-64 letters/digits/._-',
+        admin_field_display_name: 'Display name',
+        admin_field_temp_password: 'Temporary password',
+        admin_field_roles: 'Roles', admin_field_roles_hint: 'Member selected by default',
+        admin_field_roles_edit_hint: 'Nothing checked resets to the default member role (current roles not loaded)',
+        admin_field_department: 'Department', admin_field_department_hint: 'Optional', admin_field_department_none: 'No department',
+        admin_field_position: 'Position',
+        admin_field_parent: 'Parent department', admin_field_parent_none: 'None (root)',
+        admin_field_sort_order: 'Sort order',
+        admin_field_permissions: 'Permissions', admin_field_permissions_hint: 'Pick permission points from the catalog',
+        admin_field_platform_admin: 'Platform admin',
+        admin_field_admin_user_id: 'Admin account ID', admin_field_admin_user_id_hint: 'User ID of an existing active account',
+        admin_tenant_admin: 'Admin',
+        admin_tenant_admin_edit: 'Configure tenant admin',
+        admin_reset: 'Reset password', admin_reset_do: 'Reset', admin_reset_confirm: 'Reset password for "{name}"?',
+        admin_reset_temp_result: 'One-time temporary password', admin_forbidden: 'Forbidden',
+        admin_prev: 'Prev', admin_next: 'Next',
+        admin_total_label: 'Total', admin_page_label: 'Page',
+        filter_all: 'All', filter_restricted: 'Needs change',
+        platform_title: 'Platform Accounts', platform_admin_only: 'Visible to platform admins only',
+        platform_search_placeholder: 'Search platform accounts',
+        platform_user_empty: 'No platform accounts',
+        platform_user_edit_title: 'Edit platform account',
+        platform_admin_badge: 'Platform admin',
+        admin_tab_members: 'Tenant members', admin_tab_platform: 'Platform accounts',
+        tenant_edit_title: 'Edit tenant',
+        member_edit_title: 'Edit member',
+        role_edit_title: 'Edit role',
+        dept_edit_title: 'Edit department',
+        admin_delete_confirm_role: 'Delete role "{name}"?',
+        admin_delete_confirm_dept: 'Delete department "{name}"?',
+        role_builtin: 'Built-in',
+        role_members_label: 'Members',
+        role_view_members: 'Members',
+        role_copy: 'Copy', role_copy_title: 'Copy role',
+        org_cycle_rejected: 'Organization tree would create a cycle; action rejected',
+        audit_title: 'Identity Audit',
+        audit_scope_hint: 'Platform admin sees all; tenant admin only current tenant',
+        audit_actor_placeholder: 'Actor',
+        audit_action_placeholder: 'Action',
+        audit_apply: 'Filter',
+        audit_empty: 'No audit records',
+        audit_result_success: 'Success',
+        audit_result_denied: 'Denied',
+        branding_reset_confirm_title: 'Restore all defaults',
+        branding_reset_confirm_body: 'This resets the logo, brand name and logo description to the built-in defaults. Continue?',
+        branding_reset_confirm_ok: 'Restore',
+        branding_reset_confirm_cancel: 'Cancel',
+        branding_dirty_leave_title: 'Unsaved changes',
+        branding_dirty_leave_body: 'Branding has unsaved changes. Leave this page and discard them?',
+        branding_dirty_leave_ok: 'Discard and leave',
+        branding_dirty_leave_cancel: 'Stay on this page',
+        branding_unsaved_warn: 'Branding has unsaved changes',
+        branding_save_pending: 'Save result unconfirmed',
+        branding_save_pending_body: 'Could not confirm whether the server published. Reload the published brand and retry.',
+        branding_save_pending_ok: 'Reload',
+        branding_added: 'New brand applied',
+        branding_image_too_large: 'Image must be under 2MB',
+        branding_invalid_image: 'Invalid image',
+        branding_asset_fallback: 'Brand image unavailable',
+        branding_browser_title: 'Console',
+        branding_logo_alt: 'Brand logo',
+        agents_page_title: 'Agent Config', agents_page_desc: 'Manage the Agents on your team',
         agents_create: 'New Agent',
         agents_name_placeholder: 'Agent name',
         agents_name_required: 'Please enter a name',
@@ -861,6 +2109,20 @@ const I18N = {
         agents_default: 'Default',
         agents_archived: 'Archived',
         agents_chat: 'Start chat',
+        start_chat: 'Start chat',
+        agent_workbench_title: 'Agents',
+        agent_workbench_desc: 'Choose a configured Agent to start a chat',
+        agent_workbench_refresh: 'Refresh',
+        agent_workbench_loading: 'Loading…',
+        agent_workbench_empty: 'No Agents available',
+        agent_workbench_failed: 'Failed to load',
+        agent_workbench_retry: 'Retry',
+        agent_unavailable: 'Unavailable',
+        agent_cannot_run: 'Cannot run currently',
+        agent_target_unavailable: 'This Agent is no longer available. Refresh the list and try again.',
+        agent_starting: 'Opening…',
+        agent_start_failed: 'Could not start the chat. Please try again.',
+        agent_runtime_not_enabled: 'Chat is not enabled in this version',
         agents_delete: 'Delete',
         agents_delete_title: 'Delete Agent',
         agents_delete_confirm: 'Delete Agent "{name}"? Its workspace and conversations will be removed for good.',
@@ -903,8 +2165,8 @@ const I18N = {
         settings_tab_basic: 'General',
         settings_tab_models: 'Models',
         knowledge_shared_hint: 'Knowledge is shared by every Agent. Open it from the Knowledge page.',
-        menu_memory: 'Memory', menu_knowledge: 'Knowledge', menu_channels: 'Channels', menu_tasks: 'Tasks',
-        menu_logs: 'Logs',
+        menu_memory: 'Memory Management', menu_knowledge: 'Knowledge Base', menu_channels: 'Channels', menu_tasks: 'Scheduled Tasks',
+        menu_logs: 'Runtime Logs', menu_todo: 'My Todos', menu_scenarios: 'Scenarios',
         models_title: 'Models',
         models_desc: 'Manage chat, image, voice, embedding and search capabilities in one place',
         models_section_vendors: 'Provider Credentials',
@@ -1113,6 +2375,34 @@ const I18N = {
         feishu_sdk_downloading_tip: 'A one-time ~1MB download; this will continue automatically',
         feishu_mode_scan: 'Scan QR', feishu_mode_manual: 'Manual',
         tasks_title: 'Scheduled Tasks', tasks_desc: 'View and manage scheduled tasks',
+        todo_title: 'Todo', todo_subtitle: 'Manage the items that need your follow-up',
+        todo_add_btn: 'New Todo', todo_save: 'Save', todo_cancel: 'Cancel',
+        todo_filter_all: 'All', todo_filter_open: 'Open', todo_filter_pending: 'Pending', todo_filter_progress: 'In Progress', todo_filter_done: 'Completed', todo_filter_cancel: 'Cancelled',
+        todo_only_overdue: 'Only Overdue', todo_search_placeholder: 'Search todos…', todo_clear_due: 'Clear',
+        todo_status_all: 'All', todo_status_open: 'Open', todo_status_pending: 'Pending', todo_status_in_progress: 'In Progress', todo_status_completed: 'Completed', todo_status_cancelled: 'Cancelled',
+        todo_kind_general: 'General', todo_kind_input_required: 'Input Required', todo_kind_confirmation: 'Confirmation', todo_kind_review: 'Review',
+        todo_priority_low: 'Low', todo_priority_normal: 'Normal', todo_priority_high: 'High',
+        todo_edit_title: 'Edit Todo', todo_create_title: 'New Todo',
+        todo_field_title: 'Title', todo_field_desc: 'Description', todo_field_kind: 'Kind', todo_field_priority: 'Priority', todo_field_due: 'Due',
+        todo_by: 'Created', todo_updated: 'Updated', todo_completed: 'Completed', todo_created_by: 'Source',
+        todo_empty_open: 'No open todos', todo_empty_pending: 'No pending items', todo_empty_progress: 'No items in progress',
+        todo_empty_done: 'No completed items', todo_empty_cancel: 'No cancelled items', todo_empty_all: 'No todos yet',
+        todo_empty_search: 'No matching todos', todo_empty_overdue: 'No overdue items',
+        todo_disabled_banner: 'Todo feature is disabled. Enable todo_enabled in settings.',
+        todo_unauthorized_banner: 'Please sign in to use todos.',
+        todo_load_failed: 'Failed to load. Please try again.',
+        todo_banner_disabled: 'Todos disabled', todo_banner_unauthorized: 'Not authenticated',
+        todo_empty_title: 'Todo title', todo_empty_subtitle: 'Auto-fill when empty',
+        todo_confirm_discard: 'You have unsaved changes. Discard them?',
+        todo_confirm_complete: 'Mark as completed?', todo_confirm_cancel: 'Cancel this todo?', todo_confirm_reopen: 'Reopen this item?',
+        todo_saved: 'Saved', todo_save_failed: 'Failed to save', todo_created: 'Created',
+        todo_action_start: 'Start', todo_action_complete: 'Complete', todo_action_cancel: 'Cancel', todo_action_reopen: 'Reopen', todo_action_edit: 'Edit', todo_action_events: 'History',
+        todo_detail_title: 'Todo Detail', todo_detail_source: 'Source', todo_detail_history: 'History', todo_detail_history_empty: 'No processing records',
+        todo_detail_note: 'Note', todo_detail_note_empty: 'No note',
+        todo_due_overdue: 'Overdue', todo_due_soon: 'Due soon', todo_due_none: 'No due',
+        todo_pagination_prev: 'Previous', todo_pagination_next: 'Next',
+        todo_source_manual: 'Manual', todo_source_conversation: 'Conversation',
+        todo_load_error: 'Failed to load', todo_retry: 'Retry',
         tasks_coming: 'Coming Soon', tasks_coming_desc: 'Scheduled task management will be available here',
         task_add_btn: 'Add Task',
         task_edit_title: 'Edit Task',
@@ -1152,6 +2442,22 @@ const I18N = {
         new_team_chat_start: 'Start chat',
         new_team_chat_min: 'Pick at least two Agents',
         session_history: 'History',
+        history_desc: 'Find a previous conversation and pick up where you left off',
+        history_search_placeholder: 'Search conversation titles',
+        history_search_clear: 'Clear search',
+        history_search_loading: 'Searching…',
+        history_search_empty: 'No matching conversations. Try another title keyword.',
+        history_search_count: 'Matching conversations: {count}',
+        history_search_limit: 'Search terms must be 100 characters or fewer',
+        history_search_unsupported: 'Title search is not supported by this server yet. Update the server and retry.',
+        history_refresh: 'Refresh conversation history',
+        history_current: 'Current',
+        history_more: 'More actions',
+        session_history_loading: 'Loading history…',
+        session_history_empty: 'No history sessions yet',
+        session_history_failed: 'Failed to load, please retry',
+        session_history_retry: 'Retry',
+        session_history_not_enabled: 'Session history is not currently enabled',
         ws_toggle: 'Workspace', ws_tab_preview: 'Preview', ws_tab_files: 'Files',
         ws_default_workspace: 'Default', ws_sel_title: 'Select workspace',
         ws_sel_default_hint: 'Use the default workspace (~/cow)', ws_sel_recents: 'Recent',
@@ -1243,14 +2549,81 @@ const I18N = {
         confirm_yes: 'Confirm',
         confirm_cancel: 'Cancel',
         error_send: 'Failed to send. Please try again.', error_timeout: 'Request timeout. Please try again.',
+        error_login_required: 'Your session has expired. Sign in again to send messages.',
+        error_tenant_required: 'Select a tenant you belong to before sending a message.',
+        error_chat_forbidden: 'Your account cannot chat in this tenant. Contact an administrator.',
+        error_password_required: 'Change your initial password before sending messages.',
         thinking_in_progress: 'Thinking...', thinking_done: 'Thought', thinking_duration: 'Duration',
         edit_message: 'Edit message',
         regenerate_response: 'Regenerate',
         edit_save: 'Save and send',
         edit_cancel: 'Cancel',
+        account_loading: 'Loading account…', account_unavailable: 'Account information unavailable',
+        account_local: 'Local access', account_password_mode: 'Password protected', account_public_mode: 'No login required',
+        account_retry: 'Check again', account_retry_hint: 'Please check again', account_logout: 'Log out',
+        account_logging_out: 'Logging out…', account_logout_unconfirmed: 'Logout not confirmed', account_retry_logout: 'Retry logout',
+        account_login: 'Log in', account_login_hint: 'Enter your login details to access the console',
+        account_credentials_error: 'Incorrect login details. Please try again.', account_login_failed: 'Login did not complete. Please try again.',
+        account_menu_profile: 'Profile', account_menu_password: 'Account security', account_menu_prefs: 'Preferences',
+        account_menu_about: 'Help & About',
+        account_profile_title: 'Profile', account_profile_global: 'Global account',
+        account_profile_member: 'Current tenant member', account_profile_display_name: 'Name',
+        account_profile_username: 'Username', account_profile_platform: 'Platform role',
+        account_profile_tenant: 'Current tenant', account_profile_member_name: 'Member name',
+        account_profile_role: 'Role', account_profile_department: 'Department',
+        account_profile_position: 'Position', account_profile_empty: 'Not set',
+        account_profile_no_tenant: 'Not a member of any tenant', account_profile_error: 'Failed to load profile',
+        account_password_title: 'Change password', account_password_note: 'After changing your password, other logged-in sessions will also expire. Please log in again.',
+        account_password_old: 'Current password', account_password_new: 'New password', account_password_confirm: 'Confirm new password',
+        account_password_submit: 'Submit', account_password_invalid_old: 'Current password is incorrect',
+        account_password_weak: 'New password does not meet requirements. Please try again.', account_password_mismatch: 'New passwords do not match',
+        account_password_unknown: 'The operation did not complete. Please try again.', account_password_done: 'Password changed. Please log in again',
+        account_password_forced_title: 'Set a new password', account_password_forced_note: 'First login / temporary password requires setting a new password before accessing other features.',
+        account_password_forced_required: 'Please set your password to continue', account_password_forced_logout: 'You must set a new password to continue. Log out now?',
+        account_prefs_title: 'Preferences', account_prefs_note: 'Preferences apply to this browser only and are not written to the instance.',
+        account_prefs_theme: 'Theme', account_prefs_lang: 'Language', account_prefs_light: 'Light',
+        account_prefs_dark: 'Dark', account_prefs_zh: '简体', account_prefs_hant: '繁體', account_prefs_en: 'EN',
+        account_prefs_storage_fail: 'Browser storage is unavailable; this change applies to this page only',
+        account_tenant_title: 'Switch tenant', account_tenant_none: 'Not a member', account_tenant_current: 'Current',
+        account_tenant_no_available: 'Not a member of any tenant', account_tenant_invalid: 'The target tenant is no longer available. Please choose again.',
+        account_assign_pending: 'This account is not yet assigned to an active tenant, so the workbench and management pages are temporarily unavailable. Ask an administrator to assign a tenant, then retry.',
+        account_tenant_single: 'Current tenant', account_about_title: 'About', account_about_version_unknown: 'Version unavailable',
         logout: 'Logout',
+        close: 'Close',
     }
 };
+
+// Appearance labels share the console's existing language catalogs.
+Object.assign(I18N.zh, {
+    appearance_title: '外观', appearance_close: '关闭外观设置', appearance_palette: '配色方案',
+    appearance_business: '商务青蓝', appearance_slate: '深蓝侧栏', appearance_classic: '经典配色',
+    appearance_recommended: '推荐', appearance_mode: '明暗模式', appearance_light: '浅色',
+    appearance_dark: '深色', appearance_system: '跟随系统', appearance_reset: '恢复默认',
+    appearance_instant: '选择后立即生效', appearance_resolved_light: '当前显示：浅色',
+    appearance_resolved_dark: '当前显示：深色',
+    appearance_scope: '仅在当前浏览器生效，此浏览器中的不同账号共用外观设置。',
+    appearance_storage_failed: '仅本页生效，刷新后可能恢复之前设置。',
+});
+Object.assign(I18N['zh-Hant'], {
+    appearance_title: '外觀', appearance_close: '關閉外觀設定', appearance_palette: '配色方案',
+    appearance_business: '商務青藍', appearance_slate: '深藍側欄', appearance_classic: '經典配色',
+    appearance_recommended: '推薦', appearance_mode: '明暗模式', appearance_light: '淺色',
+    appearance_dark: '深色', appearance_system: '跟隨系統', appearance_reset: '恢復預設',
+    appearance_instant: '選擇後立即生效', appearance_resolved_light: '目前顯示：淺色',
+    appearance_resolved_dark: '目前顯示：深色',
+    appearance_scope: '僅在目前瀏覽器生效，此瀏覽器中的不同帳號共用外觀設定。',
+    appearance_storage_failed: '僅本頁生效，重新整理後可能恢復先前設定。',
+});
+Object.assign(I18N.en, {
+    appearance_title: 'Appearance', appearance_close: 'Close appearance settings', appearance_palette: 'Color palette',
+    appearance_business: 'Business blue', appearance_slate: 'Slate sidebar', appearance_classic: 'Classic',
+    appearance_recommended: 'Recommended', appearance_mode: 'Appearance mode', appearance_light: 'Light',
+    appearance_dark: 'Dark', appearance_system: 'System', appearance_reset: 'Restore defaults',
+    appearance_instant: 'Changes apply immediately', appearance_resolved_light: 'Currently using light mode',
+    appearance_resolved_dark: 'Currently using dark mode',
+    appearance_scope: 'Saved in this browser only. Accounts using this browser share appearance settings.',
+    appearance_storage_failed: 'Applied to this page only. Reloading may restore previous settings.',
+});
 
 // Resolve language by priority: user choice (localStorage) -> backend-detected
 // (cow_lang) -> browser language -> 'zh'. Shares __cowResolveLang__ defined in
@@ -1269,11 +2642,15 @@ let currentLang = (typeof window.__cowResolveLang__ === 'function')
             if (v.indexOf('en') === 0) return 'en';
             return '';
         };
-        return norm(localStorage.getItem('cow_lang'))
+        return norm(readStartupPreference('cow_lang'))
             || norm(window.__COW_DEFAULT_LANG__)
             || norm(navigator.language)
             || 'zh';
     })();
+
+// Expose for sibling scripts (e.g. identity-admin.js) that use the same catalogs.
+window.I18N = I18N;
+window.__cowLang__ = currentLang;
 
 function t(key) {
     return (I18N[currentLang] && I18N[currentLang][key]) || (I18N.en[key]) || key;
@@ -1323,11 +2700,19 @@ function applyI18n() {
     if (docsLink) docsLink.href = currentLang === 'zh' ? 'https://docs.cowagent.ai/zh' : 'https://docs.cowagent.ai';
     // Workspace panel content is rendered by JS, not data-i18n attributes.
     if (typeof relocalizeWorkspacePanel === 'function') relocalizeWorkspacePanel();
+    _renderSidebarAccount();
+    renderAppearancePreferences();
 }
 
-// Single entry point for switching language. Updates the in-memory language,
-// persists the user choice locally, re-renders the UI, and binds the choice to
-// the backend `cow_lang` config so logs / agent replies / CLI follow suit.
+// Single entry point for switching language.
+//
+// Two call paths share this:
+//   * Personal change (the top-right header toggle and the account Preferences
+//     modal): browser-local only (``cow_lang``). MUST NOT write instance config.
+//   * Config-page language picker (``cfg-lang-select``): preserves the original
+//     permission and still persists the instance default ``cow_lang``.
+// They are split so a personal switch never changes the instance (logs / CLI /
+// agent replies) default.
 function setLanguage(lang) {
     const next = (lang === 'en' || lang === 'zh' || lang === 'zh-Hant') ? lang : 'zh';
     if (next === currentLang) {
@@ -1335,18 +2720,41 @@ function setLanguage(lang) {
         syncLanguageToBackend(next);
         return;
     }
+    applyLanguage(next, /* writeToBackend */ true);
+}
+
+// Personal / browser-local switch (header toggle + preferences modal). Applies
+// the language locally and NEVER writes the instance ``cow_lang`` config.
+function setLanguageLocal(lang) {
+    const next = (lang === 'en' || lang === 'zh' || lang === 'zh-Hant') ? lang : 'zh';
+    applyLanguage(next, /* writeToBackend */ false);
+}
+
+let languageStorageFailed = false;
+
+// Shared application of a new language. ``writeToBackend`` selects whether the
+// instance config default is updated (config page) or left untouched (personal).
+function applyLanguage(next, writeToBackend) {
     currentLang = next;
-    localStorage.setItem('cow_lang', currentLang);
+    window.__cowLang__ = currentLang;
+    try {
+        localStorage.setItem('cow_lang', currentLang);
+        languageStorageFailed = localStorage.getItem('cow_lang') !== currentLang;
+    } catch (_) { languageStorageFailed = true; }
     applyI18n();
     _applyInputTooltips();
     // Keep the language switch button and config selector visually in sync.
     try { updateLangControls(); } catch (e) {}
-    
-    // Sync language choice to backend first, then trigger dynamic views reload
-    // to avoid race conditions on API endpoints.
-    syncLanguageToBackend(currentLang, () => {
+
+    if (writeToBackend) {
+        // Sync language choice to backend first, then trigger dynamic views
+        // reload to avoid race conditions on API endpoints.
+        syncLanguageToBackend(currentLang, () => {
+            try { rerenderDynamicViews(); } catch (e) {}
+        });
+    } else {
         try { rerenderDynamicViews(); } catch (e) {}
-    });
+    }
 }
 
 // Persist the language to the backend `cow_lang` config (best-effort; the UI
@@ -1386,15 +2794,12 @@ function updateLangControls() {
     }
 }
 
-// Reflect the current language on the header dropdown: short label on the
-// toggle (简 / 繁 / EN) plus the active item highlighted in the menu.
+// Keep the full language name on desktop and a compact label on narrow screens.
 function _syncLangControls() {
     const langLabel = document.getElementById('lang-label');
-    if (langLabel) {
-        if (currentLang === 'zh-Hant') langLabel.textContent = '繁';
-        else if (currentLang === 'zh') langLabel.textContent = '简';
-        else langLabel.textContent = 'EN';
-    }
+    const shortLabel = document.getElementById('lang-label-short');
+    if (langLabel) langLabel.textContent = currentLang === 'zh-Hant' ? '繁體中文' : currentLang === 'zh' ? '简体中文' : 'English';
+    if (shortLabel) shortLabel.textContent = currentLang === 'zh-Hant' ? '繁' : currentLang === 'zh' ? '简' : 'EN';
     document.querySelectorAll('#lang-menu .lang-menu-item').forEach(item => {
         const active = item.dataset.lang === currentLang;
         item.classList.toggle('text-blue-600', active);
@@ -1405,6 +2810,7 @@ function _syncLangControls() {
 
 // Toggle the header language dropdown menu open/closed.
 function toggleLangMenu(event) {
+    closeAccountMenu();
     if (event) event.stopPropagation();
     const menu = document.getElementById('lang-menu');
     if (menu) menu.classList.toggle('hidden');
@@ -1414,7 +2820,8 @@ function toggleLangMenu(event) {
 function selectLanguage(lang) {
     const menu = document.getElementById('lang-menu');
     if (menu) menu.classList.add('hidden');
-    setLanguage(lang);
+    // Top-right header toggle: personal, browser-local, never writes instance.
+    setLanguageLocal(lang);
 }
 window.toggleLangMenu = toggleLangMenu;
 window.selectLanguage = selectLanguage;
@@ -1431,6 +2838,13 @@ document.addEventListener('click', (e) => {
 // Refresh JS-rendered views after a language switch. Each branch uses the
 // lightweight in-memory re-render path (no extra network round-trips).
 function rerenderDynamicViews() {
+    if (currentView === 'history') {
+        _closeSessionActionMenu();
+        _renderSessionList();
+        _updateHistorySearchControls();
+        _renderHistoryStatus();
+    }
+    if (currentView === 'agent-workbench') renderAgentWorkbench();
     // Models are a tab of the config view, not a view of their own.
     if (currentView === 'config' && typeof renderModelsView === 'function'
             && modelsState && (modelsState.providers || modelsState.capabilities)) {
@@ -1454,6 +2868,13 @@ function rerenderDynamicViews() {
     if (currentView === 'config') {
         loadConfigView();
     }
+    // Reload identity/admin views after language switch
+    if (currentView === 'platform') loadPlatformUsersView();
+    if (currentView === 'tenant') loadTenantView();
+    if (currentView === 'system_user') loadMembersView();
+    if (currentView === 'roles') loadRolesView();
+    if (currentView === 'org') loadOrgView();
+    if (currentView === 'audit') loadAuditView();
 }
 
 // Floating tooltip portal for [data-tip-key] elements. Tooltip nodes are
@@ -1513,27 +2934,94 @@ function installCfgTipPortal() {
 // =====================================================================
 // Theme
 // =====================================================================
-let currentTheme = localStorage.getItem('cow_theme') || 'dark';
+// The pre-paint controller owns state; this is a resolved-mode projection for
+// existing console consumers, not a second persisted preference.
+let currentTheme = window.CowAppearance.getState().resolved;
+let appearanceTrigger = null;
 
-function applyTheme() {
-    const root = document.documentElement;
-    if (currentTheme === 'dark') {
-        root.classList.add('dark');
-        document.getElementById('theme-icon').className = 'fas fa-sun';
-        document.getElementById('hljs-light').disabled = true;
-        document.getElementById('hljs-dark').disabled = false;
-    } else {
-        root.classList.remove('dark');
-        document.getElementById('theme-icon').className = 'fas fa-moon';
-        document.getElementById('hljs-light').disabled = false;
-        document.getElementById('hljs-dark').disabled = true;
+function renderAppearancePreferences() {
+    const state = window.CowAppearance.getState();
+    document.querySelectorAll('input[name="web-palette"]').forEach(input => {
+        input.checked = input.value === state.palette;
+    });
+    document.querySelectorAll('input[name="web-mode"]').forEach(input => {
+        input.checked = input.value === state.mode;
+    });
+    document.querySelectorAll('input[name="web-language"]').forEach(input => {
+        input.checked = input.value === currentLang;
+    });
+    const warning = document.getElementById('appearance-storage-warning');
+    if (warning) { warning.hidden = !state.storageFailed; warning.textContent = t('appearance_storage_failed'); }
+    const languageWarning = document.getElementById('appearance-language-warning');
+    if (languageWarning) {
+        languageWarning.hidden = !languageStorageFailed;
+        languageWarning.textContent = t('account_prefs_storage_fail');
+    }
+    const resolved = document.getElementById('appearance-resolved');
+    if (resolved) {
+        resolved.hidden = state.mode !== 'system';
+        resolved.textContent = t('appearance_resolved_' + state.resolved);
     }
 }
 
+window.CowAppearance.subscribe(state => {
+    currentTheme = state.resolved;
+    const icon = document.getElementById('theme-icon');
+    if (icon) icon.className = 'fas fa-palette';
+    const light = document.getElementById('hljs-light');
+    const dark = document.getElementById('hljs-dark');
+    if (light) light.disabled = state.resolved === 'dark';
+    if (dark) dark.disabled = state.resolved !== 'dark';
+    renderAppearancePreferences();
+});
+
+function applyTheme() { window.CowAppearance.apply(); }
+
+// Compatibility for existing direct light/dark actions, without another store.
 function toggleTheme() {
-    currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
-    localStorage.setItem('cow_theme', currentTheme);
-    applyTheme();
+    window.CowAppearance.setMode(currentTheme === 'dark' ? 'light' : 'dark');
+}
+
+function openAppearancePreferences(trigger) {
+    const dialog = document.getElementById('appearance-dialog');
+    if (!dialog || dialog.open) return;
+    if (!closeAccountPanels(false)) return;
+    appearanceTrigger = trigger || document.activeElement;
+    closeAccountMenu();
+    ['lang-menu', 'tenant-menu'].forEach(id => _accountHidden(id, true));
+    renderAppearancePreferences();
+    dialog.showModal();
+    _setAccountPanel('prefs');
+    dialog.querySelector('input[name="web-palette"]:checked')?.focus();
+}
+
+function closeAppearancePreferences(returnFocus = true) {
+    const dialog = document.getElementById('appearance-dialog');
+    if (dialog?.open) {
+        if (!returnFocus) appearanceTrigger = null;
+        if (_activeAccountPanel === 'prefs') _setAccountPanel(null);
+        dialog.close();
+    }
+}
+
+const appearanceDialog = document.getElementById('appearance-dialog');
+if (appearanceDialog) {
+    appearanceDialog.addEventListener('close', () => {
+        if (_activeAccountPanel === 'prefs') _setAccountPanel(null);
+        // A login transition has its own focus target; do not focus the
+        // now-hidden workbench after its modal is dismissed.
+        if (!appearanceTrigger) return;
+        if (appearanceTrigger?.isConnected && appearanceTrigger.getClientRects().length) appearanceTrigger.focus();
+        else document.getElementById('theme-toggle')?.focus();
+        appearanceTrigger = null;
+    });
+    appearanceDialog.addEventListener('click', event => {
+        if (event.target !== appearanceDialog) return;
+        const rect = appearanceDialog.getBoundingClientRect();
+        if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
+            closeAppearancePreferences();
+        }
+    });
 }
 
 // =====================================================================
@@ -1541,8 +3029,8 @@ function toggleTheme() {
 // =====================================================================
 const TASK_NOTIFY_KEY = 'cow_task_notify';
 const TASK_NOTIFY_SOUND_KEY = 'cow_task_notify_sound';
-let taskNotifyEnabled = localStorage.getItem(TASK_NOTIFY_KEY) !== '0';
-let taskNotifySound = localStorage.getItem(TASK_NOTIFY_SOUND_KEY) !== '0';
+let taskNotifyEnabled = readStartupPreference(TASK_NOTIFY_KEY) !== '0';
+let taskNotifySound = readStartupPreference(TASK_NOTIFY_SOUND_KEY) !== '0';
 let notifyAudioCtx = null;
 let unreadCount = 0;
 const baseDocTitle = document.title;
@@ -1699,63 +3187,263 @@ function initTaskNotifyToggles() {
 
 document.addEventListener('DOMContentLoaded', initTaskNotifyToggles);
 
+// Homepage labels share the existing locale catalog.
+Object.assign(I18N["zh"], {
+    "home_new_chat": "新建对话",
+    "home_toggle_sidebar": "展开或收起侧栏",
+    "home_manage_monitor": "管理与监控",
+    "home_resources": "资源管理",
+    "home_assistant": "你的工作助手",
+    "home_greeting": "你好，今天想完成什么？",
+    "home_description": "从一个问题开始，让 AI 帮你查资料、处理文件、安排任务。",
+    "home_suggestions": "也可以从这里开始",
+    "home_workspace_title": "查看工作空间",
+    "home_workspace_text": "快速了解文件与目录",
+    "home_workspace_prompt": "查看当前工作空间的文件与目录，帮我整理一份概览。",
+    "home_reminder_title": "设置定时提醒",
+    "home_reminder_text": "把待办交给 AI 安排",
+    "home_reminder_prompt": "帮我设置一个定时提醒，请先询问我要提醒的事项和时间。",
+    "home_research_title": "搜索并整理资料",
+    "home_research_text": "汇总信息，生成报告",
+    "home_research_prompt": "帮我搜索并整理资料，请先询问研究主题和报告要求。",
+    "home_knowledge_title": "让 AI 梳理知识库",
+    "home_knowledge_text": "填写草稿，整理知识库内容",
+    "home_knowledge_prompt": "查看知识库当前收录的文档，帮我整理一份概览。",
+    "home_skills_title": "探索工具与技能",
+    "home_skills_text": "发现 AI 可以帮你做什么",
+    "home_skills_prompt": "查看所有支持的工具和技能，并介绍它们适合处理哪些任务。",
+    "home_commands_title": "指令中心",
+    "home_commands_text": "查看可用命令与使用方法",
+    "home_commands_prompt": "/help",
+    "home_footer": "清晰描述目标，让每一次对话更有成果",
+    "home_input_placeholder": "描述你的任务，或直接提问…",
+    "home_composer_hint": "/ 使用指令 · @ 引用智能体或文件"
+});
+Object.assign(I18N["zh-Hant"], {
+    "home_new_chat": "新增對話",
+    "home_toggle_sidebar": "展開或收起側欄",
+    "home_manage_monitor": "管理與監控",
+    "home_resources": "資源管理",
+    "home_assistant": "你的工作助手",
+    "home_greeting": "你好，今天想完成什麼？",
+    "home_description": "從一個問題開始，讓 AI 幫你查資料、處理檔案、安排任務。",
+    "home_suggestions": "也可以從這裡開始",
+    "home_workspace_title": "查看工作空間",
+    "home_workspace_text": "快速了解檔案與目錄",
+    "home_workspace_prompt": "查看目前工作空間的檔案與目錄，幫我整理一份概覽。",
+    "home_reminder_title": "設定定時提醒",
+    "home_reminder_text": "把待辦交給 AI 安排",
+    "home_reminder_prompt": "幫我設定一個定時提醒，請先詢問我要提醒的事項和時間。",
+    "home_research_title": "搜尋並整理資料",
+    "home_research_text": "彙整資訊，產生報告",
+    "home_research_prompt": "幫我搜尋並整理資料，請先詢問研究主題和報告要求。",
+    "home_knowledge_title": "讓 AI 梳理知識庫",
+    "home_knowledge_text": "填入草稿，整理知識庫內容",
+    "home_knowledge_prompt": "查看知識庫目前收錄的文件，幫我整理一份概覽。",
+    "home_skills_title": "探索工具與技能",
+    "home_skills_text": "發現 AI 可以幫你做什麼",
+    "home_skills_prompt": "查看所有支援的工具和技能，並介紹它們適合處理哪些任務。",
+    "home_commands_title": "指令中心",
+    "home_commands_text": "查看可用命令與使用方法",
+    "home_commands_prompt": "/help",
+    "home_footer": "清晰描述目標，讓每一次對話更有成果",
+    "home_input_placeholder": "描述你的任務，或直接提問…",
+    "home_composer_hint": "/ 使用指令 · @ 引用智慧體或檔案"
+});
+Object.assign(I18N["en"], {
+    "home_new_chat": "New chat",
+    "home_toggle_sidebar": "Expand or collapse sidebar",
+    "home_manage_monitor": "Manage & monitor",
+    "home_resources": "Resources",
+    "home_assistant": "Your work assistant",
+    "home_greeting": "What would you like to do today?",
+    "home_description": "Start with a question. Let AI help you research, work with files, and plan tasks.",
+    "home_suggestions": "You can also start here",
+    "home_workspace_title": "Explore your workspace",
+    "home_workspace_text": "Get an overview of files and folders",
+    "home_workspace_prompt": "Review the files and folders in my current workspace and give me an overview.",
+    "home_reminder_title": "Set a reminder",
+    "home_reminder_text": "Let AI help organize your to-dos",
+    "home_reminder_prompt": "Help me set a reminder. First ask what to remind me about and when.",
+    "home_research_title": "Research and organize",
+    "home_research_text": "Gather information and create a report",
+    "home_research_prompt": "Help me research and organize information. First ask for the topic and report requirements.",
+    "home_knowledge_title": "Let AI summarize the knowledge base",
+    "home_knowledge_text": "Fill a draft to summarize knowledge content",
+    "home_knowledge_prompt": "Review the documents in my knowledge base and give me an overview.",
+    "home_skills_title": "Discover tools and skills",
+    "home_skills_text": "Find out what AI can help you do",
+    "home_skills_prompt": "Show all available tools and skills, and explain which tasks they can help with.",
+    "home_commands_title": "Command center",
+    "home_commands_text": "See available commands and how to use them",
+    "home_commands_prompt": "/help",
+    "home_footer": "Describe your goal clearly to get more from every conversation.",
+    "home_input_placeholder": "Describe your task, or ask a question…",
+    "home_composer_hint": "/ Commands · @ Reference agents or files"
+});
+
 // =====================================================================
 // Sidebar & Navigation
 // =====================================================================
 const VIEW_META = {
-    chat:     { group: 'nav_chat',    page: 'menu_chat' },
-    agents:   { group: 'nav_manage',  page: 'menu_agents' },
-    config:   { group: 'nav_manage',  page: 'menu_config' },
-    skills:   { group: 'nav_manage',  page: 'menu_skills' },
-    memory:   { group: 'nav_manage',  page: 'menu_memory' },
-    knowledge:{ group: 'nav_manage',  page: 'menu_knowledge' },
-    channels: { group: 'nav_manage',  page: 'menu_channels' },
-    tasks:    { group: 'nav_manage',  page: 'menu_tasks' },
-    logs:     { group: 'nav_monitor', page: 'menu_logs' },
+    chat:     { group: 'nav_workbench', page: 'menu_chat' },
+    history:  { group: 'nav_workbench', page: 'session_history' },
+    'agent-workbench': { group: 'nav_workbench', page: 'menu_agents' },
+    todo:     { group: 'nav_workbench', page: 'menu_todo' },
+    tasks:    { group: 'nav_workbench', page: 'menu_tasks' },
+    knowledge:{ group: 'nav_workbench', page: 'menu_knowledge' },
+    agents:   { group: 'nav_group_agent_dev', page: 'menu_agent_config' },
+    skills:   { group: 'nav_group_agent_dev', page: 'menu_skills' },
+    memory:   { group: 'nav_group_agent_dev', page: 'menu_memory' },
+    config:   { group: 'nav_group_model_access', page: 'menu_config' },
+    channels: { group: 'nav_group_model_access', page: 'menu_channels' },
+    system_user: { group: 'nav_group_org_perm', page: 'menu_system_user' },
+    roles:       { group: 'nav_group_org_perm', page: 'menu_roles' },
+    org:         { group: 'nav_group_org_perm', page: 'menu_org' },
+    tenant:      { group: 'nav_group_platform_ops', page: 'menu_tenant' },
+    platform:    { group: 'nav_group_platform_ops', page: 'menu_platform' },
+    branding:    { group: 'nav_group_platform_ops', page: 'menu_branding' },
+    logs:        { group: 'nav_group_platform_ops', page: 'menu_logs' },
+    audit:       { group: 'nav_group_platform_ops', page: 'menu_audit' },
 };
 
+// Known previously-visible targets whose feature is not yet enabled. These are
+// removed from the normal sidebar, but old internal IDs and direct links must
+// not silently no-op: route them to a clear "not available" view with a return.
+const UNAVAILABLE_VIEWS = new Set(['scenarios', 'backup', 'open_api']);
+
+function showUnavailableView(viewId) {
+    currentView = viewId;
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    const target = document.getElementById('view-unavailable');
+    if (target) target.classList.add('active');
+    document.querySelectorAll('.sidebar-item').forEach(item => {
+        item.classList.remove('active');
+        item.removeAttribute('aria-current');
+    });
+    document.getElementById('breadcrumb-group').textContent = t('nav_system');
+    document.getElementById('breadcrumb-group').dataset.i18n = 'nav_system';
+    document.getElementById('breadcrumb-page').textContent = t('nav_unavailable');
+    document.getElementById('breadcrumb-page').dataset.i18n = 'nav_unavailable';
+    document.getElementById('chat-agent-identity')?.classList.toggle('hidden', true);
+    document.getElementById('workspace-toggle-btn')?.classList.toggle('hidden', true);
+    if (window.innerWidth < 1024) closeSidebar();
+}
+
 let currentView = 'chat';
+let agentNavigationVersion = 0;
 
 function navigateTo(viewId) {
+    if (UNAVAILABLE_VIEWS.has(viewId)) {
+        showUnavailableView(viewId);
+        return;
+    }
     if (!VIEW_META[viewId]) return;
+    // Leaving the branding page with unsaved changes: ask to discard first.
+    if (currentView === 'branding' && viewId !== 'branding' && brandingDirty) {
+        brandingConfirmDiscard(() => {
+            _brandingResetDraftToBaseline();
+            navigateTo(viewId);
+        });
+        return;
+    }
+    // Leaving an identity-admin view with an unsaved create/edit form open:
+    // ask to discard before switching (see identity-admin.js).
+    const _adminLeaving = (currentView === 'tenant' || currentView === 'system_user'
+        || currentView === 'roles' || currentView === 'org'
+        || currentView === 'platform' || currentView === 'audit');
+    if (_adminLeaving && viewId !== currentView
+        && typeof window.__identityAdminDirtyGuard__ === 'function'
+        && !window.__identityAdminDirtyGuard__()) {
+        return;
+    }
+    if (viewId !== currentView) {
+        agentNavigationVersion++;
+        cancelAgentStart();
+    }
+    // Entering any functional view re-validates the public brand snapshot so
+    // another tab's published change is picked up (unless the branding page
+    // itself has a live draft, which is protected separately).
+    if (viewId !== 'branding') fetchPublicBrand();
+
+    // Leaving the history page: mark it dirty so a later re-entry re-reads the
+    // newest list (titles/activity may have changed while we were elsewhere).
+    if (currentView === 'history' && viewId !== 'history') {
+        _historyDirty = true;
+        _cancelHistoryRequest();
+        _closeSessionActionMenu();
+    }
+
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     const target = document.getElementById('view-' + viewId);
     if (target) target.classList.add('active');
     document.querySelectorAll('.sidebar-item').forEach(item => {
-        item.classList.toggle('active', item.dataset.view === viewId);
+        const selected = item.dataset.view === viewId;
+        item.classList.toggle('active', selected);
+        if (selected) item.setAttribute('aria-current', 'page');
+        else item.removeAttribute('aria-current');
+        if (selected) {
+            const resources = item.closest('details');
+            if (resources) resources.open = true;
+            const group = item.closest('.menu-group');
+            if (group) { group.classList.add('open'); group.querySelector('button')?.setAttribute('aria-expanded', 'true'); }
+        }
     });
     const meta = VIEW_META[viewId];
     document.getElementById('breadcrumb-group').textContent = t(meta.group);
     document.getElementById('breadcrumb-group').dataset.i18n = meta.group;
     document.getElementById('breadcrumb-page').textContent = t(meta.page);
     document.getElementById('breadcrumb-page').dataset.i18n = meta.page;
-    const leavingAgents = currentView === 'agents' && viewId !== 'agents';
     currentView = viewId;
+    document.getElementById('chat-agent-identity')?.classList.toggle('hidden', viewId !== 'chat');
+    document.getElementById('workspace-toggle-btn')?.classList.toggle('hidden', viewId !== 'chat');
+    if (viewId === 'branding') initBrandingView();
+    if (viewId === 'platform') loadPlatformUsersView();
+    if (viewId === 'tenant') loadTenantView();
+    if (viewId === 'system_user') loadMembersView();
+    if (viewId === 'roles') loadRolesView();
+    if (viewId === 'org') loadOrgView();
+    if (viewId === 'audit') loadAuditView();
     // The Agent detail is a fixed drawer, so it would otherwise hang over
-    // whatever view you navigate to. It only belongs to the Agent Team page.
+    // whatever view you navigate to. It only belongs to the Agent Config page.
     if (viewId !== 'agents') closeAgentDetail();
-    if (viewId === 'agents') {
-        // The team page is a wide two-pane workbench; the history panel on top
-        // of it would leave the detail cramped. Tuck it away on entry and put it
-        // back the way it was when the user leaves (only if they hadn't already
-        // toggled it themselves in the meantime).
-        _sessionPanelWasOpen = sessionPanelOpen;
-        if (sessionPanelOpen) closeSessionPanel(true);
-        loadAgentCatalog();
-    } else if (leavingAgents && _sessionPanelWasOpen) {
-        _sessionPanelWasOpen = false;
-        openSessionPanel();
+
+    // Entering the history page: it is now the active consumer, so (re)load its
+    // list. Re-reading only happens when dirty or the list is empty, so a plain
+    // in-page refresh is not spuriously overwritten by a stale read.
+    if (viewId === 'history') {
+        _historyVisible = true;
+        if (_historyDirty || !_sessionItems.length) {
+            _historyDirty = false;
+            loadSessionList();
+        }
+    } else {
+        _historyVisible = false;
     }
-    
+
+    if (viewId === 'agents') {
+        loadAgentCatalog();
+    } else if (viewId === 'agent-workbench') {
+        loadAgentWorkbench();
+    }
+
     // Clear status messages when navigating away
     document.querySelectorAll('[id$="-status"]').forEach(el => {
         el.classList.add('opacity-0');
     });
-    
+
+    if (viewId === 'history') _renderHistoryStatus();
+
     if (window.innerWidth < 1024) closeSidebar();
 }
 
 function toggleSidebar() {
+    if (window.innerWidth >= 1024) {
+        closeAccountMenu();
+        const collapsed = document.getElementById('app').classList.toggle('sidebar-collapsed');
+        document.getElementById('menu-toggle')?.setAttribute('aria-expanded', String(!collapsed));
+        return;
+    }
     const sidebar = document.getElementById('sidebar');
     const overlay = document.getElementById('sidebar-overlay');
     const isOpen = !sidebar.classList.contains('-translate-x-full');
@@ -1764,25 +3452,113 @@ function toggleSidebar() {
     } else {
         sidebar.classList.remove('-translate-x-full');
         overlay.classList.remove('hidden');
+        document.getElementById('menu-toggle')?.setAttribute('aria-expanded', 'true');
     }
 }
 
 function closeSidebar() {
+    closeAccountMenu();
     document.getElementById('sidebar').classList.add('-translate-x-full');
     document.getElementById('sidebar-overlay').classList.add('hidden');
+    if (window.innerWidth < 1024) document.getElementById('menu-toggle')?.setAttribute('aria-expanded', 'false');
+}
+
+function startSidebarNewChat() {
+    if (typeof wsGuardUnsaved === 'function' && !wsGuardUnsaved(startSidebarNewChat)) return;
+    if (currentView === 'branding' && brandingDirty) {
+        brandingConfirmDiscard(() => { _brandingResetDraftToBaseline(); startSidebarNewChat(); });
+        return;
+    }
+    navigateTo('chat');
+    if (currentView !== 'chat') return;
+    newChat();
+    focusChatComposer();
+}
+
+// Keep closed groups out of the keyboard focus order and move focus to the
+// group trigger when a group that currently holds focus is collapsed. This
+// fixes the "collapsed group still Tab-focusable" accessibility problem.
+function _syncMenuGroupFocusability() {
+    document.querySelectorAll('.menu-group').forEach(group => {
+        const open = group.classList.contains('open');
+        group.querySelectorAll('.sidebar-item').forEach(item => {
+            item.tabIndex = open ? 0 : -1;
+        });
+    });
+    // The resources <details> is a native disclosure; only its open children
+    // should be focusable.
+    const resources = document.getElementById('sidebar-resources');
+    if (resources) {
+        const open = resources.open;
+        resources.querySelectorAll('.sidebar-item').forEach(item => {
+            item.tabIndex = open ? 0 : -1;
+        });
+    }
+}
+
+function _collapseMenuGroup(group, trigger) {
+    group.querySelectorAll('.sidebar-item').forEach(item => { item.tabIndex = -1; });
+    const focusedInGroup = group.contains(document.activeElement);
+    group.classList.remove('open');
+    trigger.setAttribute('aria-expanded', 'false');
+    if (focusedInGroup) trigger.focus();
 }
 
 document.querySelectorAll('.menu-group > button').forEach(btn => {
+    const label = btn.querySelector('[data-i18n]');
+    if (label) { btn.dataset.i18nTitle = label.dataset.i18n; btn.title = t(label.dataset.i18n); }
+    btn.setAttribute('aria-expanded', String(btn.parentElement.classList.contains('open')));
     btn.addEventListener('click', () => {
-        btn.parentElement.classList.toggle('open');
+        if (window.innerWidth >= 1024 && document.getElementById('app').classList.contains('sidebar-collapsed')) toggleSidebar();
+        const group = btn.parentElement;
+        const opening = !group.classList.contains('open');
+        group.classList.toggle('open', opening);
+        btn.setAttribute('aria-expanded', String(opening));
+        if (opening) _syncMenuGroupFocusability();
+        else _collapseMenuGroup(group, btn);
     });
+});
+document.querySelector('#sidebar-resources summary')?.addEventListener('click', () => {
+    if (window.innerWidth >= 1024 && document.getElementById('app').classList.contains('sidebar-collapsed')) toggleSidebar();
+    const resources = document.getElementById('sidebar-resources');
+    // The browser toggles `open` on the native <details>; re-sync focusability.
+    setTimeout(_syncMenuGroupFocusability, 0);
 });
 
 document.querySelectorAll('.sidebar-item').forEach(item => {
+    item.setAttribute('role', 'link');
+    item.tabIndex = 0;
+    const label = item.querySelector('[data-i18n]');
+    if (label) { item.dataset.i18nTitle = label.dataset.i18n; item.title = t(label.dataset.i18n); }
+    if (item.classList.contains('active')) item.setAttribute('aria-current', 'page');
     item.addEventListener('click', () => navigateTo(item.dataset.view));
+    item.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigateTo(item.dataset.view); }
+    });
 });
 
+// Ensure closed groups are excluded from the tab order (run after the items
+// get their default tabIndex so it is authoritative).
+_syncMenuGroupFocusability();
+
+// Return to an available page from the "not available" view (unreachable).
+document.getElementById('nav-unavailable-back')?.addEventListener('click', () => {
+    const next = ['chat', 'history', 'agent-workbench', 'todo', 'tasks', 'knowledge', 'agents']
+        .find(v => VIEW_META[v] && document.getElementById('view-' + v));
+    if (next) navigateTo(next);
+});
+
+function syncSidebarToggleState() {
+    const expanded = window.innerWidth >= 1024
+        ? !document.getElementById('app').classList.contains('sidebar-collapsed')
+        : !document.getElementById('sidebar').classList.contains('-translate-x-full');
+    document.getElementById('menu-toggle')?.setAttribute('aria-expanded', String(expanded));
+}
+syncSidebarToggleState();
+window.addEventListener('resize', syncSidebarToggleState);
+
 window.addEventListener('resize', () => {
+    closeAccountMenu();
     if (window.innerWidth >= 1024) {
         document.getElementById('sidebar').classList.remove('-translate-x-full');
         document.getElementById('sidebar-overlay').classList.add('hidden');
@@ -1799,7 +3575,7 @@ window.addEventListener('resize', () => {
 let agentCatalog = [];
 let channelInstances = [];
 let rosterRevision = '';
-let defaultAgentId = localStorage.getItem('cow_default_agent') || 'default';
+let defaultAgentId = readScopedPreference('cow_default_agent') || 'default';
 let selectedAdminAgentId = '';
 let selectedCoreRevision = '';
 let installedSkills = [];
@@ -1808,8 +3584,24 @@ function findAgent(agentId) {
     return agentCatalog.find(a => a.id === agentId) || null;
 }
 
+function normalizeAgentCatalogEntry(agent) {
+    // Database mode returns only enabled, tenant-visible Agents, with can_chat
+    // rather than the management snapshot's enabled flag. Keep runtime chat
+    // readiness separate from configuration state and never infer permissions
+    // from an unknown/missing capability.
+    return {
+        ...agent,
+        name: /^cowagent$/i.test((agent.name || '').trim()) ? 'RongAI' : agent.name,
+        enabled: typeof agent.enabled === 'boolean' ? agent.enabled : typeof agent.can_chat === 'boolean',
+    };
+}
+
 function enabledAgents() {
-    return agentCatalog.filter(a => a.enabled);
+    return agentCatalog.filter(a => a.enabled === true);
+}
+
+function availableChatAgents() {
+    return enabledAgents().filter(a => a.can_chat === undefined || a.can_chat === true);
 }
 
 /* An uploaded avatar reuses the same URL every time, so the browser would keep
@@ -1857,10 +3649,10 @@ function agentAvatarHTML(agent, size) {
         return `<img class="${cls}" src="/api/agents/${encodeURIComponent(agent.id)}/avatar?v=${encodeURIComponent(v)}" alt="">`;
     }
     // The default (first) Agent falls back to the product logo when it has no
-    // uploaded picture, so the instance's own Agent wears the CowAgent face.
+    // uploaded picture, so the instance's own Agent wears the product mark.
     // Added Agents keep the initial-disc fallback so a team stays distinguishable.
-    if (agent && agent.id && agent.id === defaultAgentId) {
-        return `<img class="${cls}" src="assets/logo.jpg" alt="">`;
+    if (agent && agent.id && (agent.is_default || agent.id === defaultAgentId)) {
+        return `<img class="${cls} agent-avatar-brand" src="${effectiveLogoUrl()}" alt="">`;
     }
     const initial = avatarInitial(agent && (agent.name || agent.id));
     return `<span class="${cls} agent-avatar-tone-${avatarTone(agent && agent.id)}">${escapeHtml(initial)}</span>`;
@@ -1894,22 +3686,28 @@ function randomAgentId() {
 }
 
 function loadAgentCatalog() {
+    const epoch = _authEpoch, tenant = sessionStorage.getItem('cow_tenant_id');
+    const current = () => epoch === _authEpoch && tenant === sessionStorage.getItem('cow_tenant_id');
     return fetch('/api/agents')
         .then(r => r.json())
         .then(data => {
+            if (!current()) return;
             if (data.status !== 'success') throw new Error(data.message || 'Failed to load Agents');
-            agentCatalog = data.agents || [];
+            // Also handle a still-running backend or an older team file.
+            agentCatalog = (data.agents || []).map(normalizeAgentCatalogEntry);
             channelInstances = data.channel_instances || [];
             rosterRevision = data.revision || '';
-            defaultAgentId = data.default_agent_id || (agentCatalog[0] && agentCatalog[0].id) || 'default';
-            localStorage.setItem('cow_default_agent', defaultAgentId);
+            defaultAgentId = data.default_agent_id || agentCatalog.find(agent => agent.is_default === true)?.id
+                || (agentCatalog[0] && agentCatalog[0].id) || 'default';
+            writeScopedPreference('cow_default_agent', defaultAgentId);
             // The default Agent leads every list it appears in — menus, the grid,
             // the memory picker — so its position never depends on load order.
             agentCatalog.sort((a, b) => (b.id === defaultAgentId) - (a.id === defaultAgentId));
-            const enabled = enabledAgents();
-            if (!enabled.some(a => a.id === activeAgentId)) {
+            // Reading configuration must not replace a bound session's owner.
+            // A deleted owner remains explicit and the server rejects its run.
+            if (!activeAgentId) {
                 activeAgentId = defaultAgentId;
-                localStorage.setItem('cow_active_agent', activeAgentId);
+                writeScopedPreference('cow_active_agent', activeAgentId);
             }
             if (!selectedAdminAgentId || !agentCatalog.some(a => a.id === selectedAdminAgentId)) {
                 selectedAdminAgentId = '';
@@ -1936,6 +3734,7 @@ function loadAgentCatalog() {
             return data;
         })
         .catch(err => {
+            if (!current()) return;
             const status = document.getElementById('agent-editor-status');
             if (status) status.textContent = err.message;
         });
@@ -1967,6 +3766,172 @@ function renderAgentsGrid() {
             </div>
         </div>`;
     }).join('');
+}
+
+// =====================================================================
+// Agent Workbench (use agents)
+// =====================================================================
+// The usage page is a read-only card gallery. It deliberately does NOT reuse
+// loadAgentCatalog(), which refreshes management data and the composer roster.
+// A workbench load must be
+// side-effect free: it only fetches /api/agents?view=workbench and paints the
+// card grid from the whitelisted projection.
+let agentWorkbench = [];
+let agentWorkbenchLoading = false;
+let agentWorkbenchSeq = 0;
+let _wbNoticeKey = '';
+
+function _wbContext() {
+    return [activeAgentId, sessionId, currentView, agentNavigationVersion,
+        sessionStorage.getItem('cow_tenant_id'), _identityMode()].join('|');
+}
+
+async function fetchAgentWorkbench() {
+    const res = await fetch('/api/agents?view=workbench', { cache: 'no-store' });
+    const data = await res.json();
+    // An old backend may ignore `view` and return the management snapshot.
+    // Fail visibly instead of treating missing capability flags as an empty list.
+    if (!res.ok || data.status !== 'success' || !Array.isArray(data.agents)
+        || 'channel_instances' in data || 'revision' in data
+        || data.agents.some(a => typeof a.id !== 'string' || !a.id
+            || typeof a.can_chat !== 'boolean' || typeof a.is_default !== 'boolean')) {
+        throw new Error(t('agent_workbench_failed'));
+    }
+    return data.agents.map(a => ({
+        id: a.id,
+        name: /^cowagent$/i.test((a.name || '').trim()) ? 'RongAI' : (a.name || a.id),
+        description: a.description || '', avatar: a.avatar || null,
+        is_default: a.is_default, can_chat: a.can_chat,
+        unavailable_reason: a.unavailable_reason || null,
+    })).sort((a, b) => Number(b.is_default) - Number(a.is_default));
+}
+
+function applyAgentWorkbench(agents) {
+    agentWorkbench = agents;
+    // Avatars can be replaced without changing their URL or roster revision.
+    const version = String(Date.now());
+    agents.forEach(a => { if (a.avatar === 'image') avatarVersions[a.id] = version; });
+}
+
+function agentUnavailableLabel(reason) {
+    return t(reason === 'runtime_not_enabled' ? 'agent_runtime_not_enabled' : 'agent_cannot_run');
+}
+
+function agentWorkbenchCardHTML(agent, canChat, unavailableReason) {
+    const desc = (agent.description || '').trim();
+    const badge = agent.is_default
+        ? `<span class="agent-card-badge agent-chip-on">${escapeHtml(t('agents_default'))}</span>`
+        : '';
+    const starting = _agentStartAgentId === agent.id;
+    const disabled = !canChat || agentWorkbenchLoading || !!_agentStartInFlight;
+    const actionLabel = starting ? t('agent_starting')
+        : canChat ? t('start_chat') : agentUnavailableLabel(unavailableReason);
+    // The card body and its button share one flow, so the whole card is a
+    // keyboard-accessible button-ish element. Use a single <button> to avoid a
+    // nested-button accessibility violation and to make one Tab stop per card.
+    const actionIcon = starting ? 'fa-spinner fa-spin' : canChat ? 'fa-comment' : 'fa-circle-exclamation';
+    return `<button type="button" class="agent-wb-card${canChat ? '' : ' agent-wb-card-disabled'}"
+            ${disabled ? 'disabled aria-disabled="true"' : `onclick="startChatWithAgent('${escapeHtml(agent.id)}')"`}
+            aria-busy="${starting || agentWorkbenchLoading}"
+            data-agent-id="${escapeHtml(agent.id)}">
+        <div class="agent-wb-card-top">
+            ${agentAvatarHTML(agent, 44)}
+            <div class="min-w-0 flex-1">
+                <div class="agent-wb-card-name truncate" title="${escapeHtml(agent.name)}">${escapeHtml(agent.name)}</div>
+                <div class="agent-wb-card-id truncate font-mono">${escapeHtml(agent.id)}</div>
+            </div>
+            ${badge}
+        </div>
+        <div class="agent-wb-card-desc">${desc ? escapeHtml(desc) : `<span class="agent-card-desc-empty">${escapeHtml(t('agents_no_desc'))}</span>`}</div>
+        <div class="agent-wb-card-foot">
+            <span class="agent-wb-action${canChat ? '' : ' agent-wb-action-disabled'}">
+                <i class="fas ${actionIcon} mr-1.5"></i>${escapeHtml(actionLabel)}
+            </span>
+        </div>
+    </button>`;
+}
+
+function renderAgentWorkbench() {
+    const grid = document.getElementById('agent-workbench-grid');
+    const status = document.getElementById('agent-workbench-status');
+    if (!grid) return;
+    // State: loading / empty / error / cards. The status line carries the
+    // non-card states (loading, empty, error), the grid carries the cards.
+    if (agentWorkbenchLoading && !agentWorkbench.length) {
+        setWbStatus(t('agent_workbench_loading'));
+        grid.innerHTML = '';
+        return;
+    }
+    if (_wbLoadedError) {
+        setWbError(t('agent_workbench_failed'));
+        grid.innerHTML = `<div class="col-span-full text-sm text-slate-400 py-16 text-center">
+            <p>${escapeHtml(t('agent_workbench_failed'))}</p>
+            <button type="button" class="agent-wb-retry"
+                onclick="loadAgentWorkbench(true)">${escapeHtml(t('agent_workbench_retry'))}</button>
+        </div>`;
+        return;
+    }
+    if (!agentWorkbench.length) {
+        if (_wbNoticeKey) setWbError(t(_wbNoticeKey));
+        else setWbStatus(t('agent_workbench_empty'));
+        grid.innerHTML = '';
+        return;
+    }
+    if (_wbNoticeKey) setWbError(t(_wbNoticeKey));
+    else setWbStatus(agentWorkbenchLoading ? t('agent_workbench_loading') : '');
+    grid.innerHTML = agentWorkbench.map(a =>
+        agentWorkbenchCardHTML(a, a.can_chat, a.unavailable_reason)
+    ).join('');
+}
+
+function setWbStatus(text) {
+    const status = document.getElementById('agent-workbench-status');
+    if (!status) return;
+    status.textContent = text || '';
+    status.classList.remove('opacity-0');
+    status.classList.toggle('agent-workbench-status-hidden', !text);
+    status.classList.remove('agent-workbench-status-error');
+}
+
+function setWbError(text) {
+    const status = document.getElementById('agent-workbench-status');
+    if (!status) return;
+    status.textContent = text || '';
+    status.classList.remove('opacity-0');
+    status.classList.remove('agent-workbench-status-hidden');
+    status.classList.add('agent-workbench-status-error');
+}
+
+let _wbLoadedError = false;
+
+function loadAgentWorkbench(manualRefresh = false) {
+    const grid = document.getElementById('agent-workbench-grid');
+    if (!grid) return Promise.resolve();
+    // Suppress a spurious "loading" flash when returning to a filled list.
+    agentWorkbenchLoading = true;
+    _wbLoadedError = false;
+    _wbNoticeKey = '';
+    renderAgentWorkbench();
+    // A request-seq + context guard so a late response from an earlier read
+    // (or one started under a different Agent / view) is dropped instead of
+    // repainting stale cards over a fresher result.
+    const seq = ++agentWorkbenchSeq;
+    const ctx = _wbContext();
+    return fetchAgentWorkbench()
+        .then(agents => {
+            if (seq !== agentWorkbenchSeq || ctx !== _wbContext()) return null;
+            applyAgentWorkbench(agents);
+            agentWorkbenchLoading = false;
+            _wbLoadedError = false;
+            renderAgentWorkbench();
+            return agents;
+        })
+        .catch(err => {
+            if (seq !== agentWorkbenchSeq || ctx !== _wbContext()) return null;
+            agentWorkbenchLoading = false;
+            _wbLoadedError = true;
+            renderAgentWorkbench();
+        });
 }
 
 function openAgentDetail(agentId) {
@@ -2441,8 +4406,7 @@ document.addEventListener('click', (e) => {
         closeAgentCreateForm();
     }
     const newMenu = document.getElementById('new-chat-menu');
-    const newWrap = document.querySelector('.session-panel-new-wrap');
-    if (newMenu && !newMenu.classList.contains('hidden') && newWrap && !newWrap.contains(e.target)) {
+    if (newMenu && !newMenu.classList.contains('hidden') && !newMenu.contains(e.target)) {
         newMenu.classList.add('hidden');
     }
     const teamModal = document.getElementById('team-chat-modal');
@@ -2642,16 +4606,16 @@ function _performAgentDelete(agentId, _retried) {
         // A conversation owned by the deleted Agent falls back to the default.
         if (activeAgentId === agentId) {
             activeAgentId = defaultAgentId;
-            localStorage.setItem('cow_active_agent', activeAgentId);
+            writeScopedPreference('cow_active_agent', activeAgentId);
         }
         // Drop the deleted Agent's remembered session id — its conversations
         // went with the workspace, so the pinned id would only re-pin a ghost.
-        localStorage.removeItem(`${SESSION_ID_KEY}:${agentId}`);
+        removeScopedPreference(`${SESSION_ID_KEY}:${agentId}`);
         return loadAgentCatalog().then(() => {
             renderComposerIdentity();
             // The Agent's sessions were removed server-side; refresh the open
             // list so its rows don't linger until the next unrelated reload.
-            if (typeof loadSessionList === 'function') loadSessionList();
+            if (typeof _refreshHistoryList === 'function') _refreshHistoryList();
             return true;
         });
     }).catch(err => {
@@ -2788,13 +4752,109 @@ function saveAgentCoreFile() {
     });
 }
 
-function startChatWithAgent(agentId) {
-    if (!agentId) return;
-    activeAgentId = agentId;
-    localStorage.setItem('cow_active_agent', activeAgentId);
-    newChat(true);
-    navigateTo('chat');
-    renderComposerIdentity();
+// In-flight guard so a double-click on a card cannot spawn two session
+// switches. Reset on every completed start / cancellation / error.
+let _agentStartInFlight = null;
+let _agentStartAgentId = null;
+
+function cancelAgentStart() {
+    _agentStartInFlight = null;
+    _agentStartAgentId = null;
+}
+
+async function startChatWithAgent(agentId) {
+    if (!agentId || _agentStartInFlight) return;
+    if (typeof wsGuardUnsaved === 'function'
+        && !wsGuardUnsaved(() => startChatWithAgent(agentId))) return;
+    const attempt = { context: _wbContext() };
+    _agentStartInFlight = attempt;
+    _agentStartAgentId = agentId;
+    _wbNoticeKey = '';
+    renderAgentWorkbench();
+    try {
+        // The use-page roster is independent of the management cache. A card
+        // created in another tab must work, and a removed target must not start.
+        const agents = await fetchAgentWorkbench();
+        if (_agentStartInFlight !== attempt || attempt.context !== _wbContext()) return;
+        const agent = agents.find(a => a.id === agentId);
+        applyAgentWorkbench(agents);
+        if (!agent || !agent.can_chat) {
+            refreshWorkbenchAfterUnavailable(agentId, agent?.unavailable_reason);
+            return;
+        }
+        // The user could edit a file while validation was in flight. Settle it
+        // once more before committing; no await occurs between this and newChat.
+        if (typeof wsGuardUnsaved === 'function'
+            && !wsGuardUnsaved(() => startChatWithAgent(agentId))) return;
+        const cached = findAgent(agentId);
+        if (cached) Object.assign(cached, agent, { enabled: true });
+        else agentCatalog.push({ ...agent, enabled: true });
+        if (agent.is_default) defaultAgentId = agent.id;
+        activeAgentId = agentId;
+        writeScopedPreference('cow_active_agent', activeAgentId);
+        newChat(true, false);
+        if (typeof resetWorkspaceToAgentRoot === 'function') resetWorkspaceToAgentRoot();
+        navigateTo('chat');
+        renderComposerIdentity();
+        focusChatComposer();
+    } catch (err) {
+        if (_agentStartInFlight === attempt && attempt.context === _wbContext()) {
+            showAgentStartNotice('agent_start_failed');
+        }
+    } finally {
+        if (_agentStartInFlight === attempt) cancelAgentStart();
+        if (currentView === 'agent-workbench') renderAgentWorkbench();
+    }
+}
+
+// Focus the chat input once the fresh conversation is on screen, so the user
+// can start typing immediately without an extra click.
+function focusChatComposer() {
+    const input = document.getElementById('chat-input');
+    if (input) {
+        requestAnimationFrame(() => { input.focus(); });
+    }
+}
+
+// When a card's target is no longer usable (archived/disabled/removed), refresh
+// the workbench list and surface a short notice instead of silently reusing a
+// default Agent or a stale card.
+function refreshWorkbenchAfterUnavailable(agentId, reason) {
+    showAgentStartNotice(reason === 'runtime_not_enabled'
+        ? 'agent_runtime_not_enabled' : 'agent_target_unavailable');
+}
+
+function showAgentStartNotice(key) {
+    _wbNoticeKey = key;
+    if (currentView === 'agents') {
+        const status = document.getElementById('agent-profile-status');
+        if (status) {
+            status.textContent = t(key);
+            status.classList.remove('opacity-0', 'agent-status-ok');
+        }
+    } else if (currentView === 'chat') {
+        showConfirmDialog({
+            title: t('agents_pick_tip'), message: t(key), hideCancel: true,
+        });
+    } else {
+        renderAgentWorkbench();
+    }
+}
+
+/** Reflect the selected Agent's identity in the chat header, so a solo chat
+ *  with a single Agent still clearly names who the conversation belongs to. */
+function paintChatAgentIdentity(agent) {
+    if (!agent) return;
+    const nameEl = document.getElementById('chat-agent-name');
+    const faceEl = document.getElementById('chat-agent-avatar');
+    if (!nameEl) return;
+    nameEl.textContent = agent.name || agent.id;
+    if (faceEl) faceEl.innerHTML = agentAvatarHTML(agent, 22);
+    const head = document.getElementById('chat-agent-identity');
+    if (head) {
+        head.classList.toggle('hidden', currentView !== 'chat');
+        head.removeAttribute('hidden');
+    }
 }
 
 function conversationHasMessages() {
@@ -2804,13 +4864,13 @@ function conversationHasMessages() {
 /** A roster of one behaves exactly like the console did before Agents existed:
  *  no face on the composer, no faces in the session list, no @ mentions. */
 function multiAgentMode() {
-    return enabledAgents().length > 1;
+    return availableChatAgents().length > 1;
 }
 
 /** True once this conversation holds more than its owner. Until then it is an
  *  ordinary chat and is drawn like one. */
 function sharedConversation() {
-    return multiAgentMode() && currentTeamIds().length > 0;
+    return currentTeamIds().length > 0;
 }
 
 // Who is answering each in-flight request, as reported when it was accepted.
@@ -2910,19 +4970,19 @@ function highlightMentions(root) {
 }
 
 function renderComposerIdentity() {
+    const agent = findAgent(activeAgentId) || { id: activeAgentId || defaultAgentId, name: activeAgentId || 'Agent' };
+    paintChatAgentIdentity(agent);
     const wrap = document.getElementById('composer-identity');
     const btn = document.getElementById('composer-agent-btn');
     if (!wrap || !btn) return;
-    // A single-Agent install keeps the composer exactly as it always was: no
-    // avatar, no menu. The identity chip only appears once there is more than
-    // one Agent and thus an actual choice to make.
-    if (!multiAgentMode()) {
+    // A solo install has no choice to offer. Existing teammates still need
+    // their menu even if the available catalog shrinks after this chat began.
+    if (!multiAgentMode() && !currentTeamIds().length) {
         wrap.classList.add('hidden');
         document.getElementById('composer-agent-menu')?.classList.add('hidden');
         return;
     }
     wrap.classList.remove('hidden');
-    const agent = findAgent(activeAgentId) || { id: activeAgentId || defaultAgentId, name: activeAgentId || 'Agent' };
     const others = currentTeamIds().length;
     btn.innerHTML = agentAvatarHTML(agent, 22)
         + (others ? `<span class="composer-agent-count">${others + 1}</span>` : '');
@@ -2965,7 +5025,7 @@ function renderComposerAgentMenu() {
     if (!sharedConversation()) {
         sections.push(
             `<div class="composer-menu-title">${escapeHtml(t('agents_pick_tip'))}</div>`
-            + enabledAgents().map(agent => `
+            + availableChatAgents().map(agent => `
                 <button type="button" class="composer-menu-item agent-row${agent.id === activeAgentId ? ' current' : ''}"
                         onclick="pickComposerAgent('${escapeHtml(agent.id)}')">
                     ${agentAvatarHTML(agent, 24)}
@@ -2975,7 +5035,7 @@ function renderComposerAgentMenu() {
         );
     }
 
-    const candidates = enabledAgents().filter(a => a.id !== activeAgentId && !taken.has(a.id));
+    const candidates = availableChatAgents().filter(a => a.id !== activeAgentId && !taken.has(a.id));
 
     // A group chat first lists the teammates already in the conversation (the
     // owner is implicit and not shown), then, in a separate section below, who
@@ -3034,13 +5094,9 @@ function openAgentCreateFromComposer() {
 function pickComposerAgent(agentId) {
     document.getElementById('composer-agent-menu')?.classList.add('hidden');
     if (!agentId || agentId === activeAgentId) return;
-    activeAgentId = agentId;
-    localStorage.setItem('cow_active_agent', activeAgentId);
-    // Switching starts a clean conversation owned by the chosen Agent rather
-    // than rewriting the current one, so it works at any point in a chat.
-    newChat(true);
-    if (typeof resetWorkspaceToAgentRoot === 'function') resetWorkspaceToAgentRoot();
-    renderComposerIdentity();
+    // Use the same guarded, freshly validated start as the workbench. A cancel
+    // must keep the current owner, and a switch must not inherit its project.
+    return startChatWithAgent(agentId);
 }
 
 function inviteTeamMember(agentId) {
@@ -3178,7 +5234,7 @@ function channelBoundAgentId(channelType) {
     return inst ? (inst.agent_id || '') : '';
 }
 
-let memoryAgentId = localStorage.getItem('cow_memory_agent') || '';
+let memoryAgentId = readScopedPreference('cow_memory_agent') || '';
 
 function viewingMemoryAgentId() {
     return memoryAgentId || activeAgentId || defaultAgentId;
@@ -3195,12 +5251,10 @@ function renderMemoryAgentSelect() {
 
 function selectMemoryAgent(agentId) {
     memoryAgentId = agentId;
-    localStorage.setItem('cow_memory_agent', agentId);
+    writeScopedPreference('cow_memory_agent', agentId);
     closeMemoryViewer();
     loadMemoryView(1);
 }
-
-loadAgentCatalog();
 
 // =====================================================================
 // Markdown Renderer
@@ -3526,9 +5580,9 @@ function updateEditButtonsState() {
 }
 let streamBuffers = {};   // request_id -> { items: [event...], timestamp } for re-attach replay
 let isComposing = false;
-let appConfig = { use_agent: false, title: 'CowAgent', subtitle: '', providers: {}, api_bases: {} };
+let appConfig = { use_agent: false, title: PRODUCT_NAME, subtitle: '', providers: {}, api_bases: {} };
 
-let activeAgentId = localStorage.getItem('cow_active_agent') || '';
+let activeAgentId = readScopedPreference('cow_active_agent') || '';
 const SESSION_ID_KEY = 'cow_session_id';
 
 function activeSessionStorageKey() {
@@ -3543,6 +5597,24 @@ const _nativeFetch = window.fetch.bind(window);
 window.fetch = function(input, init) {
     init = init ? { ...init } : {};
     let url = typeof input === 'string' ? input : input.url;
+    // In database identity mode the request context is tenant-scoped. The
+    // selected tenant lives in sessionStorage (cow_tenant_id) but the core
+    // console requests (agents / sessions / history / knowledge) do not
+    // otherwise carry it, so the backend rejects them with a 400
+    // "tenant selection required". Inject the header for same-origin /api
+    // requests here, mirroring identity-admin.js / todos.js apiFetch. This is
+    // a no-op in legacy mode (no tenant is ever stored).
+    const tenantId = sessionStorage.getItem('cow_tenant_id');
+    if (tenantId && typeof url === 'string' && url.startsWith('/')
+            && (/^\/api\//.test(url)
+                || /^\/(message|stream|poll|cancel)\b/.test(url))
+            && !/^\/api\/auth\//.test(url)) {
+        const headers = init.headers instanceof Headers
+            ? new Headers(init.headers)
+            : new Headers(init.headers || {});
+        if (!headers.has('X-Tenant-ID')) headers.set('X-Tenant-ID', tenantId);
+        init.headers = headers;
+    }
     if (activeAgentId && typeof url === 'string' && url.startsWith('/')) {
         if (!/[?&]agent_id=/.test(url)) {
             const joiner = url.includes('?') ? '&' : '?';
@@ -3582,10 +5654,10 @@ function generateSessionId() {
 // Restore session_id from localStorage so conversation history survives page refresh.
 // A new id is only generated when the user explicitly starts a new chat.
 function loadOrCreateSessionId() {
-    const stored = localStorage.getItem(activeSessionStorageKey());
+    const stored = readScopedPreference(activeSessionStorageKey());
     if (stored) return stored;
     const fresh = generateSessionId();
-    localStorage.setItem(activeSessionStorageKey(), fresh);
+    writeScopedPreference(activeSessionStorageKey(), fresh);
     return fresh;
 }
 
@@ -3595,24 +5667,99 @@ let sessionId = loadOrCreateSessionId();
 let historyPage = 0;       // last page fetched (0 = nothing fetched yet)
 let historyHasMore = false;
 let historyLoading = false;
+let _historyLoadSeq = 0;
+let _historyLoadContext = '';
 
-fetch('/config').then(r => r.json()).then(data => {
-    if (data.status === 'success') {
-        appConfig = data;
-        const title = data.title || 'CowAgent';
-        document.getElementById('welcome-title').textContent = title;
-        initConfigView(data);
-    }
-    loadHistory(1);
-}).catch(() => { loadHistory(1); });
+function restoreChatState() {
+    const epoch = _authEpoch, owner = activeAgentId, sid = sessionId;
+    const current = () => epoch === _authEpoch && owner === activeAgentId && sid === sessionId;
+    return fetch('/config').then(r => r.json()).then(data => {
+        if (!current()) return;
+        if (data.status === 'success') {
+            appConfig = data;
+            appConfig.title = productTitle(data.title);
+            const welcomeTitle = document.getElementById('welcome-title');
+            if (welcomeTitle) welcomeTitle.innerHTML = productTitleHTML(appConfig.title);
+            initConfigView(data);
+        }
+        loadHistory(1);
+    }).catch(() => { if (current()) loadHistory(1); });
+}
 
-// Start polling immediately so scheduler/push messages are received at any time
-startPolling();
+// Load the public brand snapshot and apply it once the DOM is ready. This
+// drives the sidebar / login / welcome / favicon / title from the SAME source
+// the published brand uses, independent of the legacy /config.title projection.
+function fetchPublicBrand(seq) {
+    const requestSeq = (seq != null ? seq : ++brandFetchSeq);
+    return fetch('/api/branding/public').then(r => r.json()).then(data => {
+        // A later public read must not clobber a version published by THIS tab
+        // after it was issued.
+        if (requestSeq < brandSaveEpoch) return;
+        if (data && data.brand_name) {
+            if (requestSeq < brandFetchSeq) return; // a newer read already landed
+            brandState = {
+                enabled: !!data.enabled,
+                revision: data.revision || 0,
+                brand_name: data.brand_name || DEFAULT_BRAND.brand_name,
+                logo_description: (data.logo_description != null) ? data.logo_description : '',
+                logo_url: data.logo_url || DEFAULT_BRAND.logo_url,
+                favicon_url: data.favicon_url || DEFAULT_BRAND.favicon_url,
+            };
+            brandLoaded = true;
+            // Keep the legacy config title in sync so any code reading it stays
+            // consistent without a second source of truth.
+            if (appConfig) appConfig.title = productTitle(brandState.brand_name);
+        }
+        applyBrandToDocument();
+        applyBrandToAgentAvatars();
+    }).catch(() => { /* keep last known brand; never break the console */ });
+}
+
+// Fetch immediately and re-validate on visibility / view entry.
+fetchPublicBrand();
+document.addEventListener('DOMContentLoaded', applyBrandToDocument);
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) fetchPublicBrand();
+});
 
 const chatInput = document.getElementById('chat-input');
 const sendBtn = document.getElementById('send-btn');
 const steerBtn = document.getElementById('steer-btn');
 const messagesDiv = document.getElementById('chat-messages');
+// Cache only welcome markup; the real composer remains a sibling for its entire
+// lifetime. CSS orders it between the intro and suggestions in an empty chat.
+const welcomeTemplateHTML = document.getElementById('welcome-screen')?.innerHTML || '';
+function syncChatHomeLayout() {
+    const main = document.getElementById('chat-main');
+    if (!main) return;
+    const home = !!document.getElementById('welcome-screen');
+    const changed = home !== main.classList.contains('chat-home');
+    main.classList.toggle('chat-home', home);
+    if (changed) main.scrollTop = 0;
+}
+function bindWelcomeSuggestions(root) {
+    root.querySelectorAll('.example-card').forEach(card => {
+        card.addEventListener('click', () => {
+            chatInput.value = t(card.dataset.promptKey);
+            chatInput.dispatchEvent(new Event('input'));
+            chatInput.focus();
+        });
+    });
+}
+function renderWelcomeScreen() {
+    const welcome = document.createElement('div');
+    welcome.id = 'welcome-screen';
+    welcome.className = 'workbench-welcome';
+    welcome.innerHTML = welcomeTemplateHTML;
+    welcome.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
+    messagesDiv.appendChild(welcome);
+    bindWelcomeSuggestions(welcome);
+    applyBrandToDocument();
+    syncChatHomeLayout();
+    document.getElementById('chat-main').scrollTop = 0;
+}
+if (typeof MutationObserver !== 'undefined') new MutationObserver(syncChatHomeLayout).observe(messagesDiv, { childList: true });
+syncChatHomeLayout();
 const fileInput = document.getElementById('file-input');
 const folderInput = document.getElementById('folder-input');
 const attachBtn = document.getElementById('attach-btn');
@@ -4125,12 +6272,12 @@ function steerActiveTask() {
             lang: currentLang,
         }),
     })
-    .then(r => r.json())
+    .then(readMessageResponse)
     .then(data => {
         if (data.status === 'success' && data.inline_reply) {
             addBotMessage(data.inline_reply, new Date());
         } else {
-            addBotMessage(t('error_send'), new Date());
+            addMessageError(data);
         }
     })
     .catch(err => {
@@ -4409,6 +6556,8 @@ function _wsToast(msg) {
 // Refresh the selector state + label for the current session.
 async function refreshWorkspaceSelector() {
     const label = document.getElementById('workspace-selector-label');
+    const requestSession = sessionId;
+    const requestAgent = activeAgentId;
     try {
         // Scope the request to the active Agent so the default-workspace hint
         // matches the file panel's real root in multi-Agent setups.
@@ -4417,6 +6566,7 @@ async function refreshWorkspaceSelector() {
         if (aid) url += `&agent=${encodeURIComponent(aid)}`;
         const res = await fetch(url);
         const data = await res.json();
+        if (sessionId !== requestSession || activeAgentId !== requestAgent) return;
         if (data.status !== 'success') return;
         _wsSelState = {
             current: data.current || null,
@@ -4727,9 +6877,12 @@ function _closeComposerMenus(keep) {
 
 // Fetch this session's effective model + permission and repaint both chips.
 async function refreshSessionSettings() {
+    const requestSession = sessionId;
+    const requestAgent = activeAgentId;
     try {
         const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/settings`);
         const data = await res.json();
+        if (sessionId !== requestSession || activeAgentId !== requestAgent) return;
         if (data.status !== 'success') return;
         _sessCfg = { model: data.model, permission: data.permission, team: data.team };
     } catch (e) {
@@ -5317,24 +7470,7 @@ chatInput.addEventListener('blur', () => {
     setTimeout(hideSlashMenu, 150);
 });
 
-document.querySelectorAll('.example-card').forEach(card => {
-    card.addEventListener('click', () => {
-        // data-send overrides the visible text (e.g. show "查看全部命令" but send "/help")
-        const sendText = card.dataset.send;
-        if (sendText) {
-            chatInput.value = sendText;
-            chatInput.dispatchEvent(new Event('input'));
-            chatInput.focus();
-            return;
-        }
-        const textEl = card.querySelector('[data-i18n*="text"]');
-        if (textEl) {
-            chatInput.value = textEl.textContent;
-            chatInput.dispatchEvent(new Event('input'));
-            chatInput.focus();
-        }
-    });
-});
+bindWelcomeSuggestions(messagesDiv);
 
 // Voice-message variant of sendMessage(): renders a playable audio bubble
 // with the ASR caption, then dispatches the recognised text to /message
@@ -5373,7 +7509,7 @@ function sendVoiceMessage(text, audioUrl) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
         })
-        .then(r => r.json())
+        .then(readMessageResponse)
         .then(data => {
             if (data.status === 'success') {
                 rememberLiveSpeaker(data);
@@ -5390,7 +7526,7 @@ function sendVoiceMessage(text, audioUrl) {
                 }
             } else {
                 loadingEl.remove();
-                addBotMessage(t('error_send'), new Date());
+                addMessageError(data);
                 resetSendBtnSendMode();
             }
         })
@@ -5576,7 +7712,7 @@ async function regenerateResponse(botMsgEl) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
         })
-        .then(r => r.json())
+        .then(readMessageResponse)
         .then(data => {
             if (data.status === 'success') {
                 rememberLiveSpeaker(data);
@@ -5592,7 +7728,7 @@ async function regenerateResponse(botMsgEl) {
                 }
             } else {
                 loadingEl.remove();
-                addBotMessage(t('error_send'), new Date());
+                addMessageError(data);
                 resetSendBtnSendMode();
             }
         })
@@ -5617,7 +7753,51 @@ async function regenerateResponse(botMsgEl) {
     postWithRetry(0);
 }
 
+// Preserve actionable server failures without retrying an HTTP rejection.
+async function readMessageResponse(response) {
+    let data;
+    try { data = await response.json(); } catch (_) { data = null; }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) data = { status: 'error' };
+    return { ...data, status: response.ok ? data.status : 'error', http_status: response.status };
+}
+
+function messageFailureText(data) {
+    const code = String(data?.code || '').toLowerCase();
+    const detail = typeof data?.message === 'string' ? data.message.trim() : '';
+    const normalized = detail.toLowerCase();
+    if (data?.http_status === 401 || code === 'unauthorized' || normalized === 'unauthorized') {
+        return t('error_login_required');
+    }
+    if (code === 'missing_tenant' || code === 'conflicting_tenant'
+            || normalized === 'tenant selection required' || normalized === 'conflicting tenant selection') {
+        return t('error_tenant_required');
+    }
+    if (code === 'password_change_required' || normalized === 'password change required') {
+        return t('error_password_required');
+    }
+    if (data?.http_status === 403 || code === 'forbidden' || normalized === 'forbidden') {
+        return t('error_chat_forbidden');
+    }
+    return detail ? `${t('error_send')} ${detail.slice(0, 500)}` : t('error_send');
+}
+
+function addMessageError(data) {
+    const text = messageFailureText(data);
+    const el = createBotMessageEl('', new Date());
+    const content = el.querySelector('.answer-content');
+    // Error details are plain text, even when the server returns markup or a
+    // Markdown link. They must never become executable HTML or clickable UI.
+    content.textContent = text;
+    content.dataset.rawMd = text;
+    messagesDiv.appendChild(el);
+    scrollChatToBottom();
+}
+
 function sendMessage() {
+    if (_identityMode() === 'database' && !sessionStorage.getItem('cow_tenant_id')) {
+        addMessageError({ code: 'missing_tenant' });
+        return;
+    }
     // Do NOT branch on sendBtnMode here: Enter should always send (so
     // typing "/cancel" submits normally). Cancel is wired only to the
     // send button's pointer click — see send-btn listener above.
@@ -5675,7 +7855,7 @@ function sendMessage() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
         })
-        .then(r => r.json())
+        .then(readMessageResponse)
         .then(data => {
             if (data.status === 'success') {
                 rememberLiveSpeaker(data);
@@ -5693,7 +7873,7 @@ function sendMessage() {
                 }
             } else {
                 loadingEl.remove();
-                addBotMessage(t('error_send'), new Date());
+                addMessageError(data);
                 resetSendBtnSendMode();
             }
         })
@@ -6151,8 +8331,12 @@ function startSSE(requestId, loadingEl, timestamp, titleInfo, replayItems) {
                 if (titleInfo) {
                     generateSessionTitle(titleInfo.sid, titleInfo.userMsg, '');
                     titleInfo = null;
-                } else if (sessionPanelOpen) {
-                    loadSessionList();
+                } else {
+                    // A session's title may have been regenerated/re-ordered or its
+                    // activity updated. Refresh the visible history list, otherwise
+                    // mark it dirty so the next visit re-reads the latest state.
+                    if (_historyVisible) loadSessionList();
+                    else _historyDirty = true;
                 }
 
             } else if (item.type === 'voice_attach') {
@@ -6391,7 +8575,7 @@ function startPolling() {
                     // Pushed message (scheduler result, missed reply): show the
                     // content itself, matching the desktop push notification.
                     showTaskNotification(
-                        sessionTitleOf(sessionId) || 'CowAgent',
+                        sessionTitleOf(sessionId) || PRODUCT_NAME,
                         firstLineSnippet(data.content),
                         sessionId
                     );
@@ -6977,9 +9161,18 @@ function addBotMessage(content, timestamp, requestId) {
 // Load conversation history from the server (page 1 = most recent messages).
 // Subsequent pages prepend older messages when the user scrolls to the top.
 function loadHistory(page) {
-    if (historyLoading) return;
-    historyLoading = true;
     const historySessionId = sessionId;
+    const historyAgentId = activeAgentId;
+    const historyEpoch = _authEpoch;
+    const historyTenantId = sessionStorage.getItem('cow_tenant_id');
+    const context = JSON.stringify([historyEpoch, historyTenantId, historyAgentId, historySessionId]);
+    if (historyLoading && _historyLoadContext === context) return;
+    historyLoading = true;
+    _historyLoadContext = context;
+    const requestSeq = ++_historyLoadSeq;
+    const current = () => requestSeq === _historyLoadSeq && historySessionId === sessionId
+        && historyAgentId === activeAgentId && historyEpoch === _authEpoch
+        && historyTenantId === sessionStorage.getItem('cow_tenant_id');
 
     // A shared conversation labels each bubble with its author and paints the
     // right face. That resolution needs this session's team roster (_sessCfg),
@@ -6988,13 +9181,20 @@ function loadHistory(page) {
     // before rendering so a reload looks exactly like the live conversation.
     const ready = _sessCfg ? Promise.resolve() : refreshSessionSettings().catch(() => {});
 
-    ready.then(() => fetch(`/api/history?session_id=${encodeURIComponent(historySessionId)}&page=${page}&page_size=20`)
-        .then(r => r.json())
+    return ready.then(() => {
+        if (!current()) return;
+        return fetch(`/api/history?session_id=${encodeURIComponent(historySessionId)}&agent_id=${encodeURIComponent(historyAgentId)}&page=${page}&page_size=20`)
+        .then(async r => {
+            const data = await r.json();
+            if (!r.ok || data.status !== 'success' || !Array.isArray(data.messages)) {
+                throw new Error('Conversation history request failed');
+            }
+            return data;
+        })
         .then(data => {
             // A response from a session we have since left must never render
             // into the new session's message list.
-            if (historySessionId !== sessionId) return;
-            if (data.status !== 'success' || data.messages.length === 0) return;
+            if (!current() || data.messages.length === 0) return;
 
             const prevScrollHeight = messagesDiv.scrollHeight;
             const isFirstLoad = page === 1;
@@ -7088,12 +9288,18 @@ function loadHistory(page) {
                 // Restore scroll position so loading older messages doesn't jump the view
                 messagesDiv.scrollTop = messagesDiv.scrollHeight - prevScrollHeight;
             }
+        });
+    })
+        .catch(error => {
+            if (!current()) return;
+            console.warn('[history] Failed to open conversation', error);
+            _wsToast(t('session_history_failed'));
         })
-        .catch(() => {})
         .finally(() => {
+            if (!current()) return;
             historyLoading = false;
             renderComposerIdentity();
-        }));
+        });
 }
 
 function addLoadingIndicator() {
@@ -7144,7 +9350,7 @@ function startSoloChat(agentId) {
     document.getElementById('new-chat-menu')?.classList.add('hidden');
     if (!agentId) { newChat(true); return; }
     activeAgentId = agentId;
-    localStorage.setItem('cow_active_agent', activeAgentId);
+    writeScopedPreference('cow_active_agent', activeAgentId);
     newChat(true);
     if (typeof resetWorkspaceToAgentRoot === 'function') resetWorkspaceToAgentRoot();
     renderComposerIdentity();
@@ -7206,7 +9412,7 @@ function startTeamChat() {
     closeTeamChatModal();
     const [owner, ...guests] = picks;
     activeAgentId = owner;
-    localStorage.setItem('cow_active_agent', activeAgentId);
+    writeScopedPreference('cow_active_agent', activeAgentId);
     newChat(true);
     if (typeof resetWorkspaceToAgentRoot === 'function') resetWorkspaceToAgentRoot();
     // The fresh session exists client-side; invite the guests onto it so the
@@ -7225,194 +9431,53 @@ function newChat(optimistic = true, inherit = true) {
 
     // Generate a fresh session and persist it so the next page load also starts clean
     sessionId = generateSessionId();
-    localStorage.setItem(activeSessionStorageKey(), sessionId);
+    writeScopedPreference(activeSessionStorageKey(), sessionId);
+    _sessCfg = null;
+    if (!inherit) {
+        _wsSelState = { current: null, recents: [], defaultWorkspace: '', projectsRoot: '' };
+        _wsSelUpdateLabel();
+    }
     refreshWorkspaceSelector();  // a fresh session starts on the default workspace
     refreshSessionSettings();    // ... and on the global model / permission
     if (typeof wsOnSessionSwitch === 'function') wsOnSessionSwitch();
     resetSendBtnSendMode();  // fresh session has no in-flight reply
     startPolling();  // bump generation so old loop self-cancels, new loop uses fresh sessionId
     messagesDiv.innerHTML = '';
-    const ws = document.createElement('div');
-    ws.id = 'welcome-screen';
-    ws.className = 'flex flex-col items-center justify-center h-full px-6 pb-16';
-    ws.style.paddingTop = '6vh';
-    ws.innerHTML = `
-        <img src="assets/logo.jpg" alt="CowAgent" class="w-16 h-16 rounded-2xl mb-6 shadow-lg shadow-primary-500/20">
-        <h1 class="text-2xl font-bold text-slate-800 dark:text-slate-100 mb-3">${appConfig.title || 'CowAgent'}</h1>
-        <p class="text-slate-500 dark:text-slate-400 text-center max-w-lg mb-10 leading-relaxed" data-i18n="welcome_subtitle">${t('welcome_subtitle')}</p>
-        <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 w-full max-w-2xl">
-            <div class="example-card group bg-white dark:bg-[#1A1A1A] border border-slate-200 dark:border-white/10 rounded-xl p-4 cursor-pointer hover:border-primary-300 dark:hover:border-primary-600 hover:shadow-md transition-all duration-200">
-                <div class="flex items-center gap-2 mb-2">
-                    <div class="w-7 h-7 rounded-lg bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center">
-                        <i class="fas fa-folder-open text-blue-500 text-xs"></i>
-                    </div>
-                    <span class="font-medium text-sm text-slate-700 dark:text-slate-200" data-i18n="example_sys_title">${t('example_sys_title')}</span>
-                </div>
-                <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="example_sys_text">${t('example_sys_text')}</p>
-            </div>
-            <div class="example-card group bg-white dark:bg-[#1A1A1A] border border-slate-200 dark:border-white/10 rounded-xl p-4 cursor-pointer hover:border-primary-300 dark:hover:border-primary-600 hover:shadow-md transition-all duration-200">
-                <div class="flex items-center gap-2 mb-2">
-                    <div class="w-7 h-7 rounded-lg bg-amber-50 dark:bg-amber-900/30 flex items-center justify-center">
-                        <i class="fas fa-clock text-amber-500 text-xs"></i>
-                    </div>
-                    <span class="font-medium text-sm text-slate-700 dark:text-slate-200" data-i18n="example_task_title">${t('example_task_title')}</span>
-                </div>
-                <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="example_task_text">${t('example_task_text')}</p>
-            </div>
-            <div class="example-card group bg-white dark:bg-[#1A1A1A] border border-slate-200 dark:border-white/10 rounded-xl p-4 cursor-pointer hover:border-primary-300 dark:hover:border-primary-600 hover:shadow-md transition-all duration-200">
-                <div class="flex items-center gap-2 mb-2">
-                    <div class="w-7 h-7 rounded-lg bg-emerald-50 dark:bg-emerald-900/30 flex items-center justify-center">
-                        <i class="fas fa-code text-emerald-500 text-xs"></i>
-                    </div>
-                    <span class="font-medium text-sm text-slate-700 dark:text-slate-200" data-i18n="example_code_title">${t('example_code_title')}</span>
-                </div>
-                <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="example_code_text">${t('example_code_text')}</p>
-            </div>
-            <div class="example-card group bg-white dark:bg-[#1A1A1A] border border-slate-200 dark:border-white/10 rounded-xl p-4 cursor-pointer hover:border-primary-300 dark:hover:border-primary-600 hover:shadow-md transition-all duration-200">
-                <div class="flex items-center gap-2 mb-2">
-                    <div class="w-7 h-7 rounded-lg bg-violet-50 dark:bg-violet-900/30 flex items-center justify-center">
-                        <i class="fas fa-book text-violet-500 text-xs"></i>
-                    </div>
-                    <span class="font-medium text-sm text-slate-700 dark:text-slate-200" data-i18n="example_knowledge_title">${t('example_knowledge_title')}</span>
-                </div>
-                <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="example_knowledge_text">${t('example_knowledge_text')}</p>
-            </div>
-            <div class="example-card group bg-white dark:bg-[#1A1A1A] border border-slate-200 dark:border-white/10 rounded-xl p-4 cursor-pointer hover:border-primary-300 dark:hover:border-primary-600 hover:shadow-md transition-all duration-200">
-                <div class="flex items-center gap-2 mb-2">
-                    <div class="w-7 h-7 rounded-lg bg-rose-50 dark:bg-rose-900/30 flex items-center justify-center">
-                        <i class="fas fa-puzzle-piece text-rose-500 text-xs"></i>
-                    </div>
-                    <span class="font-medium text-sm text-slate-700 dark:text-slate-200" data-i18n="example_skill_title">${t('example_skill_title')}</span>
-                </div>
-                <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="example_skill_text">${t('example_skill_text')}</p>
-            </div>
-            <div class="example-card group bg-white dark:bg-[#1A1A1A] border border-slate-200 dark:border-white/10 rounded-xl p-4 cursor-pointer hover:border-primary-300 dark:hover:border-primary-600 hover:shadow-md transition-all duration-200" data-send="/help">
-                <div class="flex items-center gap-2 mb-2">
-                    <div class="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-                        <i class="fas fa-terminal text-slate-500 text-xs"></i>
-                    </div>
-                    <span class="font-medium text-sm text-slate-700 dark:text-slate-200" data-i18n="example_web_title">${t('example_web_title')}</span>
-                </div>
-                <p class="text-sm text-slate-500 dark:text-slate-400 leading-relaxed" data-i18n="example_web_text">${t('example_web_text')}</p>
-            </div>
-        </div>
-    `;
-    messagesDiv.appendChild(ws);
+    renderWelcomeScreen();
     renderComposerIdentity();
-    ws.querySelectorAll('.example-card').forEach(card => {
-        card.addEventListener('click', () => {
-            const sendText = card.dataset.send;
-            if (sendText) {
-                chatInput.value = sendText;
-                chatInput.dispatchEvent(new Event('input'));
-                chatInput.focus();
-                return;
-            }
-            const textEl = card.querySelector('[data-i18n*="text"]');
-            if (textEl) {
-                chatInput.value = textEl.textContent;
-                chatInput.dispatchEvent(new Event('input'));
-                chatInput.focus();
-            }
-        });
-    });
     if (currentView !== 'chat') navigateTo('chat');
 
-    // Show panel and load full session list, then prepend the new session on top
-    const panel = document.getElementById('session-panel');
-    if (panel && !sessionPanelOpen) {
-        sessionPanelOpen = true;
-        panel.classList.remove('hidden');
-        _showSessionOverlay();
-        _persistPanelState();
-    }
-    // Only prepend an optimistic "new chat" item when this is a real new-chat
-    // action. When called after deleting the current session, skip it: the
-    // fresh session has no backend record yet, so inserting it would leave an
-    // empty, undeletable item in the list (deleting it just spawns another).
+    // A fresh session may not have a backend record until its first message, so
+    // only prepend an optimistic item for a real new-chat action. After deleting
+    // the current session it is skipped: the fresh session has no row yet, and
+    // inserting one would leave an empty, undeletable item behind (deleting it
+    // would just spawn another).
     const newSid = sessionId;
-    if (optimistic) {
-        loadSessionList(() => _addOptimisticSessionItem(newSid));
+    if (_historyVisible) {
+        if (optimistic) {
+            loadSessionList(() => _addOptimisticSessionItem(newSid));
+        } else {
+            loadSessionList();
+        }
     } else {
-        loadSessionList();
+        // The list is hidden; mark it dirty so the next visit re-reads it.
+        _historyDirty = true;
     }
 }
 
 // =====================================================================
-// Session Panel
+// Session History (workbench page)
 // =====================================================================
 
-const SESSION_PANEL_KEY = 'cow_session_panel_open';
-let sessionPanelOpen = localStorage.getItem(SESSION_PANEL_KEY) === '1';
-// Whether the history panel was open before entering the team page, so it can
-// be restored on the way out (the team page force-closes it for room).
-let _sessionPanelWasOpen = false;
-
-function _persistPanelState() {
-    localStorage.setItem(SESSION_PANEL_KEY, sessionPanelOpen ? '1' : '0');
-}
+// The history page is the sole consumer of the session list now that the old
+// collapsible panel is gone. `_historyVisible` tracks whether the page is the
+// active view; `_historyDirty` marks a pending reload (a session changed while
+// the page was hidden, or the page was left and needs a fresh read).
+let _historyVisible = false;
+let _historyDirty = false;
 
 function _isMobileView() {
     return window.innerWidth <= 768;
-}
-
-function _showSessionOverlay() {
-    if (!_isMobileView()) return;
-    const overlay = document.getElementById('session-panel-overlay');
-    if (overlay) overlay.classList.remove('hidden');
-}
-
-function _hideSessionOverlay() {
-    const overlay = document.getElementById('session-panel-overlay');
-    if (overlay) overlay.classList.add('hidden');
-}
-
-function closeSessionPanel(skipPersist) {
-    const panel = document.getElementById('session-panel');
-    if (!panel || !sessionPanelOpen) return;
-    sessionPanelOpen = false;
-    panel.classList.add('hidden');
-    _hideSessionOverlay();
-    // When the team page tucks the panel away it shouldn't overwrite the user's
-    // own preference; only real user closes persist.
-    if (!skipPersist) _persistPanelState();
-}
-
-function toggleSessionPanel() {
-    const panel = document.getElementById('session-panel');
-    if (!panel) return;
-    sessionPanelOpen = !sessionPanelOpen;
-    panel.classList.toggle('hidden', !sessionPanelOpen);
-    if (sessionPanelOpen) {
-        _showSessionOverlay();
-    } else {
-        _hideSessionOverlay();
-    }
-    _persistPanelState();
-    if (sessionPanelOpen) loadSessionList();
-}
-
-function openSessionPanel() {
-    const panel = document.getElementById('session-panel');
-    if (!panel || sessionPanelOpen) return;
-    sessionPanelOpen = true;
-    panel.classList.remove('hidden');
-    _showSessionOverlay();
-    _persistPanelState();
-    loadSessionList();
-}
-
-function _restoreSessionPanel() {
-    const panel = document.getElementById('session-panel');
-    if (!panel) return;
-    if (sessionPanelOpen && !_isMobileView()) {
-        panel.classList.remove('hidden');
-        _showSessionOverlay();
-        loadSessionList();
-    } else {
-        panel.classList.add('hidden');
-        _hideSessionOverlay();
-    }
 }
 
 // Swap the native `title` for the CSS tooltip so hints appear instantly
@@ -7434,8 +9499,10 @@ function _applyInputTooltips() {
     set('clear-context-btn', 'tip_clear_context');
     set('attach-btn', 'tip_attach');
     set('steer-btn', 'steer_active');
-    set('session-toggle-btn', 'session_history', 'bottom');
     set('workspace-toggle-btn', 'ws_toggle', 'bottom');
+    // The history page's inline refresh button carries a translated tooltip.
+    const historyRefresh = document.querySelector('.history-refresh-btn');
+    if (historyRefresh) _setBtnTooltip(historyRefresh, t('ws_refresh'));
     // Optimize / mic buttons carry state-dependent tooltips managed in their
     // own setup, but on language switch we reset them to the idle label so the
     // tooltip follows the current locale.
@@ -7453,6 +9520,7 @@ function _applyInputTooltips() {
 // pressed "new chat" and has not sent the first message. Rendered from the same
 // path as real sessions so it lands in the right group.
 function _addOptimisticSessionItem(sid) {
+    if (_historyQuery) return;
     const container = document.getElementById('session-list');
     if (!container) return;
     if (_sessionItems.some(s => s.session_id === sid)) return;
@@ -7509,34 +9577,316 @@ function _saveCollapsed(set) {
 }
 let _collapsedProjects = _loadCollapsed();
 
-function loadSessionList(onDone) {
-    const container = document.getElementById('session-list');
-    if (!container) return;
-
-    _sessionPage = 1;
-    _sessionHasMore = false;
-
-    _fetchSessionPage(1, true, onDone);
+// Request-generation + context guard for the session list, so a late response
+// from an earlier read (or one started under a different Agent / after a
+// re-entry) is dropped instead of overwriting a fresher list.
+let _sessionReqSeq = 0;
+let _sessionReqAgent = '';
+let _historyQuery = '';
+let _historySearchTimer = null;
+let _historySearchComposing = false;
+let _historyTotal = null;
+let _historyRequestController = null;
+let _historyAuthGeneration = 0;
+let _historyStatus = { key: '', message: '', error: false, retry: null };
+let _historyPageFailed = false;
+function _sessionListContext() {
+    return JSON.stringify([_historyAuthGeneration, sessionStorage.getItem('cow_tenant_id') || '', activeAgentId, _historyQuery]);
 }
 
-function _fetchSessionPage(page, clear, onDone) {
+function _renderHistoryStatus() {
+    const status = document.getElementById('history-status');
+    if (!status) return;
+    const text = _historyStatus.key ? t(_historyStatus.key) : _historyStatus.message;
+    status.textContent = text || '';
+    status.classList.remove('opacity-0');
+    status.classList.toggle('history-status-hidden', !text);
+    status.classList.toggle('history-status-error', _historyStatus.error);
+    status.setAttribute('role', _historyStatus.error ? 'alert' : 'status');
+    if (_historyStatus.retry) {
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'history-status-actions';
+        retry.textContent = t('session_history_retry');
+        retry.addEventListener('click', _historyStatus.retry);
+        status.appendChild(retry);
+    }
+}
+
+function _setHistoryState(key, error = false, retry = null, message = '') {
+    _historyStatus = { key, error, retry, message };
+    _renderHistoryStatus();
+}
+
+function _setHistoryStatus(text, error) {
+    _setHistoryState('', !!error, null, text || '');
+}
+
+function _setHistoryErrorWithRetry(text, retry = () => loadSessionList()) {
+    _setHistoryState('', true, retry, text);
+}
+
+function _updateHistorySearchControls() {
+    const input = document.getElementById('history-search-input');
+    const clear = document.getElementById('history-search-clear');
+    const summary = document.getElementById('history-search-summary');
+    const refresh = document.getElementById('history-refresh-btn');
+    if (input) input.setAttribute('aria-label', t('history_search_placeholder'));
+    if (clear) {
+        clear.classList.toggle('hidden', !(input && input.value));
+        clear.setAttribute('aria-label', t('history_search_clear'));
+    }
+    if (refresh) {
+        refresh.setAttribute('aria-label', t('history_refresh'));
+        refresh.setAttribute('data-tooltip', t('history_refresh'));
+    }
+    if (summary) summary.textContent = _historyQuery && _historyTotal !== null
+        ? t('history_search_count').replace('{count}', String(_historyTotal)) : '';
+    const list = document.getElementById('session-list');
+    if (list) list.setAttribute('aria-busy', String(_sessionLoading));
+}
+
+function _cancelHistoryRequest() {
+    clearTimeout(_historySearchTimer);
+    _historySearchTimer = null;
+    if (_historyRequestController) _historyRequestController.abort();
+    _historyRequestController = null;
+    _sessionReqSeq++;
+    _sessionLoading = false;
+}
+
+function _resetHistorySearch() {
+    _cancelHistoryRequest();
+    _historyAuthGeneration++;
+    _historySearchComposing = false;
+    _historyQuery = '';
+    _historyTotal = null;
+    _sessionItems = [];
+    _sessionHasMore = false;
+    _historyPageFailed = false;
+    _historyDirty = true;
+    const input = document.getElementById('history-search-input');
+    if (input) input.value = '';
+    _closeSessionActionMenu();
+    _setHistoryState('');
+    _renderSessionList();
+    _updateHistorySearchControls();
+}
+
+function onHistorySearchCompositionStart() {
+    _historySearchComposing = true;
+    _cancelHistoryRequest();
+}
+
+function onHistorySearchCompositionEnd(event) {
+    _historySearchComposing = false;
+    onHistorySearchInput(event);
+}
+
+function _readHistorySearchQuery() {
+    const input = document.getElementById('history-search-input');
+    return input ? input.value.trim() : _historyQuery;
+}
+
+function _syncHistorySearchQuery() {
+    const query = _readHistorySearchQuery();
+    if (query === _historyQuery) return false;
+    // The displayed value is authoritative. Restored/autofilled values need not
+    // have emitted input, so every explicit submit and refresh also comes here.
+    _cancelHistoryRequest();
+    _historyQuery = query;
+    _sessionItems = [];
+    _historyTotal = null;
+    _sessionHasMore = false;
+    _historyPageFailed = false;
+    _closeSessionActionMenu();
+    _renderSessionList();
+    _updateHistorySearchControls();
+    return true;
+}
+
+function onHistorySearchInput(event) {
+    if (event && event.isComposing) return;
+    // A committed InputEvent can recover from a missed compositionend. Keep
+    // the composition flag as a fallback only for events without this signal.
+    if (event && event.isComposing === false) _historySearchComposing = false;
+    if (_historySearchComposing) return;
+    const changed = _syncHistorySearchQuery();
+    if (!changed && (_sessionLoading || _historyTotal !== null)) {
+        _updateHistorySearchControls();
+        return;
+    }
+    if (!changed) _cancelHistoryRequest();
+    const query = _historyQuery;
+    if (Array.from(query).length > 100) {
+        _setHistoryState('history_search_limit', true);
+        return;
+    }
+    if (!query) return _submitHistorySearch();
+    _setHistoryState('history_search_loading');
+    _historySearchTimer = setTimeout(_submitHistorySearch, 300);
+}
+
+function _submitHistorySearch() {
+    clearTimeout(_historySearchTimer);
+    _historySearchTimer = null;
+    if (_historySearchComposing) return;
+    return loadSessionList();
+}
+
+function onHistorySearchChange(event) {
+    if (event && event.isComposing) return;
+    _historySearchComposing = false;
+    const changed = _syncHistorySearchQuery();
+    if (!changed && !_historySearchTimer && (_sessionLoading || _historyTotal !== null)) return;
+    return _submitHistorySearch();
+}
+
+function onHistorySearchKeydown(event) {
+    if (event.key === 'Enter' && event.isComposing === false && event.keyCode !== 229) {
+        _historySearchComposing = false;
+    }
+    if (event.key === 'Enter' && !_historySearchComposing && !event.isComposing && event.keyCode !== 229) {
+        event.preventDefault();
+        _syncHistorySearchQuery();
+        // An immediate submit consumes the debounce; repeated Enter while that
+        // same query is loading must not start a duplicate request.
+        if (!_sessionLoading) return _submitHistorySearch();
+    } else if (event.key === 'Escape' && !_historySearchComposing) {
+        event.preventDefault();
+        return clearHistorySearch();
+    }
+}
+
+function clearHistorySearch() {
+    const input = document.getElementById('history-search-input');
+    if (input) { input.value = ''; input.focus(); }
+    _historySearchComposing = false;
+    _cancelHistoryRequest();
+    _historyQuery = '';
+    _historyTotal = null;
+    _sessionItems = [];
+    _sessionHasMore = false;
+    _renderSessionList();
+    _updateHistorySearchControls();
+    return _submitHistorySearch();
+}
+
+function loadSessionList(onDone) {
+    const container = document.getElementById('session-list');
+    if (!container || _historySearchComposing) return;
+    if (container.querySelector('.session-title-input') || _dragSpaceKey !== null) {
+        _historyDirty = true;
+        return;
+    }
+    _syncHistorySearchQuery();
+    if (Array.from(_historyQuery).length > 100) {
+        _setHistoryState('history_search_limit', true);
+        return;
+    }
+
+    // A fresh (re)load supersedes any in-flight read: reset loading so the new
+    // request starts, and bump the sequence so a stale response is dropped.
+    _cancelHistoryRequest();
+    _sessionPage = 1;
+    _sessionHasMore = false;
+    _historyDirty = false;
+    _historyPageFailed = false;
+    _historyTotal = null;
+    _sessionReqAgent = _sessionListContext();
+    const seq = _sessionReqSeq;
+    container.scrollTop = 0;
+
+    return _fetchSessionPage(1, true, onDone, seq);
+}
+
+// Refresh the list for session operations that happen while the user may not be
+// on the history page: reload only if it is the active view, otherwise mark it
+// dirty so the next visit re-reads.
+function _refreshHistoryList() {
+    if (_historyVisible) loadSessionList();
+    else _historyDirty = true;
+}
+
+function _fetchSessionPage(page, clear, onDone, seq) {
     if (_sessionLoading) return;
+    const existingList = document.getElementById('session-list');
+    if (existingList && (existingList.querySelector('.session-title-input') || _dragSpaceKey !== null)) {
+        _historyDirty = true;
+        return;
+    }
+    if (!seq) seq = ++_sessionReqSeq;
+    // A re-entry or identity change invalidates prior reads: drop the request so
+    // a stale result cannot repaint the current list.
+    if (seq !== _sessionReqSeq) return;
     _sessionLoading = true;
+    _historyPageFailed = false;
+    _setHistoryState(_historyQuery ? 'history_search_loading' : 'session_history_loading');
+    _updateHistorySearchControls();
 
     const container = document.getElementById('session-list');
     if (!container) { _sessionLoading = false; return; }
+    const ctx = _sessionListContext();
+    const query = _historyQuery;
+    const controller = new AbortController();
+    _historyRequestController = controller;
+    const current = () => seq === _sessionReqSeq && ctx === _sessionListContext();
+    const fail = (key, message) => {
+        if (!current()) return;
+        _sessionLoading = false;
+        _historyRequestController = null;
+        if (container.querySelector('.session-title-input') || _dragSpaceKey !== null) {
+            _historyDirty = true;
+            _setHistoryState('');
+            _updateHistorySearchControls();
+            return;
+        }
+        _historyPageFailed = true;
+        if (clear) { _sessionItems = []; _historyTotal = null; }
+        _setHistoryState(key, true, () => _fetchSessionPage(page, clear, onDone, seq), message);
+        _renderSessionList();
+        _updateHistorySearchControls();
+    };
+    const url = `/api/sessions?page=${page}&page_size=${_SESSION_PAGE_SIZE}&scope=all`
+        + (query ? `&q=${encodeURIComponent(query)}` : '');
 
-    fetch(`/api/sessions?page=${page}&page_size=${_SESSION_PAGE_SIZE}&scope=all`)
-        .then(r => r.json())
+    return fetch(url, { signal: controller.signal })
+        .then(async r => {
+            const data = await r.json();
+            if (r.status === 403 || r.status === 503) data._historyUnavailable = true;
+            return data;
+        })
         .then(data => {
+            // Late / stale result: the page changed or the identity moved on.
+            if (!current()) return;
+            // Editing can begin after this request was sent. Defer its result
+            // rather than replacing a focused editor or a dragged project.
+            if (container.querySelector('.session-title-input') || _dragSpaceKey !== null) {
+                _sessionLoading = false;
+                _historyRequestController = null;
+                _historyDirty = true;
+                _setHistoryState('');
+                _updateHistorySearchControls();
+                return;
+            }
+
+            if (data.status !== 'success') {
+                fail(data._historyUnavailable ? 'session_history_not_enabled' : 'session_history_failed');
+                return;
+            }
+            if (query && data.query !== query) {
+                fail('history_search_unsupported');
+                return;
+            }
             _sessionLoading = false;
-            if (data.status !== 'success') return;
+            _historyRequestController = null;
 
             if (clear) _sessionItems = [];
 
             const sessions = data.sessions || [];
             _sessionPage = page;
             _sessionHasMore = !!data.has_more;
+            _historyTotal = Number.isFinite(data.total) ? data.total : null;
             _sessionGroupMode = data.group_mode === 'project' ? 'project' : 'time';
             if (Array.isArray(data.project_order)) _projectOrder = data.project_order;
 
@@ -7549,10 +9899,24 @@ function _fetchSessionPage(page, clear, onDone) {
                 _sessionItems.push(s);
             });
 
+            // First-page (full) reloads paint the list state; subsequent-page
+            // loads keep whatever is already confirmed on screen.
+            _setHistoryState(_sessionItems.length ? '' : query ? 'history_search_empty' : 'session_history_empty');
             _renderSessionList();
+            _updateHistorySearchControls();
             if (typeof onDone === 'function') onDone();
+            // A tall screen may not produce a scroll event after the first page.
+            // Fill until scrolling is possible or all matching sessions arrived.
+            requestAnimationFrame(() => {
+                if (current() && _historyVisible && _sessionHasMore && !_sessionLoading
+                        && container.clientHeight > 0 && container.scrollHeight <= container.clientHeight + 60) {
+                    _fetchSessionPage(_sessionPage + 1, false, undefined, seq);
+                }
+            });
         })
-        .catch(() => { _sessionLoading = false; });
+        .catch(error => {
+            if (error.name !== 'AbortError') fail('session_history_failed');
+        });
 }
 
 // Split the loaded sessions into ordered, labelled groups.
@@ -7606,13 +9970,20 @@ function _sessionGroups() {
 function _renderSessionList() {
     const container = document.getElementById('session-list');
     if (!container) return;
+    _closeSessionActionMenu();
 
     if (!_sessionItems.length) {
-        container.innerHTML = '<div class="session-empty">' + t('untitled_session') + '</div>';
+        // The state (empty / error / loading) is shown in the status line above;
+        // the list itself is left blank.
+        container.innerHTML = '';
         return;
     }
 
     container.innerHTML = '';
+    if (_historyQuery) {
+        _sessionItems.forEach(s => container.appendChild(_sessionItemEl(s, false)));
+        return;
+    }
     const projectMode = _sessionGroupMode === 'project';
     // Indent sessions under their project header when several projects are
     // shown, so the list reads as a tree aligned to the folder icon above.
@@ -7678,6 +10049,7 @@ function _wireGroupDrag(header, key) {
     header.addEventListener('dragend', () => {
         _dragSpaceKey = null;
         header.classList.remove('dragging');
+        if (_historyDirty) { _historyDirty = false; _refreshHistoryList(); }
         document.querySelectorAll('.session-group-project.drop-target')
             .forEach(el => el.classList.remove('drop-target'));
     });
@@ -7727,13 +10099,13 @@ function renameProject(path, currentName) {
             .then(r => r.json())
             .then(data => {
                 if (data.status !== 'success') { _wsToast(data.message || t('session_settings_failed')); return; }
-                loadSessionList();
+                _refreshHistoryList();
             })
             .catch(() => _wsToast(t('session_settings_failed')));
     });
 }
 
-// Delete a project record. Only the CowAgent record is removed; files stay and
+// Delete a project record. Only the RongAI record is removed; files stay and
 // bound sessions revert to the default workspace.
 function deleteProject(path, name) {
     showConfirmModal(
@@ -7748,11 +10120,94 @@ function deleteProject(path, name) {
                 .then(r => r.json())
                 .then(data => {
                     if (data.status !== 'success') { _wsToast(data.message || t('session_settings_failed')); return; }
-                    loadSessionList();
+                    _refreshHistoryList();
                 })
                 .catch(() => _wsToast(t('session_settings_failed')));
         }
     );
+}
+
+function _historyTimeLabel(timestamp) {
+    const date = new Date(Number(timestamp) * 1000);
+    if (!timestamp || Number.isNaN(date.getTime())) return { text: '', full: '' };
+    const now = new Date();
+    const locale = currentLang === 'en' ? 'en-US' : currentLang === 'zh-Hant' ? 'zh-TW' : 'zh-CN';
+    const today = date.toDateString() === now.toDateString();
+    return {
+        text: today ? date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false })
+            : date.toLocaleDateString(locale, { month: '2-digit', day: '2-digit', ...(date.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}) }),
+        full: date.toLocaleString(locale),
+    };
+}
+
+let _sessionActionMenu = null;
+let _sessionMenuCleanup = null;
+function _closeSessionActionMenu(restoreFocus = false) {
+    if (_sessionMenuCleanup) _sessionMenuCleanup(restoreFocus);
+    _sessionMenuCleanup = null;
+    if (_sessionActionMenu) _sessionActionMenu.remove();
+    _sessionActionMenu = null;
+}
+
+function _openSessionActionMenu(event, session, trigger) {
+    event.stopPropagation();
+    const wasOpen = trigger.getAttribute('aria-expanded') === 'true';
+    _closeSessionActionMenu();
+    if (wasOpen) return;
+    const owner = (session.agent && session.agent.id) || activeAgentId;
+    const menu = document.createElement('div');
+    menu.className = 'session-action-menu';
+    menu.setAttribute('role', 'menu');
+    menu.setAttribute('aria-label', t('history_more'));
+    const actions = [
+        [session.pinned ? 'unpin_session' : 'pin_session', 'fa-thumbtack', () => toggleSessionPin(session.session_id, owner)],
+        ['rename_session', 'fa-pen', () => renameSession(session.session_id, owner)],
+        ['agents_delete', 'fa-trash-can', () => deleteSession(session.session_id, owner)],
+    ];
+    actions.forEach(([label, icon, action], index) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'session-action-menu-item' + (index === 2 ? ' danger' : '');
+        button.setAttribute('role', 'menuitem');
+        button.innerHTML = `<i class="fas ${icon}" aria-hidden="true"></i><span>${escapeHtml(t(label))}</span>`;
+        button.addEventListener('click', e => {
+            e.stopPropagation();
+            _closeSessionActionMenu(index !== 1);
+            action();
+        });
+        menu.appendChild(button);
+    });
+    document.body.appendChild(menu);
+    _sessionActionMenu = menu;
+    trigger.setAttribute('aria-expanded', 'true');
+    const rect = trigger.getBoundingClientRect();
+    const bounds = menu.getBoundingClientRect();
+    menu.style.left = Math.max(8, Math.min(rect.right - bounds.width, window.innerWidth - bounds.width - 8)) + 'px';
+    menu.style.top = Math.max(8, rect.bottom + bounds.height + 6 <= window.innerHeight
+        ? rect.bottom + 6 : rect.top - bounds.height - 6) + 'px';
+    const dismissOutside = e => { if (!menu.contains(e.target) && !trigger.contains(e.target)) _closeSessionActionMenu(); };
+    const dismiss = () => _closeSessionActionMenu();
+    const keydown = e => {
+        const buttons = [...menu.querySelectorAll('button')];
+        const index = buttons.indexOf(document.activeElement);
+        if (e.key === 'Escape') { e.preventDefault(); _closeSessionActionMenu(true); }
+        else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            buttons[(index + (e.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length].focus();
+        } else if (e.key === 'Tab') _closeSessionActionMenu(true);
+    };
+    document.addEventListener('pointerdown', dismissOutside);
+    window.addEventListener('resize', dismiss);
+    window.addEventListener('scroll', dismiss, true);
+    menu.addEventListener('keydown', keydown);
+    _sessionMenuCleanup = restore => {
+        trigger.setAttribute('aria-expanded', 'false');
+        document.removeEventListener('pointerdown', dismissOutside);
+        window.removeEventListener('resize', dismiss);
+        window.removeEventListener('scroll', dismiss, true);
+        if (restore && trigger.isConnected) trigger.focus();
+    };
+    menu.querySelector('button').focus({ preventScroll: true });
 }
 
 function _sessionItemEl(s, indent) {
@@ -7765,8 +10220,6 @@ function _sessionItemEl(s, indent) {
     if (ownerId) item.dataset.agentId = ownerId;
 
     const title = s.title || t('untitled_session');
-    const sid = _wsAttr(s.session_id);
-    const owner = ownerId ? _wsAttr(ownerId) : '';
     // Faces mark a conversation that has several Agents in it, the way a group
     // chat is distinguishable from a direct one. A conversation with a single
     // Agent stays a plain row, whatever the roster looks like elsewhere. We show
@@ -7780,21 +10233,25 @@ function _sessionItemEl(s, indent) {
             + (overflow > 0 ? `<span class="session-face-more">+${overflow}</span>` : '')
             + `</span>`
         : `<i class="fas ${s.pinned ? 'fa-thumbtack' : 'fa-message'} session-icon"></i>`;
+    const agentName = (s.agent && (s.agent.name || s.agent.id)) || t('agents_default');
+    const projectName = s.project && s.project.name || t('ws_default_workspace');
+    const time = _historyTimeLabel(s.last_active);
     item.innerHTML = `
-        ${face}
-        <span class="session-title" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
-        <button class="session-pin" onclick="event.stopPropagation(); toggleSessionPin('${sid}', '${owner}')"
-                title="${escapeHtml(t(s.pinned ? 'unpin_session' : 'pin_session'))}">
-            <i class="fas fa-thumbtack"></i>
+        <button type="button" class="session-row-main">
+            ${face}
+            <span class="session-copy">
+                <span class="session-title-line"><span class="session-title" title="${escapeHtml(title)}">${escapeHtml(title)}</span>
+                    ${isActive ? `<span class="session-current-label">${escapeHtml(t('history_current'))}</span>` : ''}</span>
+                <span class="session-meta">${escapeHtml(agentName)} · ${escapeHtml(projectName)}</span>
+            </span>
         </button>
-        <button class="session-rename" onclick="event.stopPropagation(); renameSession('${sid}')" title="${escapeHtml(t('rename_session'))}">
-            <i class="fas fa-pen"></i>
-        </button>
-        <button class="session-delete" onclick="event.stopPropagation(); deleteSession('${sid}', '${owner}')" title="Delete">
-            <i class="fas fa-trash-can"></i>
-        </button>
+        <span class="session-time" title="${escapeHtml(time.full)}">${escapeHtml(time.text)}</span>
+        <button type="button" class="session-more-btn" aria-haspopup="menu" aria-expanded="false"
+                aria-label="${escapeHtml(t('history_more') + ': ' + title)}"><i class="fas fa-ellipsis" aria-hidden="true"></i></button>
     `;
-    item.addEventListener('click', () => switchSession(s.session_id, ownerId || undefined));
+    item.querySelector('.session-row-main').addEventListener('click', () => switchSession(s.session_id, ownerId || undefined));
+    const more = item.querySelector('.session-more-btn');
+    more.addEventListener('click', e => _openSessionActionMenu(e, s, more));
     return item;
 }
 
@@ -7833,7 +10290,7 @@ function toggleSessionPin(sid, agentId) {
     })
         .then(r => r.json())
         .then(data => {
-            if (data.status === 'success') return;
+            if (data.status === 'success') { _refreshHistoryList(); return; }
             // Most often an empty brand-new chat: it has no row to pin until the
             // first message is stored.
             _wsToast(data.message || t('session_settings_failed'));
@@ -7849,12 +10306,16 @@ function toggleSessionPin(sid, agentId) {
 }
 
 function _onSessionListScroll() {
-    if (!_sessionHasMore || _sessionLoading) return;
+    if (!_sessionHasMore || _sessionLoading || _historyPageFailed) return;
     const container = document.getElementById('session-list');
     if (!container) return;
     // Trigger when scrolled near the bottom (within 60px)
     if (container.scrollHeight - container.scrollTop - container.clientHeight < 60) {
-        _fetchSessionPage(_sessionPage + 1, false);
+        // Carry the current generation sequence so a page loading under a newer
+        // read (or after re-entry) is dropped rather than appended to the wrong
+        // list. A pagination failure is not fatal: keep what is confirmed and
+        // allow the user to retry by scrolling again.
+        _fetchSessionPage(_sessionPage + 1, false, undefined, _sessionReqSeq);
     }
 }
 
@@ -7920,29 +10381,41 @@ function _reattachStream(sid) {
 }
 
 function switchSession(newSessionId, agentId) {
-    if (agentId && agentId !== activeAgentId) {
-        activeAgentId = agentId;
-        localStorage.setItem('cow_active_agent', activeAgentId);
-    }
-    if (newSessionId === sessionId) {
+    // Carry the target across the guard: the identity/session flip must not
+    // happen unless the navigation and the unsaved-editor check pass, so a
+    // cancel keeps the current Agent and session untouched.
+    if (newSessionId === sessionId && (!agentId || agentId === activeAgentId)) {
         if (currentView !== 'chat') navigateTo('chat');
+        // Re-open a conversation whose previous history request did not load.
+        if (!historyLoading && historyPage === 0) loadHistory(1);
         renderComposerIdentity();
+        focusChatComposer();
         return;
     }
 
     // The preview panel is scoped to a session's workspace, so switching tears
     // down an open editor. Settle unsaved edits before committing to the switch.
+    // Preserve the target agentId so a confirm re-runs with the same destination.
     if (typeof wsGuardUnsaved === 'function'
-        && !wsGuardUnsaved(() => switchSession(newSessionId))) return;
+        && !wsGuardUnsaved(() => switchSession(newSessionId, agentId))) return;
 
     // Do NOT close active streams here: sessions run in parallel, so any
     // in-flight reply for another session must keep streaming in the
     // background (it self-guards against rendering into the foreign view).
     // Switching back re-attaches and resumes live streaming.
 
+    // Commit the identity switch only after the guard passed.
+    if (agentId && agentId !== activeAgentId) {
+        activeAgentId = agentId;
+        writeScopedPreference('cow_active_agent', activeAgentId);
+    }
+
     sessionId = newSessionId;
+    _sessCfg = null;
+    _wsSelState = { current: null, recents: [], defaultWorkspace: '', projectsRoot: '' };
+    _wsSelUpdateLabel();
     updateEditButtonsState();
-    localStorage.setItem(activeSessionStorageKey(), sessionId);
+    writeScopedPreference(activeSessionStorageKey(), sessionId);
     refreshWorkspaceSelector();
     refreshSessionSettings();
     // Reset the file/preview panel so it reflects the new session's root.
@@ -7968,18 +10441,22 @@ function switchSession(newSessionId, agentId) {
     }
 
     document.querySelectorAll('.session-item').forEach(el => {
-        el.classList.toggle('active', el.dataset.sessionId === sessionId);
+        el.classList.toggle('active', el.dataset.sessionId === sessionId
+            && (!el.dataset.agentId || el.dataset.agentId === activeAgentId));
     });
 
-    if (_isMobileView()) closeSessionPanel();
     if (currentView !== 'chat') navigateTo('chat');
     renderComposerIdentity();
+    focusChatComposer();
 }
 
 // In-place rename a session title: replace the title <span> with an <input>,
 // commit on Enter/blur, cancel on Escape. Persists via PUT /api/sessions/<id>.
-function renameSession(sid) {
-    const item = document.querySelector(`.session-item[data-session-id="${sid}"]`);
+function renameSession(sid, agentId) {
+    const owner = agentId || activeAgentId;
+    const same = s => s.session_id === sid && (!owner || (s.agent && s.agent.id) === owner);
+    const item = [...document.querySelectorAll('.session-item')].find(el =>
+        el.dataset.sessionId === sid && (!owner || el.dataset.agentId === owner));
     if (!item) return;
     const titleEl = item.querySelector('.session-title');
     if (!titleEl || item.querySelector('.session-title-input')) return;
@@ -7991,6 +10468,15 @@ function renameSession(sid) {
     input.className = 'session-title-input';
     input.value = oldTitle;
     input.maxLength = 100;
+    input.setAttribute('aria-label', t('rename_session'));
+
+    // Keep the editor outside a button while retaining the original button's
+    // click listener when the edit finishes.
+    const mainButton = item.querySelector('.session-row-main');
+    const editWrap = document.createElement('div');
+    editWrap.className = 'session-row-main';
+    while (mainButton.firstChild) editWrap.appendChild(mainButton.firstChild);
+    mainButton.replaceWith(editWrap);
 
     // Avoid switching session while interacting with the input
     const stop = e => e.stopPropagation();
@@ -8003,7 +10489,7 @@ function renameSession(sid) {
 
     let done = false;
 
-    const restore = (title) => {
+    const restore = (title, refreshDeferred = true) => {
         if (done) return;
         done = true;
         const span = document.createElement('span');
@@ -8011,17 +10497,21 @@ function renameSession(sid) {
         span.title = title;
         span.textContent = title;
         input.replaceWith(span);
+        while (editWrap.firstChild) mainButton.appendChild(editWrap.firstChild);
+        editWrap.replaceWith(mainButton);
+        if (_historyDirty && refreshDeferred) { _historyDirty = false; _refreshHistoryList(); }
     };
 
     // Undo the optimistic rename in both the DOM and the cached entry.
     const revert = () => {
-        const cachedEntry = _sessionItems.find(s => s.session_id === sid);
+        const cachedEntry = _sessionItems.find(same);
         if (cachedEntry) cachedEntry.title = oldTitle;
         const span = item.querySelector('.session-title');
         if (span) {
             span.title = oldTitle;
             span.textContent = oldTitle;
         }
+        _refreshHistoryList();
     };
 
     const commit = () => {
@@ -8033,23 +10523,24 @@ function renameSession(sid) {
         }
         // Optimistically show the new title, then persist. The cached entry is
         // updated too, or the next re-render (a pin, say) would revive the old one.
-        restore(newTitle);
-        const cached = _sessionItems.find(s => s.session_id === sid);
+        restore(newTitle, false);
+        const cached = _sessionItems.find(same);
         if (cached) cached.title = newTitle;
-        fetch(`/api/sessions/${encodeURIComponent(sid)}`, {
+        fetch(`/api/sessions/${encodeURIComponent(sid)}?agent_id=${encodeURIComponent(owner || '')}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title: newTitle })
+            body: JSON.stringify({ title: newTitle, agent_id: owner })
         })
             .then(r => r.json())
             .then(data => {
-                if (data.status !== 'success') revert();
+                if (data.status !== 'success') { revert(); _wsToast(data.message || t('session_settings_failed')); }
+                else _refreshHistoryList();
             })
             .catch(revert);
     };
 
     input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); commit(); }
         else if (e.key === 'Escape') { e.preventDefault(); restore(oldTitle); }
     });
     input.addEventListener('blur', commit);
@@ -8064,19 +10555,19 @@ function deleteSession(sid, agentId) {
         fetch(`/api/sessions/${encodeURIComponent(sid)}?agent_id=${encodeURIComponent(owner || '')}`, { method: 'DELETE' })
             .then(r => r.json())
             .then(data => {
-                if (data.status !== 'success') return;
+                if (data.status !== 'success') { _wsToast(data.message || t('session_settings_failed')); return; }
                 if (!deletingCurrent) {
-                    loadSessionList();
+                    _refreshHistoryList();
                     return;
                 }
                 if (next) {
                     switchSession(next.sessionId, next.agentId);
-                    loadSessionList();
+                    _refreshHistoryList();
                 } else {
                     newChat(false);
                 }
             })
-            .catch(() => {});
+            .catch(() => _wsToast(t('session_settings_failed')));
     });
 }
 
@@ -8195,9 +10686,12 @@ function generateSessionTitle(sid, userMsg, assistantReply) {
     })
         .then(r => r.json())
         .then(data => {
-            if (data.status === 'success' && sessionPanelOpen) {
-                loadSessionList();
-            }
+            if (data.status !== 'success') return;
+            // The list only exists on the history page now; refresh it if it is
+            // the active view, otherwise mark it dirty so the next visit re-reads
+            // the freshly generated title.
+            if (_historyVisible) loadSessionList();
+            else _historyDirty = true;
         })
         .catch(() => {});
 }
@@ -8948,6 +11442,7 @@ function savePasswordConfig() {
     .then(data => {
         console.log('[Password Config] Response:', data); // Debug
         if (data.status === 'success') {
+            refreshAccountIdentity();
             if (newPwd) {
                 showStatus('cfg-password-status', 'config_password_changed', false);
                 // Mark as masked so user needs to re-enter to change again
@@ -9001,6 +11496,533 @@ function switchConfigTab(tab) {
     // page refresh. loadConfigView re-renders from the fresh provider list.
     if (tab === 'basic') loadConfigView();
 }
+
+// =====================================================================
+// Branding View (系统设置 → 品牌设置)
+// =====================================================================
+let brandingDraft = null;       // { brand_name, logo_description, logo_action, logoFile, logoPreviewUrl, hasLogoChange }
+let brandingBaseline = null;    // last successful published snapshot (the form baseline)
+let brandingLoading = false;
+let brandingSaving = false;
+let brandingReadonly = false;
+let brandingReadonlyReason = '';
+let brandingCanReset = false;
+let brandingCsrfToken = '';
+let brandingConflict = false;
+let brandingSavePending = false;
+let brandingPreviewDark = true;
+let brandingImageError = false;
+let brandingInitDone = false;
+
+function brandingEl(id) {
+    return document.getElementById(id);
+}
+
+function _brandingInputsEqual() {
+    if (!brandingDraft || !brandingBaseline) return false;
+    return brandingDraft.brand_name === brandingBaseline.brand_name
+        && brandingDraft.logo_description === brandingBaseline.logo_description
+        && brandingDraft.logo_action === 'keep'
+        && brandingDraft.logoPreviewUrl === brandingBaseline.logoUrl;
+}
+
+function _brandingSetDirty(flag) {
+    brandingDirty = flag;
+    const badge = brandingEl('branding-state-badge');
+    if (!badge) return;
+    badge.classList.remove('hidden');
+    if (flag) {
+        badge.textContent = t('branding_unsaved');
+        badge.classList.remove('bg-emerald-50', 'dark:bg-emerald-900/20', 'text-emerald-600', 'dark:text-emerald-300');
+        badge.classList.add('bg-amber-50', 'dark:bg-amber-900/20', 'text-amber-600', 'dark:text-amber-300');
+    } else {
+        badge.textContent = t('branding_saved_state');
+        badge.classList.remove('bg-amber-50', 'dark:bg-amber-900/20', 'text-amber-600', 'dark:text-amber-300');
+        badge.classList.add('bg-emerald-50', 'dark:bg-emerald-900/20', 'text-emerald-600', 'dark:text-emerald-300');
+    }
+}
+
+function _brandingRefreshDirty() {
+    if (!brandingDraft) { _brandingSetDirty(false); return; }
+    _brandingSetDirty(!_brandingInputsEqual());
+    _brandingUpdateControls();
+}
+
+function _brandingShowBanner(msg, kind) {
+    const banner = brandingEl('branding-banner');
+    if (!banner) return;
+    const styles = {
+        warning: 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-200',
+        error: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-200',
+        info: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-200',
+        success: 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-200',
+    };
+    banner.className = `hidden mb-4 rounded-xl border px-4 py-3 text-sm ${styles[kind] || styles.info}`;
+    banner.innerHTML = `<div class="flex items-start gap-2"><span>${escapeHtml(msg)}</span></div>`;
+    banner.classList.remove('hidden');
+}
+
+function _brandingHideBanner() {
+    const banner = brandingEl('branding-banner');
+    if (banner) banner.classList.add('hidden');
+}
+
+function _brandingShowReadonlyState() {
+    _brandingUpdateControls();
+    const messages = {
+        branding_enterprise_unavailable: 'branding_enterprise_unavailable',
+        branding_storage_corrupt: 'branding_storage_corrupt',
+    };
+    _brandingShowBanner(t(messages[brandingReadonlyReason] || 'branding_readonly_reason'), 'info');
+    if (brandingReadonlyReason === 'branding_storage_corrupt') _brandingRenderConflictActions();
+}
+
+function _brandingRenderPreview() {
+    if (!brandingDraft) return;
+    const name = brandingDraft.brand_name || DEFAULT_BRAND.brand_name;
+    const desc = brandingDraft.logo_description || '';
+    const logoUrl = brandingDraft.logoPreviewUrl || effectiveLogoUrl();
+
+    const canvas = brandingEl('branding-preview-canvas');
+    if (!canvas) return;
+    canvas.classList.toggle('dark', brandingPreviewDark);
+
+    // sidebar slot
+    canvas.querySelectorAll('[data-brand-slot="name"]').forEach(el => {
+        el.innerHTML = brandWordmarkHTML(name);
+        if (brandingPreviewDark) {
+            el.classList.add('!text-[#f3f8fc]');
+        } else {
+            el.classList.remove('!text-[#f3f8fc]');
+        }
+    });
+    canvas.querySelectorAll('[data-brand-slot="logo"]').forEach(el => {
+        el.src = logoUrl;
+        el.alt = '';
+    });
+    // Sidebar caption: always shows the description (default "控制台" included).
+    canvas.querySelectorAll('[data-brand-slot="caption"]').forEach(el => {
+        const hasDesc = !!desc.trim();
+        el.textContent = hasDesc ? desc : '';
+        el.classList.toggle('hidden', !hasDesc);
+        el.title = hasDesc ? desc : '';
+    });
+    // Desc slot is used by both the login and welcome previews. The welcome
+    // preview mirrors the real welcome hero and hides the default "控制台"
+    // (redundant with the eyebrow); login preview keeps showing it.
+    canvas.querySelectorAll('[data-brand-slot="desc"]').forEach(el => {
+        const isWelcomePreview = !!el.closest('[data-preview="welcome"]');
+        const isDefault = (desc || '').trim() === DEFAULT_BRAND.logo_description;
+        const visible = isWelcomePreview
+            ? !!(desc && desc.trim() && !isDefault)
+            : !!(desc && desc.trim());
+        el.textContent = visible ? desc : '';
+        el.classList.toggle('hidden', !visible);
+        el.title = visible ? desc : '';
+    });
+}
+
+function _brandingFillFormFromDraft() {
+    if (!brandingDraft) return;
+    const nameInput = brandingEl('branding-brand-name');
+    const descInput = brandingEl('branding-logo-desc');
+    if (nameInput) nameInput.value = brandingDraft.brand_name;
+    if (descInput) descInput.value = brandingDraft.logo_description;
+    _brandingRenderLogoThumb(brandingDraft.logoPreviewUrl, brandingDraft.logo_action === 'default');
+}
+
+function _brandingRenderLogoThumb(url, useDefault) {
+    const thumb = brandingEl('branding-logo-thumb');
+    if (!thumb) return;
+    const src = (useDefault || !url) ? DEFAULT_BRAND.logo_url : url;
+    thumb.innerHTML = `<img src="${escapeHtml(src)}" alt="" class="brand-mark w-12 h-12 object-contain" style="${brandingImageError ? 'opacity:.4' : ''}">`;
+    brandingImageError = false;
+}
+
+function _brandingValidate() {
+    const name = brandingEl('branding-brand-name').value.trim();
+    const desc = brandingEl('branding-logo-desc').value.trim();
+    const flowErr = brandingEl('branding-flow-error');
+    if (!name) return '品牌名称不能为空';
+    if (name.length > 32) return t('branding_save_failed');
+    if (/\n|\r/.test(name) || /\n|\r/.test(desc)) return '不能包含换行字符';
+    if (desc.length > 100) return 'Logo 描述不能超过 100 字';
+    if (flowErr) flowErr.classList.add('hidden');
+    return '';
+}
+
+function _brandingFormatFileError(err) {
+    if (err && err.code === 'image_too_large') return t('branding_image_too_large');
+    if (err && err.code === 'invalid_image_format') return '仅支持 PNG、JPG、WebP 图片';
+    return t('branding_invalid_image');
+}
+
+function _brandingSetError(msg) {
+    const flowErr = brandingEl('branding-flow-error');
+    if (flowErr) {
+        flowErr.textContent = msg;
+        flowErr.classList.remove('hidden');
+    }
+}
+
+function _brandingPublishSuccess(record) {
+    brandingCsrfToken = record.csrf_token || brandingCsrfToken;
+    brandingReadonly = record.can_manage === false;
+    brandingCanReset = record.can_reset !== false;
+    brandingReadonlyReason = record.readonly_reason || '';
+    // Update the shared brand snapshot from the save response, bump the save
+    // epoch so any in-flight (older) public read is ignored.
+    brandSaveEpoch += 1;
+    const logoUrl = record.logo_url || DEFAULT_BRAND.logo_url;
+    brandState = {
+        enabled: true,
+        revision: record.revision || 0,
+        brand_name: record.brand_name || DEFAULT_BRAND.brand_name,
+        logo_description: (record.logo_description != null) ? record.logo_description : '',
+        logo_url: logoUrl,
+        favicon_url: record.favicon_url || DEFAULT_BRAND.favicon_url,
+    };
+    brandLoaded = true;
+    if (appConfig) appConfig.title = productTitle(brandState.brand_name);
+    applyBrandToDocument();
+    applyBrandToAgentAvatars();
+
+    // Update the baseline to the newly saved snapshot.
+    brandingBaseline = {
+        brand_name: brandState.brand_name,
+        logo_description: brandState.logo_description,
+        logo_action: 'keep',
+        logoUrl: logoUrl,
+        revision: brandState.revision,
+    };
+    brandingDraft = { ...brandingBaseline, logo_action: 'keep', logoPreviewUrl: logoUrl, logoFile: null };
+    brandingDirty = false;
+    brandingConflict = false;
+    brandingSavePending = false;
+    _brandingFillFormFromDraft();
+    _brandingRefreshDirty();
+    _brandingRenderPreview();
+    _brandingShowBanner(t('branding_saved'), 'success');
+    setTimeout(_brandingHideBanner, 3000);
+}
+
+function _brandingSetControlsState(saving) {
+    brandingSaving = saving;
+    _brandingUpdateControls();
+}
+
+function _brandingUpdateControls() {
+    const busy = brandingLoading || brandingSaving;
+    const editable = !busy && !brandingReadonly && !!brandingBaseline;
+    ['branding-brand-name', 'branding-logo-desc', 'branding-logo-file', 'branding-upload-btn',
+        'branding-default-logo-btn', 'branding-cancel'].forEach(id => {
+        const el = brandingEl(id);
+        if (el) el.disabled = !editable;
+    });
+    const saveBtn = brandingEl('branding-save');
+    const resetBtn = brandingEl('branding-reset-all');
+    if (saveBtn) saveBtn.disabled = !editable || brandingConflict || !brandingDirty || !!_brandingValidate();
+    if (resetBtn) resetBtn.disabled = busy || !brandingCanReset || !brandingBaseline;
+}
+
+function _brandingSubmitSave() {
+    if (brandingSaving || brandingLoading || brandingReadonly || brandingConflict || !brandingBaseline) return;
+    const errMsg = _brandingValidate();
+    if (errMsg) { _brandingSetError(errMsg); return; }
+    const name = brandingEl('branding-brand-name').value.trim();
+    const desc = brandingEl('branding-logo-desc').value.trim();
+    // No-op save guard.
+    if (_brandingInputsEqual()) { _brandingShowBanner(t('branding_unsaved_warn'), 'warning'); return; }
+
+    _brandingSetControlsState(true);
+    _brandingHideBanner();
+    const fd = new FormData();
+    fd.append('expected_revision', String(brandingBaseline ? brandingBaseline.revision : 0));
+    fd.append('brand_name', name);
+    fd.append('logo_description', desc);
+    fd.append('logo_action', brandingDraft.logo_action || 'keep');
+    if (brandingDraft.logo_action === 'replace' && brandingDraft.logoFile) fd.append('logo', brandingDraft.logoFile);
+
+    return fetch('/api/branding', { method: 'POST', body: fd, headers: { 'X-Branding-CSRF': brandingCsrfToken } })
+        .then(async (r) => {
+            const data = await r.json().catch(() => ({}));
+            if (r.status === 401) {
+                // Session expired: re-prompt login; draft stays in memory only.
+                if (typeof maybeShowLoginOverlay === 'function') maybeShowLoginOverlay();
+                _brandingShowBanner(t('branding_save_failed') + ' 401', 'error');
+                throw new Error('unauthorized');
+            }
+            if (r.status === 409) {
+                brandingConflict = true;
+                _brandingShowBanner(t('branding_conflict'), 'warning');
+                _brandingRenderConflictActions();
+                throw new Error('conflict');
+            }
+            if (!r.ok || data.status !== 'success') {
+                _brandingShowBanner(data.message || t('branding_save_failed'), 'error');
+                throw new Error('save-failed');
+            }
+            return data;
+        })
+        .then((data) => {
+            _brandingPublishSuccess(data);
+        })
+        .catch((err) => {
+            if (err && err.message === 'conflict') {
+                // Keep the draft so the user can inspect / reload.
+                brandingDirty = true;
+                return;
+            }
+            if (err && err.message === 'unauthorized') return;
+            _brandingSetDirty(true);
+        })
+        .finally(() => {
+            _brandingSetControlsState(false);
+            brandingSaving = false;
+            _brandingRefreshDirty();
+        });
+}
+
+function _brandingRenderConflictActions() {
+    const banner = brandingEl('branding-banner');
+    if (!banner) return;
+    banner.innerHTML += `<button type="button" id="branding-reload-btn" class="ml-2 underline text-xs cursor-pointer">${escapeHtml(t('branding_reload'))}</button>`;
+    const rb = brandingEl('branding-reload-btn');
+    if (rb) rb.addEventListener('click', () => initBrandingView());
+}
+
+function brandingConfirmDiscard(onDiscard) {
+    if (!brandingDirty) { onDiscard(); return; }
+    showConfirmDialog({
+        title: t('branding_dirty_leave_title'),
+        message: t('branding_dirty_leave_body'),
+        okText: t('branding_dirty_leave_ok'),
+        cancelText: t('branding_dirty_leave_cancel'),
+        onConfirm: onDiscard,
+    });
+}
+
+function _brandingResetDraftToBaseline() {
+    if (!brandingBaseline) return;
+    brandingDraft = {
+        brand_name: brandingBaseline.brand_name,
+        logo_description: brandingBaseline.logo_description,
+        logo_action: 'keep',
+        logoFile: null,
+        logoPreviewUrl: brandingBaseline.logoUrl,
+        hasLogoChange: false,
+    };
+    _brandingFillFormFromDraft();
+    _brandingRenderPreview();
+    _brandingRefreshDirty();
+    _brandingHideBanner();
+}
+
+function initBrandingView() {
+    if (!brandingEl('view-branding')) return;
+    if (brandingLoading || brandingSaving) return;
+    // Re-entry and conflict reload both preserve drafts unless confirmed.
+    brandingConfirmDiscard(_loadBrandingSetup);
+}
+
+function _loadBrandingSetup() {
+    const view = brandingEl('view-branding');
+    if (!view) return;
+    brandingLoading = true;
+    _brandingUpdateControls();
+    const banner = brandingEl('branding-banner');
+    if (banner) banner.classList.add('hidden');
+    // Show a loading placeholder on the Save button.
+    const saveBtn = brandingEl('branding-save');
+    if (saveBtn) saveBtn.disabled = true;
+
+    return fetch('/api/branding', { credentials: 'same-origin' })
+        .then(async (r) => {
+            if (r.status === 401) {
+                if (typeof maybeShowLoginOverlay === 'function') maybeShowLoginOverlay();
+                throw new Error('unauthorized');
+            }
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok || data.status !== 'success') throw new Error(data.message || 'load-failed');
+            return data;
+        })
+        .then((data) => {
+            brandingReadonly = !data.can_manage;
+            brandingCanReset = !!data.can_reset;
+            brandingCsrfToken = data.csrf_token || '';
+            brandingReadonlyReason = data.readonly_reason || '';
+            brandingBaseline = {
+                brand_name: data.brand_name || DEFAULT_BRAND.brand_name,
+                logo_description: (data.logo_description != null) ? data.logo_description : '',
+                logo_action: 'keep',
+                logoUrl: data.logo_url || DEFAULT_BRAND.logo_url,
+                revision: data.revision || 0,
+            };
+            brandingDraft = { ...brandingBaseline, logo_action: 'keep', logoPreviewUrl: data.logo_url || DEFAULT_BRAND.logo_url, logoFile: null, hasLogoChange: false };
+            brandingConflict = false;
+            _brandingFillFormFromDraft();
+            _brandingRenderPreview();
+            _brandingRefreshDirty();
+            brandingInitDone = true;
+            brandingLoading = false;
+            _brandingUpdateControls();
+            if (brandingReadonly) _brandingShowReadonlyState();
+        })
+        .catch(() => {
+            brandingLoading = false;
+            brandingReadonly = true;
+            brandingCanReset = false;
+            brandingCsrfToken = '';
+            _brandingUpdateControls();
+            _brandingShowBanner(t('branding_load_failed'), 'error');
+            _brandingRenderConflictActions();
+        });
+}
+
+function _brandingBindEvents() {
+    const view = brandingEl('view-branding');
+    if (!view || brandingInitDone && brandingEl('view-branding').dataset.bound === '1') return;
+
+    const name = brandingEl('branding-brand-name');
+    const desc = brandingEl('branding-logo-desc');
+    if (name) name.addEventListener('input', () => {
+        if (!brandingDraft) return;
+        brandingDraft.brand_name = name.value;
+        _brandingRefreshDirty();
+        _brandingRenderPreview();
+    });
+    if (desc) desc.addEventListener('input', () => {
+        if (!brandingDraft) return;
+        brandingDraft.logo_description = desc.value;
+        _brandingRefreshDirty();
+        _brandingRenderPreview();
+    });
+
+    const uploadBtn = brandingEl('branding-upload-btn');
+    const fileInput = brandingEl('branding-logo-file');
+    if (uploadBtn && fileInput) {
+        uploadBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', () => {
+            if (brandingReadonly || brandingLoading || brandingSaving) return;
+            const file = fileInput.files && fileInput.files[0];
+            if (!file) return;
+            if (file.size > 2 * 1024 * 1024) { _brandingSetError(t('branding_image_too_large')); return; }
+            const ext = (file.name.split('.').pop() || '').toLowerCase();
+            if (!['png', 'jpg', 'jpeg', 'webp'].includes(ext)) { _brandingSetError('仅支持 PNG、JPG、WebP 图片'); return; }
+            _brandingSetError('');
+            const objUrl = URL.createObjectURL(file);
+            if (brandingDraft) { brandingDraft.logoFile = file; brandingDraft.logo_preview = objUrl; brandingDraft.logo_action = 'replace'; brandingDraft.logoPreviewUrl = objUrl; }
+            _brandingRenderLogoThumb(objUrl, false);
+            _brandingRenderPreview();
+            _brandingRefreshDirty();
+        });
+    }
+
+    const defaultLogoBtn = brandingEl('branding-default-logo-btn');
+    if (defaultLogoBtn) defaultLogoBtn.addEventListener('click', () => {
+        if (!brandingDraft) return;
+        brandingDraft.logoFile = null;
+        brandingDraft.logo_action = 'default';
+        brandingDraft.logoPreviewUrl = DEFAULT_BRAND.logo_url;
+        brandingDraft.hasLogoChange = true;
+        // Keep a stable, non-emptied file state.
+        const fileInputEl = brandingEl('branding-logo-file');
+        if (fileInputEl) fileInputEl.value = '';
+        _brandingRenderLogoThumb(DEFAULT_BRAND.logo_url, true);
+        _brandingRenderPreview();
+        _brandingRefreshDirty();
+    });
+
+    const saveBtn = brandingEl('branding-save');
+    if (saveBtn) saveBtn.addEventListener('click', _brandingSubmitSave);
+
+    const cancelBtn = brandingEl('branding-cancel');
+    if (cancelBtn) cancelBtn.addEventListener('click', () => _brandingResetDraftToBaseline());
+
+    const resetAllBtn = brandingEl('branding-reset-all');
+    if (resetAllBtn) resetAllBtn.addEventListener('click', () => {
+        const doReset = () => {
+            if (brandingSaving || brandingLoading || !brandingCanReset || !brandingBaseline) return;
+            _brandingSetControlsState(true);
+            _brandingHideBanner();
+            fetch('/api/branding/reset', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json', 'X-Branding-CSRF': brandingCsrfToken },
+                body: JSON.stringify({ expected_revision: brandingBaseline ? brandingBaseline.revision : 0 }),
+            })
+                .then(async (r) => {
+                    if (r.status === 401) {
+                        if (typeof maybeShowLoginOverlay === 'function') maybeShowLoginOverlay();
+                        throw new Error('unauthorized');
+                    }
+                    const data = await r.json().catch(() => ({}));
+                    if (r.status === 409) { brandingConflict = true; _brandingShowBanner(t('branding_conflict'), 'warning'); _brandingRenderConflictActions(); throw new Error('conflict'); }
+                    if (!r.ok || data.status !== 'success') { _brandingShowBanner(data.message || t('branding_save_failed'), 'error'); throw new Error('reset-failed'); }
+                    return data;
+                })
+                .then((data) => _brandingPublishSuccess(data))
+                .catch((err) => {
+                    if (err && err.message === 'conflict') { brandingDirty = true; return; }
+                    if (err && err.message === 'unauthorized') return;
+                    _brandingSetDirty(true);
+                })
+                .finally(() => _brandingSetControlsState(false));
+        };
+        if (typeof showConfirmDialog === 'function') {
+            showConfirmDialog({
+                title: t('branding_reset_confirm_title'),
+                message: t('branding_reset_confirm_body'),
+                okText: t('branding_reset_confirm_ok'),
+                cancelText: t('branding_reset_confirm_cancel'),
+                onConfirm: doReset,
+            });
+        } else if (window.confirm(t('branding_reset_confirm_body'))) {
+            doReset();
+        }
+    });
+
+    // Theme toggle for the preview
+    const darkBtn = brandingEl('branding-theme-dark');
+    const lightBtn = brandingEl('branding-theme-light');
+    const setTheme = (dark) => {
+        brandingPreviewDark = dark;
+        if (darkBtn) darkBtn.classList.toggle('active', dark);
+        if (lightBtn) lightBtn.classList.toggle('active', !dark);
+        _brandingRenderPreview();
+    };
+    if (darkBtn) darkBtn.addEventListener('click', () => setTheme(true));
+    if (lightBtn) lightBtn.addEventListener('click', () => setTheme(false));
+
+    // Drag & drop onto the logo thumb.
+    const thumb = brandingEl('branding-logo-thumb');
+    if (thumb) {
+        thumb.addEventListener('dragover', (e) => { e.preventDefault(); thumb.classList.add('border-primary-500'); });
+        thumb.addEventListener('dragleave', () => thumb.classList.remove('border-primary-500'));
+        thumb.addEventListener('drop', (e) => {
+            e.preventDefault();
+            if (brandingReadonly || brandingLoading || brandingSaving) return;
+            thumb.classList.remove('border-primary-500');
+            const file = e.dataTransfer.files && e.dataTransfer.files[0];
+            if (file) {
+                if (file.size > 2 * 1024 * 1024) { _brandingSetError(t('branding_image_too_large')); return; }
+                const objUrl = URL.createObjectURL(file);
+                if (brandingDraft) { brandingDraft.logoFile = file; brandingDraft.logo_action = 'replace'; brandingDraft.logoPreviewUrl = objUrl; }
+                _brandingRenderLogoThumb(objUrl, false);
+                _brandingRenderPreview();
+                _brandingRefreshDirty();
+            }
+        });
+    }
+
+    brandingEl('view-branding').dataset.bound = '1';
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Bind the branding page controls once. The page is populated lazily on
+    // first entry via navigateTo -> initBrandingView.
+    if (brandingEl('view-branding')) _brandingBindEvents();
+});
 
 // =====================================================================
 // Skills View
@@ -9451,7 +12473,7 @@ function closeMemoryViewer() {
 // Reloading or closing the tab drops an unsaved edit. All the browser allows
 // here is its own generic prompt, which still beats losing the text in silence.
 window.addEventListener('beforeunload', (e) => {
-    if (!memoryEditor.isDirty() && !skillEditor.isDirty()) return;
+    if (!memoryEditor.isDirty() && !skillEditor.isDirty() && !brandingDirty) return;
     e.preventDefault();
     e.returnValue = '';
 });
@@ -12861,6 +15883,10 @@ function stopLogStream() {
 // =====================================================================
 const _origNavigateTo = navigateTo;
 navigateTo = function(viewId) {
+    // Previously-visible but not-yet-enabled targets (menu placeholders) are
+    // routed by the base handler to a clear "not available" view instead of a
+    // silent no-op. Do not early-return here.
+
     // An open document editor is about to be replaced by another view, which
     // would drop the edit with nothing on screen to say so.
     if (!docGuardUnsaved(() => navigateTo(viewId))) return;
@@ -12881,7 +15907,7 @@ navigateTo = function(viewId) {
         // Agent has since been deleted so we don't point at a ghost.
         if (memoryAgentId && agentCatalog.length && !agentCatalog.some(a => a.id === memoryAgentId)) {
             memoryAgentId = '';
-            localStorage.removeItem('cow_memory_agent');
+            removeScopedPreference('cow_memory_agent');
         }
         if (!memoryAgentId) memoryAgentId = activeAgentId || defaultAgentId;
         renderMemoryAgentSelect();
@@ -12890,6 +15916,7 @@ navigateTo = function(viewId) {
     else if (viewId === 'knowledge') loadKnowledgeView();
     else if (viewId === 'channels') loadChannelsView();
     else if (viewId === 'tasks') loadTasksView();
+    else if (viewId === 'todo') loadTodosView();
     else if (viewId === 'logs') startLogStream();
 };
 
@@ -12907,7 +15934,7 @@ const KNOWLEDGE_IMPORT_MAX_TOTAL_SIZE = 200 * 1024 * 1024;
 // Which Agent's knowledge base the page is viewing. Persisted like the memory
 // page's selector so a refresh keeps the last choice. An Agent on "shared" mode
 // resolves to the shared base on the backend, so this simply scopes the view.
-let knowledgeAgentId = localStorage.getItem('cow_knowledge_agent') || '';
+let knowledgeAgentId = readScopedPreference('cow_knowledge_agent') || '';
 
 function viewingKnowledgeAgentId() {
     return knowledgeAgentId || activeAgentId || defaultAgentId;
@@ -12931,7 +15958,7 @@ function renderKnowledgeAgentSelect() {
 
 function selectKnowledgeAgent(agentId) {
     knowledgeAgentId = agentId;
-    localStorage.setItem('cow_knowledge_agent', agentId);
+    writeScopedPreference('cow_knowledge_agent', agentId);
     loadKnowledgeView();
 }
 
@@ -12944,7 +15971,7 @@ function loadKnowledgeView(targetPath) {
     // Drop a deleted Agent selection so we never point at a ghost.
     if (knowledgeAgentId && agentCatalog.length && !agentCatalog.some(a => a.id === knowledgeAgentId)) {
         knowledgeAgentId = '';
-        localStorage.removeItem('cow_knowledge_agent');
+        removeScopedPreference('cow_knowledge_agent');
     }
     renderKnowledgeAgentSelect();
 
@@ -13851,6 +16878,101 @@ function renderKnowledgeGraph(container, nodes, links) {
 // =====================================================================
 // Authentication
 // =====================================================================
+function _identityMode() {
+    return _identityModeState;
+}
+
+// Console navigation presentation switch, injected by the backend as a validated
+// value in { "classic", "split" }. It is layout-only and never changes
+// authorization, the identity mode, or any consumer open/closed state. Invalid
+// or missing values fall back to "classic".
+const _NAVIGATION_MODES = ['classic', 'split'];
+function _navigationMode() {
+    const raw = String(window.__COW_NAVIGATION_MODE__ || 'classic').trim().toLowerCase();
+    return _NAVIGATION_MODES.indexOf(raw) >= 0 ? raw : 'classic';
+}
+
+function _setupHeaderTenantSelector() {
+    const sel = document.getElementById('tenant-selector');
+    if (!sel) return;
+    const label = document.getElementById('tenant-selector-label');
+    const menu = document.getElementById('tenant-menu');
+    if (!menu) return;
+    // Only meaningful in database mode with a selected tenant.
+    const tid = sessionStorage.getItem('cow_tenant_id');
+    if (!tid) { sel.classList.add('hidden'); return; }
+    sel.classList.remove('hidden');
+    menu.innerHTML = '';
+    // The picker lists the SELF's effective tenants (via /auth/me), not the
+    // platform-admin tenant list — a platform admin is not given tenant members
+    // for tenants they are not on. The list is not an authorization grant.
+    fetch('/auth/me').then(r => r.json()).then(data => {
+        const tenants = (data && data.status === 'success' && Array.isArray(data.tenants))
+            ? data.tenants.map(tn => ({ id: tn.id, code: tn.code, name: tn.name })) : [];
+        if (!tenants.length) return;
+        const current = tenants.find(t => t.id === tid);
+        if (current) label.textContent = current.name || current.code;
+        tenants.forEach(tn => {
+            const item = document.createElement('button');
+            item.className = 'tenant-menu-item w-full text-left px-3 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/10 cursor-pointer';
+            item.dataset.tenant = tn.id;
+            item.textContent = (tn.name || tn.code) + (tn.id === tid ? ' ✓' : '');
+            item.addEventListener('click', () => {
+                menu.classList.add('hidden');
+                if (sessionStorage.getItem('cow_tenant_id') === tn.id) return;
+                // Refresh-based switch (task 3.6): navigate with a one-shot
+                // switch_tenant param; the new page validates before committing,
+                // so the old page and its requests are never left half-switched.
+                if (typeof bumpTenantGeneration === 'function') bumpTenantGeneration();
+                const url = new URL(window.location.href);
+                url.searchParams.set('switch_tenant', tn.id);
+                window.location.assign(url.toString());
+            });
+            menu.appendChild(item);
+        });
+    }).catch(() => {});
+}
+
+// A platform administrator may see tenants they do not belong to. Resolve
+// business context only from the authenticated account's effective memberships,
+// including on reload when sessionStorage is empty or contains a stale tenant.
+async function _ensureTenantSelected() {
+    if (_identityMode() !== 'database') return true;
+    const epoch = _authEpoch;
+    const response = await fetch('/auth/me', { credentials: 'same-origin', cache: 'no-store' });
+    if (epoch !== _authEpoch) return false;
+    if (!response.ok) throw new Error('Tenant membership unavailable');
+    const data = await response.json();
+    if (epoch !== _authEpoch) return false;
+    if (!data || data.status !== 'success' || !Array.isArray(data.tenants)) {
+        throw new Error('Invalid tenant membership response');
+    }
+    const tenants = data.tenants.filter(tn => tn && typeof tn.id === 'string' && tn.id);
+    const stored = sessionStorage.getItem('cow_tenant_id');
+    if (tenants.some(tn => tn.id === stored)) return true;
+    sessionStorage.removeItem('cow_tenant_id');
+    if (tenants.length === 1) {
+        sessionStorage.setItem('cow_tenant_id', tenants[0].id);
+        if (typeof bumpTenantGeneration === 'function') bumpTenantGeneration();
+        return true;
+    }
+    if (tenants.length > 1) {
+        _showTenantPicker(tenants, null);
+        return false;
+    }
+    if (data.user?.is_platform_admin === true) return 'platform';
+    const error = new Error('No available tenant membership');
+    error.code = 'no_tenants';
+    throw error;
+}
+
+function toggleTenantMenu(event) {
+    closeAccountMenu();
+    event.stopPropagation();
+    const menu = document.getElementById('tenant-menu');
+    if (menu) menu.classList.toggle('hidden');
+}
+
 function toggleLoginPassword() {
     const input = document.getElementById('login-password');
     const icon = document.querySelector('#login-toggle-pwd i');
@@ -13865,96 +16987,176 @@ function toggleLoginPassword() {
 window.toggleLoginPassword = toggleLoginPassword;
 
 function showLoginScreen() {
-    const overlay = document.getElementById('login-overlay');
-    if (!overlay) return;
-    overlay.classList.remove('hidden');
-    document.getElementById('app').classList.add('hidden');
-
-    const subtitle = document.getElementById('login-subtitle');
-    const loginBtn = document.getElementById('login-btn');
-    if (currentLang === 'en') {
-        subtitle.textContent = 'Enter password to access the console';
-        loginBtn.textContent = 'Login';
-    } else if (currentLang === 'zh-Hant') {
-        subtitle.textContent = '請輸入密碼以存取控制台';
-        loginBtn.textContent = '登入';
-    } else {
-        subtitle.textContent = '请输入密码以访问控制台';
-        loginBtn.textContent = '登录';
-    }
-
-    const form = document.getElementById('login-form');
-    const pwdInput = document.getElementById('login-password');
-    pwdInput.focus();
-
-    form.onsubmit = function(e) {
-        e.preventDefault();
-        const pwd = pwdInput.value;
-        if (!pwd) return;
-        const btn = document.getElementById('login-btn');
-        const errEl = document.getElementById('login-error');
-        btn.disabled = true;
-        errEl.classList.add('hidden');
-
-        fetch('/auth/login', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({password: pwd})
-        }).then(r => r.json()).then(data => {
-            if (data.status === 'success') {
-                overlay.classList.add('hidden');
-                document.getElementById('app').classList.remove('hidden');
-                const logoutBtn = document.getElementById('logout-btn-header');
-                if (logoutBtn) logoutBtn.classList.remove('hidden');
-                initApp();
-            } else {
-                if (currentLang === 'zh-Hant') {
-                    errEl.textContent = '密碼錯誤';
-                } else if (currentLang === 'zh') {
-                    errEl.textContent = '密码错误';
-                } else {
-                    errEl.textContent = 'Wrong password';
-                }
-                errEl.classList.remove('hidden');
-                pwdInput.value = '';
-                pwdInput.focus();
-            }
-            btn.disabled = false;
-        }).catch(() => {
-            if (currentLang === 'zh-Hant') {
-                errEl.textContent = '網路錯誤，請重試';
-            } else if (currentLang === 'zh') {
-                errEl.textContent = '网络错误，请重试';
-            } else {
-                errEl.textContent = 'Network error, please retry';
-            }
-            errEl.classList.remove('hidden');
-            btn.disabled = false;
-        });
-        return false;
-    };
+    if (typeof closeAppearancePreferences === 'function') closeAppearancePreferences(false);
+    _invalidateAccountIdentity(_identityModeState === 'unknown' ? 'error' : 'unauthenticated');
+    _accountAppVisible = false;
+    _resetHistorySearch();
+    if (_identityModeState === 'unknown') { _showAccountCheckGate(); return; }
+    _accountState.authRequired = true;
+    _accountState.authenticated = false;
+    _accountHidden('login-overlay', false);
+    _accountHidden('app', true);
+    _accountHidden('auth-check-panel', true);
+    _accountHidden('login-form', false);
+    _accountHidden('login-error', true);
+    _accountHidden('login-username-wrap', _identityMode() !== 'database');
+    const password = document.getElementById('login-password');
+    if (password) { password.value = ''; password.type = 'password'; }
+    const icon = document.querySelector('#login-toggle-pwd i');
+    if (icon) icon.classList.replace('fa-eye-slash', 'fa-eye');
+    const btn = document.getElementById('login-btn');
+    if (btn) btn.disabled = !!_accountWritePending;
+    _renderSidebarAccount();
+    document.getElementById(_identityMode() === 'database' ? 'login-username' : 'login-password')?.focus();
 }
 
-function handleLogout() {
-    fetch('/auth/logout', {
-        method: 'POST'
-    }).then(r => r.json()).then(data => {
-        if (data.status === 'success') {
-            window.location.reload();
+async function _submitAccountLogin(event) {
+    event.preventDefault();
+    if (_accountWritePending || _pendingTenantPicker || _identityMode() === 'unknown') return false;
+    const pwdInput = document.getElementById('login-password');
+    const userInput = document.getElementById('login-username');
+    if (!pwdInput?.value) return false;
+    const dbMode = _identityMode() === 'database';
+    const epoch = _authEpoch;
+    const btn = document.getElementById('login-btn');
+    const body = dbMode ? { username: userInput?.value || '', password: pwdInput.value } : { password: pwdInput.value };
+    _accountWritePending = 'login';
+    ++_accountCheckSeq;
+    _accountCheckRequest = null;
+    btn.disabled = true;
+    _accountHidden('login-error', true);
+    try {
+        const response = await fetch('/auth/login', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        const data = await response.json();
+        if (epoch !== _authEpoch) return false;
+        if (!response.ok || !data || data.status !== 'success') {
+            _accountText('login-error', t('account_credentials_error'));
+            _accountHidden('login-error', false);
+            pwdInput.value = '';
+            (dbMode ? userInput : pwdInput)?.focus();
+            return false;
         }
-    }).catch(() => {
-        window.location.reload();
+        if (dbMode && data.identity_mode !== 'database') throw new Error('Invalid login mode');
+        const loginNext = _normalizeAccountCheck({
+            status: 'success', identity_mode: dbMode ? 'database' : 'legacy',
+            auth_required: true, authenticated: true, user: data.user,
+            must_change_password: dbMode ? Boolean(data.must_change_password) : false
+        });
+        _acceptAccountIdentity(loginNext, true);
+        pwdInput.value = '';
+        // A forced change blocks tenant selection and business load: show the
+        // change-password gate and stay there until set.
+        if (dbMode && loginNext.mustChangePassword) {
+            if (typeof bumpTenantGeneration === 'function') bumpTenantGeneration();
+            _enterForcedPassword();
+            return false;
+        }
+        // Keep only the sanitized user above, before entering the tenant step.
+        const tenants = dbMode && Array.isArray(data.tenants)
+            ? data.tenants.filter(tn => tn && typeof tn.id === 'string' && tn.id) : [];
+        if (dbMode) sessionStorage.removeItem('cow_tenant_id');
+        if (tenants.length > 1) {
+            _showTenantPicker(tenants, null);
+        } else {
+            if (tenants.length === 1) sessionStorage.setItem('cow_tenant_id', tenants[0].id);
+            _afterLogin(dbMode);
+        }
+    } catch (_) {
+        if (epoch === _authEpoch) {
+            _accountText('login-error', t('account_login_failed'));
+            _accountHidden('login-error', false);
+        }
+    } finally {
+        _accountWritePending = null;
+        btn.disabled = false;
+        _renderSidebarAccount();
+    }
+    return false;
+}
+
+function _afterLogin(dbMode) {
+    _clearTenantPicker();
+    _resetHistorySearch();
+    _enterAccountApp();
+}
+
+function _showTenantPicker(tenants, currentId) {
+    _clearTenantPicker();
+    const tenantGroup = document.getElementById('login-tenant-group');
+    const tenantSelect = document.getElementById('login-tenant-select');
+    const nextBtn = document.getElementById('login-btn');
+    if (!tenantGroup || !tenantSelect || !nextBtn) throw new Error('Tenant picker unavailable');
+    _pendingTenantPicker = true;
+    _accountHidden('login-overlay', false);
+    _accountHidden('app', true);
+    _accountHidden('auth-check-panel', true);
+    _accountHidden('login-form', false);
+    const epoch = _authEpoch;
+    const allowed = new Set(tenants.map(tn => tn.id));
+    tenantGroup.classList.remove('hidden');
+    tenants.forEach(tn => {
+        const opt = document.createElement('option');
+        opt.value = tn.id;
+        opt.textContent = tn.name || tn.code || tn.id;
+        if (tn.id === currentId) opt.selected = true;
+        tenantSelect.appendChild(opt);
     });
+    const enter = event => {
+        event.preventDefault();
+        if (epoch !== _authEpoch || !_pendingTenantPicker || _accountWritePending) return false;
+        const chosen = tenantSelect.value;
+        if (!allowed.has(chosen)) return false;
+        sessionStorage.setItem('cow_tenant_id', chosen);
+        if (typeof bumpTenantGeneration === 'function') bumpTenantGeneration();
+        _afterLogin(true);
+        return false;
+    };
+    nextBtn.onclick = enter;
+    document.getElementById('login-form').onsubmit = enter;
+    _renderSidebarAccount();
+    tenantSelect.focus();
+}
+
+async function handleLogout() {
+    if (_accountWritePending || !((_accountState.authRequired && _accountState.authenticated)
+            || _accountState.phase === 'logout_error')) return;
+    _accountWritePending = 'logout';
+    _invalidateAccountIdentity('logout_pending');
+    _resetHistorySearch();
+    const epoch = _authEpoch;
+    _renderSidebarAccount();
+    try {
+        const response = await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' });
+        const data = await response.json();
+        if (epoch !== _authEpoch) return;
+        if (!response.ok || !data || data.status !== 'success') throw new Error('Logout unconfirmed');
+        window.location.reload();
+    } catch (_) {
+        if (epoch === _authEpoch) _accountState = _emptyAccount('logout_error');
+    } finally {
+        _accountWritePending = null;
+        _renderSidebarAccount();
+    }
 }
 window.handleLogout = handleLogout;
 
-// Intercept 401 responses globally to show login screen on session expiry
+// Only a 401 from the current identity can show the login screen. Preserve
+// the earlier Agent-routing fetch wrapper and return the original response.
 const _originalFetch = window.fetch;
 window.fetch = function(...args) {
+    const epoch = _authEpoch;
     return _originalFetch.apply(this, args).then(response => {
-        if (response.status === 401) {
-            const url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
-            if (!url.startsWith('/auth/')) {
+        if (response.status === 401 && epoch === _authEpoch
+                && !['unauthenticated', 'logout_pending'].includes(_accountState.phase)
+                && _accountWritePending !== 'login') {
+            const input = args[0];
+            const raw = typeof input === 'string' ? input : input?.url;
+            let url;
+            try { url = new URL(raw, window.location.href); } catch (_) { return response; }
+            if (url.origin === window.location.origin && !url.pathname.startsWith('/auth/')) {
                 showLoginScreen();
             }
         }
@@ -13965,25 +17167,505 @@ window.fetch = function(...args) {
 function initApp() {
     applyI18n();
     _applyInputTooltips();
-    _restoreSessionPanel();
-    refreshWorkspaceSelector();
-    refreshSessionSettings();
-
-    fetch('/api/knowledge/list').then(r => r.json()).then(data => {
-        if (data.status === 'success') {
-            _knowledgeTreeData = data.tree || [];
-            _knowledgeRootFiles = data.root_files || [];
-        }
-    }).catch(() => {});
-
-    fetch('/api/version').then(r => r.json()).then(data => {
-        APP_VERSION = `v${data.version}`;
-        document.getElementById('sidebar-version').textContent = `CowAgent ${APP_VERSION}`;
-    }).catch(() => {
-        document.getElementById('sidebar-version').textContent = 'CowAgent';
+    const epoch = _authEpoch;
+    // Top-level variables were read before authentication. Restore the actual
+    // account/tenant selections only now, then resolve the Agent before any
+    // session/history request can capture an old owner or default.
+    if (_identityMode() === 'database') {
+        activeAgentId = readScopedPreference('cow_active_agent') || '';
+        defaultAgentId = readScopedPreference('cow_default_agent') || 'default';
+        memoryAgentId = readScopedPreference('cow_memory_agent') || '';
+        knowledgeAgentId = readScopedPreference('cow_knowledge_agent') || '';
+    }
+    const chatReady = Promise.resolve(loadAgentCatalog()).then(() => {
+        if (epoch !== _authEpoch) return;
+        sessionId = loadOrCreateSessionId();
+        refreshWorkspaceSelector();
+        refreshSessionSettings();
+        restoreChatState();
+        startPolling();
+        fetch('/api/knowledge/list').then(r => r.json()).then(data => {
+            if (epoch === _authEpoch && data.status === 'success') {
+                _knowledgeTreeData = data.tree || [];
+                _knowledgeRootFiles = data.root_files || [];
+            }
+        }).catch(() => {});
     });
-    chatInput.focus();
+
+    fetch('/api/version').then(async response => {
+        if (!response.ok) throw new Error('Version unavailable');
+        const data = await response.json();
+        if (!data || (data.status && data.status !== 'success')
+                || typeof data.version !== 'string' || !data.version.trim()) throw new Error('Invalid version');
+        APP_VERSION = 'v' + data.version.trim().replace(/^v/i, '');
+        renderAccountVersion();
+    }).catch(() => renderAccountVersion());
+    return chatReady;
 }
+
+// =====================================================================
+// Account self-context: /auth/me, six-item menu, password, prefs, tenant switch
+// =====================================================================
+// Read-only self profile cached for the current account/epoch. Cleared on
+// account switch/logout so a previous account cannot restore into a new one.
+let _accountSelf = null;
+let _accountSelfSeq = 0;
+let _accountSelfRequest = null;
+let _activeAccountPanel = null;  // 'profile' | 'password' | 'prefs' | 'tenant' | 'about'
+
+function _db() { return _identityMode() === 'database'; }
+
+function _setAccountPanel(panel) {
+    _activeAccountPanel = panel;
+    ['account-password-form', 'account-password-status', 'ap-old-password',
+     'ap-new-password', 'ap-confirm-password'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && panel !== 'password') delete el.dataset.dirty;
+    });
+}
+
+// Close account surfaces before opening another, preserving the existing
+// password form's dismissal guard. The native preferences dialog owns focus.
+function closeAccountPanels(returnFocus = false) {
+    if (_forcedPassword) return false;
+    if (_activeAccountPanel === 'password') {
+        cancelAccountPassword();
+        if (_activeAccountPanel === 'password') return false;
+    }
+    closeAppearancePreferences(returnFocus);
+    _accountHidden('account-profile-drawer', true);
+    _setAccountPanel(null);
+    return true;
+}
+
+// --- profile ------------------------------------------------------------
+
+const _ACCOUNT_PROFILE_SEL = {
+    displayName: 'ap-display-name', username: 'ap-username', platform: 'ap-platform',
+    tenant: 'ap-tenant', memberName: 'ap-member-name', role: 'ap-role',
+    department: 'ap-department', position: 'ap-position',
+};
+
+async function fetchAccountSelf() {
+    // Refreshes /auth/me once per sequence; dedupes concurrent calls.
+    if (_accountSelfRequest) return _accountSelfRequest;
+    const seq = ++_accountSelfSeq;
+    const epoch = _authEpoch;
+    const request = Promise.resolve().then(async () => {
+        try {
+            const resp = await fetch('/auth/me', { credentials: 'same-origin', cache: 'no-store' });
+            const data = await resp.json();
+            if (seq !== _accountSelfSeq) return null;
+            if (resp.status === 401 || data.status !== 'success') return null;
+            if (epoch !== _authEpoch) return null;
+            _accountSelf = data;
+            return data;
+        } catch (_) {
+            if (seq === _accountSelfSeq && epoch === _authEpoch) _accountSelf = null;
+            return null;
+        } finally {
+            if (_accountSelfRequest === request) _accountSelfRequest = null;
+        }
+    });
+    _accountSelfRequest = request;
+    return request;
+}
+
+// Best-effort sync view of the last successful /auth/me. Returns null until the
+// first fetch resolves; callers must treat null as "unknown" (leave menus as-is)
+// rather than as a privilege denial.
+function _baseAccountSelf() {
+    return _accountSelf && _accountSelf.status === 'success' ? _accountSelf : null;
+}
+
+// Gate the permission-sensitive sidebar entries (task 5.7/5.8). The "platform
+// accounts" entry is visible only to a platform admin. The "identity audit"
+// entry is visible only to a platform admin OR the current tenant's tenant_admin
+// (or anyone holding a tenant-scoped audit privilege). Rows that fail the check
+// are hidden; the authorization decision always stays server-side.
+function _applySidebarPermissions(self) {
+    const gotSelf = self || _baseAccountSelf();
+    const user = gotSelf && gotSelf.user ? gotSelf.user : null;
+    const isPlatformAdmin = !!(user && user.is_platform_admin);
+    // Determine current-tenant tenant_admin: match the stored tenant id against
+    // the self tenants' membership role codes.
+    const tenantId = sessionStorage.getItem('cow_tenant_id') || '';
+    let isTenantAdmin = false;
+    if (gotSelf && Array.isArray(gotSelf.tenants) && tenantId) {
+        const cur = gotSelf.tenants.find(function (tn) { return tn.id === tenantId; });
+        if (cur && cur.membership && Array.isArray(cur.membership.roles)) {
+            isTenantAdmin = cur.membership.roles.some(function (r) { return r.code === 'tenant_admin'; });
+        }
+    }
+    // Admin console is shown only when the identity actually has an admin
+    // capability (platform admin or a tenant admin for the selected tenant).
+    // Display projection only: every page still re-authorizes server-side, and
+    // the backend console_pages projection drives the authoritative check.
+    const canAdmin = isPlatformAdmin || isTenantAdmin;
+
+    // In legacy mode there is no tenant/membership permission model, so the
+    // operator keeps the full navigation (no role-based hiding). In database
+    // mode, the 管理控制台 area and its four groups are hidden for a plain
+    // member (no admin capability). Authorization is never derived client-side;
+    // this is the read-availability presentation for the currently open
+    // identity-management consumers.
+    const isDb = _identityMode() === 'database';
+    if (isDb) {
+        document.querySelectorAll('#sidebar-nav .sidebar-hidden-admin-area')
+            .forEach(el => el.classList.toggle('hidden', !canAdmin));
+        // Platform-scope groups are visible only to a platform admin.
+        document.querySelectorAll('#sidebar-nav .sidebar-hidden-platform-scope')
+            .forEach(el => el.classList.toggle('hidden', !isPlatformAdmin));
+    } else {
+        document.querySelectorAll('#sidebar-nav .sidebar-hidden-admin-area')
+            .forEach(el => el.classList.toggle('hidden', false));
+        document.querySelectorAll('#sidebar-nav .sidebar-hidden-platform-scope')
+            .forEach(el => el.classList.toggle('hidden', false));
+    }
+
+    // Per-item: platform entries only for a platform admin.
+    const platformEl = document.querySelector('.sidebar-item[data-view="platform"]');
+    if (platformEl) platformEl.classList.toggle('hidden', !isPlatformAdmin);
+}
+
+function openAccountProfile() {
+    if (!closeAccountPanels(false)) return;
+    closeAccountMenu();
+    _setAccountPanel('profile');
+    _accountHidden('account-profile-drawer', false);
+    _accountHidden('account-profile-content', true);
+    _accountHidden('account-profile-status', true);
+    fetchAccountSelf().then(() => {
+        renderAccountProfile();
+        focusAccountPanel('account-profile-drawer');
+    }).catch(() => {
+        _accountText('account-profile-status', t('account_profile_error'));
+        _accountHidden('account-profile-status', false);
+    });
+}
+
+function renderAccountProfile() {
+    const box = document.getElementById('account-profile-content');
+    if (!box) return;
+    const ctx = _accountSelf;
+    _accountHidden(box, false);
+    _accountHidden('account-profile-status', true);
+    if (!ctx || !ctx.user) {
+        _accountText('account-profile-status', t('account_profile_error'));
+        _accountHidden('account-profile-status', false);
+        return;
+    }
+    const user = ctx.user;
+    _accountText(_ACCOUNT_PROFILE_SEL.displayName, user.display_name || user.username || '—');
+    _accountText(_ACCOUNT_PROFILE_SEL.username, user.username || '—');
+    _accountText(_ACCOUNT_PROFILE_SEL.platform, user.is_platform_admin ? t('account_profile_platform') : t('account_public_mode'));
+
+    // Resolve the selected tenant's membership from the self list.
+    const tid = sessionStorage.getItem('cow_tenant_id');
+    const entry = (ctx.tenants || []).find(tn => tn.id === tid) || (ctx.tenants || [])[0];
+    if (!entry) {
+        _accountText(_ACCOUNT_PROFILE_SEL.tenant, t('account_profile_no_tenant'));
+        _accountText(_ACCOUNT_PROFILE_SEL.memberName, t('account_profile_empty'));
+        _accountText(_ACCOUNT_PROFILE_SEL.role, t('account_profile_empty'));
+        _accountText(_ACCOUNT_PROFILE_SEL.department, t('account_profile_empty'));
+        _accountText(_ACCOUNT_PROFILE_SEL.position, t('account_profile_empty'));
+        return;
+    }
+    const m = entry.membership || {};
+    _accountText(_ACCOUNT_PROFILE_SEL.tenant, entry.name || entry.code || entry.id);
+    _accountText(_ACCOUNT_PROFILE_SEL.memberName, m.display_name || t('account_profile_empty'));
+    _accountText(_ACCOUNT_PROFILE_SEL.role, (m.roles || []).map(r => r.name || r.code).join(', ') || t('account_profile_empty'));
+    _accountText(_ACCOUNT_PROFILE_SEL.department, m.department ? (m.department.name || m.department.id) : t('account_profile_empty'));
+    _accountText(_ACCOUNT_PROFILE_SEL.position, m.position_text || t('account_profile_empty'));
+}
+
+function closeAccountProfile() {
+    _accountHidden('account-profile-drawer', true);
+    if (_activeAccountPanel === 'profile') _setAccountPanel(null);
+    if (_accountAppVisible) document.getElementById('sidebar-account-toggle')?.focus();
+}
+
+// --- change password ----------------------------------------------------
+
+function openAccountPassword() {
+    if (!closeAccountPanels(false)) return;
+    closeAccountMenu();
+    _setAccountPanel('password');
+    _accountHidden('account-password-modal', false);
+    _accountHidden('account-password-status', true);
+    ['ap-old-password', 'ap-new-password', 'ap-confirm-password'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.value = ''; delete el.dataset.dirty; }
+    });
+    focusAccountPanel('account-password-modal');
+}
+
+function cancelAccountPassword() {
+    if (_forcedPassword) {
+        // No dismissal: offer logout as the only way out. If confirmed, log out.
+        if (window.confirm(t('account_password_forced_logout'))) handleLogout();
+        return;
+    }
+    const dirty = ['ap-old-password', 'ap-new-password', 'ap-confirm-password']
+        .some(id => document.getElementById(id)?.dataset.dirty);
+    if (dirty && !window.confirm(t('unsaved_changes_warning'))) return;
+    _clearPasswordInputs();
+    closeAccountPassword();
+}
+
+function closeAccountPassword() {
+    // Forced change must not be bypassed by closing the modal: the restricted
+    // account can only set a new password or log out. Keep the gate open.
+    if (_forcedPassword) return;
+    _accountHidden('account-password-modal', true);
+    _setAccountPanel(null);
+    if (_accountAppVisible) document.getElementById('sidebar-account-toggle')?.focus();
+}
+
+function _clearPasswordInputs() {
+    ['ap-old-password', 'ap-new-password', 'ap-confirm-password'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.value = ''; delete el.dataset.dirty; }
+    });
+}
+
+async function submitAccountPassword(event) {
+    if (event) event.preventDefault();
+    const oldPw = document.getElementById('ap-old-password')?.value || '';
+    const newPw = document.getElementById('ap-new-password')?.value || '';
+    const confirmPw = document.getElementById('ap-confirm-password')?.value || '';
+    const status = document.getElementById('account-password-status');
+    const submitBtn = document.getElementById('ap-submit-btn');
+    if (!oldPw || !newPw || !confirmPw) {
+        _accountPasswordStatus(t('account_password_unknown'), true);
+        return;
+    }
+    if (newPw !== confirmPw) {
+        _accountPasswordStatus(t('account_password_mismatch'), true);
+        return;
+    }
+    if (_accountWritePending) return;
+    _accountWritePending = 'password';
+    if (submitBtn) submitBtn.disabled = true;
+    _accountHidden('account-password-status', true);
+    try {
+        const resp = await fetch('/auth/password', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ old_password: oldPw, new_password: newPw }),
+        });
+        let data = null;
+        try { data = await resp.json(); } catch (_) {}
+        if (resp.status === 401 && data && data.code === 'invalid_old') {
+            _accountPasswordStatus(t('account_password_invalid_old'), true);
+            return;
+        }
+        if (resp.status === 400 && data && data.code === 'weak_password') {
+            _accountPasswordStatus(t('account_password_weak'), true);
+            return;
+        }
+        if (resp.status === 401) {
+            // unauthorized -> session invalid; return to login
+            showLoginScreen();
+            return;
+        }
+        if (!resp.ok || !data || data.status !== 'success') {
+            _accountPasswordStatus(t('account_password_unknown'), true);
+            return;
+        }
+        // Success: session revoked & cookie cleared; force re-login.
+        _accountPasswordStatus(t('account_password_done'), false);
+        _clearPasswordInputs();
+        _accountSelf = null;
+        const wasForced = _forcedPassword;
+        if (wasForced) _closeForcedPasswordModal();
+        window.setTimeout(() => { showLoginScreen(); }, wasForced ? 700 : 900);
+    } catch (_) {
+        _accountPasswordStatus(t('account_password_unknown'), true);
+    } finally {
+        _accountWritePending = null;
+        if (submitBtn) submitBtn.disabled = false;
+    }
+}
+
+function _accountPasswordStatus(text, isError) {
+    const status = document.getElementById('account-password-status');
+    if (!status) return;
+    status.textContent = text || '';
+    status.classList.toggle('error', !!isError);
+    status.classList.remove('hidden');
+}
+
+// --- preferences (theme + language, browser-local) -----------------------
+
+function openAccountPrefs() {
+    openAppearancePreferences(document.getElementById('sidebar-account-toggle'));
+}
+
+function closeAccountPrefs() {
+    closeAppearancePreferences();
+}
+
+function _syncAccountPrefButtons() {
+    renderAppearancePreferences();
+}
+
+function setAccountTheme(theme) {
+    window.CowAppearance.setMode(theme);
+}
+
+function setAccountLang(lang) {
+    if (lang !== 'zh' && lang !== 'zh-Hant' && lang !== 'en') return;
+    // Personal preference: browser-local only, MUST NOT write instance config.
+    setLanguageLocal(lang);
+    _syncAccountPrefButtons();
+    if (typeof window.__cowLang__ !== 'undefined') window.__cowLang__ = lang;
+}
+
+function _accountPrefStorageWarn() {
+    languageStorageFailed = true;
+    renderAppearancePreferences();
+}
+
+// --- about ---------------------------------------------------------------
+
+function openAccountAbout() {
+    closeAccountMenu();
+    // Reuse the version link row: navigate to the release changelog, which is
+    // the existing "original update log" entry.
+    const version = document.getElementById('sidebar-version');
+    if (version && version.href) window.open(version.href, '_blank', 'noopener');
+    _setAccountPanel(null);
+}
+
+// --- tenant switching (refresh-based) ------------------------------------
+
+async function openAccountTenant() {
+    closeAccountMenu();
+    const epoch = _authEpoch;
+    const self = await fetchAccountSelf();
+    if (epoch !== _authEpoch) return;
+    if (!self) {
+        window.alert(t('account_profile_error'));
+        return;
+    }
+    const tenants = Array.isArray(self.tenants) ? self.tenants : [];
+    if (tenants.length === 0) {
+        window.alert(t('account_tenant_no_available'));
+        return;
+    }
+    if (tenants.length === 1) {
+        window.alert(t('account_tenant_single'));
+        return;
+    }
+    const current = sessionStorage.getItem('cow_tenant_id');
+    // Lists available tenants; clicking a non-current tenant navigates via a
+    // one-shot switch_tenant query param so the old page never pre-changes the
+    // stored tenant. The new page validates before committing.
+    const label = (tn) => (tn.name || tn.code || tn.id) + (tn.id === current ? ' (' + t('account_tenant_current') + ')' : '');
+    const choice = window.prompt(t('account_tenant_title') + '\n' + tenants.map((tn, i) => (i + 1) + '. ' + label(tn)).join('\n'));
+    if (!choice) return;
+    const idx = parseInt(choice, 10) - 1;
+    if (!Number.isInteger(idx) || idx < 0 || idx >= tenants.length) return;
+    const target = tenants[idx];
+    if (target.id === current) return;
+    _applyTenantSwitch(target.id);
+}
+
+function _applyTenantSwitch(targetId) {
+    if (!targetId || _accountWritePending) return;
+    _accountWritePending = 'tenant';
+    try {
+        const url = new URL(window.location.href);
+        url.searchParams.set('switch_tenant', targetId);
+        // The old page does NOT change cow_tenant_id; the new page validates.
+        window.location.assign(url.toString());
+    } catch (_) {
+        _accountWritePending = null;
+    }
+}
+
+// --- shared focus helper -------------------------------------------------
+
+function focusAccountPanel(panelId) {
+    const panel = document.getElementById(panelId);
+    if (!panel) return;
+    const focusable = panel.querySelector('input, select, button, a');
+    if (focusable) window.setTimeout(() => focusable.focus(), 0);
+}
+
+// Prevent accidental navigation/close when the password form has input.
+function accountBeforeUnload(e) {
+    if (_forcedPassword) return;  // forced gate may be exited via logout reload
+    const dirty = ['ap-old-password', 'ap-new-password', 'ap-confirm-password']
+        .some(id => document.getElementById(id)?.dataset.dirty);
+    if (dirty || _activeAccountPanel === 'password') {
+        e.preventDefault();
+        e.returnValue = true;
+    }
+}
+window.addEventListener('beforeunload', accountBeforeUnload);
+
+// One-shot tenant switch validation on load: read the switch_tenant query
+// param, validate it against /auth/me, then commit and strip the param.
+function _resolveOneShotTenantSwitch() {
+    try {
+        const url = new URL(window.location.href);
+        const target = url.searchParams.get('switch_tenant');
+        const epoch = _authEpoch;
+        if (!target || _identityMode() !== 'database') return Promise.resolve(false);
+        return fetch('/auth/me', { credentials: 'same-origin', cache: 'no-store' })
+            .then(r => r.json())
+            .then(data => {
+                if (epoch !== _authEpoch) return false;
+                const valid = data && data.status === 'success'
+                    && Array.isArray(data.tenants)
+                    && data.tenants.some(tn => tn.id === target);
+                if (valid) {
+                    sessionStorage.setItem('cow_tenant_id', target);
+                    if (typeof bumpTenantGeneration === 'function') bumpTenantGeneration();
+                    // strip the one-shot param
+                    url.searchParams.delete('switch_tenant');
+                    if (typeof window.history !== 'undefined' && window.history.replaceState) {
+                        window.history.replaceState(null, '', url.toString());
+                    }
+                    return true;
+                }
+                // invalid target: keep global login, do not silently enter another
+                window.alert(t('account_tenant_invalid'));
+                if (typeof bumpTenantGeneration === 'function') bumpTenantGeneration();
+                url.searchParams.delete('switch_tenant');
+                if (typeof window.history !== 'undefined' && window.history.replaceState) {
+                    window.history.replaceState(null, '', url.toString());
+                }
+                return false;
+            })
+            .catch(() => false);
+    } catch (_) {
+        return Promise.resolve(false);
+    }
+}
+
+// Mark password inputs dirty on change (for the beforeunload confirmation).
+document.addEventListener('input', (e) => {
+    if (e.target && ['ap-old-password', 'ap-new-password', 'ap-confirm-password'].includes(e.target.id)) {
+        e.target.dataset.dirty = '1';
+    }
+});
+
+window.openAccountProfile = openAccountProfile;
+window.openAccountPassword = openAccountPassword;
+window.closeAccountProfile = closeAccountProfile;
+window.closeAccountPassword = closeAccountPassword;
+window.cancelAccountPassword = cancelAccountPassword;
+window.openAccountPrefs = openAccountPrefs;
+window.closeAccountPrefs = closeAccountPrefs;
+window.setAccountTheme = setAccountTheme;
+window.setAccountLang = setAccountLang;
+window.openAccountAbout = openAccountAbout;
+window.openAccountTenant = openAccountTenant;
+window.submitAccountPassword = submitAccountPassword;
 
 // =====================================================================
 // Initialization
@@ -13991,19 +17673,13 @@ function initApp() {
 applyTheme();
 applyI18n();
 
-fetch('/auth/check').then(r => r.json()).then(data => {
-    if (data.auth_required && !data.authenticated) {
-        showLoginScreen();
-    } else {
-        if (data.auth_required) {
-            const logoutBtn = document.getElementById('logout-btn-header');
-            if (logoutBtn) logoutBtn.classList.remove('hidden');
-        }
-        initApp();
-    }
-}).catch(() => {
-    initApp();
-});
+// Wire the change-password form submit (single submission).
+(function () {
+    const form = document.getElementById('account-password-form');
+    if (form) form.addEventListener('submit', submitAccountPassword);
+})();
+
+refreshAccountIdentity();
 
 requestAnimationFrame(() => {
     document.body.classList.add('transition-colors', 'duration-200');

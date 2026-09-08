@@ -61,7 +61,7 @@ VENDOR_URLS = (
 DOWNLOAD_TIMEOUT = 120
 
 # Per-user, writable, persistent location. Mirrors the browser tool's ~/.cow
-# layout so everything CowAgent owns lives under one roof.
+# layout so everything RongAI owns lives under one roof.
 _VENDOR_SUBDIR = os.path.join(".cow", "feishu_vendor")
 
 
@@ -121,7 +121,7 @@ def _fetch(url: str) -> bytes:
     logger.info("[FeiShu] downloading Feishu SDK bundle from %s", url)
     # The overseas mirror sits behind a CDN that answers 403 to urllib's default
     # User-Agent, so an unnamed request only ever reaches the China mirror.
-    req = urllib.request.Request(url, headers={"User-Agent": "CowAgent"})
+    req = urllib.request.Request(url, headers={"User-Agent": "RongAI"})
     with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT) as resp:
         return resp.read()
 

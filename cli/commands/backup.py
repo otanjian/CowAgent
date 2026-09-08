@@ -1,5 +1,6 @@
-"""Portable local backup and restore commands for CowAgent user data."""
+"""Portable local backup and restore commands for RongAI user data."""
 
+import base64
 import json
 import os
 import re
@@ -32,7 +33,7 @@ def _team():
 BACKUP_FORMAT = "cowagent-backup"
 # v2 only describes the multi-Agent layout. A single-workspace archive is
 # structurally identical to what v1 produced, so it keeps declaring v1 and
-# stays restorable by older CowAgent versions.
+# stays restorable by older RongAI versions.
 BACKUP_VERSION = 2
 _SINGLE_WORKSPACE_VERSION = 1
 _SUPPORTED_BACKUP_VERSIONS = {_SINGLE_WORKSPACE_VERSION, BACKUP_VERSION}
@@ -44,6 +45,69 @@ _SKIP_FILES = {".DS_Store"}
 def _data_root() -> Path:
     configured = os.environ.get("COW_DATA_DIR")
     return Path(configured).expanduser().resolve() if configured else Path(get_project_root()).resolve()
+
+
+def _branding_export(data_root: Path) -> Optional[dict]:
+    """Return a backup-safe brand bundle, or ``None`` when unset.
+
+    The bundle is the current published snapshot plus the raw bytes of the
+    assets it references. ``None`` means "no custom brand to back up"; the
+    restore side then knows to fall back to defaults (fresh) or keep the
+    existing brand (already customized), never to delete anything.
+    """
+    _ensure_project_on_path()
+    from channel.web import branding
+
+    return branding.BrandingService(data_root=str(data_root)).export_backup()
+
+
+def _branding_restore(data_root: Path, segment: dict) -> None:
+    """Publish a validated brand segment into the target data root.
+
+    Raises on an invalid / unsupported segment so the restore aborts before
+    publishing config rather than quietly dropping the brand. The service
+    allocates a fresh revision, so no stale browser draft can collide.
+    """
+    _ensure_project_on_path()
+    from channel.web import branding
+
+    branding.BrandingService(data_root=str(data_root)).restore_backup(segment)
+
+
+_BRAND_SEGMENT = "data/branding.json"
+
+
+def _write_brand_segment(zip_file, brand: Optional[dict]) -> None:
+    if not brand:
+        return
+    payload = dict(brand)
+    assets = payload.get("assets") or {}
+    payload["assets"] = {
+        asset_id: base64.b64encode(data).decode("ascii")
+        for asset_id, data in assets.items()
+    }
+    zip_file.writestr(
+        _BRAND_SEGMENT,
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+    )
+
+
+def _read_brand_segment(data_dir: Path) -> Optional[dict]:
+    """Return the decoded brand segment, or ``None`` when the archive has none."""
+    path = data_dir / "data" / "branding.json"
+    if not path.is_file():
+        return None
+    with path.open("r", encoding="utf-8") as handle:
+        value = json.load(handle)
+    if not isinstance(value, dict):
+        return None
+    assets = value.get("assets") or {}
+    if isinstance(assets, dict):
+        value["assets"] = {
+            asset_id: base64.b64decode(data)
+            for asset_id, data in assets.items()
+        }
+    return value
 
 
 def _read_config(data_root: Path) -> dict:
@@ -135,6 +199,7 @@ def create_backup_archive(
         # being archived rather than from wherever config.json happens to point.
         config = _team().resolve({**config, "agent_workspace": str(workspace)})
     legacy_path = _legacy_user_data_path(data_root, config)
+    brand_export = _branding_export(data_root)
     profiles, explicit_registry = _configured_workspaces(config, workspace)
     sources = {
         profile.id: Path(profile.workspace).expanduser().resolve()
@@ -197,12 +262,17 @@ def create_backup_archive(
         # slot now means adding per-user archive roots later is an additive
         # change to the v2 manifest instead of a v3 format break.
         "users": [],
+        # Instance Web branding (optional). Populated only when a custom brand
+        # has been published; the restore side treats a missing segment as "not
+        # backed up" and never deletes existing brand data.
+        "branding": bool(brand_export),
         "contents": {
             "config": config_path.is_file(),
             "legacy_user_data": legacy_path.is_file(),
             "agent_workspaces": len(workspace_entries),
             "workspace_files": total_files,
             "workspace_bytes": total_bytes,
+            "branding": bool(brand_export),
         },
     }
 
@@ -232,6 +302,7 @@ def create_backup_archive(
                     archive.write(str(config_path), "data/config.json")
             if legacy_path.is_file():
                 archive.write(str(legacy_path), "data/user_datas.pkl")
+            _write_brand_segment(archive, brand_export)
             for _, source, archive_root, files, _ in workspace_entries:
                 for path in files:
                     relative = path.relative_to(source).as_posix()
@@ -261,7 +332,7 @@ def _validate_archive(archive: zipfile.ZipFile) -> dict:
         manifest.get("format") != BACKUP_FORMAT
         or version not in _SUPPORTED_BACKUP_VERSIONS
     ):
-        raise ValueError("unsupported CowAgent backup format or version")
+        raise ValueError("unsupported 容大AI backup format or version")
 
     # The user dimension is declared but not yet produced. Checked at any
     # version, because the slot travels on single-workspace archives too.
@@ -273,7 +344,7 @@ def _validate_archive(archive: zipfile.ZipFile) -> dict:
         raise ValueError("archive manifest has an invalid users list")
     if users:
         raise ValueError(
-            "archive contains user-scoped workspaces, which this CowAgent "
+            "archive contains user-scoped workspaces, which this 容大AI "
             "version cannot restore; upgrade before restoring"
         )
 
@@ -425,6 +496,8 @@ def restore_backup_archive(
                 raise ValueError("archived config.json must contain an object")
             archived_config = value
 
+        archived_branding = _read_brand_segment(temp_dir)
+
         restored_config = dict(archived_config)
         multi_agent = (
             manifest.get("version", 1) >= 2
@@ -506,6 +579,16 @@ def restore_backup_archive(
                     _atomic_copy(source, destination)
                     restored_files += 1
 
+        # Restore the instance Web branding segment, if the archive carries one.
+        # A missing segment is "not backed up": never delete existing brand data,
+        # and on a fresh instance leave the built-in default. A present-but-invalid
+        # segment aborts here (before config is published) so the restore is never
+        # a partial brand overwrite.
+        branding_restored = False
+        if archived_branding is not None:
+            _branding_restore(data_root, archived_branding)
+            branding_restored = True
+
         # Publish config only after every workspace file has been validated
         # and copied. A copy failure cannot leave config pointing at a partial
         # multi-agent restore.
@@ -549,6 +632,7 @@ def restore_backup_archive(
             "agents": restored_agents,
             "config_restored": bool(restored_config),
             "legacy_user_data_restored": legacy_source.is_file(),
+            "branding_restored": branding_restored,
         }
     finally:
         shutil.rmtree(str(temp_dir), ignore_errors=True)
@@ -592,7 +676,7 @@ def restore_command(archive: Path, workspace: Optional[Path], yes: bool):
     pid = _read_pid()
     if pid:
         raise click.ClickException(
-            f"CowAgent is running (PID: {pid}). Run 'cow stop' before restoring."
+            f"容大AI is running (PID: {pid}). Run 'cow stop' before restoring."
         )
     if not yes:
         click.confirm(

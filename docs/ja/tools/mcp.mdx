@@ -3,11 +3,11 @@ title: MCP Tool
 description: Model Context Protocol を介して外部Toolエコシステムを統合
 ---
 
-CowAgent は [Model Context Protocol (MCP)](https://modelcontextprotocol.io) をサポートしており、コミュニティで提供されている数万種類の MCP Tool を Agent から直接呼び出せます。`mcp.json` を一度設定すれば、組み込みToolとまったく同じ形で LLM に公開され、自動的に選択・呼び出されます。
+容大AI は [Model Context Protocol (MCP)](https://modelcontextprotocol.io) をサポートしており、コミュニティで提供されている数万種類の MCP Tool を Agent から直接呼び出せます。`mcp.json` を一度設定すれば、組み込みToolとまったく同じ形で LLM に公開され、自動的に選択・呼び出されます。
 
 ## 設定ファイル
 
-CowAgent は `~/cow/mcp.json` を読み込みます。ファイルが存在しない場合は MCP Tool は読み込まれず、エラーにもなりません。
+容大AI は `~/cow/mcp.json` を読み込みます。ファイルが存在しない場合は MCP Tool は読み込まれず、エラーにもなりません。
 
 Docker デプロイの場合、公式の `docker-compose.yml` はホスト側の `./cow` をコンテナ内の `/home/agent/cow`（コンテナユーザーの `~/cow`）にマウント済みです。ホスト側の `./cow/` に `mcp.json` を置くだけで反映されます。
 
@@ -65,7 +65,7 @@ MCP コミュニティ標準に完全準拠しており、Claude Desktop / Curso
 
 ## Agent に設定を任せる
 
-CowAgent には `read` / `write` / `edit` Tool が組み込まれているため、**MCP の設定をそのまま Agent に渡して、ファイルに書き込んでもらえます**：
+容大AI には `read` / `write` / `edit` Tool が組み込まれているため、**MCP の設定をそのまま Agent に渡して、ファイルに書き込んでもらえます**：
 
 例：
 
@@ -82,7 +82,7 @@ Agent は次のように動作します：
 
 ## Web 認可（OAuth）
 
-一部のリモート MCP は OAuth の Web 認可が必要で、そのまま設定すると `401` が返ります。CowAgent は標準的な OAuth フローを内蔵しているため、**token を手動で入力する必要はなく**、通常どおり設定するだけです。例：
+一部のリモート MCP は OAuth の Web 認可が必要で、そのまま設定すると `401` が返ります。容大AI は標準的な OAuth フローを内蔵しているため、**token を手動で入力する必要はなく**、通常どおり設定するだけです。例：
 
 ```json
 {
@@ -131,4 +131,4 @@ server の初回ロードで `401` が返ると、認可が自動的に開始さ
 - [mcp.so](https://mcp.so) — グローバル MCP サービスインデックス
 - [ModelScope MCP 広場](https://modelscope.cn/mcp) — 魔搭コミュニティの MCP 広場、中国本土からのアクセスが安定
 
-MCP 標準プロトコル（stdio / SSE / Streamable HTTP）に準拠していれば、コードを一切変更せずに CowAgent に統合できます。
+MCP 標準プロトコル（stdio / SSE / Streamable HTTP）に準拠していれば、コードを一切変更せずに 容大AI に統合できます。

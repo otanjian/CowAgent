@@ -11,9 +11,28 @@ def test_legacy_config_synthesizes_default_agent(tmp_path):
 
     profile = registry.get()
     assert profile.id == "default"
-    assert profile.name == "CowAgent"
+    assert profile.name == "RongAI"
     assert profile.workspace_path == workspace.resolve()
     assert registry.default_agent_id == "default"
+
+
+@pytest.mark.parametrize("legacy_name", ["CowAgent", "cowagent", " COWAGENT "])
+def test_legacy_product_name_is_normalized_without_moving_the_agent(tmp_path, legacy_name):
+    settings = {
+        "agent_workspace": str(tmp_path),
+        "default_agent_id": "main",
+        "agents": [
+            {"id": "main", "name": legacy_name},
+            {"id": "erpnext", "name": "ERPnext助手"},
+        ],
+    }
+    registry = AgentRegistry.from_config(settings)
+
+    assert registry.get().name == "RongAI"
+    assert registry.get().id == "main"
+    assert registry.get().workspace_path == tmp_path.resolve()
+    assert registry.get("erpnext").name == "ERPnext助手"
+    assert settings["agents"][0]["name"] == legacy_name
 
 
 def test_configured_agents_keep_separate_workspaces(tmp_path):

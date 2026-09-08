@@ -69,7 +69,7 @@ DEFAULT_ALIASES = {
     name="cow_cli",
     desc="Handle cow/slash commands in chat messages",
     version="0.1.0",
-    author="CowAgent",
+    author="RongAI",
     desire_priority=1000,
 )
 class CowCliPlugin(Plugin):
@@ -349,7 +349,7 @@ class CowCliPlugin(Plugin):
     def _cmd_help(self, args: str, e_context, **_) -> str:
         if _t("zh", "en") == "en":
             lines = [
-                "📋 CowAgent Commands",
+                "📋 容大AI Commands",
                 "",
                 "/help: Show this help",
                 "/version: Show version",
@@ -379,7 +379,7 @@ class CowCliPlugin(Plugin):
             ]
         else:
             lines = [
-                "📋 CowAgent 命令列表",
+                "📋 容大AI 命令列表",
                 "",
                 "/help: 显示此帮助",
                 "/version: 查看版本",
@@ -410,7 +410,7 @@ class CowCliPlugin(Plugin):
         return "\n".join(lines)
 
     def _cmd_version(self, args: str, e_context, **_) -> str:
-        return f"CowAgent v{__version__}"
+        return f"容大AI v{__version__}"
 
     # ------------------------------------------------------------------
     # tasks — read-only scheduler list scoped to the current chat.
@@ -543,7 +543,7 @@ class CowCliPlugin(Plugin):
         from config import conf
 
         cfg = conf()
-        lines = [_t("📊 CowAgent 运行状态", "📊 CowAgent Status"), ""]
+        lines = [_t("📊 容大AI 运行状态", "📊 容大AI Status"), ""]
 
         lines.append(_t(f"  版本: v{__version__}", f"  Version: v{__version__}"))
         lines.append(_t(f"  进程: PID {os.getpid()}", f"  Process: PID {os.getpid()}"))
@@ -940,8 +940,8 @@ class CowCliPlugin(Plugin):
                 "you can also run `cow install-browser` in a terminal.",
             )
         return _t(
-            "✅ 安装流程已结束。请重启 CowAgent 后使用 browser 工具。",
-            "✅ Installation finished. Restart CowAgent to use the browser tool.",
+            "✅ 安装流程已结束。请重启容大AI后使用 browser 工具。",
+            "✅ Installation finished. Restart 容大AI to use the browser tool.",
         )
 
     # ------------------------------------------------------------------

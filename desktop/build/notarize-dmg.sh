@@ -21,7 +21,7 @@
 #
 # Usage:
 #   # notarize + staple only (no upload):
-#   desktop/build/notarize-dmg.sh path/to/CowAgent-1.2.3-arm64.dmg [more.dmg ...]
+#   desktop/build/notarize-dmg.sh path/to/容大AI-1.2.3-arm64.dmg [more.dmg ...]
 #
 #   # notarize + staple + re-upload to R2 (needs wrangler + Cloudflare creds):
 #   VER=1.2.3 UPLOAD=1 desktop/build/notarize-dmg.sh *.dmg

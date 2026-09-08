@@ -1,4 +1,4 @@
-"""OpenAI-compatible HTTP adapter for CowAgent chat completions."""
+"""OpenAI-compatible HTTP adapter for 容大AI chat completions."""
 
 from __future__ import annotations
 
@@ -298,12 +298,12 @@ def _stream_completion(
         closed.set()
         _cancel_agent_request(completion_id)
         raise OpenAIAPIError(
-            500, "CowAgent timed out before producing a response.", "timeout"
+            500, "容大AI timed out before producing a response.", "timeout"
         ) from error
     if first_item is _STREAM_ERROR:
         closed.set()
         raise OpenAIAPIError(
-            500, "CowAgent failed to complete the request.", "internal_error"
+            500, "容大AI failed to complete the request.", "internal_error"
         )
 
     def frames() -> Iterator[str]:
@@ -325,7 +325,7 @@ def _stream_completion(
                             {},
                             cow_event={
                                 "type": "error",
-                                "message": "CowAgent failed to complete the request.",
+                                "message": "容大AI failed to complete the request.",
                             },
                         )
                     )
@@ -386,7 +386,7 @@ def _non_stream_completion(
     except Exception as error:
         logger.exception("[OpenAI API] Chat completion failed")
         raise OpenAIAPIError(
-            500, "CowAgent failed to complete the request.", "internal_error"
+            500, "容大AI failed to complete the request.", "internal_error"
         ) from error
 
     message = {"role": "assistant", "content": "".join(content)}
@@ -469,6 +469,21 @@ class OpenAIChatCompletionsHandler:
 
     def POST(self):
         import web
+
+        # Server-side closure of the OpenAI-compatible API in database identity
+        # mode (task 3.11). Closed even for an explicit token: the identity
+        # console only opens identity management + restricted reads.
+        try:
+            from config import conf
+            if str(conf().get("identity_mode", "legacy") or "legacy") == "database":
+                raise OpenAIAPIError(
+                    503, "OpenAI-compatible API is disabled in database identity mode.",
+                    "database_unavailable",
+                )
+        except OpenAIAPIError:
+            raise
+        except Exception:
+            pass
 
         try:
             raw_body = web.data()

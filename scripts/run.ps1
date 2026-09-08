@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    CowAgent installer & management script for Windows.
+    RongAI installer & management script for Windows.
 .DESCRIPTION
     One-liner install:
       irm https://cdn.link-ai.tech/code/cow/run.ps1 | iex
@@ -293,7 +293,7 @@ function Install-Project {
         exit 1
     }
 
-    Write-Cow (T "正在克隆 CowAgent 项目..." "Cloning CowAgent project...")
+    Write-Cow (T "正在克隆 容大AI 项目..." "Cloning 容大AI project...")
     $cloneOk = $false
 
     # Test GitHub connectivity before attempting clone
@@ -791,7 +791,7 @@ function Resolve-CowCommand {
 
 # ── start via cow CLI ─────────────────────────────────────────────
 function Start-CowAgent {
-    Write-Cow (T "正在启动 CowAgent..." "Starting CowAgent...")
+    Write-Cow (T "正在启动 容大AI..." "Starting 容大AI...")
     if (Resolve-CowCommand) {
         & cow start
     } else {
@@ -824,7 +824,7 @@ function Invoke-CowCommand {
 # ── usage ─────────────────────────────────────────────────────────
 function Show-Usage {
     Write-Info "========================================="
-    Write-Info "   CowAgent Management Script (Windows)"
+    Write-Info "   容大AI Management Script (Windows)"
     Write-Info "========================================="
     Write-Host ""
     Write-Host (T "用法:" "Usage:")
@@ -847,7 +847,7 @@ function Show-Usage {
 function Install-Mode {
     Clear-Host
     Write-Info "========================================="
-    Write-Info "   CowAgent Installation (Windows)"
+    Write-Info "   容大AI Installation (Windows)"
     Write-Info "========================================="
     Write-Host ""
 
@@ -887,7 +887,7 @@ function Install-Mode {
 
 # ── update ────────────────────────────────────────────────────────
 function Update-Project {
-    Write-Cow (T "正在更新 CowAgent..." "Updating CowAgent...")
+    Write-Cow (T "正在更新 容大AI..." "Updating 容大AI...")
     Set-Location $BaseDir
 
     # Stop if running
@@ -920,7 +920,7 @@ function Update-Project {
 
     # Start via python -m cli.cli instead of cow.exe, because the exe may
     # still be cached/locked from the previous installation on Windows.
-    Write-Cow (T "正在启动 CowAgent..." "Starting CowAgent...")
+    Write-Cow (T "正在启动 容大AI..." "Starting 容大AI...")
     & $PythonCmd -m cli.cli start
 }
 

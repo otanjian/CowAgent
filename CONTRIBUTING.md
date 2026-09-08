@@ -1,6 +1,6 @@
-# Contributing to CowAgent
+# Contributing to RongAI
 
-Thanks for taking the time to contribute! 🎉 CowAgent is built by a global
+Thanks for taking the time to contribute! 🎉 RongAI is built by a global
 community, and contributions of all sizes are welcome — from typo fixes to new
 features.
 
@@ -57,5 +57,5 @@ cow start
 
 ## Code of conduct
 
-Be respectful and constructive. We want CowAgent to be a welcoming place for
+Be respectful and constructive. We want RongAI to be a welcoming place for
 everyone.

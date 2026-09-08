@@ -96,7 +96,7 @@ class FakeAgentBridge:
 def _setup_workspace():
     """Create a realistic temp workspace: seeded memory + real editable skills.
 
-    Mirrors a real CowAgent workspace closely enough that the model has genuine
+    Mirrors a real RongAI workspace closely enough that the model has genuine
     content to read, reason about, and edit during a real evolution pass.
     """
     ws = Path(tempfile.mkdtemp(prefix="evo_test_"))

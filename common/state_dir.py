@@ -64,6 +64,116 @@ def state_root(identity: Optional[RuntimeIdentity] = None) -> Path:
     return Path(profile.workspace)
 
 
+def _real(path) -> str:
+    """Symlink-resolved absolute path for containment comparisons."""
+    return os.path.realpath(str(path))
+
+
+def _contains(a: str, b: str) -> bool:
+    """True when path ``a`` equals or is an ancestor of ``b``."""
+    try:
+        return os.path.commonpath([a, b]) == a
+    except ValueError:
+        # different drives (Windows) -> cannot be ancestors
+        return False
+
+
+def _engineering_root() -> Optional[str]:
+    """The verified default workspace root (e.g. ``~/cow``), realpath'd.
+
+    This is the one root a default tenant legitimately lives in. It is exempt
+    from the home/global escape check so a real install (where the default
+    tenant's shared root IS ``~/cow``) is not falsely rejected. Mirrors the
+    default-Agent workspace that ``state_root()`` resolves for an absent id.
+    """
+    try:
+        from agent.registry import get_agent_registry
+        return _real(get_agent_registry().get(require_enabled=False).workspace)
+    except Exception:
+        return None
+
+
+def _is_home_or_global_escape(path: str, home: str, engineering: Optional[str]) -> bool:
+    """True when ``path`` escapes into home/config/global areas.
+
+    Rejects a path that is (or sits inside) the user's home or a global data
+    root, unless it is the verified engineering/workspace root (or a descendant)
+    — a default tenant legitimately lives there, and that root is already
+    verified rather than user-controlled.
+    """
+    if _contains(home, path) and not (engineering and _contains(engineering, path)):
+        return True
+    # Global data/config root: tenant data must never be stored in the config/
+    # source tree or the shared data directory itself.
+    try:
+        from config import get_data_root
+        data_root = _real(get_data_root())
+        if _contains(data_root, path):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _assert_tenant_roots_do_not_contain(ident, root) -> None:
+    """Reject a tenant root that escapes into home/config or another tenant (3.9).
+
+    ``shared_root()`` and the tenant base resolvers must never return a path
+    that (a) is/falls inside the user's home or a global data/config root
+    (unless it is the verified engineering workspace root), or (b) equals or
+    contains / is contained by another tenant's shared root. Both checks use
+    ``os.path.realpath`` so symlinks cannot smuggle a path out. Throws
+    ``StateDirError`` on violation. Same-tenant historical nesting is allowed —
+    only *other* tenants' roots are compared.
+    """
+    from common.runtime_identity import current_identity
+    if not ident.tenant_id:
+        return
+    home = _real(Path.home())
+    engineering = _engineering_root()
+
+    target = _real(root)
+    if _is_home_or_global_escape(target, home, engineering):
+        raise StateDirError(
+            f"tenant {ident.tenant_id!r} shared root {target!r} resolves inside "
+            f"the home/global workspace root; refusing to fall back"
+        )
+
+    from auth.service import get_identity_service
+    try:
+        svc = get_identity_service()
+        for other in svc.tenant_shared_roots():
+            # Skip the tenant being resolved: its own nested paths are legal.
+            if other["id"] == ident.tenant_id:
+                continue
+            other_root = _real(other["shared_root"])
+            # Equal, or one contains the other -> cross-tenant containment.
+            if _contains(target, other_root) or _contains(other_root, target):
+                raise StateDirError(
+                    f"tenant {ident.tenant_id!r} shared root {target!r} "
+                    f"overlaps tenant {other['id']!r} root {other_root!r}"
+                )
+    except StateDirError:
+        raise
+    except Exception as e:
+        # Tie-breaking failure must not silently open a path we cannot verify.
+        raise StateDirError(
+            f"cannot verify tenant {ident.tenant_id!r} shared root containment: {e}"
+        ) from e
+
+
+def _resolve_tenant_shared_root(ident) -> Path:
+    """Resolve the trusted tenant shared root and validate containment (3.9)."""
+    from auth.service import get_identity_service
+    root = get_identity_service().tenant_shared_root(ident.tenant_id)
+    if root:
+        _assert_tenant_roots_do_not_contain(ident, root)
+        return Path(root)
+    raise StateDirError(
+        f"tenant {ident.tenant_id!r} has no configured shared root"
+    )
+
+
 def shared_root() -> Path:
     """Root of the assets every Agent draws on.
 
@@ -72,10 +182,53 @@ def shared_root() -> Path:
     moves, and a second Agent reads the skills and credentials that are already
     there instead of needing its own copies. Add a setting if someone ever
     wants the shared area somewhere else.
+
+    In database mode the current identity's tenant resolves its trusted shared
+    root (task 3.9): a tenant never falls back to another tenant's (or the
+    default Agent's) shared assets, and the root is rejected when it escapes
+    into home/global or overlaps another tenant.
     """
+    from common.runtime_identity import current_identity
+    ident = current_identity()
+    if ident.tenant_id:
+        return _resolve_tenant_shared_root(ident)
     from agent.registry import get_agent_registry
 
     return Path(get_agent_registry().get(require_enabled=False).workspace)
+
+
+def tenant_app_data_root(tenant_id: str, *, identity_service=None) -> Path:
+    """Private application data for a verified tenant, outside its workspace.
+
+    Resolves only; the business store creates its directory after authorization.
+    Never use the tenant's shared_root here: it is exposed by file previews.
+    """
+    import re
+    from auth.service import get_identity_service
+    from agent.registry import get_agent_registry
+    from config import get_data_root
+
+    if not isinstance(tenant_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", tenant_id):
+        raise StateDirError("invalid tenant id for private application data")
+    svc = identity_service if identity_service is not None else get_identity_service()
+    tenant = svc.get_tenant(tenant_id)
+    if not tenant or not tenant["active"]:
+        raise StateDirError("private application data requires an active tenant")
+
+    data_root = Path(get_data_root()).resolve()
+    namespace = data_root / "tenants"
+    root = namespace / tenant_id
+    # A symlink must not turn a private tenant directory into a workspace or
+    # another tenant's directory, including when the target does not exist yet.
+    if namespace.is_symlink() or root.is_symlink():
+        raise StateDirError("private tenant data directory cannot be a symlink")
+    workspaces = [p.workspace for p in get_agent_registry().list(include_disabled=True)]
+    workspaces.extend(t["shared_root"] for t in svc.tenant_shared_roots())
+    for workspace in filter(None, workspaces):
+        workspace = _real(workspace)
+        if _contains(workspace, str(root)) or _contains(str(root), workspace):
+            raise StateDirError("private tenant data directory overlaps a workspace")
+    return root
 
 
 def user_root(identity: Optional[RuntimeIdentity] = None) -> Path:

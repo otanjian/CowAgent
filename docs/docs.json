@@ -1,7 +1,7 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "name": "CowAgent",
-  "description": "CowAgent - AI Super Assistant powered by LLMs, with autonomous task planning, long-term memory, skills system, and multi-channel deployment.",
+  "name": "容大AI",
+  "description": "容大AI - AI Super Assistant powered by LLMs, with autonomous task planning, long-term memory, skills system, and multi-channel deployment.",
   "theme": "mint",
   "appearance": {
     "default": "light"
@@ -12,8 +12,8 @@
     "dark": "#228547"
   },
   "logo": {
-    "light": "/images/logo.jpg",
-    "dark": "/images/logo.jpg"
+    "light": "/images/rongda-ai-logo.svg",
+    "dark": "/images/rongda-ai-logo-dark.svg"
   },
   "favicon": "/images/favicon.ico",
   "navbar": {
@@ -23,7 +23,7 @@
         "href": "https://cowagent.ai/"
       },
       {
-        "label": "下载",
+        "label": "上游客户端下载",
         "href": "https://cowagent.ai/download/"
       },
       {
@@ -60,7 +60,7 @@
               "href": "https://cowagent.ai/"
             },
             {
-              "label": "Download",
+              "label": "Upstream Download",
               "href": "https://cowagent.ai/download/"
             },
             {
@@ -305,7 +305,7 @@
               "href": "https://cowagent.ai/?lang=zh"
             },
             {
-              "label": "下载",
+              "label": "上游客户端下载",
               "href": "https://cowagent.ai/zh/download/"
             },
             {
@@ -550,7 +550,7 @@
               "href": "https://cowagent.ai/"
             },
             {
-              "label": "ダウンロード",
+              "label": "上流クライアントのダウンロード",
               "href": "https://cowagent.ai/download/"
             },
             {

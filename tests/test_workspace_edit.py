@@ -357,7 +357,7 @@ def test_web_console_editor_contract():
 
     # Switching session or starting a new chat resets the panel, so both have to
     # settle an open editor before they commit rather than dropping it silently.
-    assert "!wsGuardUnsaved(() => switchSession(newSessionId))" in console
+    assert "!wsGuardUnsaved(() => switchSession(newSessionId, agentId))" in console
     assert "!wsGuardUnsaved(() => newChat(optimistic, inherit))" in console
 
 

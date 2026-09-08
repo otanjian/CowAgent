@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 440" role="img" aria-labelledby="title desc">
+  <title id="title">容大 AI 平台图形标 v2</title>
+  <desc id="desc">蓝色开放 U 形与绿色几何上部组合而成的容大 AI 平台图形标</desc>
+  <path d="M72 48v218c0 76 57 126 142 126s142-50 142-126v-54" fill="none" stroke="#079BD3" stroke-width="72" stroke-linecap="butt" stroke-linejoin="round"/>
+  <path d="M180 30h254v84H264v206h-84V30z" fill="#43A238"/>
+  <path d="M180 30h254" fill="none" stroke="#43A238" stroke-width="6"/>
+</svg>

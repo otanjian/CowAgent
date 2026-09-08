@@ -653,7 +653,7 @@ def _check_checksum(content: bytes, expected: str):
 
 @click.group()
 def skill():
-    """Manage CowAgent skills."""
+    """Manage 容大AI skills."""
     pass
 
 

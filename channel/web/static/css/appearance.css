@@ -1,0 +1,914 @@
+/* Web appearance preferences. Only the shared shell, chat home/composer and
+   this dialog consume these tokens; business views and branding previews keep
+   their existing .dark contract. The approved home layout is scoped below. */
+:root {
+    --web-content-bg: #f8fafc;
+    --web-header-bg: #ffffff;
+    --web-surface-bg: #ffffff;
+    --web-surface-soft: #f1f5f9;
+    --web-composer-bg: #f8fafc;
+    --web-text-main: #1e293b;
+    --web-text-muted: #526378;
+    --web-border: #dce4ed;
+    --web-control-border: #7b8b9e;
+    --web-accent: #087ca8;
+    --web-accent-hover: #066487;
+    --web-accent-text: #07658a;
+    --web-accent-soft: #e6f2f7;
+    --web-accent-on: #ffffff;
+    --web-focus-ring: rgba(8, 124, 168, .2);
+    --web-disabled-bg: #e2e8f0;
+    --web-disabled-text: #617084;
+    --web-danger: #b91c1c;
+    --web-danger-soft: #fef2f2;
+    --web-warning: #92400e;
+    --web-warning-soft: #fff7df;
+    --web-shadow: 0 14px 40px rgba(15, 23, 42, .16);
+    --web-sidebar-bg: #f6f8fa;
+    --web-sidebar-text: #475569;
+    --web-sidebar-muted: #526378;
+    --web-sidebar-title: #1e293b;
+    --web-sidebar-border: #dce4ed;
+    --web-sidebar-hover: #e9eef3;
+    --web-sidebar-active: #e0eff6;
+    --web-sidebar-accent: #07658a;
+    --web-sidebar-brand-accent: #0879a3;
+    --web-sidebar-menu: #ffffff;
+    --web-sidebar-avatar: #e0eff6;
+    --web-brand-text: #172b3a;
+    --web-brand-accent: #087ca8;
+}
+
+:root.dark {
+    --web-content-bg: #121a24;
+    --web-header-bg: #17212d;
+    --web-surface-bg: #1a2634;
+    --web-surface-soft: #263646;
+    --web-composer-bg: #1c2938;
+    --web-text-main: #edf3fa;
+    --web-text-muted: #a8b8c9;
+    --web-border: #354759;
+    --web-control-border: #71869c;
+    --web-accent: #55c6ee;
+    --web-accent-hover: #7ad6f5;
+    --web-accent-text: #79d5f3;
+    --web-accent-soft: #203e50;
+    --web-accent-on: #102533;
+    --web-focus-ring: rgba(85, 198, 238, .22);
+    --web-disabled-bg: #354759;
+    --web-disabled-text: #a8b8c9;
+    --web-danger: #fca5a5;
+    --web-danger-soft: #492c35;
+    --web-warning: #fcd98a;
+    --web-warning-soft: #443622;
+    --web-shadow: 0 14px 40px rgba(0, 0, 0, .4);
+    --web-sidebar-bg: #17212d;
+    --web-sidebar-text: #c3cfdd;
+    --web-sidebar-muted: #a8b8c9;
+    --web-sidebar-title: #edf3fa;
+    --web-sidebar-border: #354759;
+    --web-sidebar-hover: #263646;
+    --web-sidebar-active: #203e50;
+    --web-sidebar-accent: #79d5f3;
+    --web-sidebar-brand-accent: #5cd7ff;
+    --web-sidebar-menu: #1a2634;
+    --web-sidebar-avatar: #203e50;
+    --web-brand-text: #f3f8fc;
+    --web-brand-accent: #79d5f3;
+}
+
+:root[data-web-palette="slate"] {
+    --web-sidebar-bg: #18232f;
+    --web-sidebar-text: #c3cfdd;
+    --web-sidebar-muted: #a8b8c9;
+    --web-sidebar-title: #edf3fa;
+    --web-sidebar-border: #354759;
+    --web-sidebar-hover: #263646;
+    --web-sidebar-active: #284454;
+    --web-sidebar-accent: #62c9ec;
+    --web-sidebar-brand-accent: #5cd7ff;
+    --web-sidebar-menu: #1b2938;
+    --web-sidebar-avatar: #284454;
+}
+
+:root.dark[data-web-palette="slate"] {
+    --web-content-bg: #152231;
+    --web-header-bg: #1b2938;
+    --web-surface-bg: #1b2938;
+    --web-composer-bg: #213142;
+    --web-accent: #62c9ec;
+    --web-accent-hover: #89dcf5;
+    --web-accent-text: #89dcf5;
+    --web-accent-soft: #284454;
+    --web-sidebar-bg: #111c28;
+    --web-sidebar-accent: #89dcf5;
+}
+
+/* Classic retains the original black sidebar, white / #1a1a1a surfaces and
+   green interaction direction. Muted text is strengthened for readability. */
+:root[data-web-palette="classic"] {
+    --web-content-bg: #f9fafb;
+    --web-header-bg: #ffffff;
+    --web-surface-bg: #ffffff;
+    --web-accent: #228547;
+    --web-accent-hover: #1c6b3b;
+    --web-accent-text: #1c6b3b;
+    --web-accent-soft: #edfdf3;
+    --web-focus-ring: rgba(74, 190, 110, .2);
+    --web-sidebar-bg: #0a0a0a;
+    --web-sidebar-text: #a3a3a3;
+    --web-sidebar-muted: #a3a3a3;
+    --web-sidebar-title: #f1f5f9;
+    --web-sidebar-border: #303332;
+    --web-sidebar-hover: #202221;
+    --web-sidebar-active: #1e1e1e;
+    --web-sidebar-accent: #8ae1a6;
+    --web-sidebar-brand-accent: #5cd7ff;
+    --web-sidebar-menu: #1b1e1c;
+    --web-sidebar-avatar: #20382a;
+}
+
+:root.dark[data-web-palette="classic"] {
+    --web-content-bg: #111111;
+    --web-header-bg: #1a1a1a;
+    --web-surface-bg: #1a1a1a;
+    --web-surface-soft: #2b2b2b;
+    --web-composer-bg: #232323;
+    --web-text-main: #e2e8f0;
+    --web-text-muted: #a8b1bf;
+    --web-border: #3b3b3b;
+    --web-control-border: #7a858f;
+    --web-accent: #6ee7a0;
+    --web-accent-hover: #8befb4;
+    --web-accent-text: #86efac;
+    --web-accent-soft: #20382a;
+    --web-accent-on: #123021;
+    --web-disabled-bg: #3b4655;
+    --web-disabled-text: #a8b1bf;
+}
+
+/* Shared shell and authentication. Brand image pixels and the isolated brand
+   settings preview are deliberately outside these selectors. The dedicated
+   .login-hero design (see console.css) is intentionally left out of the palette
+   skin: the login page keeps its fixed dark branded composition. */
+html[data-web-palette] body,
+html[data-web-palette] #login-overlay:not(.login-hero),
+html[data-web-palette] #chat-main {
+    background-color: var(--web-content-bg);
+    color: var(--web-text-main);
+}
+html[data-web-palette] #sidebar {
+    background-color: var(--web-sidebar-bg);
+    color: var(--web-sidebar-text);
+}
+html[data-web-palette] #sidebar .sidebar-brand,
+html[data-web-palette] #sidebar-account-footer {
+    background-color: var(--web-sidebar-bg);
+    border-color: var(--web-sidebar-border);
+}
+html[data-web-palette] #sidebar .brand-wordmark { color: var(--web-sidebar-title); }
+html[data-web-palette] #sidebar .brand-ai { color: var(--web-sidebar-brand-accent); }
+html[data-web-palette] #sidebar .sidebar-brand-caption,
+html[data-web-palette] #sidebar .menu-group > button,
+html[data-web-palette] #sidebar .sidebar-account-subtitle,
+html[data-web-palette] #sidebar .sidebar-account-chevron {
+    color: var(--web-sidebar-muted);
+}
+html[data-web-palette] #sidebar .sidebar-item { color: var(--web-sidebar-text); }
+html[data-web-palette] #sidebar .sidebar-item:hover,
+html[data-web-palette] #sidebar .menu-group > button:hover,
+html[data-web-palette] #sidebar .sidebar-account-toggle:hover,
+html[data-web-palette] #sidebar .sidebar-account-toggle[aria-expanded="true"] {
+    background-color: var(--web-sidebar-hover);
+    color: var(--web-sidebar-title);
+}
+html[data-web-palette] #sidebar .sidebar-item.active {
+    background-color: var(--web-sidebar-active);
+    color: var(--web-sidebar-accent);
+}
+html[data-web-palette] #sidebar .sidebar-item.active .item-icon { color: inherit; }
+html[data-web-palette="classic"] #sidebar .sidebar-item.active { color: #ffffff; }
+html[data-web-palette="classic"] #sidebar .sidebar-item.active .item-icon { color: #4abe6e; }
+html[data-web-palette] #sidebar .sidebar-account-toggle { color: var(--web-sidebar-title); }
+html[data-web-palette] #sidebar .sidebar-account-avatar {
+    background-color: var(--web-sidebar-avatar);
+    color: var(--web-sidebar-accent);
+}
+html[data-web-palette] #sidebar .sidebar-account-menu {
+    background-color: var(--web-sidebar-menu);
+    border-color: var(--web-sidebar-border);
+    color: var(--web-sidebar-title);
+    box-shadow: var(--web-shadow);
+}
+html[data-web-palette] #sidebar .account-menu-username,
+html[data-web-palette] #sidebar .account-menu-status { color: var(--web-sidebar-muted); }
+html[data-web-palette] #sidebar .account-menu-action { color: var(--web-sidebar-title); }
+html[data-web-palette] #sidebar .account-menu-version { border-color: var(--web-sidebar-border); }
+html[data-web-palette] #sidebar .account-menu-version a { color: var(--web-sidebar-accent); }
+html[data-web-palette] #sidebar .account-menu-action:hover:not(:disabled),
+html[data-web-palette] #sidebar .account-menu-version a:hover {
+    background-color: var(--web-sidebar-hover);
+    color: var(--web-sidebar-title);
+}
+html[data-web-palette] #sidebar :is(a, button):focus-visible {
+    outline: 2px solid var(--web-sidebar-accent);
+    outline-offset: -3px;
+}
+
+html[data-web-palette] #main-content > header,
+html[data-web-palette] #chat-agent-identity,
+html[data-web-palette] #chat-input-area {
+    background-color: var(--web-header-bg);
+    border-color: var(--web-border);
+    color: var(--web-text-main);
+}
+html[data-web-palette] #main-content > header button,
+html[data-web-palette] #main-content > header i,
+html[data-web-palette] #breadcrumb-group { color: var(--web-text-muted); }
+html[data-web-palette] #breadcrumb-page,
+html[data-web-palette] #chat-agent-name { color: var(--web-text-main); }
+html[data-web-palette] #main-content > header button:hover {
+    background-color: var(--web-surface-soft);
+    color: var(--web-text-main);
+}
+html[data-web-palette] #main-content > header button:hover i { color: inherit; }
+html[data-web-palette] #main-content > header #logout-btn-header:hover {
+    background-color: var(--web-danger-soft);
+    color: var(--web-danger);
+}
+html[data-web-palette] #lang-menu,
+html[data-web-palette] #tenant-menu {
+    background-color: var(--web-surface-bg);
+    color: var(--web-text-main);
+    --tw-ring-color: var(--web-border);
+}
+html[data-web-palette] #main-content > header :is(a, button):focus-visible,
+html[data-web-palette] #welcome-screen .example-card:focus-visible,
+html[data-web-palette] #chat-input-area :is(button, input):focus-visible,
+html[data-web-palette] #login-overlay:not(.login-hero) :is(button, input, select):focus-visible {
+    outline: 2px solid var(--web-accent);
+    outline-offset: 2px;
+}
+
+html[data-web-palette] #welcome-title,
+html[data-web-palette] #login-overlay:not(.login-hero) #login-brand-name { color: var(--web-brand-text); }
+html[data-web-palette] #welcome-title .brand-ai,
+html[data-web-palette] #login-overlay:not(.login-hero) #login-brand-name .brand-ai { color: var(--web-brand-accent); }
+html[data-web-palette] #welcome-subtitle,
+html[data-web-palette] #welcome-screen [data-brand-desc],
+html[data-web-palette] #login-overlay:not(.login-hero) #login-subtitle,
+html[data-web-palette] #login-overlay:not(.login-hero) #auth-check-panel,
+html[data-web-palette] #login-overlay:not(.login-hero) #login-tenant-group label { color: var(--web-text-muted); }
+html[data-web-palette] #welcome-screen .example-card {
+    background-color: var(--web-surface-bg);
+    border-color: var(--web-border);
+}
+html[data-web-palette] #welcome-screen .example-card span { color: var(--web-text-main); }
+html[data-web-palette] #welcome-screen .example-card p { color: var(--web-text-muted); }
+html[data-web-palette] #welcome-screen .example-card:hover {
+    border-color: var(--web-accent);
+    background-color: var(--web-surface-bg);
+}
+html[data-web-palette] #scroll-to-bottom-btn {
+    background-color: var(--web-surface-bg);
+    border-color: var(--web-border);
+    color: var(--web-text-muted);
+}
+html[data-web-palette] #scroll-to-bottom-btn:hover { color: var(--web-accent-text); }
+html[data-web-palette] #login-overlay:not(.login-hero) #login-form :is(input, select) {
+    background-color: var(--web-surface-bg);
+    border-color: var(--web-control-border);
+    color: var(--web-text-main);
+}
+html[data-web-palette] #login-overlay:not(.login-hero) #login-form input::placeholder { color: var(--web-text-muted); }
+html[data-web-palette] #login-overlay:not(.login-hero) #login-toggle-pwd { color: var(--web-text-muted); }
+html[data-web-palette] :is(#login-overlay:not(.login-hero) #login-btn, #auth-check-retry) {
+    background-color: var(--web-accent);
+    color: var(--web-accent-on);
+}
+html[data-web-palette] :is(#login-overlay:not(.login-hero) #login-btn, #auth-check-retry):hover:not(:disabled) { background-color: var(--web-accent-hover); }
+
+/* Composer, including its menus. Keep warning, recording, removal and stop
+   states semantic instead of replacing them with the selected accent. */
+html[data-web-palette] #composer-card {
+    background-color: var(--web-composer-bg);
+    border-color: var(--web-control-border);
+}
+html[data-web-palette] #composer-card:focus-within {
+    background-color: var(--web-surface-bg);
+    border-color: var(--web-accent);
+    box-shadow: 0 0 0 3px var(--web-focus-ring);
+}
+html[data-web-palette] #composer-card.drag-over {
+    background-color: var(--web-accent-soft) !important;
+    border-color: var(--web-accent) !important;
+    box-shadow: 0 0 0 3px var(--web-focus-ring);
+}
+html[data-web-palette] #chat-main.ws-drop-active::after {
+    border-color: var(--web-accent);
+    background-color: var(--web-focus-ring);
+}
+html[data-web-palette] #chat-input { color: var(--web-text-main); }
+html[data-web-palette] #chat-input::placeholder { color: var(--web-text-muted); }
+html[data-web-palette] #composer-card :is(.composer-icon-btn, .composer-chip) { color: var(--web-text-muted); }
+html[data-web-palette] #composer-card :is(.composer-icon-btn, .composer-chip):hover:not(:disabled),
+html[data-web-palette] #composer-card .composer-chip.open {
+    color: var(--web-accent-text);
+    background-color: var(--web-accent-soft);
+}
+html[data-web-palette] #composer-card .composer-chip.open { border-color: var(--web-accent); }
+html[data-web-palette] #composer-card .composer-icon-btn-warn:hover:not(:disabled) {
+    color: var(--web-warning);
+    background-color: var(--web-warning-soft);
+}
+html[data-web-palette] #composer-card #mic-btn.text-red-500 { color: var(--web-danger); }
+html[data-web-palette] #composer-card #mic-btn.text-primary-500 { color: var(--web-accent-text); }
+html[data-web-palette] #composer-card :is(.composer-icon-btn, .composer-chip):disabled {
+    color: var(--web-disabled-text);
+    background-color: transparent;
+    opacity: .6;
+    cursor: not-allowed;
+}
+html[data-web-palette] #composer-card .composer-divider { background-color: var(--web-border); }
+html[data-web-palette] #composer-card .composer-send-btn {
+    background-color: var(--web-accent);
+    color: var(--web-accent-on);
+}
+html[data-web-palette] #composer-card .composer-send-btn:hover:not(:disabled) { background-color: var(--web-accent-hover); }
+html[data-web-palette] #composer-card .composer-send-btn:disabled {
+    background-color: var(--web-disabled-bg);
+    color: var(--web-disabled-text);
+}
+html[data-web-palette] #composer-card .composer-steer-btn {
+    background-color: transparent;
+    color: var(--web-accent-text);
+    border-color: var(--web-accent);
+}
+html[data-web-palette] #composer-card .composer-steer-btn:hover:not(:disabled) { background-color: var(--web-accent-soft); }
+html[data-web-palette] #composer-card .composer-steer-btn:disabled {
+    background-color: transparent;
+    border-color: var(--web-border);
+    color: var(--web-disabled-text);
+}
+html[data-web-palette] #send-btn.send-btn-cancel {
+    background-color: var(--web-surface-soft) !important;
+    color: var(--web-text-main) !important;
+}
+html[data-web-palette] #send-btn.send-btn-cancel:hover {
+    background-color: var(--web-danger-soft) !important;
+    color: var(--web-danger) !important;
+}
+html[data-web-palette] #send-btn.send-btn-cancel:disabled {
+    background-color: var(--web-disabled-bg) !important;
+    color: var(--web-disabled-text) !important;
+}
+html[data-web-palette] #composer-card :is(.composer-menu, .attach-menu, .slash-menu, .mention-menu, .workspace-selector-menu) {
+    background-color: var(--web-surface-bg);
+    border-color: var(--web-border);
+    color: var(--web-text-main);
+    box-shadow: var(--web-shadow);
+}
+html[data-web-palette] #composer-card :is(.composer-menu-item, .attach-menu-item, .slash-menu-item .cmd, .mention-item .m-name, .ws-sel-item) {
+    color: var(--web-text-main);
+}
+html[data-web-palette] #composer-card :is(.composer-menu-title, .composer-menu-desc, .composer-menu-note, .composer-menu-item > i:first-child, .attach-menu-item i, .slash-menu-header, .slash-menu-item .desc, .mention-item .m-path, .mention-empty, .ws-sel-section-title, .ws-sel-item i, .ws-sel-path, .ws-sel-crumb) {
+    color: var(--web-text-muted);
+}
+html[data-web-palette] #composer-card :is(.composer-menu-item, .attach-menu-item, .slash-menu-item, .mention-item, .ws-sel-item):is(:hover, .active) {
+    background-color: var(--web-accent-soft);
+    color: var(--web-accent-text);
+}
+html[data-web-palette] #composer-card :is(.composer-menu-item.current, .composer-menu-check, .composer-menu-item.current > i.fa-check, .ws-sel-item.active .ws-sel-check, .slash-menu-item.active .cmd) {
+    color: var(--web-accent-text);
+}
+html[data-web-palette] #composer-card button.composer-menu-item.joined:hover {
+    background-color: var(--web-danger-soft);
+    color: var(--web-danger);
+}
+html[data-web-palette] #composer-card button.composer-menu-item.joined:hover .joined-remove { color: var(--web-danger); }
+html[data-web-palette] #composer-card :is(.composer-menu-divider, .composer-menu-sep, .ws-sel-divider) { background-color: var(--web-border); }
+html[data-web-palette] #composer-card :is(.att-chip, .composer-menu-badge) {
+    background-color: var(--web-surface-soft);
+    border-color: var(--web-border);
+    color: var(--web-text-muted);
+}
+html[data-web-palette] #composer-card .att-thumb { border-color: var(--web-border); }
+html[data-web-palette] #composer-card .att-remove { background-color: #b91c1c; color: #ffffff; }
+html[data-web-palette] #composer-card .att-remove:focus-visible { opacity: 1; }
+html[data-web-palette] #composer-card .composer-agent-btn:hover { box-shadow: 0 0 0 2px var(--web-accent); }
+html[data-web-palette] #composer-card .composer-agent-btn.locked:hover { box-shadow: 0 0 0 2px var(--web-control-border); }
+html[data-web-palette] #composer-card .composer-agent-count {
+    background-color: var(--web-accent);
+    color: var(--web-accent-on);
+    border-color: var(--web-composer-bg);
+}
+html[data-web-palette] #composer-card .ws-sel-input-row input {
+    background-color: var(--web-composer-bg);
+    color: var(--web-text-main);
+    border-color: var(--web-control-border);
+}
+html[data-web-palette] #composer-card .ws-sel-input-row input:focus { border-color: var(--web-accent); }
+html[data-web-palette] #composer-card .ws-sel-input-row button {
+    background-color: var(--web-accent);
+    color: var(--web-accent-on);
+}
+html[data-web-palette] #composer-card .ws-sel-input-row button:hover { background-color: var(--web-accent-hover); }
+
+/* The native dialog keeps focus/keyboard semantics independent of CSS. Its
+   content can scroll at short heights; the close control stays reachable. */
+#appearance-dialog {
+    width: min(560px, calc(100vw - 32px));
+    max-width: none;
+    max-height: calc(100vh - 32px);
+    max-height: calc(100dvh - 32px);
+    margin: auto;
+    padding: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border: 1px solid var(--web-border);
+    border-radius: 16px;
+    background: var(--web-surface-bg);
+    color: var(--web-text-main);
+    box-shadow: var(--web-shadow);
+    color-scheme: light;
+}
+.dark #appearance-dialog { color-scheme: dark; }
+#appearance-dialog:not([open]),
+#appearance-dialog [hidden] { display: none; }
+#appearance-dialog::backdrop { background: rgba(15, 23, 42, .48); }
+#appearance-options { padding: 24px; min-width: 0; }
+.appearance-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.appearance-title { margin: 0; font-size: 20px; font-weight: 650; line-height: 1.4; }
+.appearance-description { margin: 8px 0 22px; font-size: 13px; line-height: 1.65; color: var(--web-text-muted); }
+.appearance-close {
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    width: 36px; height: 36px; border: 0; border-radius: 8px;
+    background: transparent; color: var(--web-text-muted); cursor: pointer;
+}
+.appearance-close:hover { background: var(--web-surface-soft); color: var(--web-text-main); }
+.appearance-fieldset { min-width: 0; padding: 0; margin: 0 0 22px; border: 0; }
+.appearance-fieldset legend { margin: 0 0 10px; font-size: 14px; font-weight: 600; line-height: 1.5; }
+.appearance-presets { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.appearance-preset { position: relative; display: flex; flex-direction: column; min-width: 0; cursor: pointer; }
+.appearance-preset > input {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+.appearance-preview {
+    display: grid; grid-template-columns: 27% 1fr; grid-template-rows: 15px 1fr;
+    height: 82px; overflow: hidden; border: 2px solid var(--web-control-border); border-radius: 9px;
+    background: var(--preview-content); transition: border-color .12s ease;
+}
+.appearance-preview-sidebar { grid-row: 1 / 3; background: var(--preview-sidebar); border-right: 1px solid var(--preview-border); position: relative; }
+.appearance-preview-sidebar::before,
+.appearance-preview-sidebar::after { content: ''; position: absolute; left: 5px; right: 5px; height: 4px; border-radius: 2px; background: var(--preview-accent); }
+.appearance-preview-sidebar::before { top: 12px; }
+.appearance-preview-sidebar::after { top: 26px; opacity: .45; }
+.appearance-preview-header { background: var(--preview-header); border-bottom: 1px solid var(--preview-border); }
+.appearance-preview-body { display: flex; align-items: center; justify-content: center; padding: 10px; }
+.appearance-preview-card { display: block; width: 100%; height: 23px; border: 1px solid var(--preview-border); border-radius: 4px; background: var(--preview-card); }
+.appearance-preset-label { display: flex; align-items: flex-start; justify-content: space-between; gap: 5px; margin-top: 8px; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.appearance-preset-label::after { content: '\2713'; flex-shrink: 0; visibility: hidden; font-weight: 700; color: var(--web-accent-text); }
+.appearance-preset-hint { display: block; width: fit-content; margin-top: 3px; font-size: 11px; line-height: 1.5; color: var(--web-accent-text); }
+.appearance-preset:hover .appearance-preview { border-color: var(--web-accent); }
+.appearance-preset > input:checked + .appearance-preview { border-color: var(--web-accent); box-shadow: 0 0 0 1px var(--web-accent); }
+.appearance-preset > input:checked ~ .appearance-preset-label { font-weight: 600; }
+.appearance-preset > input:checked ~ .appearance-preset-label::after { visibility: visible; }
+.appearance-preset > input:focus-visible + .appearance-preview { outline: 2px solid var(--web-accent); outline-offset: 4px; }
+.appearance-preset[data-palette="business"] {
+    --preview-sidebar: #f6f8fa; --preview-header: #ffffff; --preview-content: #f8fafc;
+    --preview-card: #ffffff; --preview-border: #dce4ed; --preview-accent: #087ca8;
+}
+.appearance-preset[data-palette="slate"] {
+    --preview-sidebar: #18232f; --preview-header: #ffffff; --preview-content: #f8fafc;
+    --preview-card: #ffffff; --preview-border: #dce4ed; --preview-accent: #62c9ec;
+}
+.appearance-preset[data-palette="classic"] {
+    --preview-sidebar: #0a0a0a; --preview-header: #ffffff; --preview-content: #f9fafb;
+    --preview-card: #ffffff; --preview-border: #e2e8f0; --preview-accent: #4abe6e;
+}
+.dark .appearance-preset[data-palette="business"] {
+    --preview-sidebar: #17212d; --preview-header: #17212d; --preview-content: #121a24;
+    --preview-card: #1a2634; --preview-border: #354759; --preview-accent: #55c6ee;
+}
+.dark .appearance-preset[data-palette="slate"] {
+    --preview-sidebar: #111c28; --preview-header: #1b2938; --preview-content: #152231;
+    --preview-card: #1b2938; --preview-border: #354759; --preview-accent: #62c9ec;
+}
+.dark .appearance-preset[data-palette="classic"] {
+    --preview-sidebar: #0a0a0a; --preview-header: #1a1a1a; --preview-content: #111111;
+    --preview-card: #1a1a1a; --preview-border: #3b3b3b; --preview-accent: #4abe6e;
+}
+.appearance-modes { display: flex; flex-wrap: wrap; gap: 8px; }
+.appearance-mode {
+    display: flex; align-items: center; gap: 7px; flex: 1 1 110px; min-width: 0;
+    padding: 10px 12px; border: 1px solid var(--web-control-border); border-radius: 8px;
+    color: var(--web-text-main); background: var(--web-surface-bg); font-size: 13px; line-height: 1.5;
+    cursor: pointer;
+}
+.appearance-mode input { flex-shrink: 0; width: 16px; height: 16px; margin: 0; accent-color: var(--web-accent); cursor: pointer; }
+.appearance-mode:has(input:checked) { border-color: var(--web-accent); background: var(--web-accent-soft); color: var(--web-accent-text); }
+.appearance-mode:hover { border-color: var(--web-accent); }
+.appearance-mode:has(input:focus-visible),
+#appearance-dialog button:focus-visible { outline: 2px solid var(--web-accent); outline-offset: 3px; }
+#appearance-resolved { margin: 8px 0 0; font-size: 12px; line-height: 1.5; color: var(--web-text-muted); }
+#appearance-dialog .appearance-warning { margin: 0 0 16px; padding: 10px 12px; border-radius: 8px; background: var(--web-warning-soft); color: var(--web-warning); font-size: 13px; line-height: 1.6; }
+.appearance-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; border-top: 1px solid var(--web-border); padding-top: 16px; }
+.appearance-footer .appearance-description { flex: 1; margin: 0; }
+.appearance-reset { padding: 8px 14px; border: 1px solid var(--web-control-border); border-radius: 8px; background: var(--web-surface-bg); color: var(--web-text-main); font-size: 13px; line-height: 1.5; cursor: pointer; }
+.appearance-reset:hover { background: var(--web-surface-soft); border-color: var(--web-accent); }
+@media (max-width: 420px) {
+    #appearance-options { padding: 18px; }
+    .appearance-presets { gap: 8px; }
+    .appearance-preview { height: 70px; }
+    .appearance-preset-label { font-size: 12px; }
+    .appearance-mode { flex-basis: 100%; }
+}
+
+/* Approved workbench home: a quiet navigation rail, one context header and a
+   left-aligned task composer. The real composer remains in place in the DOM;
+   display:contents and order only rearrange the empty conversation visually. */
+:root { --web-home-bg: #ffffff; --web-home-width: 920px; }
+:root.dark { --web-home-bg: var(--web-content-bg); }
+
+html[data-web-palette] #sidebar {
+    width: 240px;
+    flex-shrink: 0;
+    border-right: 1px solid var(--web-sidebar-border);
+    transition: width .18s ease, transform .25s ease;
+}
+html[data-web-palette] #sidebar .sidebar-brand {
+    height: 80px;
+    gap: 12px;
+    padding: 0 24px;
+    border-bottom: 0;
+}
+html[data-web-palette] #sidebar .sidebar-brand .brand-wordmark { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 22px; }
+html[data-web-palette] #sidebar .sidebar-brand-mark { width: 36px; height: 36px; }
+html[data-web-palette] #sidebar .sidebar-new-chat {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    min-height: 46px;
+    margin: 8px 18px 18px;
+    padding: 10px 16px;
+    border: 1px solid var(--web-sidebar-border);
+    border-radius: 11px;
+    background: var(--web-sidebar-menu);
+    color: var(--web-sidebar-title);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.5;
+    cursor: pointer;
+    transition: border-color .15s ease, background-color .15s ease;
+}
+html[data-web-palette] #sidebar .sidebar-new-chat:hover {
+    background: var(--web-sidebar-hover);
+    border-color: var(--web-sidebar-accent);
+}
+html[data-web-palette] #sidebar .sidebar-new-chat:disabled { opacity: .6; cursor: not-allowed; }
+html[data-web-palette] #sidebar-nav { padding: 0 16px 18px; }
+html[data-web-palette] #sidebar-nav .menu-group + .menu-group { margin-top: 14px; }
+html[data-web-palette] #sidebar-nav .menu-group > button {
+    min-height: 34px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: .04em;
+}
+html[data-web-palette] #sidebar-nav .menu-group-items { padding-left: 0; }
+html[data-web-palette] #sidebar-nav .sidebar-section-label {
+    margin: 24px 12px 10px;
+    color: var(--web-sidebar-muted);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.5;
+    letter-spacing: .04em;
+}
+html[data-web-palette] #sidebar-nav .sidebar-item {
+    position: relative;
+    min-height: 44px;
+    gap: 12px;
+    margin: 3px 0;
+    padding: 11px 14px;
+    border-radius: 10px;
+    font-size: 14px;
+    line-height: 1.5;
+}
+html[data-web-palette] #sidebar-nav .sidebar-item .item-icon { font-size: 14px; }
+html[data-web-palette] #sidebar .sidebar-item.active { font-weight: 600; }
+html[data-web-palette] #sidebar .sidebar-item.active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 3px;
+    height: 18px;
+    border-radius: 0 3px 3px 0;
+    background: var(--web-sidebar-accent);
+    transform: translateY(-50%);
+}
+html[data-web-palette] #sidebar-resources { margin: 0 0 8px; }
+#sidebar-resources > .menu-group-items { max-height: none; overflow: visible; }
+html[data-web-palette] #sidebar-resources > summary {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 44px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    color: var(--web-sidebar-text);
+    font-size: 14px;
+    line-height: 1.5;
+    list-style: none;
+    cursor: pointer;
+}
+#sidebar-resources > summary::-webkit-details-marker { display: none; }
+#sidebar-resources > summary::marker { content: ''; }
+html[data-web-palette] #sidebar-resources > summary::after {
+    content: '';
+    width: 6px;
+    height: 6px;
+    margin-left: auto;
+    border-top: 1.5px solid currentColor;
+    border-right: 1.5px solid currentColor;
+    transform: rotate(45deg);
+    transition: transform .15s ease;
+}
+html[data-web-palette] #sidebar-resources[open] > summary::after { transform: rotate(135deg); }
+#sidebar-resources > summary .fa-chevron-right { display: none; }
+html[data-web-palette] #sidebar-resources > summary:hover {
+    background: var(--web-sidebar-hover);
+    color: var(--web-sidebar-title);
+}
+html[data-web-palette] #sidebar-resources > summary:focus-visible {
+    outline: 2px solid var(--web-sidebar-accent);
+    outline-offset: -3px;
+}
+html[data-web-palette] #sidebar-account-footer { margin: 0 16px; }
+html[data-web-palette] #sidebar-account-toggle { padding: 14px 4px; min-height: 80px; }
+
+html[data-web-palette] #main-content > .workbench-header {
+    height: 64px;
+    min-height: 64px;
+    gap: 16px;
+    padding: 0 28px;
+}
+.workbench-context { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.workbench-page-title { flex-shrink: 0; }
+.workbench-header .lang-label-short { display: none; }
+html[data-web-palette] .workbench-header #menu-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
+}
+html[data-web-palette] .workbench-header #breadcrumb-page { font-size: 16px; font-weight: 600; }
+html[data-web-palette] .workbench-header #chat-agent-identity {
+    min-width: 0;
+    max-width: 240px;
+    margin: 0;
+    padding: 0 0 0 16px;
+    border: 0;
+    border-left: 1px solid var(--web-border);
+    background: transparent;
+}
+html[data-web-palette] .workbench-header #chat-agent-identity.hidden { display: none; }
+html[data-web-palette] .workbench-header #chat-agent-name { font-size: 14px; font-weight: 400; color: var(--web-text-muted); }
+
+html[data-web-palette] #chat-main.chat-home {
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    background: var(--web-home-bg);
+}
+#chat-main.chat-home #chat-messages,
+#chat-main.chat-home #welcome-screen { display: contents; }
+#chat-main.chat-home #welcome-screen.hidden { display: none; }
+#chat-main.chat-home :is(.home-intro, #chat-input-area, .home-suggestions, .home-footer) {
+    width: min(var(--web-home-width), calc(100% - 80px));
+    min-width: 0;
+    flex: 0 0 auto;
+    margin-left: auto;
+    margin-right: auto;
+}
+#chat-main.chat-home .home-intro { order: 1; margin-top: clamp(40px, 6.5vh, 80px); margin-bottom: 28px; }
+.home-intro .home-eyebrow { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-bottom: 18px; }
+.home-intro #welcome-title { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+html[data-web-palette] .home-intro #welcome-title,
+html[data-web-palette] .home-intro #welcome-title .brand-ai {
+    margin: 0;
+    color: var(--web-accent-text);
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.6;
+    letter-spacing: .01em;
+}
+html[data-web-palette] .home-intro .home-eyebrow { color: var(--web-accent-text); font-size: 14px; line-height: 1.6; }
+html[data-web-palette] .home-intro .home-greeting {
+    margin: 16px 0 14px;
+    color: var(--web-text-main);
+    font-size: clamp(27px, 2.6vw, 36px);
+    font-weight: 650;
+    line-height: 1.4;
+    letter-spacing: -.035em;
+    text-wrap: balance;
+}
+html[data-web-palette] .home-intro .home-description {
+    max-width: 760px;
+    margin: 0;
+    color: var(--web-text-muted);
+    font-size: 15px;
+    line-height: 1.85;
+}
+html[data-web-palette] .home-intro .home-brand-description { margin-top: 8px; color: var(--web-text-muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+html[data-web-palette] #chat-main.chat-home #chat-input-area {
+    order: 2;
+    padding: 0;
+    border: 0;
+    background: transparent;
+}
+#chat-main.chat-home #chat-input-area > div { max-width: none; }
+html[data-web-palette] #chat-main.chat-home #composer-card {
+    min-height: 180px;
+    gap: 12px;
+    padding: 20px 18px 14px;
+    border: 1px solid var(--web-border);
+    border-radius: 20px;
+    background: var(--web-surface-bg);
+    box-shadow: 0 4px 24px rgba(15, 23, 42, .025);
+}
+html[data-web-palette] #chat-main.chat-home #composer-card:focus-within {
+    border-color: var(--web-accent);
+    box-shadow: 0 0 0 3px var(--web-focus-ring), 0 6px 24px rgba(15, 23, 42, .04);
+}
+#chat-main.chat-home .composer-identity-row { flex: 1; }
+#chat-main.chat-home #chat-input { min-height: 92px; padding: 1px 4px; font-size: 16px; line-height: 1.75; }
+html[data-web-palette] #composer-card .composer-hint { margin: 0; padding: 0 4px; color: var(--web-text-muted); font-size: 12px; line-height: 1.6; }
+#chat-main:not(.chat-home) .composer-hint { display: none; }
+#chat-main.chat-home .composer-toolbar { gap: 10px; }
+#chat-main.chat-home .composer-send-btn { width: 36px; height: 36px; border-radius: 11px; }
+/* Empty-home popovers open below the composer: long command/model lists must
+   not be clipped against the top of the scrollable welcome area. */
+#chat-main.chat-home :is(#attach-menu, #slash-menu, #mention-menu, #workspace-selector-menu, #permission-selector-menu, #model-selector-menu, #composer-agent-menu) {
+    top: calc(100% + 8px);
+    bottom: auto;
+}
+#chat-main.chat-home .home-suggestions { order: 3; margin-top: 20px; }
+html[data-web-palette] .home-suggestions > :is(h2, h3, p, .home-suggestions-title) {
+    margin: 0 0 10px;
+    color: var(--web-text-muted);
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 1.5;
+}
+.home-suggestions :is(.home-suggestion-list, .home-suggestions-list) {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+    gap: 10px;
+}
+html[data-web-palette] #welcome-screen .home-suggestions .example-card {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+    min-height: 74px;
+    padding: 14px;
+    border: 1px solid var(--web-border);
+    border-radius: 13px;
+    background: var(--web-surface-bg);
+    text-align: left;
+    cursor: pointer;
+    transition: border-color .15s ease, background-color .15s ease, box-shadow .15s ease;
+}
+html[data-web-palette] #welcome-screen .home-suggestions .example-card:hover {
+    background: var(--web-accent-soft);
+    border-color: var(--web-accent);
+    box-shadow: 0 3px 12px rgba(15, 23, 42, .035);
+}
+html[data-web-palette] .home-suggestions .example-card > :is(i, .home-suggestion-icon) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 24px;
+    margin-top: 0;
+    flex-shrink: 0;
+    color: var(--web-accent-text);
+    font-size: 18px;
+}
+.home-suggestions :is(.home-suggestion-copy, .example-card > div) { display: flex; min-width: 0; flex-direction: column; gap: 3px; overflow-wrap: anywhere; }
+html[data-web-palette] .home-suggestions .example-card :is(strong, h3, .home-suggestion-title, div > span) {
+    margin: 0;
+    color: var(--web-text-main);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.5;
+}
+html[data-web-palette] #welcome-screen .home-suggestions .example-card :is(p, small, .home-suggestion-description) {
+    display: block;
+    min-height: 0;
+    margin: 0;
+    color: var(--web-text-muted);
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.6;
+    -webkit-line-clamp: unset;
+}
+html[data-web-palette] #chat-main.chat-home .home-footer {
+    order: 4;
+    margin-top: 18px;
+    margin-bottom: 24px;
+    color: var(--web-text-muted);
+    font-size: 12px;
+    line-height: 1.6;
+    text-align: center;
+}
+
+/* Keep the add-Agent glyph legible in all palette menus as well. */
+html[data-web-palette] #composer-card .composer-menu-create-icon { border-color: var(--web-control-border); color: var(--web-text-muted); }
+html[data-web-palette] #composer-card .composer-menu-item.composer-menu-create:hover .composer-menu-create-icon {
+    border-color: var(--web-accent);
+    color: var(--web-accent-text);
+}
+html[data-web-palette] #composer-card #optimize-btn.text-primary-500 { color: var(--web-accent-text); }
+
+@media (min-width: 1024px) {
+    html[data-web-palette] #app.sidebar-collapsed #sidebar { width: 72px; }
+    #app.sidebar-collapsed #sidebar .sidebar-brand { justify-content: center; padding: 0; }
+    #app.sidebar-collapsed #sidebar .sidebar-brand-mark { width: 32px; height: 32px; }
+    #app.sidebar-collapsed #sidebar .sidebar-new-chat { margin: 8px 12px 18px; padding: 10px; }
+    #app.sidebar-collapsed #sidebar-nav { padding-left: 10px; padding-right: 10px; }
+    #app.sidebar-collapsed #sidebar-nav .sidebar-item { justify-content: center; gap: 0; padding: 11px 0; }
+    #app.sidebar-collapsed #sidebar-nav .menu-group > button { justify-content: center; gap: 0; padding: 8px 0; }
+    #app.sidebar-collapsed #sidebar-resources > summary { justify-content: center; gap: 0; padding: 10px 0; }
+    #app.sidebar-collapsed #sidebar-resources > summary::after { display: none; }
+    #app.sidebar-collapsed #sidebar-account-footer { margin: 0 10px; }
+    #app.sidebar-collapsed #sidebar-account-toggle { justify-content: center; padding: 14px 0; }
+    #app.sidebar-collapsed #sidebar-account-menu { width: 224px; left: calc(100% + 12px); right: auto; bottom: 8px; }
+    #app.sidebar-collapsed #sidebar :is(.sidebar-brand-copy, .sidebar-new-chat > span, .sidebar-item > span, .menu-group > button > span, .sidebar-section-label, #sidebar-resources > summary > span, .sidebar-account-copy, .sidebar-account-chevron) {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+    }
+}
+
+@media (max-width: 1023px) {
+    html[data-web-palette] #sidebar { width: 240px; max-width: calc(100vw - 48px); }
+    #sidebar.open { transform: translateX(0); }
+    html[data-web-palette] #main-content > .workbench-header { padding: 0 20px; gap: 12px; }
+    #chat-main.chat-home :is(.home-intro, #chat-input-area, .home-suggestions, .home-footer) { width: min(var(--web-home-width), calc(100% - 48px)); }
+}
+@media (max-width: 767px) {
+    .workbench-header .lang-label-full { display: none; }
+    .workbench-header .lang-label-short { display: inline; }
+}
+@media (max-width: 640px) {
+    /* A 300px team menu cannot be right-anchored to the toolbar's 22px avatar
+       on a phone. Anchor it to the existing composer card instead. */
+    #composer-card .composer-identity { position: static; }
+    #composer-card #composer-agent-menu {
+        left: auto;
+        right: 8px;
+        width: min(300px, calc(100% - 16px));
+        max-width: calc(100vw - 48px);
+    }
+    html[data-web-palette] #main-content > .workbench-header { height: 64px; min-height: 64px; padding: 0 12px; gap: 8px; }
+    html[data-web-palette] .workbench-header #chat-agent-identity { max-width: 115px; padding-left: 10px; gap: 6px; }
+    html[data-web-palette] .workbench-header #breadcrumb-page { font-size: 14px; }
+    html[data-web-palette] .workbench-header #chat-agent-name { font-size: 12px; }
+    .workbench-context { gap: 10px; }
+    .workbench-header #lang-toggle { padding-left: 6px; padding-right: 6px; font-size: 12px; }
+    #chat-main.chat-home :is(.home-intro, #chat-input-area, .home-suggestions, .home-footer) { width: calc(100% - 36px); }
+    #chat-main.chat-home .home-intro { margin-top: 32px; margin-bottom: 24px; }
+    html[data-web-palette] .home-intro .home-greeting { margin-top: 14px; margin-bottom: 12px; font-size: 27px; line-height: 1.45; }
+    html[data-web-palette] .home-intro .home-description { font-size: 14px; line-height: 1.8; }
+    html[data-web-palette] #chat-main.chat-home #composer-card { padding: 16px 10px 10px; min-height: 184px; border-radius: 17px; }
+    #chat-main.chat-home #chat-input { font-size: 15px; min-height: 90px; }
+    #chat-main.chat-home .composer-toolbar { flex-wrap: wrap; row-gap: 8px; column-gap: 6px; }
+    #chat-main.chat-home .composer-group { gap: 1px; }
+    #chat-main.chat-home .composer-group-end { margin-left: auto; }
+    #chat-main.chat-home .home-suggestions { margin-top: 20px; }
+    .home-suggestions :is(.home-suggestion-list, .home-suggestions-list) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    html[data-web-palette] #welcome-screen .home-suggestions .example-card { flex-direction: column; align-items: flex-start; min-height: 0; padding: 12px; gap: 8px; }
+    #chat-main.chat-home #composer-card :is(.composer-menu, .attach-menu, .workspace-selector-menu) { max-width: calc(100vw - 44px); }
+    #chat-main.chat-home .home-footer { margin-top: 18px; margin-bottom: 24px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    html[data-web-palette] #sidebar,
+    html[data-web-palette] #sidebar-nav .sidebar-item,
+    html[data-web-palette] #sidebar-resources > summary::after,
+    html[data-web-palette] #welcome-screen .home-suggestions .example-card { transition: none; }
+}

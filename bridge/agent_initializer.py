@@ -409,7 +409,7 @@ class AgentInitializer:
         
         try:
             from agent.memory import MemoryManager, MemoryConfig, register_memory_config
-            from agent.tools import MemorySearchTool, MemoryGetTool
+            from agent.tools import MemorySearchTool, MemoryGetTool, MemoryAddTool
             from config import conf
 
             memory_config = MemoryConfig(workspace_root=workspace_root)
@@ -427,7 +427,8 @@ class AgentInitializer:
 
             memory_tools = [
                 MemorySearchTool(memory_manager),
-                MemoryGetTool(memory_manager)
+                MemoryGetTool(memory_manager),
+                MemoryAddTool(memory_manager)
             ]
             
             if session_id is None:
@@ -526,6 +527,16 @@ class AgentInitializer:
                     from agent.evolution.config import get_evolution_config
                     if not get_evolution_config().enabled:
                         logger.debug("[AgentInitializer] evolution_undo skipped - self-evolution disabled")
+                        continue
+
+                # Skip the todo tool when the feature is disabled. The tool also
+                # self-gates on a trusted Web identity at call time via
+                # is_available(), but dropping it entirely at assembly time keeps
+                # a disabled instance from spending a tool slot on it.
+                if tool_name == "todo":
+                    from agent.todo.service import default_enabled
+                    if not default_enabled():
+                        logger.debug("[AgentInitializer] todo skipped - todo_enabled is off")
                         continue
 
                 if tool_name == "agent_delegate":

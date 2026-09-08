@@ -1,4 +1,4 @@
-"""CowAgent CLI - Manage your CowAgent from the command line."""
+"""RongAI CLI - Manage your RongAI from the command line."""
 
 import os as _os
 

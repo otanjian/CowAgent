@@ -1,9 +1,9 @@
 ---
 title: Backup and Restore
-description: Export and restore CowAgent configuration and agent workspace data
+description: Export and restore 容大AI configuration and agent workspace data
 ---
 
-CowAgent can create a portable local archive for migration or disaster recovery.
+容大AI can create a portable local archive for migration or disaster recovery.
 
 ## Create a backup
 
@@ -19,6 +19,7 @@ The archive contains:
 - Daily memory, session history, knowledge, custom skills, and scheduled tasks in the configured workspace
 - The Agent registry, channel bindings, and every configured Agent workspace when multi-Agent mode is configured
 - Legacy `user_datas.pkl`, when present
+- The instance Web branding snapshot and its referenced images, when a custom brand has been published
 
 Transient `tmp/` data, caches, Git metadata, and symbolic links are skipped. The
 archive is written with owner-only permissions where the operating system
@@ -31,7 +32,7 @@ supports them.
 
 ## Restore a backup
 
-Stop CowAgent before restoring:
+Stop 容大AI before restoring:
 
 ```bash
 cow stop
@@ -44,7 +45,7 @@ Use `--workspace` to migrate workspace files to a different location:
 cow restore cow-backup.zip --workspace ~/cow-restored
 ```
 
-For a multi-Agent archive, `--workspace` is the instance root. CowAgent restores
+For a multi-Agent archive, `--workspace` is the instance root. 容大AI restores
 the default Agent into that root and every other Agent into
 `<root>/agents/<agent-id>`, the same layout the Agent registry derives on its
 own. Without the option, Agent IDs that already exist locally keep their current
@@ -53,7 +54,15 @@ uses.
 
 Restore validates the archive format and paths before writing anything. It
 overwrites matching files but does not delete unrelated files already present
-at the destination. When current CowAgent data exists, the command first
+at the destination. When current 容大AI data exists, the command first
 creates a `cow-pre-restore-*.zip` rollback archive beside the selected backup.
+
+If the archive carries a branding segment, restore re-publishes it into the
+target data root under a fresh revision (the source revision is kept as
+provenance, so a stale browser draft cannot collide). An archive without a
+branding segment never deletes an existing brand — on a fresh instance it
+falls back to the built-in defaults, and on an already-customized instance it
+leaves the current brand untouched. A corrupt or unsupported branding segment
+aborts the restore before config is published.
 
 For unattended scripts, pass `--yes` to acknowledge overwrites.

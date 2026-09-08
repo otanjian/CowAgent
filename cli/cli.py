@@ -1,4 +1,4 @@
-"""CowAgent CLI entry point."""
+"""容大AI CLI entry point."""
 
 import click
 from cli import __version__
@@ -8,25 +8,26 @@ from cli.commands.context import context
 from cli.commands.install import install_browser
 from cli.commands.knowledge import knowledge
 from cli.commands.backup import backup_command, restore_command
+from cli.commands.management import management
 
 
 HELP_TEXT = """Usage: cow COMMAND [ARGS]...
 
-  CowAgent CLI - Manage your CowAgent instance.
+  容大AI CLI - Manage your 容大AI instance.
 
 Commands:
   help     Show this message.
   version  Show the version.
-  start    Start CowAgent.
-  stop     Stop CowAgent.
-  restart  Restart CowAgent.
-  update   Update CowAgent and restart.
-  status   Show CowAgent running status.
-  logs     View CowAgent logs.
-  skill    Manage CowAgent skills.
+  start    Start 容大AI.
+  stop     Stop 容大AI.
+  restart  Restart 容大AI.
+  update   Update 容大AI and restart.
+  status   Show 容大AI running status.
+  logs     View 容大AI logs.
+  skill    Manage 容大AI skills.
   knowledge  Manage knowledge base.
   backup   Back up config and agent workspace.
-  restore  Restore a CowAgent backup.
+  restore  Restore a 容大AI backup.
   install-browser  Install browser tool (Playwright + Chromium).
 
 Tip: Memory index management lives in chat — send /memory status or
@@ -49,7 +50,7 @@ class CowCLI(click.Group):
 @click.group(cls=CowCLI, invoke_without_command=True, context_settings=dict(help_option_names=[]))
 @click.pass_context
 def main(ctx):
-    """CowAgent CLI - Manage your CowAgent instance."""
+    """容大AI CLI - Manage your 容大AI instance."""
     if ctx.invoked_subcommand is None:
         click.echo(HELP_TEXT.strip())
 
@@ -57,7 +58,7 @@ def main(ctx):
 @main.command()
 def version():
     """Show the version."""
-    click.echo(f"cow {__version__}")
+    click.echo(f"容大AI v{__version__}")
 
 
 @main.command(name='help')
@@ -80,6 +81,7 @@ main.add_command(knowledge)
 main.add_command(backup_command)
 main.add_command(restore_command)
 main.add_command(install_browser)
+main.add_command(management)
 
 
 if __name__ == '__main__':

@@ -360,7 +360,7 @@ def test_streaming_agent_failure_after_first_event_finishes_with_error():
     assert payloads[1]["choices"][0]["delta"] == {"content": "partial"}
     assert payloads[2]["cow_event"] == {
         "type": "error",
-        "message": "CowAgent failed to complete the request.",
+        "message": "容大AI failed to complete the request.",
     }
     assert payloads[-1]["choices"][0]["finish_reason"] == "error"
 
@@ -948,7 +948,7 @@ def test_http_stream_first_event_timeout_returns_500_and_cancels(monkeypatch):
     assert response.status == "500 Internal Server Error"
     assert response.headers["Content-Type"] == "application/json; charset=utf-8"
     assert json.loads(response.data)["error"] == {
-        "message": "CowAgent timed out before producing a response.",
+        "message": "容大AI timed out before producing a response.",
         "type": "api_error",
         "code": "timeout",
     }

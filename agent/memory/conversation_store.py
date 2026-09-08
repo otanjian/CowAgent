@@ -24,6 +24,18 @@ from typing import Any, Dict, List, Optional
 from common.log import logger
 
 
+def normalize_session_search_query(q: Optional[str]) -> str:
+    """Validate the optional, literal session-title search query."""
+    if q is None:
+        return ""
+    if not isinstance(q, str):
+        raise ValueError("q must be a string")
+    q = q.strip()
+    if len(q) > 100:
+        raise ValueError("q must be at most 100 characters")
+    return q
+
+
 # ---------------------------------------------------------------------------
 # Schema
 # ---------------------------------------------------------------------------
@@ -40,7 +52,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at        INTEGER NOT NULL,
     last_active       INTEGER NOT NULL,
     msg_count         INTEGER NOT NULL DEFAULT 0,
-    pinned            INTEGER NOT NULL DEFAULT 0
+    pinned            INTEGER NOT NULL DEFAULT 0,
+    -- Tenancy dimension: the owning user. Empty until per-user isolation lands,
+    -- so filtering by owner is an additive query change rather than a schema one.
+    owner             TEXT    NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -51,6 +66,8 @@ CREATE TABLE IF NOT EXISTS messages (
     content      TEXT    NOT NULL,
     created_at   INTEGER NOT NULL,
     extras       TEXT    NOT NULL DEFAULT '',
+    -- Tenancy dimension: the owning user, mirrored from the session.
+    owner        TEXT    NOT NULL DEFAULT '',
     UNIQUE (session_id, seq)
 );
 
@@ -82,7 +99,7 @@ CREATE TABLE IF NOT EXISTS runs (
     -- top-level run. Lets a whole delegation tree be walked from any node.
     parent_run_id TEXT   NOT NULL DEFAULT '',
     -- Free-form external work handle and where it came from. task_source is
-    -- empty for a native CowAgent run; a non-empty value names the external
+    -- empty for a native RongAI run; a non-empty value names the external
     -- system and task_id then addresses a work item within it. TEXT on purpose:
     -- it must hold external ids, never a foreign key into a table we own.
     task_id      TEXT    NOT NULL DEFAULT '',
@@ -133,6 +150,16 @@ ALTER TABLE messages ADD COLUMN extras TEXT NOT NULL DEFAULT '';
 # parent's. Empty for messages written before runs were tracked.
 _MIGRATION_ADD_MSG_RUN_ID = """
 ALTER TABLE messages ADD COLUMN run_id TEXT NOT NULL DEFAULT '';
+"""
+
+# Tenancy dimension. Empty for pre-isolation rows, which then read as shared /
+# default-user content. Filtering by owner is applied at the retrieval point.
+_MIGRATION_ADD_SESSION_OWNER = """
+ALTER TABLE sessions ADD COLUMN owner TEXT NOT NULL DEFAULT '';
+"""
+
+_MIGRATION_ADD_MSG_OWNER = """
+ALTER TABLE messages ADD COLUMN owner TEXT NOT NULL DEFAULT '';
 """
 
 DEFAULT_MAX_AGE_DAYS: int = 30
@@ -584,6 +611,13 @@ class ConversationStore:
             from common.utils import current_agent_run_id
             run_id = current_agent_run_id() or ""
 
+        # Tenancy dimension (task 3.8 / 4.1): attribute new content to the
+        # requesting user when one is in scope, so database-mode reads can be
+        # filtered by owner. Empty in legacy mode, which keeps every legacy
+        # session visible via the owner='' filter.
+        from common.runtime_identity import current_identity
+        owner = current_identity().user_id or ""
+
         now = int(time.time())
         with self._lock:
             conn = self._connect()
@@ -603,10 +637,10 @@ class ConversationStore:
                     conn.execute(
                         """
                         INSERT OR IGNORE INTO sessions
-                            (session_id, channel_type, created_at, last_active, msg_count)
-                        VALUES (?, ?, ?, ?, 0)
+                            (session_id, channel_type, owner, created_at, last_active, msg_count)
+                        VALUES (?, ?, ?, ?, ?, 0)
                         """,
-                        (session_id, channel_type, now, now),
+                        (session_id, channel_type, owner, now, now),
                     )
                     conn.execute(
                         "UPDATE sessions SET last_active = ? WHERE session_id = ?",
@@ -631,10 +665,10 @@ class ConversationStore:
                         conn.execute(
                             """
                             INSERT OR IGNORE INTO messages
-                                (session_id, seq, role, content, created_at, extras, run_id)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                                (session_id, seq, role, content, created_at, extras, run_id, owner)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                             """,
-                            (session_id, next_seq, role, content, now, extras, msg_run_id),
+                            (session_id, next_seq, role, content, now, extras, msg_run_id, owner),
                         )
                         next_seq += 1
 
@@ -1314,6 +1348,7 @@ class ConversationStore:
         session_id: str,
         page: int = 1,
         page_size: int = 20,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Load a page of conversation history for UI display, grouped into turns.
@@ -1358,27 +1393,33 @@ class ConversationStore:
 
                 # extras column is added by migration; tolerate older DBs that
                 # might miss it by falling back to a NULL literal.
+                if user_id:
+                    msg_where = "WHERE session_id = ? AND owner = ?"
+                    msg_args = (session_id, user_id)
+                else:
+                    msg_where = "WHERE session_id = ?"
+                    msg_args = (session_id,)
                 try:
                     rows = conn.execute(
-                        """
+                        f"""
                         SELECT seq, role, content, created_at, extras
                         FROM messages
-                        WHERE session_id = ?
+                        {msg_where}
                         ORDER BY seq ASC
                         """,
-                        (session_id,),
+                        msg_args,
                     ).fetchall()
                 except sqlite3.OperationalError:
                     rows = [
                         (seq, role, content, created_at, "")
                         for (seq, role, content, created_at) in conn.execute(
-                            """
+                            f"""
                             SELECT seq, role, content, created_at
                             FROM messages
-                            WHERE session_id = ?
+                            {msg_where}
                             ORDER BY seq ASC
                             """,
-                            (session_id,),
+                            msg_args,
                         ).fetchall()
                     ]
             finally:
@@ -1413,10 +1454,16 @@ class ConversationStore:
         channel_type: Optional[str] = None,
         page: int = 1,
         page_size: int = 50,
+        user_id: Optional[str] = None,
+        q: str = "",
     ) -> Dict[str, Any]:
         """
         List sessions with pinned ones first, then last_active DESC, with an
-        optional channel_type filter.
+        optional channel_type filter and literal title substring search.
+
+        Title matching ignores ASCII letter case. Search uses ``instr`` rather
+        than LIKE so percent signs and underscores remain literal characters.
+        Ownership and search apply before both counting and pagination.
 
         Pinned sessions sort ahead of everything else rather than only ahead of
         the rows on the same page, so a pin still reaches the top of the list
@@ -1433,37 +1480,32 @@ class ConversationStore:
             }
         """
         page = max(1, page)
+        q = normalize_session_search_query(q)
+        clauses = ["owner = ?"]
+        params: List[Any] = [user_id or ""]
+        if channel_type:
+            clauses.append("channel_type = ?")
+            params.append(channel_type)
+        if q:
+            clauses.append("instr(lower(title), lower(?)) > 0")
+            params.append(q)
+        where = " AND ".join(clauses)
         with self._lock:
             conn = self._connect()
             try:
-                if channel_type:
-                    total = conn.execute(
-                        "SELECT COUNT(*) FROM sessions WHERE channel_type = ?",
-                        (channel_type,),
-                    ).fetchone()[0]
-                    rows = conn.execute(
-                        """
-                        SELECT session_id, title, created_at, last_active, msg_count, pinned
-                        FROM sessions
-                        WHERE channel_type = ?
-                        ORDER BY pinned DESC, last_active DESC
-                        LIMIT ? OFFSET ?
-                        """,
-                        (channel_type, page_size, (page - 1) * page_size),
-                    ).fetchall()
-                else:
-                    total = conn.execute(
-                        "SELECT COUNT(*) FROM sessions",
-                    ).fetchone()[0]
-                    rows = conn.execute(
-                        """
-                        SELECT session_id, title, created_at, last_active, msg_count, pinned
-                        FROM sessions
-                        ORDER BY pinned DESC, last_active DESC
-                        LIMIT ? OFFSET ?
-                        """,
-                        (page_size, (page - 1) * page_size),
-                    ).fetchall()
+                total = conn.execute(
+                    f"SELECT COUNT(*) FROM sessions WHERE {where}", params,
+                ).fetchone()[0]
+                rows = conn.execute(
+                    f"""
+                    SELECT session_id, title, created_at, last_active, msg_count, pinned
+                    FROM sessions
+                    WHERE {where}
+                    ORDER BY pinned DESC, last_active DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    [*params, page_size, (page - 1) * page_size],
+                ).fetchall()
             finally:
                 conn.close()
 
@@ -1500,6 +1542,31 @@ class ConversationStore:
             finally:
                 conn.close()
 
+    def backfill_owner(self, owner: str) -> int:
+        """Assign ``owner`` to every owner-less session/message row (task 4.1).
+
+        Runs once during the maintenance-window migration on an existing store:
+        pre-isolation content is in-place registered to the default tenant's
+        initial admin. Idempotent — rows that already have a non-empty owner are
+        left untouched, so re-running does not overwrite later splits.
+        Returns the number of sessions updated.
+        """
+        with self._lock:
+            conn = self._connect()
+            try:
+                with conn:
+                    cur = conn.execute(
+                        "UPDATE sessions SET owner = ? WHERE owner = ''",
+                        (owner,),
+                    )
+                    conn.execute(
+                        "UPDATE messages SET owner = ? WHERE owner = ''",
+                        (owner,),
+                    )
+                    return cur.rowcount
+            finally:
+                conn.close()
+
     def set_pinned(self, session_id: str, pinned: bool) -> bool:
         """Pin or unpin a session. Returns True if the session existed."""
         with self._lock:
@@ -1514,8 +1581,9 @@ class ConversationStore:
             finally:
                 conn.close()
 
-    def list_session_ids(self, channel_type: Optional[str] = None) -> List[str]:
-        """Every session id, optionally filtered by channel.
+    def list_session_ids(self, channel_type: Optional[str] = None,
+                         user_id: Optional[str] = None) -> List[str]:
+        """Every session id, optionally filtered by channel and/or owner.
 
         One cheap single-column scan, used to work out how many distinct project
         spaces are actually in play without paging through full session rows.
@@ -1525,11 +1593,14 @@ class ConversationStore:
             try:
                 if channel_type:
                     rows = conn.execute(
-                        "SELECT session_id FROM sessions WHERE channel_type = ?",
-                        (channel_type,),
+                        "SELECT session_id FROM sessions WHERE channel_type = ? AND owner = ?",
+                        (channel_type, user_id or ""),
                     ).fetchall()
                 else:
-                    rows = conn.execute("SELECT session_id FROM sessions").fetchall()
+                    rows = conn.execute(
+                        "SELECT session_id FROM sessions WHERE owner = ?",
+                        (user_id or "",),
+                    ).fetchall()
             finally:
                 conn.close()
         return [r[0] for r in rows]
@@ -1704,6 +1775,13 @@ class ConversationStore:
                 logger.info("[ConversationStore] Migrated: added pinned column")
             except Exception as e:
                 logger.warning(f"[ConversationStore] Migration (pinned) failed: {e}")
+        if "owner" not in cols:
+            try:
+                conn.execute(_MIGRATION_ADD_SESSION_OWNER)
+                conn.commit()
+                logger.info("[ConversationStore] Migrated: added sessions.owner column")
+            except Exception as e:
+                logger.warning(f"[ConversationStore] Migration (sessions.owner) failed: {e}")
 
         msg_cols = {
             row[1]
@@ -1723,6 +1801,13 @@ class ConversationStore:
                 logger.info("[ConversationStore] Migrated: added messages.run_id column")
             except Exception as e:
                 logger.warning(f"[ConversationStore] Migration (run_id) failed: {e}")
+        if "owner" not in msg_cols:
+            try:
+                conn.execute(_MIGRATION_ADD_MSG_OWNER)
+                conn.commit()
+                logger.info("[ConversationStore] Migrated: added messages.owner column")
+            except Exception as e:
+                logger.warning(f"[ConversationStore] Migration (messages.owner) failed: {e}")
 
     def _connect(self) -> sqlite3.Connection:
         with self._lock:

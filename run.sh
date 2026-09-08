@@ -2,7 +2,7 @@
 set -e
 
 # ============================
-# CowAgent Management Script
+# RongAI Management Script
 # ============================
 
 # ANSI colors
@@ -413,7 +413,7 @@ check_python_version() {
 
 # Clone project
 clone_project() {
-    echo -e "${GREEN}🔍 Cloning CowAgent project...${NC}"
+    echo -e "${GREEN}🔍 Cloning 容大AI project...${NC}"
 
     if [ -d "CowAgent" ]; then
         # An existing directory is automatically backed up (no prompt) so the
@@ -921,7 +921,7 @@ with open('config.json', 'w') as f:
 # Start project
 start_project() {
     echo ""
-    echo -e "${GREEN}${EMOJI_ROCKET} Starting CowAgent...${NC}"
+    echo -e "${GREEN}${EMOJI_ROCKET} Starting 容大AI...${NC}"
     sleep 1
 
     local USE_COW=false
@@ -941,10 +941,10 @@ start_project() {
 
         if [[ "$OS_TYPE" == "Linux" ]]; then
             nohup setsid $PYTHON_CMD "${BASE_DIR}/app.py" > "${BASE_DIR}/nohup.out" 2>&1 &
-            echo -e "${GREEN}${EMOJI_COW} CowAgent started on Linux (using $PYTHON_CMD)${NC}"
+            echo -e "${GREEN}${EMOJI_COW} 容大AI started on Linux (using $PYTHON_CMD)${NC}"
         elif [[ "$OS_TYPE" == "Darwin" ]]; then
             nohup $PYTHON_CMD "${BASE_DIR}/app.py" > "${BASE_DIR}/nohup.out" 2>&1 &
-            echo -e "${GREEN}${EMOJI_COW} CowAgent started on macOS (using $PYTHON_CMD)${NC}"
+            echo -e "${GREEN}${EMOJI_COW} 容大AI started on macOS (using $PYTHON_CMD)${NC}"
         else
             echo -e "${RED}❌ Unsupported OS: ${OS_TYPE}${NC}"
             exit 1
@@ -954,7 +954,7 @@ start_project() {
     sleep 2
     echo ""
     echo -e "${CYAN}${BOLD}=========================================${NC}"
-    echo -e "${GREEN}${EMOJI_CHECK} $(t "CowAgent 已在后台运行" "CowAgent is now running in background")!${NC}"
+    echo -e "${GREEN}${EMOJI_CHECK} $(t "容大AI 已在后台运行" "容大AI is now running in background")!${NC}"
     echo -e "${GREEN}${EMOJI_CHECK} $(t "关闭终端后进程仍会继续运行" "Process will continue after closing terminal").${NC}"
     echo -e "${CYAN}$ACCESS_INFO${NC}"
 
@@ -995,7 +995,7 @@ start_project() {
 # Show usage
 show_usage() {
     echo -e "${CYAN}${BOLD}=========================================${NC}"
-    echo -e "${CYAN}${BOLD}   ${EMOJI_COW} CowAgent Management Script${NC}"
+    echo -e "${CYAN}${BOLD}   ${EMOJI_COW} 容大AI Management Script${NC}"
     echo -e "${CYAN}${BOLD}=========================================${NC}"
     echo ""
     echo -e "${YELLOW}$(t "用法" "Usage"):${NC}"
@@ -1054,7 +1054,7 @@ cmd_start() {
         cow start
     else
         if is_running; then
-            echo -e "${YELLOW}${EMOJI_WARN} $(t "CowAgent 已在运行中" "CowAgent is already running") (PID: $(get_pid))${NC}"
+            echo -e "${YELLOW}${EMOJI_WARN} $(t "容大AI 已在运行中" "容大AI is already running") (PID: $(get_pid))${NC}"
             echo -e "${YELLOW}$(t "使用 './run.sh restart' 重启" "Use './run.sh restart' to restart")${NC}"
             return
         fi
@@ -1072,10 +1072,10 @@ cmd_stop() {
         cd "${BASE_DIR}"
         cow stop
     else
-        echo -e "${GREEN}${EMOJI_STOP} $(t "正在停止 CowAgent" "Stopping CowAgent")...${NC}"
+        echo -e "${GREEN}${EMOJI_STOP} $(t "正在停止 容大AI" "Stopping 容大AI")...${NC}"
 
         if ! is_running; then
-            echo -e "${YELLOW}${EMOJI_WARN} $(t "CowAgent 未在运行" "CowAgent is not running")${NC}"
+            echo -e "${YELLOW}${EMOJI_WARN} $(t "容大AI 未在运行" "容大AI is not running")${NC}"
             return 0
         fi
 
@@ -1095,7 +1095,7 @@ cmd_stop() {
             kill -9 ${pid} 2>/dev/null || true
         fi
 
-        echo -e "${GREEN}${EMOJI_CHECK} $(t "CowAgent 已停止" "CowAgent stopped")${NC}"
+        echo -e "${GREEN}${EMOJI_CHECK} $(t "容大AI 已停止" "容大AI stopped")${NC}"
     fi
 }
 
@@ -1118,7 +1118,7 @@ cmd_status() {
         cow status
     else
         echo -e "${CYAN}${BOLD}=========================================${NC}"
-        echo -e "${CYAN}${BOLD}   ${EMOJI_COW} CowAgent Status${NC}"
+        echo -e "${CYAN}${BOLD}   ${EMOJI_COW} 容大AI Status${NC}"
         echo -e "${CYAN}${BOLD}=========================================${NC}"
 
         if is_running; then
@@ -1169,7 +1169,7 @@ cmd_config() {
     # Choose language first so the rest of the flow is localized.
     select_language
     echo ""
-    echo -e "${YELLOW}${EMOJI_WRENCH} $(t "正在重新配置 CowAgent" "Reconfiguring CowAgent")...${NC}"
+    echo -e "${YELLOW}${EMOJI_WRENCH} $(t "正在重新配置 容大AI" "Reconfiguring 容大AI")...${NC}"
     
     if [ -f "${BASE_DIR}/config.json" ]; then
         backup_file="${BASE_DIR}/config.json.backup.$(date +%s)"
@@ -1196,7 +1196,7 @@ cmd_config() {
 
 # Update project
 cmd_update() {
-    echo -e "${GREEN}${EMOJI_WRENCH} $(t "正在更新 CowAgent" "Updating CowAgent")...${NC}"
+    echo -e "${GREEN}${EMOJI_WRENCH} $(t "正在更新 容大AI" "Updating 容大AI")...${NC}"
     cd "${BASE_DIR}"
     
     # Pull latest code first (service still running)
@@ -1248,7 +1248,7 @@ install_mode() {
     set +e
     clear
     echo -e "${CYAN}${BOLD}=========================================${NC}"
-    echo -e "${CYAN}${BOLD}   ${EMOJI_COW} CowAgent Installation${NC}"
+    echo -e "${CYAN}${BOLD}   ${EMOJI_COW} 容大AI Installation${NC}"
     echo -e "${CYAN}${BOLD}=========================================${NC}"
     echo ""
 

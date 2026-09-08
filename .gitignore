@@ -17,6 +17,9 @@ logs/
 /workspace
 config.yaml
 user_datas.pkl
+# Private per-tenant application data (including personal todo databases).
+/tenants/
+/todo/
 chatgpt_tool_hub/
 plugins/**/
 !plugins/bdunit
@@ -36,6 +39,10 @@ plugins/banwords/lib/__pycache__
 client_config.json
 # HMAC key for signing /preview URLs; generated per install.
 .preview_secret
+
+# Local-only chinese startup runbook: contains a developer's absolute path and
+# test-account plaintext password. Never share.
+/启动说明.md
 ref/
 **/.dev.vars
 .cursor/
@@ -70,3 +77,18 @@ desktop/resources/.icon-work/
 desktop/resources/bin/
 
 .wrangler/
+
+# OpenSpec change specs: local design/workflow scratch produced during
+# propose/apply cycles. Not part of the shipped repository — never commit.
+/openspec/
+
+# Local runtime data written into the workspace on source deployments
+# (config.py: get_data_root() falls back to the workspace root). These are
+# private per-instance artifacts, not source, so keep them out of git.
+/identity.db
+/memory/
+
+# Transient verification scratch files (launcher scripts + their data dir).
+.tmp_verify_launcher.py
+.tmp_verify_server.py
+.tmp_verify_data/

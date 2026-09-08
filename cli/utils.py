@@ -6,7 +6,7 @@ import json
 
 
 def get_project_root() -> str:
-    """Get the CowAgent project root directory."""
+    """Get the RongAI project root directory."""
     # cli/ is directly under the project root
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

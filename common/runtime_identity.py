@@ -20,7 +20,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Iterator, Optional
 
-_FIELDS = ("agent_id", "user_id", "session_id", "run_id")
+_FIELDS = ("agent_id", "user_id", "tenant_id", "session_id", "run_id",
+           "web_auth_session_id", "web_legacy_authenticated")
 
 
 @dataclass(frozen=True)
@@ -28,16 +29,25 @@ class RuntimeIdentity:
     """Every field is optional.
 
     ``agent_id`` is None on single-Agent installs and before routing has run;
-    ``user_id`` stays None until tenancy lands; ``run_id`` is set per task once
-    sub agents exist. Consumers must treat None as "use the default".
+    ``user_id`` stays None until tenancy lands; ``tenant_id`` is set when the
+    request selected a tenant (database mode) so path resolution can scope to the
+    tenant's shared root; ``run_id`` is set per task once sub agents exist.
+    Consumers must treat ``user_id``/``tenant_id``/``agent_id`` as None meaning
+    "use the legacy/default path".
     """
 
     agent_id: Optional[str] = None
     user_id: Optional[str] = None
+    tenant_id: Optional[str] = None
     session_id: Optional[str] = None
     run_id: Optional[str] = None
+    # Set only by the authenticated Web entry point. This is the non-secret
+    # database session row id, never the bearer/cookie token. Tools revalidate
+    # its current owner, expiry and revocation when they act for the user.
+    web_auth_session_id: Optional[str] = None
+    web_legacy_authenticated: bool = False
 
-    def derive(self, **overrides: Optional[str]) -> "RuntimeIdentity":
+    def derive(self, **overrides: Any) -> "RuntimeIdentity":
         unknown = set(overrides) - set(_FIELDS)
         if unknown:
             raise TypeError(f"unknown identity fields: {sorted(unknown)}")
@@ -60,7 +70,7 @@ def current_agent_id() -> Optional[str]:
 
 
 @contextmanager
-def identity_scope(**overrides: Optional[str]) -> Iterator[RuntimeIdentity]:
+def identity_scope(**overrides: Any) -> Iterator[RuntimeIdentity]:
     """Derive an identity from the ambient one for the duration of a block.
 
     Sub agents use this: they inherit agent_id/user_id/session_id from the

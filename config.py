@@ -266,11 +266,30 @@ available_setting = {
     "web_session_expire_days": 30,  # Auth session expiry in days
     "web_file_serve_root": "~",  # Root dir the /api/file endpoint may serve; "/" allows the whole filesystem
     "mcp_oauth_redirect_base": "",  # Base URL for MCP OAuth callback (e.g. http://your-ip:9899); empty uses local web console
+    # Personal todo (待办事项) switch (default off). When enabled the Web
+    # workbench exposes a personal todo list/detail page backed by a private
+    # todo/todos.db (see agent/todo/). When disabled the todo API and the minimal
+    # agent todo tool are refused (but storage is preserved). Legacy mode maps a
+    # verified login to a stable local-owner; database mode requires a real
+    # user/tenant/membership plus todo.read / todo.write before it unlocks.
+    "todo_enabled": False,
+    # Identity mode. "legacy" keeps the shared-password + HMAC auth (default);
+    # "database" uses per-account login, per-tenant membership and RBAC from
+    # identity.db. Switching requires a maintenance-window restart.
+    "identity_mode": "legacy",
+    # Console navigation presentation switch. "classic" keeps a single sidebar
+    # that stacks the workbench and the four admin groups (default); "split"
+    # shows only the selected area (workbench OR admin) with an area switch.
+    # This is a layout-only switch: it NEVER changes authorization, the identity
+    # mode or the consumer open/closed state. Valid values: "classic" | "split".
+    "web_navigation_mode": "classic",
+    # Path to identity.db when identity_mode=database. Empty uses the data root.
+    "identity_db_path": "",
     "agent": True,  # whether to enable Agent mode
     "agent_workspace": "~/cow",  # agent workspace path, used to store skills, memory, etc.
-    # Optional native multi-agent registry. When empty or omitted, CowAgent
+    # Optional native multi-agent registry. When empty or omitted, RongAI
     # synthesizes one "default" agent from agent_workspace and behaves exactly
-    # as before. Each configured workspace is a complete CowAgent workspace.
+    # as before. Each configured workspace is a complete RongAI workspace.
     "agents": [],
     # Agent handling conversations that no channel instance binds. Defaults to
     # the first configured agent when unset.

@@ -27,8 +27,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { Theme } from '../theme/themes'
-// The desktop app's own brand icon (transparent PNG), bundled by Vite.
-import brandLogo from '../assets/logo.png'
+import BrandMark from '../components/BrandMark'
 import { t, getLang, setLang, Lang } from '../i18n'
 import { useUIStore } from '../store/uiStore'
 import { guardDocEditors } from '../store/docEditorStore'
@@ -204,10 +203,10 @@ const NavRail: React.FC<NavRailProps> = ({ onLangChange }) => {
             // A build may render its own wordmark in the brand area.
             <product.slots.NavRailBrand collapsed={collapsed} />
           ) : (
-            <div className="flex items-center gap-2 min-w-0 select-none">
-              <BrandLogo />
+            <div className="flex items-center gap-2.5 min-w-0 select-none">
+              <BrandMark className="w-7 h-7" decorative={!collapsed} />
               {!collapsed && (
-                <span className="text-[14px] font-semibold text-content truncate">{appName}</span>
+                <span className="text-[16px] font-semibold tracking-[0.02em] text-content truncate">{appName}</span>
               )}
             </div>
           ))}
@@ -314,18 +313,6 @@ const NavRail: React.FC<NavRailProps> = ({ onLangChange }) => {
     </aside>
   )
 }
-
-// Brand mark for the top-left corner (Windows/Linux). Uses the desktop app's
-// own icon (transparent PNG with its own rounded shape), so it sits cleanly on
-// both light and dark backgrounds without extra styling.
-const BrandLogo: React.FC = () => (
-  <img
-    src={brandLogo}
-    alt="CowAgent"
-    draggable={false}
-    className="flex-shrink-0 w-7 h-7 object-contain"
-  />
-)
 
 const FooterBtn: React.FC<{
   collapsed: boolean

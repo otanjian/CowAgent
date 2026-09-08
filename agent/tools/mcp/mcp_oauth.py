@@ -136,7 +136,7 @@ def has_pending() -> bool:
 # HTTP helpers (stdlib only)
 # ------------------------------------------------------------------
 
-_UA = "CowAgent-MCP-OAuth/1.0"
+_UA = "RongAI-MCP-OAuth/1.0"
 
 
 def _http_get_json(url: str, timeout: int = 15) -> Optional[dict]:
@@ -299,7 +299,7 @@ class OAuthHandler:
     """Drives the OAuth flow and token lifecycle for a single MCP server."""
 
     def __init__(self, server_name: str, resource_url: str, redirect_uri: str,
-                 scope: str = "", client_name: str = "CowAgent"):
+                 scope: str = "", client_name: str = "容大AI"):
         self.server_name = server_name
         self.resource_url = resource_url
         self.redirect_uri = redirect_uri

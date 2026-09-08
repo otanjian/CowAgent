@@ -14,6 +14,7 @@ from agent.tools.search_files.search_files import SearchFiles
 # Import memory tools
 from agent.tools.memory.memory_search import MemorySearchTool
 from agent.tools.memory.memory_get import MemoryGetTool
+from agent.tools.memory.memory_add import MemoryAddTool
 
 # Import self-evolution tools
 from agent.tools.evolution_undo.evolution_undo import EvolutionUndoTool
@@ -81,6 +82,16 @@ def _import_optional_tools():
     except Exception as e:
         logger.error(f"[Tools] Vision failed to load: {e}")
 
+    # Todo tool: personal todos. Always importable (no extra dependency); the
+    # tool itself gates on todo_enabled + trusted Web identity via is_available.
+    try:
+        from agent.tools.todo.todo_tool import TodoTool
+        tools['TodoTool'] = TodoTool
+    except ImportError as e:
+        logger.error(f"[Tools] TodoTool not loaded - missing dependency: {e}")
+    except Exception as e:
+        logger.error(f"[Tools] TodoTool failed to load: {e}")
+
     return tools
 
 # Load optional tools
@@ -90,6 +101,7 @@ SchedulerTool = _optional_tools.get('SchedulerTool')
 WebSearch = _optional_tools.get('WebSearch')
 WebFetch = _optional_tools.get('WebFetch')
 Vision = _optional_tools.get('Vision')
+TodoTool = _optional_tools.get('TodoTool')
 GoogleSearch = _optional_tools.get('GoogleSearch')
 FileSave = _optional_tools.get('FileSave')
 Terminal = _optional_tools.get('Terminal')
@@ -138,6 +150,7 @@ __all__ = [
     'SearchFiles',
     'MemorySearchTool',
     'MemoryGetTool',
+    'MemoryAddTool',
     'EvolutionUndoTool',
     'SubagentTool',
     'AgentDelegateTool',
@@ -148,6 +161,7 @@ __all__ = [
     'Vision',
     'BrowserTool',
     'McpTool',
+    'TodoTool',
 ]
 
 """

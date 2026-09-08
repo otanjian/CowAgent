@@ -1,4 +1,4 @@
-"""Tests for portable CowAgent backup archives."""
+"""Tests for portable RongAI backup archives."""
 
 import json
 import zipfile
@@ -407,3 +407,121 @@ def test_restore_rejects_archive_carrying_user_scoped_workspaces(tmp_path):
 
     with pytest.raises(ValueError, match="user-scoped"):
         restore_backup_archive(archive, tmp_path / "data", tmp_path / "root")
+
+
+# --------------------------------------------------------------------------- #
+# Branding segment in backup archives
+# --------------------------------------------------------------------------- #
+
+def _brand_png() -> bytes:
+    import io
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGBA", (64, 64), (0, 120, 200, 255)).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _save_brand(data_root: Path, name="容大AI", desc="企业智能协作平台"):
+    from channel.web import branding
+
+    svc = branding.BrandingService(data_root=str(data_root))
+    svc.save(0, name, desc, "replace", ("logo.png", _brand_png()))
+    return svc
+
+
+def test_backup_without_brand_has_no_segment(tmp_path):
+    source_data = tmp_path / "source-data"
+    source_ws = tmp_path / "source-ws"
+    source_ws.mkdir()
+    (source_ws / "MEMORY.md").write_text("m", encoding="utf-8")
+    _write_json(source_data / "config.json", {"agent_workspace": str(source_ws)})
+
+    archive = tmp_path / "plain.zip"
+    summary = create_backup_archive(archive, source_data, source_ws)
+    assert summary["contents"]["branding"] is False
+    with zipfile.ZipFile(archive) as bundle:
+        assert "data/branding.json" not in bundle.namelist()
+        manifest = json.loads(bundle.read("manifest.json").decode("utf-8"))
+    assert manifest["branding"] is False
+
+
+def test_backup_restore_brand_round_trip(tmp_path):
+    source_data = tmp_path / "source-data"
+    source_ws = tmp_path / "source-ws"
+    source_ws.mkdir()
+    (source_ws / "MEMORY.md").write_text("m", encoding="utf-8")
+    _write_json(source_data / "config.json", {"agent_workspace": str(source_ws)})
+    _save_brand(source_data)
+
+    archive = tmp_path / "brand.zip"
+    summary = create_backup_archive(archive, source_data, source_ws)
+    assert summary["contents"]["branding"] is True
+    assert summary["branding"] is True
+
+    target_data = tmp_path / "target-data"
+    target_ws = tmp_path / "target-ws"
+    result = restore_backup_archive(archive, target_data, target_ws)
+    assert result["branding_restored"] is True
+
+    from channel.web import branding
+
+    target_svc = branding.BrandingService(data_root=str(target_data))
+    published = target_svc.get_published()
+    # Restored into a fresh target -> revision is 1 (fresh allocation).
+    assert published["brand_name"] == "容大AI"
+    assert published["logo_description"] == "企业智能协作平台"
+    # Assets were restored and resolvable from disk.
+    logo = target_svc.resolve_asset(published["logo_asset_id"])
+    assert logo[0] == "image/png"
+    assert target_svc.public_payload()["enabled"] is True
+
+
+def test_restore_without_brand_preserves_existing_brand(tmp_path):
+    """An archive without a branding segment must not delete existing brand."""
+    # Existing target already has custom brand.
+    target_data = tmp_path / "target-data"
+    target_ws = tmp_path / "target-ws"
+    target_ws.mkdir()
+    _write_json(target_data / "config.json", {"agent_workspace": str(target_ws)})
+    _save_brand(target_data, name="既有品牌")
+
+    # Archive has no brand segment.
+    source_data = tmp_path / "source-data"
+    source_ws = tmp_path / "source-ws"
+    source_ws.mkdir()
+    (source_ws / "MEMORY.md").write_text("m", encoding="utf-8")
+    _write_json(source_data / "config.json", {"agent_workspace": str(source_ws)})
+    archive = tmp_path / "plain.zip"
+    create_backup_archive(archive, source_data, source_ws)
+
+    restore_backup_archive(archive, target_data, target_ws)
+    from channel.web import branding
+
+    svc = branding.BrandingService(data_root=str(target_data))
+    assert svc.get_published()["brand_name"] == "既有品牌"
+
+
+def test_backup_restore_brand_preserves_source_revision_provenance(tmp_path):
+    source_data = tmp_path / "source-data"
+    source_ws = tmp_path / "source-ws"
+    source_ws.mkdir()
+    (source_ws / "MEMORY.md").write_text("m", encoding="utf-8")
+    _write_json(source_data / "config.json", {"agent_workspace": str(source_ws)})
+    _save_brand(source_data)
+
+    archive = tmp_path / "brand.zip"
+    create_backup_archive(archive, source_data, source_ws)
+
+    target_data = tmp_path / "target-data"
+    restore_backup_archive(archive, target_data, tmp_path / "target-ws")
+    from channel.web import branding
+
+    svc = branding.BrandingService(data_root=str(target_data))
+    published = svc.get_published()
+    assert published.get("source_backup_revision") == 1
+    # Target allocates its own fresh revision, never the source's.
+    assert published["revision"] == 1
+    # Re-running restore again bumps to a fresh revision and keeps provenance.
+    restore_backup_archive(archive, target_data, tmp_path / "target-ws")
+    assert svc.get_published()["revision"] == 2

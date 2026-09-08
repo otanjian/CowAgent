@@ -3,11 +3,11 @@ title: MCP 工具
 description: 通过 Model Context Protocol 接入外部工具生态
 ---
 
-CowAgent 支持 [Model Context Protocol (MCP)](https://modelcontextprotocol.io)，让 Agent 能够直接调用社区中数以万计的 MCP 工具。配置一次 `mcp.json`，工具就会以与内置工具完全相同的方式呈现给 LLM，可被自动选择和调用。
+容大AI 支持 [Model Context Protocol (MCP)](https://modelcontextprotocol.io)，让 Agent 能够直接调用社区中数以万计的 MCP 工具。配置一次 `mcp.json`，工具就会以与内置工具完全相同的方式呈现给 LLM，可被自动选择和调用。
 
 ## 配置文件
 
-CowAgent 读取 `~/cow/mcp.json`。文件不存在时不会启用任何 MCP 工具，也不会报错。
+容大AI 读取 `~/cow/mcp.json`。文件不存在时不会启用任何 MCP 工具，也不会报错。
 
 Docker 部署时，官方 `docker-compose.yml` 已经把宿主机 `./cow` 挂载到容器内 `/home/agent/cow`（即容器用户的 `~/cow`），把 `mcp.json` 放进宿主机 `./cow/` 目录即可生效。
 
@@ -65,7 +65,7 @@ Docker 部署时，官方 `docker-compose.yml` 已经把宿主机 `./cow` 挂载
 
 ## 让 Agent 帮你配置
 
-CowAgent 自带 `read` / `write` / `edit` 工具，**直接把要装的 MCP 配置发给 Agent，让它写到配置文件中：
+容大AI 自带 `read` / `write` / `edit` 工具，**直接把要装的 MCP 配置发给 Agent，让它写到配置文件中：
 
 例如：
 
@@ -82,7 +82,7 @@ Agent 会：
 
 ## 网页授权（OAuth）
 
-部分远程 MCP需要 OAuth 网页授权，直接配置会返回 `401`。CowAgent 内置标准 OAuth 流程，**无需手填 token**，正常配置即可，例如：
+部分远程 MCP需要 OAuth 网页授权，直接配置会返回 `401`。容大AI 内置标准 OAuth 流程，**无需手填 token**，正常配置即可，例如：
 
 ```json
 {
@@ -131,4 +131,4 @@ server 首次加载遇到 `401` 时会自动发起授权：本机运行会**自�
 - [mcp.so](https://mcp.so) — 全球 MCP 服务索引
 - [ModelScope MCP 广场](https://modelscope.cn/mcp) — 魔搭社区 MCP 广场，国内访问更稳定
 
-只要遵循 MCP 标准协议（stdio / SSE / Streamable HTTP），都可以直接接入 CowAgent。
+只要遵循 MCP 标准协议（stdio / SSE / Streamable HTTP），都可以直接接入 容大AI。

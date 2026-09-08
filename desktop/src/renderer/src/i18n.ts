@@ -1,7 +1,7 @@
 const translations: Record<string, Record<string, string>> = {
   zh: {
     console: '控制台',
-    nav_chat: '对话',
+    nav_chat: '工作台',
     nav_manage: '管理',
     nav_monitor: '监控',
     menu_chat: '对话',
@@ -223,7 +223,7 @@ const translations: Record<string, Record<string, string>> = {
     menu_skill_hub: '技能广场',
     menu_feedback: '反馈',
     // onboarding
-    onboarding_welcome_title: '欢迎使用 CowAgent',
+    onboarding_welcome_title: '欢迎使用容大AI',
     onboarding_welcome_desc: '你的私人超级 AI 助手。几步设置，即可开始对话。',
     onboarding_lang_label: '界面语言',
     onboarding_model_title: '配置对话模型',
@@ -490,7 +490,7 @@ const translations: Record<string, Record<string, string>> = {
     channels_available_section: '可添加',
     channels_empty_connected: '暂无已连接的通道',
     channels_empty: '暂未接入任何通道',
-    channels_empty_desc: '点击右上角「接入通道」按钮，即可将 CowAgent 接入微信、飞书、钉钉等消息通道',
+    channels_empty_desc: '点击右上角「接入通道」按钮，即可将容大AI接入微信、飞书、钉钉等消息通道',
     channels_qr_hint: '该通道通过扫码登录，请前往 Web 控制台完成扫码连接',
     channels_save_ok: '已保存',
     channels_save_error: '保存失败',
@@ -616,7 +616,7 @@ const translations: Record<string, Record<string, string>> = {
   },
   en: {
     console: 'Console',
-    nav_chat: 'Chat',
+    nav_chat: 'Workbench',
     nav_manage: 'Management',
     nav_monitor: 'Monitor',
     menu_chat: 'Chat',
@@ -840,7 +840,7 @@ const translations: Record<string, Record<string, string>> = {
     menu_skill_hub: 'Skill Hub',
     menu_feedback: 'Feedback',
     // onboarding
-    onboarding_welcome_title: 'Welcome to CowAgent',
+    onboarding_welcome_title: 'Welcome to 容大AI',
     onboarding_welcome_desc: 'Your personal super AI assistant. A few quick steps and you are ready to chat.',
     onboarding_lang_label: 'Language',
     onboarding_model_title: 'Set up your chat model',
@@ -1107,7 +1107,7 @@ const translations: Record<string, Record<string, string>> = {
     channels_available_section: 'Available',
     channels_empty_connected: 'No connected channels yet',
     channels_empty: 'No channels connected',
-    channels_empty_desc: 'Click "Add channel" above to connect CowAgent to WeChat, Feishu, DingTalk and more',
+    channels_empty_desc: 'Click "Add channel" above to connect 容大AI to WeChat, Feishu, DingTalk and more',
     channels_qr_hint: 'This channel uses QR login — please connect it from the Web console',
     channels_save_ok: 'Saved',
     channels_save_error: 'Failed to save',

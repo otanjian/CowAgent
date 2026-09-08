@@ -1,7 +1,7 @@
 """Agent profile registry.
 
 The registry is deliberately small: an agent is identified by a stable ID and
-one complete CowAgent workspace. Runtime, routing, and persistence layers build
+one complete RongAI workspace. Runtime, routing, and persistence layers build
 on this module without changing the existing single-agent configuration path.
 """
 
@@ -25,7 +25,7 @@ class AgentRegistryError(ValueError):
 
 @dataclass(frozen=True)
 class AgentProfile:
-    """Configuration for one complete CowAgent workspace."""
+    """Configuration for one complete RongAI workspace."""
 
     id: str
     name: str
@@ -149,7 +149,9 @@ def _profile_from_mapping(
 
     return AgentProfile(
         id=agent_id,
-        name=name.strip(),
+        # Older team files may still carry the previous product name. Keep
+        # routing IDs and user-defined names intact when resolving the label.
+        name="RongAI" if name.strip().casefold() == "cowagent" else name.strip(),
         workspace=_normalise_workspace(workspace),
         description=(description.strip() or None) if description else None,
         enabled=enabled,
@@ -192,7 +194,7 @@ class AgentRegistry:
 
         raw_agents = settings.get("agents")
         if raw_agents is None or raw_agents == []:
-            profile = AgentProfile(id="default", name="CowAgent", workspace=instance_root)
+            profile = AgentProfile(id="default", name="RongAI", workspace=instance_root)
             return cls([profile], "default")
 
         if not isinstance(raw_agents, list):

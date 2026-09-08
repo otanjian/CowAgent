@@ -478,26 +478,34 @@ class AgentBridge:
     
     def __init__(self, bridge: Bridge):
         self.bridge = bridge
+        from config import conf
+        self._database_identity_mode = (
+            str(conf().get("identity_mode", "legacy") or "legacy") == "database"
+        )
+        # In database identity mode the runtime path (chat / model execution) is
+        # closed server-side (task 3.11 / design.md §deferred capabilities): the
+        # bridge constructs WITHOUT initializing the registry/router/initializer.
+        self.agents = {}
+        self.default_agent = None
+        self.agent = None
+        self.scheduler_initialized = False
+        self.scheduler_agent_ids = set()
+        self._agent_instances = {}
+        self._default_agents = {}
+        self._agents_lock = threading.RLock()
+        if self._database_identity_mode:
+            return
+        # Legacy mode: resolve the registry/router and build the initializer so a
+        # message can route to an Agent and run lazily.
         from agent.registry import get_agent_registry
-        from agent.routing import get_agent_router
-
+        from agent.routing import AgentRouter, get_agent_router
         self.agent_registry = get_agent_registry()
         self.agent_router = get_agent_router(self.agent_registry)
+        self.initializer = AgentInitializer(bridge, self)
         # Canonical runtime map. A session identifier is only unique inside an
         # agent workspace, so the agent id is part of every live key.
         self._agent_instances: Dict[Tuple[str, str], Agent] = {}
         self._default_agents: Dict[str, Agent] = {}
-        self._agents_lock = threading.RLock()
-        # Backward-compatible view for integrations that inspect sessions of
-        # the configured default agent directly.
-        self.agents: Dict[str, Agent] = {}
-        self.default_agent = None
-        self.agent: Optional[Agent] = None
-        self.scheduler_initialized = False
-        self.scheduler_agent_ids = set()
-        
-        # Create helper instances
-        self.initializer = AgentInitializer(bridge, self)
 
         # Eager-start the scheduler so cron tasks fire without waiting
         # for the first user message. init_scheduler is idempotent.

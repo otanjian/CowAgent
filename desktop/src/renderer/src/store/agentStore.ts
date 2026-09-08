@@ -84,7 +84,10 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       return
     }
 
-    const agents = snap.agents
+    const agents = snap.agents.map((agent) => ({
+      ...agent,
+      name: /^cowagent$/i.test(agent.name.trim()) ? 'RongAI' : agent.name,
+    }))
     const defaultAgentId = snap.default_agent_id || agents[0]?.id || ''
     const enabled = enabledAgents(agents)
     const multiAgent = enabled.length > 1

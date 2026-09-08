@@ -562,7 +562,7 @@ class WebSearch(BaseTool):
             "Accept": "application/json",
             # Serply sits behind Cloudflare, which rejects the default
             # requests User-Agent, so send an explicit one.
-            "User-Agent": "CowAgent",
+            "User-Agent": "RongAI",
         }
 
         logger.debug(f"[WebSearch] serply: query='{query}', count={count}")

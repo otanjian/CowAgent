@@ -14,9 +14,10 @@ import threading
 import time
 import uuid
 from queue import Queue, Empty
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Iterator
 from urllib.parse import quote
 from collections import OrderedDict, deque
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import web
@@ -25,6 +26,30 @@ from bridge.context import *
 from bridge.reply import Reply, ReplyType
 from channel.chat_channel import ChatChannel, check_prefix
 from channel.chat_message import ChatMessage
+from channel.web.auth_handlers import (
+    DbAuthCheckHandler,
+    DbAuthLoginHandler,
+    DbAuthContextHandler,
+    DbAuthLogoutHandler,
+    DbAuthMeHandler,
+    DbAuthPasswordHandler,
+)
+from channel.web.admin_handlers import (
+    PlatformUsersHandler,
+    PlatformUserPasswordHandler,
+    PlatformTenantsHandler,
+    PlatformTenantHandler,
+    PlatformTenantAdminsHandler,
+    TenantInfoHandler,
+    TenantMembersHandler,
+    TenantMemberHandler,
+    TenantRolesHandler,
+    TenantRoleHandler,
+    TenantPermissionsHandler,
+    TenantDepartmentsHandler,
+    TenantDepartmentHandler,
+    IdentityAuditHandler,
+)
 from common import const
 from common import i18n
 from common.log import logger
@@ -43,6 +68,18 @@ from agent.permission import (
     normalize_mode as permission_normalize_mode,
 )
 from channel.web.openai_api import OpenAIChatCompletionsHandler
+from channel.web.branding import (
+    BrandingError,
+    BrandingService,
+    create_service as create_branding_service,
+)
+from channel.web.todo_handlers import (
+    TodosHandler,
+    TodoSummaryHandler,
+    TodoDetailHandler,
+    TodoEventsHandler,
+    TodoSourceHandler,
+)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"}
 VIDEO_EXTENSIONS = {".mp4", ".webm", ".avi", ".mov", ".mkv"}
@@ -217,14 +254,32 @@ def _get_query_token():
 
 
 def _check_auth():
-    """Return True if request is authenticated or password not enabled."""
+    """Return True if request is authenticated or password not enabled.
+
+    The database identity branch runs FIRST and independently of legacy auth: in
+    database mode only a valid revocable ``cow_session`` (cookie or Bearer) is
+    trusted. The shared HMAC token, an old shared password and a URL ``token``
+    query param NEVER grant a database identity — a legacy client must use the
+    database contract, not auto-degrade to shared-auth.
+    """
+    if _is_database_identity():
+        from channel.web.auth_handlers import _get_service, _session_token
+        try:
+            token = _session_token()
+            if token and _get_service().verify_session(token):
+                return True
+        except Exception:
+            return False
+        return False
     if not _is_password_enabled():
         return True
     if _verify_auth_token(web.cookies().get("cow_auth_token", "")):
         return True
     if _verify_auth_token(_get_bearer_token()):
         return True
-    return _verify_auth_token(_get_query_token())
+    if _verify_auth_token(_get_query_token()):
+        return True
+    return False
 
 
 def _require_auth():
@@ -234,12 +289,18 @@ def _require_auth():
         # request is otherwise invisible in run.log, which makes client bugs —
         # e.g. an endpoint that forgets the Authorization header — undiagnosable.
         offered = []
-        if web.cookies().get("cow_auth_token", ""):
-            offered.append("cookie")
-        if _get_bearer_token():
-            offered.append("bearer")
-        if _get_query_token():
-            offered.append("query")
+        if _is_database_identity():
+            from channel.web.auth_handlers import _select_credential
+            sel = _select_credential()
+            if sel.source:
+                offered.append(sel.source)
+        else:
+            if web.cookies().get("cow_auth_token", ""):
+                offered.append("cookie")
+            if _get_bearer_token():
+                offered.append("bearer")
+            if _get_query_token():
+                offered.append("query")
         logger.warning(
             "[WebChannel] 401 Unauthorized: %s %s (credentials offered: %s)",
             web.ctx.env.get("REQUEST_METHOD", "?"),
@@ -249,6 +310,28 @@ def _require_auth():
         raise web.HTTPError("401 Unauthorized",
                             {"Content-Type": "application/json; charset=utf-8"},
                             json.dumps({"status": "error", "message": "Unauthorized"}))
+
+
+def _require_platform_console():
+    """Guard the platform-scoped config/model console.
+
+    In database identity mode these routes belong to the platform admin
+    control plane: resolve the per-request context and require
+    ``is_platform_admin``. In legacy identity mode the shared console password
+    still owns access (``_require_auth``).
+
+    The HTTP-method policy processor classifies these routes as ``platform``;
+    this call is what actually resolves the session and rejects a non-admin
+    (401 unauthorised, 400 missing tenant, 403 forbidden) — it is independent
+    of the frontend.
+    """
+    if _is_database_identity():
+        from channel.web.auth_handlers import _require_context
+        from channel.web.admin_handlers import _require_platform_admin
+        ctx = _require_context()
+        _require_platform_admin(ctx)
+        return
+    _require_auth()
 
 
 # Localized text for /cancel system replies. Web is the only channel that
@@ -299,6 +382,299 @@ def _get_upload_dir(agent_id: str = None) -> str:
     return upload_dir
 
 
+@contextmanager
+def _db_scope() -> Iterator["Optional[RequestContext]"]:
+    """Context manager yielding the database-mode request context (or None).
+
+    In database mode this resolves the session token + X-Tenant-ID into a
+    verified ``RequestContext`` and applies it to the ambient ``RuntimeIdentity``
+    (scoping state_dir / conversation stores to the request's user+tenant) for the
+    duration of the ``with`` block, restoring the previous identity on exit so a
+    pooled web.py thread never leaks one request's scope into the next.
+
+    Raises HTTP errors (401/400/403) for missing/invalid tenant selection or a
+    forced-password-change restriction.
+    """
+    if not _is_database_identity():
+        yield None
+        return
+    from auth.runtime import to_runtime_identity
+    from channel.web.auth_handlers import _require_context
+    from common.runtime_identity import use_identity
+
+    # Share the HTTP error mapping with the identity endpoints. A revoked
+    # membership or stale tenant must remain a JSON 401/403, not an uncaught
+    # IdentityContextError rendered as an HTML 500 page. Chat is tenant-scoped,
+    # so it requires an explicit, valid tenant selection.
+    ctx = _require_context(require_tenant=True)
+    if ctx.must_change_password:
+        raise web.HTTPError(
+            "403 Forbidden", {"Content-Type": "application/json"},
+            json.dumps({"status": "error", "message": "password change required",
+                        "code": "password_change_required"}))
+    ident = to_runtime_identity(ctx)
+    with use_identity(ident):
+        yield ctx
+
+
+def _require_read_permission(ctx: "Optional[RequestContext]", permission: str) -> None:
+    """Enforce a business-read permission in database mode.
+
+    Legacy mode has no per-user permissions, so this is a no-op. In database
+    mode the caller must have selected a tenant and hold the permission. The
+    permission is checked independently of tenant_admin qualification (the
+    built-in tenant_admin grants the permission via its effective union); a
+    custom role cannot be bypassed by admin status. A missing/invalid tenant was
+    already rejected by ``_db_scope``.
+    """
+    if ctx is None:
+        return
+    if not ctx.tenant_id:
+        raise web.HTTPError("400 Bad Request", {"Content-Type": "application/json"},
+                            json.dumps({"status": "error", "message": "tenant selection required",
+                                        "code": "missing_tenant"}))
+    if permission not in ctx.permissions:
+        raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
+                            json.dumps({"status": "error", "message": "forbidden",
+                                        "code": "forbidden"}))
+
+
+def _web_runtime_identity_snapshot() -> dict:
+    """Carry verified Web delegation across the chat worker thread boundary.
+
+    The database session row id is non-secret and lets tools recheck revocation
+    without keeping a login token on an agent, tool, or persisted conversation.
+    Never copy identity or delegation claims from the submitted JSON body.
+    """
+    from common.runtime_identity import current_identity
+    ident = current_identity()
+    snapshot = {
+        "user_id": ident.user_id,
+        "tenant_id": ident.tenant_id,
+        "agent_id": ident.agent_id,
+        "session_id": ident.session_id,
+        "web_auth_session_id": None,
+        "web_legacy_authenticated": False,
+    }
+    if _is_database_identity():
+        from channel.web.auth_handlers import _get_service, _session_token
+        verified = _get_service().verify_session(_session_token())
+        if not verified or verified["user"]["id"] != ident.user_id or not ident.tenant_id:
+            raise PermissionError("Web 会话身份不可用")
+        snapshot["web_auth_session_id"] = verified["session"]["id"]
+    elif _is_password_enabled() and _check_auth():
+        snapshot["web_legacy_authenticated"] = True
+    return snapshot
+
+
+def _chat_error(message: str, status: str = "403 Forbidden", code: str = "forbidden"):
+    raise web.HTTPError(status, {"Content-Type": "application/json; charset=utf-8"},
+                        json.dumps({"status": "error", "message": message, "code": code}))
+
+
+def _chat_body() -> dict:
+    try:
+        body = json.loads(web.data() or b"{}")
+    except (TypeError, ValueError):
+        _chat_error("invalid JSON", "400 Bad Request", "bad_request")
+    if not isinstance(body, dict):
+        _chat_error("JSON object required", "400 Bad Request", "bad_request")
+    return body
+
+
+def _require_chat_csrf() -> None:
+    # Reuse the unified credential selection so a same-value repeated cookie+
+    # bearer is still treated as a cookie request (origin check applies), and a
+    # different-value pair is a hard 400 mixed_credentials rather than a bypass.
+    from channel.web.auth_handlers import _csrf_ok
+    if not _csrf_ok():
+        _chat_error("invalid request origin", code="csrf_failed")
+
+
+def _authorize_chat_session(ctx, session_id, agent_id, *, create=False) -> str:
+    """Authorize and, for a new chat, atomically claim its durable owner.
+
+    Runtime/queue/cancellation keys include Agent and session but not user. A
+    SELECT followed by asynchronous persistence would let two users race for
+    the same new key. Claim it before dispatch, preserving all existing owners
+    (including legacy owner='') and never borrowing another Agent's workspace.
+    """
+    if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256:
+        _chat_error("valid session_id required", "400 Bad Request", "bad_request")
+    _require_read_permission(ctx, "agent.read")
+    agent_id = _require_tenant_agent_binding(ctx, agent_id)
+    _require_private_owner(ctx, agent_id)
+    from agent.registry import get_agent_registry
+    from agent.memory import get_conversation_store
+    try:
+        profile = get_agent_registry().get(agent_id)
+    except (KeyError, ValueError):
+        _chat_error("agent not found", "404 Not Found", "not_found")
+    store = get_conversation_store(profile.workspace)
+    with store._lock:
+        con = store._connect()
+        try:
+            with con:
+                if create:
+                    now = int(time.time())
+                    con.execute(
+                        "INSERT OR IGNORE INTO sessions "
+                        "(session_id, channel_type, owner, created_at, last_active, msg_count) "
+                        "VALUES (?, 'web', ?, ?, ?, 0)",
+                        (session_id, ctx.user_id, now, now),
+                    )
+                row = con.execute(
+                    "SELECT owner, channel_type FROM sessions WHERE session_id=?", (session_id,),
+                ).fetchone()
+                if not row or row[0] != ctx.user_id or row[1] != "web":
+                    _chat_error("session not found", "404 Not Found", "not_found")
+        finally:
+            con.close()
+    return agent_id
+
+
+def _owned_chat_request(channel, request_id):
+    if not isinstance(request_id, str) or not request_id:
+        _chat_error("request_id required", "400 Bad Request", "bad_request")
+    # Tuples are captured by the authenticated /message route, never by the
+    # event payload or client-supplied user/tenant/session identifiers.
+    with channel._sse_streams_lock:
+        owner = getattr(channel, "request_owners", {}).get(request_id)
+    if owner is None:
+        _chat_error("request not found", "404 Not Found", "not_found")
+    return owner
+
+
+def _authorize_chat_request(ctx, channel, request_id):
+    tenant_id, user_id, agent_id, session_id = _owned_chat_request(channel, request_id)
+    if tenant_id != ctx.tenant_id or user_id != ctx.user_id:
+        _chat_error("request not found", "404 Not Found", "not_found")
+    _authorize_chat_session(ctx, session_id, agent_id)
+    return agent_id, session_id
+
+
+@contextmanager
+def _stream_identity_scope(channel, request_id):
+    """Native EventSource sends cookies but cannot add X-Tenant-ID.
+
+    Authenticate the login first, then resolve the recorded request's tenant
+    and current membership. A supplied tenant selection must still agree.
+    """
+    from auth.runtime import resolve_context, to_runtime_identity, IdentityContextError
+    from channel.web.auth_handlers import _get_service, _session_token
+    from common.runtime_identity import use_identity
+    svc, token = _get_service(), _session_token()
+    try:
+        personal = resolve_context(svc, token, None)
+        owner = _owned_chat_request(channel, request_id)
+        if personal.user_id != owner[1]:
+            _chat_error("request not found", "404 Not Found", "not_found")
+        query_tenant = web.input(tenant_id="").tenant_id
+        for selected in (web.ctx.env.get("HTTP_X_TENANT_ID", ""), query_tenant):
+            if selected and selected != owner[0]:
+                _chat_error("conflicting tenant selection", "400 Bad Request", "conflicting_tenant")
+        ctx = resolve_context(svc, token, owner[0])
+    except IdentityContextError as e:
+        from http import HTTPStatus
+        _chat_error(str(e), f"{e.status} {HTTPStatus(e.status).phrase}", e.code)
+    if ctx.must_change_password:
+        _chat_error("password change required", code="password_change_required")
+    with use_identity(to_runtime_identity(ctx)):
+        yield ctx
+
+
+def _require_session_owner(ctx: "Optional[RequestContext]", session_id: str,
+                           agent_id: Optional[str]) -> None:
+    """Reject reads of a session whose agent is not visible to the caller.
+
+    In database mode the requested ``agent_id`` (defaulting to the global default
+    when absent) must be one the caller's tenant is bound to. This stops one
+    tenant from reading another tenant's conversation by naming its agent or by
+    relying on the global default fallback. Legacy mode is a no-op.
+    """
+    if ctx is None:
+        return
+    if agent_id:
+        visible = _tenant_ids_for_context(ctx) or []
+        if agent_id not in visible:
+            raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
+                                json.dumps({"status": "error", "message": "forbidden"}))
+    else:
+        # No agent selected in database mode: allowed only if the tenant's
+        # *bound default* agent can be unambiguously resolved (task 3.8). The
+        # tenant's configured default wins; otherwise a single bound agent is
+        # accepted (a tenant with one agent has an implicit default). Any other
+        # case is ambiguous and is rejected rather than falling back to the
+        # global default agent.
+        from auth.service import get_identity_service
+        svc = get_identity_service()
+        tenant_default = svc.tenant_default_agent_id(ctx.tenant_id)
+        if tenant_default:
+            return
+        ids = svc.tenant_agent_ids(ctx.tenant_id)
+        if len(ids) != 1:
+            raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
+                                json.dumps({"status": "error", "message": "default agent ambiguous"}))
+
+
+def _require_tenant_agent_binding(ctx: "Optional[RequestContext]", agent_id: Optional[str]) -> str:
+    """Validate that ``agent_id`` is bound to the caller's tenant (task 3.10).
+
+    In database mode a resource read addressed by ``agent_id`` must belong to the
+    caller's tenant — otherwise a tenant could read another tenant's memory or
+    knowledge by naming that tenant's agent. Returns the resolved agent id. When
+    the caller selected no agent, the tenant's bound default agent is used (it
+    must resolve unambiguously, mirroring ``_require_session_owner``). Legacy
+    mode (``ctx is None``) is a no-op and returns the id as-is.
+    """
+    if ctx is None:
+        return agent_id
+    from auth.service import get_identity_service
+    svc = get_identity_service()
+    if agent_id:
+        binding = svc.get_agent_binding(agent_id)
+        if not binding or binding["tenant_id"] != ctx.tenant_id:
+            raise web.HTTPError("404 Not Found", {"Content-Type": "application/json"},
+                                json.dumps({"status": "error", "message": "agent not found"}))
+        return agent_id
+    tenant_default = svc.tenant_default_agent_id(ctx.tenant_id)
+    if tenant_default:
+        return tenant_default
+    ids = svc.tenant_agent_ids(ctx.tenant_id)
+    if len(ids) != 1:
+        raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
+                            json.dumps({"status": "error", "message": "default agent ambiguous"}))
+    return ids[0]
+
+
+def _require_private_owner(ctx: "Optional[RequestContext]", agent_id: str) -> None:
+    """Enforce private-owner read scoping for an agent's assets (task 3.10).
+
+    In database mode, if the agent is privately owned (``private_owner_user_id``
+    set) only that owner (self) and a ``tenant_admin`` of the same tenant may
+    read its memory/knowledge. ``tenant_admin`` reads the whole tenant; an
+    ordinary member reads only their own private content. Platform admin status
+    is deliberately NOT an exception at the tenant layer — a platform admin must
+    still be a member of the tenant to read its resources. Legacy mode is a
+    no-op.
+    """
+    if ctx is None or not ctx.tenant_id:
+        return
+    from auth.service import get_identity_service
+    binding = get_identity_service().get_agent_binding(agent_id)
+    if not binding:
+        return
+    owner = binding.get("private_owner_user_id")
+    if not owner:
+        # tenant-shared asset: any permission-holder of the tenant may read.
+        return
+    if ctx.is_tenant_admin:
+        return
+    if owner != ctx.user_id:
+        raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
+                            json.dumps({"status": "error", "message": "forbidden"}))
+
+
 def _get_workspace_root(session_id: str = None, agent_id: str = None) -> str:
     """Resolve the working directory for this request.
 
@@ -306,6 +682,10 @@ def _get_workspace_root(session_id: str = None, agent_id: str = None) -> str:
     directory the file panel / preview / ``@`` picker operate in. Otherwise it
     is the Agent's workspace (``state_root``, e.g. ``~/cow``). Memory and skills
     always stay in ``state_root`` regardless; only the working root moves.
+
+    In database mode the workspace is derived from the request's ``RuntimeIdentity``:
+    a selected tenant resolves its trusted shared root, and the agent must be
+    bound to that tenant (no global default fallback). Legacy mode is unchanged.
     """
     if session_id:
         try:
@@ -315,6 +695,17 @@ def _get_workspace_root(session_id: str = None, agent_id: str = None) -> str:
                 return project_dir
         except Exception as e:
             logger.debug(f"[WebChannel] project_dir resolve failed: {e}")
+    # database mode: scope to the tenant's trusted shared root (task 3.8/3.9)
+    from common.runtime_identity import current_identity
+    ident = current_identity()
+    if ident.tenant_id:
+        from auth.service import get_identity_service
+        root = get_identity_service().tenant_shared_root(ident.tenant_id)
+        if root:
+            return root
+        # No configured shared root -> reject rather than fall back globally.
+        raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
+                            json.dumps({"status": "error", "message": "tenant has no shared root"}))
     from agent.registry import get_agent_registry
 
     return get_agent_registry().get(agent_id).workspace
@@ -698,6 +1089,122 @@ class WebMessage(ChatMessage):
         self.other_user_id = other_user_id
 
 
+# Full URL table for the Web console. Kept as a module constant so a dev server
+# or test harness can build the real web.py application without reconstructing
+# the routing map by hand (see build_web_app).
+_WEB_URLS = (
+    '/', 'RootHandler',
+    '/api/health', 'HealthHandler',
+    '/auth/login', 'AuthLoginHandler',
+    '/auth/check', 'AuthCheckHandler',
+    '/auth/logout', 'AuthLogoutHandler',
+    '/auth/password', 'DbAuthPasswordHandler',
+    '/auth/me', 'DbAuthMeHandler',
+    '/auth/context', 'DbAuthContextHandler',
+    # database identity-mode handlers (active only when identity_mode=database)
+    '/api/platform/users', 'PlatformUsersHandler',
+    '/api/platform/users/([^/]+)/password', 'PlatformUserPasswordHandler',
+    '/api/platform/users/([^/]+)', 'PlatformUsersHandler',
+    '/api/platform/tenants', 'PlatformTenantsHandler',
+    '/api/platform/tenants/([^/]+)/admins', 'PlatformTenantAdminsHandler',
+    '/api/platform/tenants/([^/]+)', 'PlatformTenantHandler',
+    '/api/tenant', 'TenantInfoHandler',
+    '/api/tenant/members', 'TenantMembersHandler',
+    '/api/tenant/members/([^/]+)', 'TenantMemberHandler',
+    '/api/tenant/roles/([^/]+)', 'TenantRoleHandler',
+    '/api/tenant/roles', 'TenantRolesHandler',
+    '/api/tenant/permissions', 'TenantPermissionsHandler',
+    '/api/tenant/departments', 'TenantDepartmentsHandler',
+    '/api/tenant/departments/([^/]+)', 'TenantDepartmentHandler',
+    '/api/identity/audit', 'IdentityAuditHandler',
+    '/message', 'MessageHandler',
+    '/upload', 'UploadHandler',
+    '/uploads/(.*)', 'UploadsHandler',
+    '/api/file', 'FileServeHandler',
+    '/preview/(.+)', 'PreviewHandler',
+    '/api/workspace/tree', 'WorkspaceTreeHandler',
+    '/api/workspace/search', 'WorkspaceSearchHandler',
+    '/api/workspace/resolve', 'WorkspaceResolveHandler',
+    '/api/workspace/meta', 'WorkspaceMetaHandler',
+    '/api/workspace/read', 'WorkspaceReadHandler',
+    '/api/workspace/write', 'WorkspaceWriteHandler',
+    '/api/projects', 'ProjectsHandler',
+    '/api/projects/select', 'ProjectSelectHandler',
+    '/api/projects/create', 'ProjectCreateHandler',
+    '/api/projects/browse', 'ProjectBrowseHandler',
+    '/api/projects/order', 'ProjectOrderHandler',
+    '/api/projects/manage', 'ProjectManageHandler',
+    '/api/voice/asr', 'VoiceAsrHandler',
+    '/api/voice/tts', 'VoiceTtsHandler',
+    '/poll', 'PollHandler',
+    '/stream', 'StreamHandler',
+    '/cancel', 'CancelHandler',
+    '/chat', 'ChatHandler',
+    '/v1/chat/completions', 'OpenAIChatCompletionsHandler',
+    '/config', 'ConfigHandler',
+    '/api/models', 'ModelsHandler',
+    '/api/channels', 'ChannelsHandler',
+    '/api/weixin/qrlogin', 'WeixinQrHandler',
+    '/api/feishu/register', 'FeishuRegisterHandler',
+    '/api/tools', 'ToolsHandler',
+    '/api/skills', 'SkillsHandler',
+    '/api/skills/content', 'SkillContentHandler',
+    '/api/memory', 'MemoryHandler',
+    '/api/memory/content', 'MemoryContentHandler',
+    '/api/knowledge/list', 'KnowledgeListHandler',
+    '/api/knowledge/read', 'KnowledgeReadHandler',
+    '/api/knowledge/graph', 'KnowledgeGraphHandler',
+    '/api/knowledge/action', 'KnowledgeActionHandler',
+    '/api/knowledge/import', 'KnowledgeImportHandler',
+    '/api/scheduler', 'SchedulerHandler',
+    '/api/scheduler/run', 'SchedulerRunHandler',
+    '/api/scheduler/toggle', 'SchedulerToggleHandler',
+    '/api/scheduler/update', 'SchedulerUpdateHandler',
+    '/api/scheduler/delete', 'SchedulerDeleteHandler',
+    '/api/todos', 'TodosHandler',
+    '/api/todos/summary', 'TodoSummaryHandler',
+    '/api/todos/(.*)/events', 'TodoEventsHandler',
+    '/api/todos/(.*)/source', 'TodoSourceHandler',
+    '/api/todos/(.*)', 'TodoDetailHandler',
+    '/api/agents', 'AgentsHandler',
+    '/api/agents/([^/]+)/avatar', 'AgentAvatarHandler',
+    '/api/agents/([^/]+)/files/([^/]+)', 'AgentCoreFileHandler',
+    '/api/sessions', 'SessionsHandler',
+    '/api/sessions/(.*)/generate_title', 'SessionTitleHandler',
+    '/api/prompt/optimize', 'PromptOptimizeHandler',
+    '/api/sessions/(.*)/clear_context', 'SessionClearContextHandler',
+    '/api/sessions/(.*)/settings', 'SessionSettingsHandler',
+    '/api/sessions/(.*)', 'SessionDetailHandler',
+    '/api/history', 'HistoryHandler',
+    '/api/messages/delete', 'MessageDeleteHandler',
+    '/api/logs/download', 'LogsDownloadHandler',
+    '/api/logs', 'LogsHandler',
+    '/api/version', 'VersionHandler',
+    '/api/branding/public', 'BrandingPublicHandler',
+    '/api/branding', 'BrandingManageHandler',
+    '/api/branding/reset', 'BrandingResetHandler',
+    '/api/branding/assets/(.*)', 'BrandingAssetHandler',
+    '/mcp/oauth/callback', 'McpOAuthCallbackHandler',
+    '/assets/(.*)', 'AssetsHandler',
+)
+
+
+def build_web_app():
+    """Build the real web.py console application (used by dev server/testing).
+
+    Installs the shared HTTP-method policy processor so the production server
+    and the test harness enforce the same route/method authorization gate. In
+    database identity mode, a multi-worker deployment is rejected because the
+    in-process login limiter / identity state are single-process only.
+    """
+    from auth.http_policy import enforce_http_policy
+    from auth.ratelimit import reject_multi_worker_identity
+    reject_multi_worker_identity()
+    app = web.application(_WEB_URLS, globals(), autoreload=False)
+    app.add_processor(enforce_http_policy)
+    return app
+
+
 @singleton
 class WebChannel(ChatChannel):
     NOT_SUPPORT_REPLYTYPE = [ReplyType.VOICE]
@@ -719,6 +1226,7 @@ class WebChannel(ChatChannel):
         self.session_queues = {}  # session_id -> Queue (fallback polling)
         self.request_to_session = {}  # request_id -> session_id
         self.request_to_agent = {}  # request_id -> agent_id
+        self.request_owners = {}  # request_id -> immutable (tenant, user, agent, session)
         self.sse_streams = {}  # request_id -> SSEStreamState
         self._sse_streams_lock = threading.RLock()
         self._http_server = None
@@ -1449,7 +1957,7 @@ class WebChannel(ChatChannel):
             logger.error(f"[WebChannel] File upload error: {e}", exc_info=True)
             return json.dumps({"status": "error", "message": str(e)})
 
-    def post_message(self):
+    def post_message(self, *, auth_context=None, authorized_session=None):
         """
         Handle incoming messages from users via POST request.
         Returns a request_id for tracking this specific request.
@@ -1461,9 +1969,12 @@ class WebChannel(ChatChannel):
             session_id = json_data.get('session_id', f'session_{int(time.time())}')
             from bridge.bridge import Bridge
             agent_bridge = Bridge().get_agent_bridge()
-            resolved_agent_id = agent_bridge.agent_router.resolve(
-                explicit_agent_id=json_data.get("agent_id"),
-            )
+            if authorized_session is not None:
+                resolved_agent_id, session_id = authorized_session
+            else:
+                resolved_agent_id = agent_bridge.agent_router.resolve(
+                    explicit_agent_id=json_data.get("agent_id"),
+                )
             prompt = json_data.get('message', '')
             # Kept before any prefixing or attachment lines, so mention parsing
             # still sees what the user actually typed.
@@ -1567,8 +2078,13 @@ class WebChannel(ChatChannel):
                     logger.info(f"[WebChannel] Attached {len(file_refs)} file(s) to message")
 
             request_id = self._generate_request_id()
-            self.request_to_session[request_id] = session_id
-            self.request_to_agent[request_id] = resolved_agent_id
+            with self._sse_streams_lock:
+                self.request_to_session[request_id] = session_id
+                self.request_to_agent[request_id] = resolved_agent_id
+                if auth_context is not None:
+                    self.request_owners[request_id] = (
+                        auth_context.tenant_id, auth_context.user_id, resolved_agent_id, session_id,
+                    )
 
             session_queue_key = self._session_queue_key(
                 session_id, resolved_agent_id
@@ -1609,6 +2125,9 @@ class WebChannel(ChatChannel):
             if not addressed or not any(item["id"] == addressed for item in roster):
                 addressed = _addressed_agent_id(typed_prompt, roster)
             if addressed and addressed != resolved_agent_id:
+                if auth_context is not None:
+                    _require_tenant_agent_binding(auth_context, addressed)
+                    _require_private_owner(auth_context, addressed)
                 context["speaker_agent_id"] = addressed
             if is_voice_input:
                 # Web channel runs its own TTS post-pipeline via
@@ -1618,6 +2137,12 @@ class WebChannel(ChatChannel):
 
             if use_sse:
                 context["on_event"] = self._make_sse_callback(request_id)
+
+            # In database identity mode the ambient identity (tenant/user) is
+            # scoped by the enclosing _db_scope. The run is dispatched on a
+            # separate thread where ContextVars don't carry, so snapshot the
+            # identity onto the context here and let _identity_for rebuild it.
+            context["runtime_identity"] = _web_runtime_identity_snapshot()
 
             threading.Thread(target=self.produce, args=(context,)).start()
 
@@ -1630,6 +2155,8 @@ class WebChannel(ChatChannel):
                 "speaker": context.get("speaker_agent_id") or "",
             })
 
+        except web.HTTPError:
+            raise
         except Exception as e:
             logger.error(f"Error processing message: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -1640,6 +2167,7 @@ class WebChannel(ChatChannel):
             state = self.sse_streams.pop(request_id, None)
             self.request_to_session.pop(request_id, None)
             self.request_to_agent.pop(request_id, None)
+            getattr(self, "request_owners", {}).pop(request_id, None)
         if state is not None:
             with state.condition:
                 state.closed = True
@@ -1818,7 +2346,7 @@ class WebChannel(ChatChannel):
             # The event log is deliberately retained for reconnection.
             raise
 
-    def cancel_request(self):
+    def cancel_request(self, *, authorized_session=None):
         """
         Cancel an in-flight agent run.
 
@@ -1843,6 +2371,8 @@ class WebChannel(ChatChannel):
             from agent.routing import AgentUnavailableError
             agent_bridge = Bridge().get_agent_bridge()
             agent_id = self.request_to_agent.get(request_id)
+            if authorized_session is not None:
+                agent_id, session_id = authorized_session
             if not agent_id:
                 try:
                     agent_id = agent_bridge.agent_router.resolve(
@@ -1890,7 +2420,7 @@ class WebChannel(ChatChannel):
             logger.error(f"[WebChannel] cancel_request error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
 
-    def poll_response(self):
+    def poll_response(self, *, authorized_session=None):
         """
         Poll for responses using the session_id.
         """
@@ -1902,9 +2432,12 @@ class WebChannel(ChatChannel):
             from agent.routing import AgentUnavailableError
             agent_bridge = Bridge().get_agent_bridge()
             try:
-                agent_id = agent_bridge.agent_router.resolve(
-                    explicit_agent_id=json_data.get("agent_id"),
-                )
+                if authorized_session is not None:
+                    agent_id, session_id = authorized_session
+                else:
+                    agent_id = agent_bridge.agent_router.resolve(
+                        explicit_agent_id=json_data.get("agent_id"),
+                    )
             except AgentUnavailableError:
                 # The session is pinned to an Agent that has since been deleted
                 # or disabled (a stale client selection). Polling is read-only,
@@ -1949,7 +2482,8 @@ class WebChannel(ChatChannel):
             html = f.read()
         # Inject the backend-resolved default language so the console can use
         # it on first load (when the user has no saved cow_lang preference).
-        return html.replace("{{COW_DEFAULT_LANG}}", i18n.get_language())
+        html = html.replace("{{COW_DEFAULT_LANG}}", i18n.get_language())
+        return html.replace("{{COW_NAVIGATION_MODE}}", _web_navigation_mode())
 
     def startup(self):
         configured_host = conf().get("web_host", "")
@@ -2033,74 +2567,8 @@ class WebChannel(ChatChannel):
             except OSError as e:
                 logger.debug(f"[WebChannel] Skipped creating static dir (read-only bundle?): {e}")
 
-        urls = (
-            '/', 'RootHandler',
-            '/api/health', 'HealthHandler',
-            '/auth/login', 'AuthLoginHandler',
-            '/auth/check', 'AuthCheckHandler',
-            '/auth/logout', 'AuthLogoutHandler',
-            '/message', 'MessageHandler',
-            '/upload', 'UploadHandler',
-            '/uploads/(.*)', 'UploadsHandler',
-            '/api/file', 'FileServeHandler',
-            '/preview/(.+)', 'PreviewHandler',
-            '/api/workspace/tree', 'WorkspaceTreeHandler',
-            '/api/workspace/search', 'WorkspaceSearchHandler',
-            '/api/workspace/resolve', 'WorkspaceResolveHandler',
-            '/api/workspace/meta', 'WorkspaceMetaHandler',
-            '/api/workspace/read', 'WorkspaceReadHandler',
-            '/api/workspace/write', 'WorkspaceWriteHandler',
-            '/api/projects', 'ProjectsHandler',
-            '/api/projects/select', 'ProjectSelectHandler',
-            '/api/projects/create', 'ProjectCreateHandler',
-            '/api/projects/browse', 'ProjectBrowseHandler',
-            '/api/projects/order', 'ProjectOrderHandler',
-            '/api/projects/manage', 'ProjectManageHandler',
-            '/api/voice/asr', 'VoiceAsrHandler',
-            '/api/voice/tts', 'VoiceTtsHandler',
-            '/poll', 'PollHandler',
-            '/stream', 'StreamHandler',
-            '/cancel', 'CancelHandler',
-            '/chat', 'ChatHandler',
-            '/v1/chat/completions', 'OpenAIChatCompletionsHandler',
-            '/config', 'ConfigHandler',
-            '/api/models', 'ModelsHandler',
-            '/api/channels', 'ChannelsHandler',
-            '/api/weixin/qrlogin', 'WeixinQrHandler',
-            '/api/feishu/register', 'FeishuRegisterHandler',
-            '/api/tools', 'ToolsHandler',
-            '/api/skills', 'SkillsHandler',
-            '/api/skills/content', 'SkillContentHandler',
-            '/api/memory', 'MemoryHandler',
-            '/api/memory/content', 'MemoryContentHandler',
-            '/api/knowledge/list', 'KnowledgeListHandler',
-            '/api/knowledge/read', 'KnowledgeReadHandler',
-            '/api/knowledge/graph', 'KnowledgeGraphHandler',
-            '/api/knowledge/action', 'KnowledgeActionHandler',
-            '/api/knowledge/import', 'KnowledgeImportHandler',
-            '/api/scheduler', 'SchedulerHandler',
-            '/api/scheduler/run', 'SchedulerRunHandler',
-            '/api/scheduler/toggle', 'SchedulerToggleHandler',
-            '/api/scheduler/update', 'SchedulerUpdateHandler',
-            '/api/scheduler/delete', 'SchedulerDeleteHandler',
-            '/api/agents', 'AgentsHandler',
-            '/api/agents/([^/]+)/avatar', 'AgentAvatarHandler',
-            '/api/agents/([^/]+)/files/([^/]+)', 'AgentCoreFileHandler',
-            '/api/sessions', 'SessionsHandler',
-            '/api/sessions/(.*)/generate_title', 'SessionTitleHandler',
-            '/api/prompt/optimize', 'PromptOptimizeHandler',
-            '/api/sessions/(.*)/clear_context', 'SessionClearContextHandler',
-            '/api/sessions/(.*)/settings', 'SessionSettingsHandler',
-            '/api/sessions/(.*)', 'SessionDetailHandler',
-            '/api/history', 'HistoryHandler',
-            '/api/messages/delete', 'MessageDeleteHandler',
-            '/api/logs/download', 'LogsDownloadHandler',
-            '/api/logs', 'LogsHandler',
-            '/api/version', 'VersionHandler',
-            '/mcp/oauth/callback', 'McpOAuthCallbackHandler',
-            '/assets/(.*)', 'AssetsHandler',
-        )
-        app = web.application(urls, globals(), autoreload=False)
+        urls = _WEB_URLS
+        app = build_web_app()
 
         # 完全禁用web.py的HTTP日志输出
         web.httpserver.LogMiddleware.log = lambda self, status, environ: None
@@ -2231,8 +2699,56 @@ class McpOAuthCallbackHandler:
         )
 
 
+def _is_database_identity() -> bool:
+    return str(conf().get("identity_mode", "legacy") or "legacy") == "database"
+
+
+# Console navigation presentation switch. Allowed values: "classic" | "split".
+_NAVIGATION_MODES = ("classic", "split")
+
+
+def _web_navigation_mode() -> str:
+    """Return a validated ``web_navigation_mode`` value (defaults to "classic").
+
+    This is a layout-only presentation switch. It does NOT change the identity
+    mode, authentication, authorization, or any consumer open/closed state. An
+    invalid or absent config value safely falls back to "classic".
+    """
+    raw = str(conf().get("web_navigation_mode", "classic") or "classic").strip().lower()
+    return raw if raw in _NAVIGATION_MODES else "classic"
+
+
+def _unavailable() -> str:
+    """Stable 503 payload for a consumer closed in database identity mode."""
+    web.status = 503
+    web.header("Content-Type", "application/json; charset=utf-8")
+    return json.dumps(
+        {"status": "error", "message": "unavailable in database identity mode",
+         "code": "database_unavailable"},
+        ensure_ascii=False,
+    )
+
+
+def _guard_not_database() -> None:
+    """Keep consumers without a verified tenant boundary closed in database mode.
+
+    Chat transport has dedicated login, tenant and personal-session ownership
+    checks. File serve/upload and the other adapters still using this gate
+    remain closed server-side (task 3.11). Legacy mode is unaffected.
+    """
+    if _is_database_identity():
+        raise web.HTTPError("503 Service Unavailable",
+                            {"Content-Type": "application/json; charset=utf-8"},
+                            _unavailable())
+
+
 class AuthCheckHandler:
     def GET(self):
+        # In database identity mode, /auth/check delegates to the database
+        # session-aware handler (user-aware auth) instead of the shared-password
+        # boolean check. Legacy mode keeps its original behavior.
+        if _is_database_identity():
+            return DbAuthCheckHandler().GET()
         web.header('Content-Type', 'application/json; charset=utf-8')
         if not _is_password_enabled():
             return json.dumps({"status": "success", "auth_required": False})
@@ -2243,6 +2759,9 @@ class AuthCheckHandler:
 
 class AuthLoginHandler:
     def POST(self):
+        # Database identity mode uses per-account username/password login.
+        if _is_database_identity():
+            return DbAuthLoginHandler().POST()
         web.header('Content-Type', 'application/json; charset=utf-8')
         if not _is_password_enabled():
             return json.dumps({"status": "success"})
@@ -2265,19 +2784,48 @@ class AuthLoginHandler:
 
 class AuthLogoutHandler:
     def POST(self):
+        # Database identity mode revokes the database AuthSession.
+        if _is_database_identity():
+            return DbAuthLogoutHandler().POST()
         web.header('Content-Type', 'application/json; charset=utf-8')
         web.setcookie("cow_auth_token", "", expires=-1, path="/")
         return json.dumps({"status": "success"})
 
 
 class MessageHandler:
+    # Chat is now a request-scoped *tenant* consumer in database mode: it runs
+    # inside _db_scope (which resolves the DB session + tenant and applies the
+    # ambient identity) rather than being blocked, so the runtime path works for
+    # a logged-in DB user. The derived identity is snapshotted in post_message
+    # for the worker thread.
     def POST(self):
         _require_auth()
-        return WebChannel().post_message()
+        web.header("Content-Type", "application/json; charset=utf-8")
+        web.header("Cache-Control", "no-store")
+        with _db_scope() as ctx:
+            if ctx is None:
+                return WebChannel().post_message()
+            _require_chat_csrf()
+            body = _chat_body()
+            if not isinstance(body.get("message", ""), str):
+                _chat_error("message must be text", "400 Bad Request", "bad_request")
+            session_id = body.get("session_id") or ("session_" + uuid.uuid4().hex)
+            # /cancel and /steer are dispatched by post_message's fast path;
+            # ownership must be verified before reaching either one.
+            command = (body.get("message") or "").strip().lower()
+            creating = not (command == "/cancel" or body.get("steer")
+                            or re.match(r"^/steer(?:\s|$)", command))
+            agent_id = _authorize_chat_session(
+                ctx, session_id, _request_agent_id(body), create=creating,
+            )
+            return WebChannel().post_message(
+                auth_context=ctx, authorized_session=(agent_id, session_id),
+            )
 
 
 class UploadHandler:
     def POST(self):
+        _guard_not_database()
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         return WebChannel().upload_file()
@@ -2287,6 +2835,7 @@ class VoiceAsrHandler:
     """Receive a mic recording, persist it under uploads/ and run ASR.
     Returns {status, text, audio_url} so the UI can render a playback bubble."""
     def POST(self):
+        _guard_not_database()
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
 
@@ -2344,6 +2893,7 @@ class VoiceTtsHandler:
     """On-demand TTS for the in-chat "read aloud" button. Returns the
     audio URL and (when session_id is given) persists it onto the message."""
     def POST(self):
+        _guard_not_database()
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
@@ -2387,6 +2937,7 @@ class VoiceTtsHandler:
 
 class UploadsHandler:
     def GET(self, file_name):
+        _guard_not_database()
         _require_auth()
         try:
             params = web.input(agent_id='')
@@ -2410,6 +2961,7 @@ class UploadsHandler:
 
 class FileServeHandler:
     def GET(self):
+        _guard_not_database()
         _require_auth()
         try:
             params = web.input(path="")
@@ -2481,6 +3033,7 @@ class PreviewHandler:
     """
 
     def GET(self, path_info):
+        _guard_not_database()
         try:
             token, _, rel_path = (path_info or "").partition("/")
             if not token or not rel_path:
@@ -2534,17 +3087,44 @@ class PreviewHandler:
 class PollHandler:
     def POST(self):
         _require_auth()
-        return WebChannel().poll_response()
+        web.header("Content-Type", "application/json; charset=utf-8")
+        web.header("Cache-Control", "no-store")
+        with _db_scope() as ctx:
+            if ctx is None:
+                return WebChannel().poll_response()
+            _require_chat_csrf()
+            body = _chat_body()
+            session_id = body.get("session_id")
+            agent_id = _authorize_chat_session(ctx, session_id, _request_agent_id(body))
+            return WebChannel().poll_response(authorized_session=(agent_id, session_id))
 
 
 class CancelHandler:
     def POST(self):
         _require_auth()
-        return WebChannel().cancel_request()
+        web.header("Content-Type", "application/json; charset=utf-8")
+        web.header("Cache-Control", "no-store")
+        with _db_scope() as ctx:
+            if ctx is None:
+                return WebChannel().cancel_request()
+            _require_chat_csrf()
+            body, channel = _chat_body(), WebChannel()
+            request_id = body.get("request_id")
+            if request_id:
+                agent_id, session_id = _authorize_chat_request(ctx, channel, request_id)
+                if (body.get("session_id") and body["session_id"] != session_id
+                        or body.get("agent_id") and body["agent_id"] != agent_id):
+                    _chat_error("request/session mismatch", "400 Bad Request", "bad_request")
+            else:
+                session_id = body.get("session_id")
+                agent_id = _authorize_chat_session(ctx, session_id, _request_agent_id(body))
+            return channel.cancel_request(authorized_session=(agent_id, session_id))
 
 
 class StreamHandler:
     def GET(self):
+        # Native EventSource authenticates by cookie; its recorded request
+        # supplies the tenant for fresh membership and personal-owner checks.
         _require_auth()
         params = web.input(request_id='', after_seq='')
         request_id = params.request_id
@@ -2559,12 +3139,18 @@ class StreamHandler:
             web.ctx.env.get('HTTP_LAST_EVENT_ID', '0'),
         )
 
+        channel = WebChannel()
+        if _is_database_identity():
+            with _stream_identity_scope(channel, request_id) as ctx:
+                _authorize_chat_request(ctx, channel, request_id)
+
         web.header('Content-Type', 'text/event-stream; charset=utf-8')
         web.header('Cache-Control', 'no-cache')
         web.header('X-Accel-Buffering', 'no')
-        web.header('Access-Control-Allow-Origin', '*')
+        if not _is_database_identity():
+            web.header('Access-Control-Allow-Origin', '*')
 
-        return WebChannel().stream_response(request_id, after_seq)
+        return channel.stream_response(request_id, after_seq)
 
 
 class ChatHandler:
@@ -2582,10 +3168,18 @@ class ChatHandler:
         # Every first-party asset the page pulls in, so an upgraded console is
         # never left running against a browser-cached copy of the old scripts.
         for asset in ('js/console.js', 'js/workspace.js', 'js/doc-editor.js',
-                      'css/console.css'):
+                      'js/appearance.js', 'css/console.css', 'css/appearance.css'):
             html = html.replace(f'assets/{asset}', f'assets/{asset}?v={cache_bust}')
         # Inject the backend-resolved default language for first-load fallback.
         html = html.replace("{{COW_DEFAULT_LANG}}", i18n.get_language())
+        # Inject the validated console navigation presentation switch (layout
+        # only): "classic" (single sidebar) or "split" (area switch). Invalid
+        # config falls back to "classic"; this never alters authorization or
+        # consumer open/closed state.
+        html = html.replace(
+            "{{COW_NAVIGATION_MODE}}",
+            _web_navigation_mode(),
+        )
         return html
 
 
@@ -2752,7 +3346,7 @@ class ConfigHandler:
         return value[:4] + "*" * (len(value) - 8) + value[-4:]
 
     def GET(self):
-        _require_auth()
+        _require_platform_console()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from agent.subagent import SubagentSettings
@@ -2760,7 +3354,7 @@ class ConfigHandler:
 
             local_config = conf()
             use_agent = local_config.get("agent", True)
-            title = "CowAgent" if use_agent else "AI Assistant"
+            title = _project_brand_name()
 
             api_bases = {}
             api_keys_masked = {}
@@ -2862,7 +3456,7 @@ class ConfigHandler:
             return json.dumps({"status": "error", "message": str(e)})
 
     def POST(self):
-        _require_auth()
+        _require_platform_console()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             data = json.loads(web.data())
@@ -2973,6 +3567,285 @@ class ConfigHandler:
         except Exception as e:
             logger.error(f"Error updating config: {e}")
             return json.dumps({"status": "error", "message": str(e)})
+
+
+# =========================================================================== #
+# Branding API handlers
+#
+# The branding service owns the single source of truth for the instance brand.
+# These handlers only translate HTTP <-> service calls and apply the auth /
+# CSRF rules required by the spec. The service itself is a module import so it
+# stays unit-testable.
+# =========================================================================== #
+
+def _branding_service() -> BrandingService:
+    return create_branding_service()
+
+
+def _project_brand_name() -> str:
+    """Project the effective brand name for the legacy /config.title field.
+
+    Returns the published brand name so the compatibility projection, browser
+    title and welcome screen stay in sync. On failure it returns the default.
+    This is a read-only projection: it must never become a write path.
+    """
+    try:
+        svc = _branding_service()
+        record = svc.get_published()
+        return record.get("brand_name") or "容大AI"
+    except Exception:
+        pass
+    return "容大AI"
+
+
+def _branding_write_allowed() -> Tuple[bool, str]:
+    """Return ``(allowed, readonly_reason)`` for a brand write.
+
+    A write is allowed only when:
+      - a Web access password is configured, AND
+      - the caller is authenticated.
+    The no-password (read-only) mode must NEVER open a write path. Rejecting
+    here is a server-side check, independent of any client-side greying out.
+    """
+    # Only the legacy single-instance mode has an implemented write adapter.
+    # Unknown/new identity modes fail closed until platform auth + audit land.
+    if conf().get("identity_mode", "legacy") != "legacy":
+        return False, "branding_enterprise_unavailable"
+    if not _is_password_enabled():
+        return False, "web_console_password_required"
+    return True, ""
+
+
+def _branding_origin_ok() -> bool:
+    """Verify the Origin / Referer is same-origin for a cookie-authorized write.
+
+    The desktop client renders from a file:// origin and authenticates via the
+    Authorization bearer header; it has no browser Origin, which is acceptable
+    because bearer writes are not cookie-bound. Browsers send an Origin on
+    POST; if present it must match the request host.
+    """
+    origin = web.ctx.env.get("HTTP_ORIGIN", "") or web.ctx.env.get("HTTP_REFERER", "") or ""
+    if not origin:
+        return False
+    from urllib.parse import urlparse
+    try:
+        source = urlparse(origin)
+        target = urlparse(web.ctx.env.get("wsgi.url_scheme", "http") + "://" + web.ctx.env.get("HTTP_HOST", ""))
+        return (source.scheme in ("http", "https")
+                and not source.username and not source.password
+                and (source.scheme, source.hostname, source.port or (443 if source.scheme == "https" else 80))
+                == (target.scheme, target.hostname, target.port or (443 if target.scheme == "https" else 80)))
+    except Exception:
+        return False
+
+
+def _branding_auth_token() -> str:
+    """Brand management accepts header/cookie credentials, never URL tokens."""
+    token = _get_bearer_token() or web.cookies().get("cow_auth_token", "")
+    if not _is_password_enabled() or not _verify_auth_token(token):
+        raise BrandingError("unauthorized", "请重新登录", 401)
+    return token
+
+
+def _branding_csrf_token(token: str) -> str:
+    return hmac.new(_get_web_password().encode(),
+                    ("branding-csrf:v1:" + token).encode(), hashlib.sha256).hexdigest()
+
+
+def _branding_csrf_ok() -> bool:
+    """Return True if a cookie-authenticated write passes the CSRF gate.
+
+    Bearer-authenticated requests (desktop client) are not cookie-bound and
+    therefore not subject to the cookie-CSRF check. A same-origin cookie request
+    is accepted only when the Origin/Referer matches.
+    """
+    if _verify_auth_token(_get_bearer_token()):
+        return True
+    token = web.cookies().get("cow_auth_token", "")
+    supplied = web.ctx.env.get("HTTP_X_BRANDING_CSRF", "")
+    return (bool(supplied) and _verify_auth_token(token) and _branding_origin_ok()
+            and hmac.compare_digest(supplied, _branding_csrf_token(token)))
+
+
+def _branding_require_write() -> None:
+    allowed, reason = _branding_write_allowed()
+    if not allowed:
+        message = ("企业品牌授权与审计尚未接入，暂不可修改" if reason == "branding_enterprise_unavailable"
+                   else "请先设置访问密码后再编辑品牌")
+        raise BrandingError(reason, message, 403)
+    _branding_auth_token()
+    if not _branding_csrf_ok():
+        raise BrandingError("csrf_failed", "请求校验失败，请重新读取品牌设置后重试", 403)
+
+
+def _branding_management_payload(service, record=None):
+    allowed, reason = _branding_write_allowed()
+    payload = service.management_payload(allowed, reason, record=record)
+    if payload.get("can_manage") or payload.get("can_reset"):
+        payload["csrf_token"] = _branding_csrf_token(_branding_auth_token())
+    payload["status"] = "success"
+    return payload
+
+
+def _branding_error_response(err: BrandingError) -> str:
+    web.header('Content-Type', 'application/json; charset=utf-8')
+    from http import HTTPStatus
+    web.ctx.status = f"{err.http_status} {HTTPStatus(err.http_status).phrase}"
+    web.header('Cache-Control', 'no-store')
+    return json.dumps({
+        "status": "error",
+        "code": err.code,
+        "message": err.message,
+        "field": err.field,
+    }, ensure_ascii=False)
+
+
+class BrandingPublicHandler:
+    """GET /api/branding/public - unauthenticated minimal brand read."""
+
+    def GET(self):
+        web.header('Content-Type', 'application/json; charset=utf-8')
+        web.header('Cache-Control', 'no-store')
+        try:
+            payload = _branding_service().public_payload()
+        except Exception as e:
+            logger.exception(f"[BrandingPublicHandler] failed: {e}")
+            # Fall back to the built-in default so login/nav never breaks.
+            payload = {
+                "enabled": False,
+                "revision": 0,
+                "brand_name": "容大AI",
+                "logo_description": "控制台",
+                "logo_url": "/assets/rongda-ai-mark.svg",
+                "favicon_url": "/assets/favicon.ico",
+            }
+        return json.dumps(payload, ensure_ascii=False)
+
+
+class BrandingManageHandler:
+    """GET /api/branding and POST /api/branding (management read + save)."""
+
+    def GET(self):
+        web.header('Content-Type', 'application/json; charset=utf-8')
+        web.header('Cache-Control', 'no-store')
+        try:
+            if _is_database_identity():
+                from channel.web.auth_handlers import _require_context
+                _require_context()
+            elif _is_password_enabled():
+                _branding_auth_token()
+            payload = _branding_management_payload(_branding_service())
+        except web.HTTPError:
+            raise
+        except BrandingError as e:
+            return _branding_error_response(e)
+        except Exception as e:
+            logger.exception(f"[BrandingManageHandler] GET failed: {e}")
+            return _branding_error_response(BrandingError("storage_error", "无法读取品牌设置", 500))
+        return json.dumps(payload, ensure_ascii=False)
+
+    def POST(self):
+        web.header('Content-Type', 'application/json; charset=utf-8')
+        web.header('Cache-Control', 'no-store')
+        try:
+            _branding_require_write()
+            params = _raw_web_input()
+
+            def _scalar(value, default=""):
+                # web.py merges the query string and form body, so a field
+                # present in both arrives as a list. Collapse to a scalar.
+                if isinstance(value, (list, tuple)):
+                    return value[0] if value else default
+                return value if value is not None else default
+
+            expected = _scalar(params.get("expected_revision"))
+            brand_name = _scalar(params.get("brand_name", ""))
+            logo_description = _scalar(params.get("logo_description", ""))
+            logo_action = _scalar(params.get("logo_action", ""), "keep")
+
+            try:
+                expected_revision = int(expected)
+            except (TypeError, ValueError):
+                raise BrandingError("missing_expected_revision", "缺少版本号", 400)
+
+            file_obj = params.get("logo")
+            logo_file = None
+            if file_obj is not None:
+                if isinstance(file_obj, (list, tuple)):
+                    raise BrandingError("conflicting_logo_action", "只能上传一个 Logo", 400)
+                filename = getattr(file_obj, "filename", "") or "logo.png"
+                try:
+                    data = _read_uploaded_file_bytes_limited(file_obj, 2 * 1024 * 1024 + 1)
+                except ValueError as exc:
+                    raise BrandingError("image_too_large", "图片不能超过 2 MiB", 413) from exc
+                logo_file = (filename, data)
+
+            service = _branding_service()
+            record = service.save(
+                expected_revision=expected_revision,
+                brand_name=brand_name,
+                logo_description=logo_description,
+                logo_action=logo_action,
+                logo_file=logo_file,
+                operator="console",
+            )
+            payload = _branding_management_payload(service, record=record)
+            return json.dumps(payload, ensure_ascii=False)
+        except BrandingError as e:
+            logger.warning(f"[BrandingManageHandler] POST rejected: {e.code}: {e.message}")
+            return _branding_error_response(e)
+        except Exception as e:
+            logger.exception(f"[BrandingManageHandler] POST failed: {e}")
+            return _branding_error_response(BrandingError("storage_error", "品牌保存失败", 500))
+
+
+class BrandingResetHandler:
+    """POST /api/branding/reset - reset to built-in defaults (full confirm)."""
+
+    def POST(self):
+        web.header('Content-Type', 'application/json; charset=utf-8')
+        web.header('Cache-Control', 'no-store')
+        try:
+            _branding_require_write()
+            try:
+                data = json.loads(web.data() or b"{}")
+                if not isinstance(data, dict):
+                    raise ValueError("expected object")
+            except ValueError as exc:
+                raise BrandingError("invalid_request", "请求 JSON 无效", 400) from exc
+            expected = data.get("expected_revision")
+            try:
+                expected_revision = int(expected)
+            except (TypeError, ValueError):
+                raise BrandingError("missing_expected_revision", "缺少版本号", 400)
+            service = _branding_service()
+            record = service.reset(expected_revision, operator="console")
+            payload = _branding_management_payload(service, record=record)
+            return json.dumps(payload, ensure_ascii=False)
+        except BrandingError as e:
+            logger.warning(f"[BrandingResetHandler] rejected: {e.code}: {e.message}")
+            return _branding_error_response(e)
+        except Exception as e:
+            logger.exception(f"[BrandingResetHandler] failed: {e}")
+            return _branding_error_response(BrandingError("storage_error", "品牌重置失败", 500))
+
+
+class BrandingAssetHandler:
+    """GET /api/branding/assets/<asset-id>.png - public referenced asset."""
+
+    def GET(self, asset_id):
+        try:
+            mime, data = _branding_service().resolve_asset(asset_id)
+        except BrandingError as e:
+            # Disabled feature or unknown asset -> 404 + built-in fallback is the
+            # client's job. Do not leak internals here.
+            return _branding_error_response(e)
+        except OSError:
+            return _branding_error_response(BrandingError("storage_error", "无法读取品牌图片", 500))
+        web.header('Content-Type', mime)
+        web.header('X-Content-Type-Options', 'nosniff')
+        web.header('Cache-Control', 'public, max-age=31536000, immutable')
+        return data
 
 
 class ModelsHandler:
@@ -4155,7 +5028,7 @@ class ModelsHandler:
         }
 
     def GET(self):
-        _require_auth()
+        _require_platform_console()
         web.header("Content-Type", "application/json; charset=utf-8")
         try:
             local_config = conf()
@@ -4169,7 +5042,7 @@ class ModelsHandler:
             return json.dumps({"status": "error", "message": str(e)})
 
     def POST(self):
-        _require_auth()
+        _require_platform_console()
         web.header("Content-Type", "application/json; charset=utf-8")
         try:
             data = json.loads(web.data() or b"{}")
@@ -6159,16 +7032,20 @@ class MemoryHandler:
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from agent.memory.service import MemoryService
-            params = web.input(
-                page='1', page_size='20', category='memory', agent_id=''
-            )
-            workspace_root = _get_workspace_root(agent_id=_request_agent_id(params))
-            service = MemoryService(workspace_root)
-            result = service.list_files(
-                page=int(params.page), page_size=int(params.page_size),
-                category=params.category,
-            )
-            return json.dumps({"status": "success", **result}, ensure_ascii=False)
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "memory.read")
+                params = web.input(
+                    page='1', page_size='20', category='memory', agent_id=''
+                )
+                agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
+                _require_private_owner(ctx, agent_id)
+                workspace_root = _get_workspace_root(agent_id=agent_id)
+                service = MemoryService(workspace_root)
+                result = service.list_files(
+                    page=int(params.page), page_size=int(params.page_size),
+                    category=params.category,
+                )
+                return json.dumps({"status": "success", **result}, ensure_ascii=False)
         except Exception as e:
             logger.error(f"[WebChannel] Memory API error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -6180,13 +7057,17 @@ class MemoryContentHandler:
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from agent.memory.service import MemoryService
-            params = web.input(filename='', category='memory', agent_id='')
-            if not params.filename:
-                return json.dumps({"status": "error", "message": "filename required"})
-            workspace_root = _get_workspace_root(agent_id=_request_agent_id(params))
-            service = MemoryService(workspace_root)
-            result = service.get_content(params.filename, category=params.category)
-            return json.dumps({"status": "success", **result}, ensure_ascii=False)
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "memory.read")
+                params = web.input(filename='', category='memory', agent_id='')
+                if not params.filename:
+                    return json.dumps({"status": "error", "message": "filename required"})
+                agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
+                _require_private_owner(ctx, agent_id)
+                workspace_root = _get_workspace_root(agent_id=agent_id)
+                service = MemoryService(workspace_root)
+                result = service.get_content(params.filename, category=params.category)
+                return json.dumps({"status": "success", **result}, ensure_ascii=False)
         except ValueError:
             return json.dumps({"status": "error", "message": "invalid filename"})
         except FileNotFoundError:
@@ -6427,6 +7308,145 @@ def _agent_admin_service():
     return AgentAdminService(os.path.join(get_data_root(), "config.json"))
 
 
+def _workbench_agents_projection() -> Dict:
+    """Minimal read-only projection for the workbench (use-Agents) page.
+
+    Returns only the fields the card gallery needs to render and decide whether
+    a chat may start. It deliberately does NOT expose workspace paths, channel
+    instances, core files or model credentials — a whitelist, not a client-side
+    trim of the full management snapshot.
+
+    The default Agent is computed from the snapshot and, if it is visible, is
+    flagged. Read scope follows the current identity mode: in the legacy
+    deployment this keeps ``_require_auth()`` (already asserted by the caller);
+    if the identity change lands, this must be gated by the real ``agent.read``
+    permission and resource range. State is not mutated here: listing never
+    changes the active Agent or any session.
+    """
+    from agent.registry import get_agent_registry
+
+    registry = get_agent_registry()
+    default_id = registry.default_agent_id
+    agents = []
+    for profile in sorted(registry.list(), key=lambda item: item.id != default_id):
+        # Only saved + enabled + readable Agents appear. Archived/disabled
+        # Agents stay in the config page only.
+        if not profile.enabled:
+            continue
+        # can_chat means the current identity mode permits entering a chat. In
+        # legacy mode enabled agents can run. If the database identity change is
+        # active, its runtime closure must be honoured here: return a stable
+        # localizable reason (e.g. ``runtime_not_enabled``) rather than silently
+        # enabling the entry. Today the database mode is not validated, so this
+        # never trips; the hook is left explicit for that consumer.
+        can_chat, unavailable_reason = _workbench_chat_readiness(profile.id)
+        agents.append({
+            "id": profile.id,
+            "name": profile.name,
+            "description": profile.description or "",
+            "avatar": profile.avatar or None,
+            "is_default": bool(profile.id == default_id),
+            "can_chat": can_chat,
+            "unavailable_reason": unavailable_reason,
+        })
+    return {"agents": agents}
+
+
+def _tenant_ids_for_context(ctx: "Optional[RequestContext]") -> Optional[list]:
+    """Return the list of agent_ids visible to ``ctx``, or None if unscoped.
+
+    In database mode, only agents bound to the caller's tenant are visible —
+    except a platform admin, who sees the entire enabled roster so they can
+    administer any tenant's agents. In legacy mode (``ctx is None``) every
+    agent is visible.
+    """
+    if ctx is None:
+        return None
+    if ctx.is_platform_admin:
+        # Platform admins span tenants: return the whole roster so no agent is
+        # filtered out, rather than None (which some callers coerce to []).
+        from agent.registry import get_agent_registry
+        return [p.id for p in get_agent_registry().list(include_disabled=False)]
+    if not ctx.tenant_id:
+        return []
+    from auth.service import get_identity_service
+    return get_identity_service().tenant_agent_ids(ctx.tenant_id)
+
+
+def _tenant_default_agent_id(ctx: "Optional[RequestContext]") -> Optional[str]:
+    """Resolve the tenant-bound default Agent for ``ctx`` (task 3.8).
+
+    Returns the tenant's configured ``default_agent_id`` when set. When the
+    tenant has no configured default, fall back to its *single* bound agent (so
+    a fresh tenant still has a sensible default) — and otherwise no agent is the
+    project default. Legacy mode (``ctx is None``) has no tenant default, so
+    callers fall back to the global registry default.
+    """
+    if ctx is None or not ctx.tenant_id:
+        return None
+    from auth.service import get_identity_service
+    svc = get_identity_service()
+    tenant_default = svc.tenant_default_agent_id(ctx.tenant_id)
+    if tenant_default:
+        return tenant_default
+    ids = svc.tenant_agent_ids(ctx.tenant_id)
+    return ids[0] if len(ids) == 1 else None
+
+
+def _tenant_agents_projection(ctx: "Optional[RequestContext]") -> Dict:
+    """Safe read-only agent projection for database mode.
+
+    Filters to the tenant-bound agents the caller may see (task 3.8) and returns
+    only non-sensitive fields (never workspace paths / credentials). Uses the
+    same whitelist as the workbench projection. ``is_default`` reflects the
+    caller's *tenant-bound* default agent (task 3.8) — never the global default —
+    so the same global Agent bound to two tenants is only marked default for the
+    tenant that actually selected it.
+    """
+    if ctx is None:
+        return _workbench_agents_projection()
+    from agent.registry import get_agent_registry
+    registry = get_agent_registry()
+    visible = _tenant_ids_for_context(ctx)
+    tenant_default = _tenant_default_agent_id(ctx)
+    agents = []
+    for profile in sorted(registry.list(), key=lambda item: (item.id != tenant_default, item.id)):
+        if visible is not None and profile.id not in visible:
+            continue
+        if not profile.enabled:
+            continue
+        can_chat, unavailable_reason = _workbench_chat_readiness(profile.id)
+        agents.append({
+            "id": profile.id,
+            "name": profile.name,
+            "description": profile.description or "",
+            "avatar": profile.avatar or None,
+            "is_default": bool(profile.id == tenant_default),
+            "can_chat": can_chat,
+            "unavailable_reason": unavailable_reason,
+        })
+    return {"agents": agents}
+
+
+def _workbench_chat_readiness(agent_id: str) -> Tuple[bool, Optional[str]]:
+    """Whether a chat may be started for ``agent_id`` in the current mode.
+
+    Returns ``(can_chat, unavailable_reason)``. ``unavailable_reason`` is a
+    stable code (never an internal config leak) and only set when the mode
+    blocks runtime.
+
+    Legacy deployment: publishing/运行 consumer is open, so an enabled Agent is
+    runnable. In database identity mode the chat consumer is not yet accepted
+    (task 3.11/Bridge stays closed), so the workbench renders a controlled read
+    page rather than silently enabling chat: ``can_chat=False`` with the stable
+    ``runtime_not_enabled`` reason. The server rejects the run independently of
+    the frontend hint.
+    """
+    if _is_database_identity():
+        return False, "runtime_not_enabled"
+    return True, None
+
+
 def _bind_channel_instance(channel_type: str, instance_id: str = "", agent_id: str = "", members=None):
     """Point one channel instance at an Agent (and team), hot-swapping without a restart.
 
@@ -6559,6 +7579,26 @@ class AgentsHandler:
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
+            # The workbench (use-Agents) page asks for a minimal read-only
+            # projection. Without the view param the default management
+            # snapshot is returned intact so Desktop and existing pickers keep
+            # their contract.
+            params = web.input(view='')
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "agent.read")
+                if params.view == 'workbench':
+                    return json.dumps(
+                        {"status": "success", **_tenant_agents_projection(ctx)},
+                        ensure_ascii=False,
+                    )
+                if ctx is not None:
+                    # database mode: only the caller's tenant-bound agents, and
+                    # never expose workspace paths. Fall through to the snapshot
+                    # path only in legacy mode.
+                    return json.dumps(
+                        {"status": "success", **_tenant_agents_projection(ctx)},
+                        ensure_ascii=False,
+                    )
             return json.dumps(
                 {"status": "success", **_agent_admin_service().snapshot()},
                 ensure_ascii=False,
@@ -6807,7 +7847,8 @@ class AgentAvatarHandler:
             return json.dumps({"status": "error", "message": str(e)})
 
 
-def _annotate_sessions_with_projects(store, result: dict, agent_id: Optional[str]) -> None:
+def _annotate_sessions_with_projects(store, result: dict, agent_id: Optional[str],
+                                    user_id: Optional[str] = None) -> None:
     """Attach each session's project space, and say how to group the list.
 
     ``group_mode`` is decided here rather than in the browser because the client
@@ -6836,7 +7877,7 @@ def _annotate_sessions_with_projects(store, result: dict, agent_id: Optional[str
     # one space when any session is still using it.
     space_paths = set()
     uses_default = False
-    for sid in store.list_session_ids(channel_type="web"):
+    for sid in store.list_session_ids(channel_type="web", user_id=user_id):
         path = project_map.get(sid)
         if path:
             space_paths.add(path)
@@ -6942,7 +7983,9 @@ def _as_epoch(value) -> int:
     return 0
 
 
-def _list_sessions_across_agents(page: int, page_size: int) -> dict:
+def _list_sessions_across_agents(page: int, page_size: int,
+                                 ctx: "Optional[RequestContext]" = None,
+                                 q: str = "") -> dict:
     """One page of every Agent's conversations, merged.
 
     Sessions are stored one database per Agent, so "all conversations" is a
@@ -6953,17 +7996,28 @@ def _list_sessions_across_agents(page: int, page_size: int) -> dict:
     Presenting them in one list is what keeps a second Agent from feeling like a
     second account: the alternative, switching the whole console to look at
     another Agent's conversations, makes the roster a tenant selector.
+
+    In database mode ``ctx`` limits the merge to the tenant-bound agents and,
+    when a user is present, filters each Agent's sessions to that user.
+
+    A title search gathers all matching summaries before deduplication and
+    pagination, so duplicates outside an early candidate page cannot inflate
+    the result count or leave later pages short. Message bodies are not read.
     """
     from agent.memory import get_conversation_store
+    from agent.memory.conversation_store import normalize_session_search_query
     from agent.registry import get_agent_registry
     from agent.workspace import project_store, session_prefs
     from common.state_dir import state_root_str
 
+    q = normalize_session_search_query(q)
     take = max(1, page) * page_size
     merged: List[dict] = []
     total = 0
     space_paths = set()
     uses_default = False
+    user_id = ctx.user_id if ctx else None
+    visible = _tenant_ids_for_context(ctx)
     try:
         members_index = session_prefs.members_index()
     except Exception as e:
@@ -6972,11 +8026,29 @@ def _list_sessions_across_agents(page: int, page_size: int) -> dict:
         members_index = {}
 
     for profile in get_agent_registry().list(include_disabled=False):
+        if visible is not None and profile.id not in visible:
+            continue
         try:
             store = get_conversation_store(profile.workspace)
-            chunk = store.list_sessions(channel_type="web", page=1, page_size=take)
+            if q:
+                matches = []
+                search_page = 1
+                while True:
+                    batch = store.list_sessions(
+                        channel_type="web", page=search_page, page_size=500,
+                        user_id=user_id, q=q,
+                    )
+                    rows = batch.get("sessions") or []
+                    matches.extend(rows)
+                    if not batch.get("has_more") or not rows:
+                        break
+                    search_page += 1
+                chunk = {"sessions": matches, "total": len(matches)}
+            else:
+                chunk = store.list_sessions(channel_type="web", page=1, page_size=take,
+                                            user_id=user_id)
             project_map = project_store.get_project_map(profile.id)
-            session_ids = store.list_session_ids(channel_type="web")
+            session_ids = store.list_session_ids(channel_type="web", user_id=user_id)
         except Exception as e:
             # One unreadable workspace must not blank out the whole list; the
             # other Agents' conversations are still perfectly readable.
@@ -7056,33 +8128,56 @@ class SessionsHandler:
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
-            params = web.input(
-                page='1', page_size='50', agent_id='', agent='', scope=''
-            )
-            page = int(params.page)
-            page_size = int(params.page_size)
-            if (params.scope or '').strip() == 'all':
-                result = _list_sessions_across_agents(page, page_size)
-                return json.dumps({"status": "success", **result}, ensure_ascii=False)
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "history.read")
+                params = web.input(
+                    page='1', page_size='50', agent_id='', agent='', scope='', q=''
+                )
+                from agent.memory.conversation_store import normalize_session_search_query
+                try:
+                    q = normalize_session_search_query(params.q)
+                except ValueError as e:
+                    web.ctx.status = '400 Bad Request'
+                    return json.dumps({"status": "error", "code": "invalid_query",
+                                       "message": str(e)}, ensure_ascii=False)
+                page = int(params.page)
+                page_size = int(params.page_size)
+                if (params.scope or '').strip() == 'all':
+                    if q:
+                        result = _list_sessions_across_agents(page, page_size, ctx, q=q)
+                    elif ctx is not None:
+                        result = _list_sessions_across_agents(page, page_size, ctx)
+                    else:
+                        result = _list_sessions_across_agents(page, page_size)
+                    if q:
+                        result["query"] = q
+                    return json.dumps({"status": "success", **result}, ensure_ascii=False)
 
-            agent_id = _request_agent_id(params)
-            from agent.memory import get_conversation_store
-            from agent.registry import get_agent_registry
-            store = get_conversation_store(
-                _get_workspace_root(agent_id=agent_id)
-            )
-            result = store.list_sessions(
-                channel_type="web",
-                page=page,
-                page_size=page_size,
-            )
-            _annotate_sessions_with_projects(store, result, agent_id)
-            badge = _agent_badge(
-                get_agent_registry().get(agent_id or None, require_enabled=False)
-            )
-            for session in result.get("sessions") or []:
-                session["agent"] = badge
-            return json.dumps({"status": "success", **result}, ensure_ascii=False)
+                agent_id = _request_agent_id(params)
+                from agent.memory import get_conversation_store
+                from agent.registry import get_agent_registry
+                store = get_conversation_store(
+                    _get_workspace_root(agent_id=agent_id)
+                )
+                search_args = {"q": q} if q else {}
+                result = store.list_sessions(
+                    channel_type="web",
+                    page=page,
+                    page_size=page_size,
+                    user_id=ctx.user_id if ctx else None,
+                    **search_args,
+                )
+                _annotate_sessions_with_projects(
+                    store, result, agent_id, user_id=ctx.user_id if ctx else None,
+                )
+                badge = _agent_badge(
+                    get_agent_registry().get(agent_id or None, require_enabled=False)
+                )
+                for session in result.get("sessions") or []:
+                    session["agent"] = badge
+                if q:
+                    result["query"] = q
+                return json.dumps({"status": "success", **result}, ensure_ascii=False)
         except Exception as e:
             logger.error(f"[WebChannel] Sessions API error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -7551,24 +8646,33 @@ class HistoryHandler:
             if not session_id:
                 return json.dumps({"status": "error", "message": "session_id required"})
 
-            from agent.memory import get_conversation_store
-            store = get_conversation_store(
-                _get_workspace_root(agent_id=_request_agent_id(params))
-            )
-            result = store.load_history_page(
-                session_id=session_id,
-                page=int(params.page),
-                page_size=int(params.page_size),
-            )
-            for msg in result.get("messages") or []:
-                if msg.get("role") != "assistant":
-                    continue
-                _add_subagent_displays(msg.get("steps"))
-                _add_delegate_displays(msg.get("steps"))
-                artifacts = _artifacts_from_steps(msg.get("steps"), session_id)
-                if artifacts:
-                    msg["artifacts"] = artifacts
-            return json.dumps({"status": "success", **result}, ensure_ascii=False)
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "history.read")
+                agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
+                _require_session_owner(ctx, session_id, agent_id)
+                from agent.memory import get_conversation_store
+                from agent.registry import get_agent_registry
+                # Conversation persistence and the cross-Agent history list
+                # use each Agent's own workspace. The tenant's shared working
+                # directory can differ and contains no history for this Agent.
+                store = get_conversation_store(
+                    get_agent_registry().get(agent_id, require_enabled=False).workspace
+                )
+                result = store.load_history_page(
+                    session_id=session_id,
+                    page=int(params.page),
+                    page_size=int(params.page_size),
+                    user_id=ctx.user_id if ctx else None,
+                )
+                for msg in result.get("messages") or []:
+                    if msg.get("role") != "assistant":
+                        continue
+                    _add_subagent_displays(msg.get("steps"))
+                    _add_delegate_displays(msg.get("steps"))
+                    artifacts = _artifacts_from_steps(msg.get("steps"), session_id)
+                    if artifacts:
+                        msg["artifacts"] = artifacts
+                return json.dumps({"status": "success", **result}, ensure_ascii=False)
         except Exception as e:
             logger.error(f"[WebChannel] History API error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -7679,7 +8783,7 @@ class LogsDownloadHandler:
             raise web.internalerror()
 
         # Timestamped name so multiple downloads don't overwrite each other.
-        fname = f"cowagent-{time.strftime('%Y%m%d-%H%M%S')}.log"
+        fname = f"rongda-ai-{time.strftime('%Y%m%d-%H%M%S')}.log"
         web.header('Content-Type', 'text/plain; charset=utf-8')
         web.header('Content-Disposition', f'attachment; filename="{fname}"')
         web.header('Content-Length', str(len(data)))
@@ -8136,7 +9240,7 @@ class ProjectManageHandler:
     """Rename (PUT) or delete (DELETE) a project record.
 
     Neither touches the folder on disk: a rename only sets a display name, and a
-    delete only forgets the CowAgent record and unbinds any sessions (they revert
+    delete only forgets the RongAI record and unbinds any sessions (they revert
     to the default workspace). The files stay exactly where they are.
     """
 
@@ -8186,6 +9290,7 @@ class ProjectBrowseHandler:
     """
 
     def GET(self):
+        _guard_not_database()
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
@@ -8261,12 +9366,16 @@ class KnowledgeListHandler:
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from agent.knowledge.service import KnowledgeService
-            params = web.input(agent_id='')
-            svc = KnowledgeService(
-                _get_workspace_root(agent_id=_request_agent_id(params))
-            )
-            result = svc.list_tree()
-            return json.dumps({"status": "success", **result}, ensure_ascii=False)
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "knowledge.read")
+                params = web.input(agent_id='')
+                agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
+                _require_private_owner(ctx, agent_id)
+                svc = KnowledgeService(
+                    _get_workspace_root(agent_id=agent_id)
+                )
+                result = svc.list_tree()
+                return json.dumps({"status": "success", **result}, ensure_ascii=False)
         except Exception as e:
             logger.error(f"[WebChannel] Knowledge list error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -8279,10 +9388,14 @@ class KnowledgeReadHandler:
         try:
             from pathlib import Path
             from agent.knowledge.service import KnowledgeService
-            params = web.input(path='', agent_id='')
-            svc = KnowledgeService(
-                _get_workspace_root(agent_id=_request_agent_id(params))
-            )
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "knowledge.read")
+                params = web.input(path='', agent_id='')
+                agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
+                _require_private_owner(ctx, agent_id)
+                svc = KnowledgeService(
+                    _get_workspace_root(agent_id=agent_id)
+                )
             result = svc.read_file(params.path)
             # Absolute directory of the doc (posix separators), so clients can
             # resolve image srcs that are relative to the doc into /api/file
@@ -8315,6 +9428,7 @@ class KnowledgeGraphHandler:
 
 class KnowledgeActionHandler:
     def POST(self):
+        _guard_not_database()
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
@@ -8336,6 +9450,7 @@ class KnowledgeActionHandler:
 
 class KnowledgeImportHandler:
     def POST(self):
+        _guard_not_database()
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:

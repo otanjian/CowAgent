@@ -412,10 +412,10 @@ def run_install_browser(
         _phase(on_phase, _t("✅ 验证通过。", "✅ Verification passed."))
 
     stream("")
-    stream("Browser tool ready! Restart CowAgent to enable it.", "green")
+    stream("Browser tool ready! Restart 容大AI to enable it.", "green")
     _phase(on_phase, _t(
-        "🎉 全部步骤结束。请重启 CowAgent 后使用 browser 工具。",
-        "🎉 All steps finished. Restart CowAgent to use the browser tool.",
+        "🎉 全部步骤结束。请重启 容大AI 后使用 browser 工具。",
+        "🎉 All steps finished. Restart 容大AI to use the browser tool.",
     ))
     return 0
 

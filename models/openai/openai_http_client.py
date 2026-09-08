@@ -36,7 +36,7 @@ DEFAULT_API_BASE = "https://api.openai.com/v1"
 DEFAULT_TIMEOUT = 600  # seconds; matches old openai SDK default
 
 
-_APP_TITLE = "CowAgent"
+_APP_TITLE = "Rongda AI"
 _APP_REFERER = "https://github.com/zhayujie/CowAgent"
 
 

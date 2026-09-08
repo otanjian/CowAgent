@@ -1,3 +1,4 @@
+import BrandMark from './BrandMark'
 import React, { useState } from 'react'
 import { Copy, Check, RefreshCw, Trash2, File as FileIcon, Folder, Sprout } from 'lucide-react'
 import type { ChatMessage } from '../types'
@@ -165,7 +166,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onRegenerate, on
           <AgentAvatar agent={speaker} size={28} shape="square" />
         </div>
       ) : (
-        <img src="./logo.jpg" alt="Agent" className="w-7 h-7 rounded-lg flex-shrink-0 mt-1" />
+        <BrandMark className="w-7 h-7 p-1 rounded-lg mt-1 bg-surface border border-default" />
       )}
       <div className="flex-1 min-w-0 max-w-[calc(100%-2.5rem)]">
         {speakerName && (

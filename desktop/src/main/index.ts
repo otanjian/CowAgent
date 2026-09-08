@@ -104,13 +104,14 @@ function initDesktopLogging(): void {
 // earliest console output and any startup crash are already being persisted.
 initDesktopLogging()
 
-// Force the product name so the Dock/menu shows the app name even in dev mode,
-// where the default Electron binary would otherwise report "Electron". The name
-// can be overridden by the bundled app-config (appName); defaults to CowAgent.
-app.setName(loadAppConfig()?.appName || 'CowAgent')
-  // The web layer may have overridden the name at runtime. Re-apply it here,
-  // before app.getPath('userData') is read anywhere, since setName moves it.
+// Resolve the existing app identity before changing the default display name.
+// Keep Electron's profile directory stable across the 容大AI rebrand so cookies,
+// local preferences and window state remain available after upgrading.
+app.setName(loadAppConfig()?.appName || 'RongAI')
 applyCachedAppName()
+const profileName = ['容大AI', 'RongAI', 'CowAgent'].includes(app.name) ? 'CowAgent' : app.name
+app.setPath('userData', path.join(app.getPath('appData'), profileName))
+if (/^cowagent$/i.test(app.name.trim())) app.setName('RongAI')
 
 // Windows shows notifications only when an AppUserModelID is set; without it
 // they are silently dropped. Harmless on macOS/Linux.
@@ -225,6 +226,7 @@ function createWindow() {
   const state = loadWindowState()
 
   mainWindow = new BrowserWindow({
+    title: app.name,
     width: state.width,
     height: state.height,
     x: state.x,

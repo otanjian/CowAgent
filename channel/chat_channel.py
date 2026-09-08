@@ -214,7 +214,23 @@ class ChatChannel(Channel):
         ``produce`` already routed the context, so the agent is read back here
         rather than resolved twice. Without this the bridge would serve the
         bound Agent while workspace paths still resolved to the default one.
+
+        In database identity mode the message handler snapshotted the request's
+        runtime identity (tenant/user) onto the context, because the worker
+        thread does not inherit ContextVars. Rebuild the full identity here so
+        state_dir and the conversation store scope to the caller's tenant/user
+        instead of leaking to global/default state.
         """
+        rt = context.get("runtime_identity")
+        if rt:
+            return RuntimeIdentity(
+                agent_id=rt.get("agent_id") or context.get("agent_id"),
+                user_id=rt.get("user_id"),
+                tenant_id=rt.get("tenant_id"),
+                session_id=rt.get("session_id") or context.get("session_id"),
+                web_auth_session_id=rt.get("web_auth_session_id"),
+                web_legacy_authenticated=rt.get("web_legacy_authenticated") is True,
+            )
         return RuntimeIdentity(
             agent_id=context.get("agent_id"),
             session_id=context.get("session_id"),

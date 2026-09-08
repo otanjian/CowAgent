@@ -1,9 +1,9 @@
 ---
 title: 备份与恢复
-description: 导出和恢复 CowAgent 配置及 Agent 工作区数据
+description: 导出和恢复 容大AI 配置及 Agent 工作区数据
 ---
 
-CowAgent 可以生成便携的本地归档，用于设备迁移或灾难恢复。
+容大AI 可以生成便携的本地归档，用于设备迁移或灾难恢复。
 
 ## 创建备份
 
@@ -19,6 +19,7 @@ cow backup --output /safe/location/cow-backup.zip
 - 工作区内的每日记忆、会话历史、知识库、自定义技能和定时任务
 - 配置多 Agent 后的 Agent registry、通道绑定和全部 Agent 工作区
 - 旧版 `user_datas.pkl`（如存在）
+- 已发布自定义品牌时的实例 Web 品牌快照及其引用图片
 
 临时 `tmp/` 数据、缓存、Git 元数据和符号链接不会写入归档。在操作系统支持的情况下，归档文件权限会限制为仅当前用户可读写。
 
@@ -28,7 +29,7 @@ cow backup --output /safe/location/cow-backup.zip
 
 ## 恢复备份
 
-恢复前先停止 CowAgent：
+恢复前先停止 容大AI：
 
 ```bash
 cow stop
@@ -43,6 +44,8 @@ cow restore cow-backup.zip --workspace ~/cow-restored
 
 恢复多 Agent 归档时，`--workspace` 表示实例根目录：默认 Agent 恢复到该根目录，其余 Agent 恢复到 `<根目录>/agents/<agent-id>`，与 Agent registry 自身推导的布局一致。未传该参数时，本机已存在的同名 Agent 沿用当前工作区，其余 Agent 落在本机当前使用的实例根目录下。
 
-恢复命令会在写入前校验归档格式和所有路径。它会覆盖同名文件，但不会删除目标目录中无关的现有文件。如果检测到当前 CowAgent 数据，会先在所选归档旁创建 `cow-pre-restore-*.zip` 回滚备份。
+恢复命令会在写入前校验归档格式和所有路径。它会覆盖同名文件，但不会删除目标目录中无关的现有文件。如果检测到当前 容大AI 数据，会先在所选归档旁创建 `cow-pre-restore-*.zip` 回滚备份。
+
+如果归档携带品牌段，恢复会以新版本号将该品牌重新发布到目标数据根目录（来源版本作为来源信息保留，避免旧浏览器草稿与恢复后的版本号相撞）。不含品牌段的归档不会删除已有品牌——全新实例回退到内置默认值，已自定义的实例则保留当前品牌不变。损坏或版本不受支持的品牌段会在 config 发布前中止整个恢复。
 
 无人值守脚本可传入 `--yes` 确认覆盖。

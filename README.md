@@ -1,4 +1,9 @@
-<p align="center"><img src="https://github.com/user-attachments/assets/eca9a9ec-8534-4615-9e0f-96c5ac1d10a3" alt="CowAgent" width="420" /></p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/rongda-ai-logo-dark.svg" />
+    <img src="docs/images/rongda-ai-logo.svg" alt="容大AI" width="420" />
+  </picture>
+</p>
 
 <p align="center">
   <a href="https://github.com/zhayujie/CowAgent/releases/latest"><img src="https://img.shields.io/github/v/release/zhayujie/CowAgent?cacheSeconds=3600" alt="Latest release"></a>
@@ -17,17 +22,17 @@
   [English] | [<a href="docs/zh/README.md">中文</a>] | [<a href="docs/zh/README-Hant.md">繁體中文</a>] | [<a href="docs/ja/README.md">日本語</a>]
 </p>
 
-**CowAgent** is an open-source super AI assistant that proactively plans tasks, controls your computer and external services, creates and runs Skills, builds a personal knowledge base and long-term memory, and grows alongside you through self-evolution — a reference implementation of Agent Harness engineering.
+**容大AI** is an open-source super AI assistant that proactively plans tasks, controls your computer and external services, creates and runs Skills, builds a personal knowledge base and long-term memory, and grows alongside you through self-evolution — a reference implementation of Agent Harness engineering.
 
-CowAgent is lightweight, easy to deploy, and built to extend. Plug in any major LLM provider and run it 24/7 on a personal computer or server, across the web and all major IM platforms.
+容大AI is lightweight, easy to deploy, and built to extend. Plug in any major LLM provider and run it 24/7 on a personal computer or server, across the web and all major IM platforms.
 
 <p align="center">
   <a href="https://cowagent.ai/">🌐 Website</a> &nbsp;·&nbsp;
   <a href="https://docs.cowagent.ai/intro/index">📖 Docs</a> &nbsp;·&nbsp;
   <a href="https://docs.cowagent.ai/guide/quick-start">🚀 Quick Start</a> &nbsp;·&nbsp;
   <a href="https://skills.cowagent.ai/">🧩 Skill Hub</a> &nbsp;·&nbsp;
-  <a href="https://cowagent.ai/download/">💻 Download</a> &nbsp;·&nbsp;
-  <a href="https://link-ai.tech/cowagent/create">☁️ Try Online</a>
+  <a href="https://cowagent.ai/download/">💻 Upstream Download</a> &nbsp;·&nbsp;
+  <a href="https://link-ai.tech/cowagent/create">☁️ Try the Upstream Service</a>
 </p>
 
 <br/>
@@ -62,9 +67,9 @@ CowAgent is lightweight, easy to deploy, and built to extend. Plug in any major 
 
 ## 🏗️ Architecture
 
-<img src="https://cdn.jsdelivr.net/gh/zhayujie/cowagent-assets@main/architecture/en/architecture.png" alt="CowAgent Architecture" width="750"/>
+<img src="https://cdn.jsdelivr.net/gh/zhayujie/cowagent-assets@main/architecture/en/architecture.png" alt="容大AI Architecture" width="750"/>
 
-CowAgent is a complete **Agent Harness**: messages flow in through **Channels**; the **Agent Core** plans and reasons over memory, knowledge, and the available tools and skills; **Models** generate the response, which is sent back through the originating channel. Every layer is decoupled and independently extensible.
+容大AI is a complete **Agent Harness**: messages flow in through **Channels**; the **Agent Core** plans and reasons over memory, knowledge, and the available tools and skills; **Models** generate the response, which is sent back through the originating channel. Every layer is decoupled and independently extensible.
 
 Read more in [Architecture](https://docs.cowagent.ai/intro/architecture).
 
@@ -72,7 +77,9 @@ Read more in [Architecture](https://docs.cowagent.ai/intro/architecture).
 
 ## 🚀 Quick Start
 
-A one-line installer takes care of dependencies, configuration, and startup:
+The public installers below are maintained by the upstream project. To run 容大AI with the changes in this repository, use this repository’s source and local build artifacts.
+
+The upstream installer takes care of dependencies, configuration, and startup:
 
 **Linux / macOS:**
 
@@ -109,13 +116,13 @@ cow skill install <name>           # install a skill
 cow install-browser                # install browser automation
 ```
 
-> 💻 Desktop client: download the **[CowAgent Desktop client](https://cowagent.ai/download/)** (macOS / Windows) — the backend is bundled, ready to use out of the box.
+> 💻 Desktop client: download the **[upstream desktop client](https://cowagent.ai/download/)** (macOS / Windows) — the backend is bundled, ready to use out of the box.
 
 <br/>
 
 ## 🤖 Models
 
-CowAgent supports all mainstream LLM providers. **Chat, vision, image generation, ASR/TTS, and embeddings** can each be routed to a different vendor. Providers are configured directly in the Web console — no manual file editing required.
+容大AI supports all mainstream LLM providers. **Chat, vision, image generation, ASR/TTS, and embeddings** can each be routed to a different vendor. Providers are configured directly in the Web console — no manual file editing required.
 
 | Provider | Featured Models | Chat | Vision | Image Gen | ASR | TTS | Embedding |
 | --- | --- | :-: | :-: | :-: | :-: | :-: | :-: |
@@ -158,7 +165,7 @@ A single Agent instance can serve multiple channels in parallel. Most channels c
 
 > See the [Channels overview](https://docs.cowagent.ai/channels/index) for setup details.
 
-<img src="https://cdn.jsdelivr.net/gh/zhayujie/cowagent-assets@main/screenshots/en/web-console-chat.png" alt="CowAgent Web Console" width="800"/>
+<img src="https://cdn.jsdelivr.net/gh/zhayujie/cowagent-assets@main/screenshots/en/web-console-chat.png" alt="容大AI Web Console" width="800"/>
 
 *The Web console is the default channel and the unified entry point to configure models, channels, skills, memory, and more.*
 
@@ -249,7 +256,7 @@ You can also [file an issue](https://github.com/zhayujie/CowAgent/issues) on Git
 
 ## 🔗 Related Projects
 
-- **[Cow Skill Hub](https://github.com/zhayujie/cow-skill-hub)** — open skill marketplace for AI Agents; works with CowAgent, OpenClaw, Claude Code, and more
+- **[Cow Skill Hub](https://github.com/zhayujie/cow-skill-hub)** — open skill marketplace for AI Agents; works with 容大AI, OpenClaw, Claude Code, and more
 - **[bot-on-anything](https://github.com/zhayujie/bot-on-anything)** — lightweight LLM application framework with integrations for Slack, Telegram, Discord, Gmail, and more
 - **[AgentMesh](https://github.com/MinimalFuture/AgentMesh)** — open-source multi-agent framework for solving complex problems through team collaboration
 
@@ -257,10 +264,10 @@ You can also [file an issue](https://github.com/zhayujie/CowAgent/issues) on Git
 
 ## 🏢 Enterprise Services
 
-[**LinkAI**](https://link-ai.tech/) is an all-in-one AI Agent platform for enterprises and developers, offering managed hosting and enterprise-grade support for CowAgent:
+[**LinkAI**](https://link-ai.tech/) is an all-in-one AI Agent platform for enterprises and developers, offering managed hosting and enterprise-grade support for the upstream project:
 
-- **🚀 Zero-deployment hosted runtime** — spin up a [CowAgent online assistant](https://link-ai.tech/cowagent/create) in under a minute, no server required
-- **🧠 Agent infrastructure** — unified access to LLMs, knowledge bases, databases, skills, and workflows; plug-and-play building blocks that extend what CowAgent can do
+- **🚀 Zero-deployment hosted runtime** — spin up an [upstream online assistant](https://link-ai.tech/cowagent/create) in under a minute, no server required
+- **🧠 Agent infrastructure** — unified access to LLMs, knowledge bases, databases, skills, and workflows; plug-and-play building blocks that extend what RongAI can do
 - **🏢 Team & enterprise features** — workspaces, role-based access, audit logs, and private deployment for production use cases
 
 For enterprise inquiries: sales@simple-future.tech or [scan the QR code](https://cdn.link-ai.tech/contact/customer-support.png) to reach our team on WeChat.
@@ -283,10 +290,10 @@ All kinds of contributions are welcome — new features, bug fixes, performance 
 
 1. This project is licensed under the [MIT License](/LICENSE) and is intended for technical research and learning. You are responsible for complying with applicable laws and regulations in your jurisdiction; the maintainers assume no liability for any consequences arising from use of this project.
 2. **Cost & safety:** Agent mode consumes substantially more tokens than regular chat — pick models that balance quality and cost. The Agent has access to your local operating system, so only deploy it in trusted environments.
-3. CowAgent is a pure open-source project and does not participate in, authorize, or issue any cryptocurrency.
+3. 容大AI is a pure open-source project and does not participate in, authorize, or issue any cryptocurrency.
 
 <br/>
 
 ## 📌 Project Renaming Notice
 
-This project was previously named `chatgpt-on-wechat` and is now officially **CowAgent**. The old GitHub URL redirects automatically; existing users may optionally run `git remote set-url origin https://github.com/zhayujie/CowAgent.git` to update the local remote.
+The product is now named **容大AI (RongAI)**, based on the upstream project (formerly `chatgpt-on-wechat`). Existing repository URLs, the `cow` CLI, and technical identifiers are retained for compatibility.

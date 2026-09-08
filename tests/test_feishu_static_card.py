@@ -4,10 +4,10 @@ from channel.feishu.feishu_static_card import build_text_delivery, contains_mark
 
 
 def test_plain_text_keeps_native_feishu_text_message():
-    msg_type, content = build_text_delivery("hello from CowAgent")
+    msg_type, content = build_text_delivery("hello from RongAI")
 
     assert msg_type == "text"
-    assert json.loads(content) == {"text": "hello from CowAgent"}
+    assert json.loads(content) == {"text": "hello from RongAI"}
 
 
 def test_markdown_reply_uses_card_2_markdown_element():

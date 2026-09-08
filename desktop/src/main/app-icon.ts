@@ -133,13 +133,18 @@ function applyIcon(icon: NativeImage): void {
   if (tray) tray.setImage(icon.resize({ width: 18, height: 18 }))
 }
 
+function displayAppTitle(title: string): string {
+  const trimmed = title.trim()
+  return /^cowagent$/i.test(trimmed) ? 'RongAI' : trimmed
+}
+
 // Window title only. app.setName is deliberately NOT called here: it also moves
 // app.getPath('userData'), and by the time this runs the session/window have
 // already opened files under the old path — the two would end up split across
 // directories. The name is applied from the cache at startup instead (see
 // applyCachedAppName), so it takes effect from the next launch.
 function applyTitle(title: string): void {
-  const trimmed = title.trim()
+  const trimmed = displayAppTitle(title)
   if (!trimmed) return
   getMainWindow?.()?.setTitle(trimmed)
 }
@@ -501,7 +506,7 @@ export function repairWindowsShortcuts(): void {
   let checkedFor = ''
   try {
     const meta = JSON.parse(fs.readFileSync(metaCachePath(), 'utf8')) as CachedMeta
-    title = meta.title?.trim() || ''
+    title = displayAppTitle(meta.title || '')
     checkedFor = meta.shortcutsCheckedFor || ''
   } catch {
     /* first run */
@@ -535,11 +540,12 @@ export function setupAppIconIPC(deps: {
 
   ipcMain.handle('set-app-title', (_event, title: unknown) => {
     if (typeof title !== 'string' || !title.trim()) return false
-    applyTitle(title)
-    cacheMeta({ title })
+    const displayTitle = displayAppTitle(title)
+    applyTitle(displayTitle)
+    cacheMeta({ title: displayTitle })
     // Reuse the cached icon (if any) so the renamed shortcut keeps it.
     const ico = fs.existsSync(icoCachePath()) ? icoCachePath() : null
-    syncWindowsShortcuts({ title, icoPath: ico })
+    syncWindowsShortcuts({ title: displayTitle, icoPath: ico })
     return true
   })
 }
