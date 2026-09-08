@@ -92,3 +92,6 @@ desktop/resources/bin/
 .tmp_verify_launcher.py
 .tmp_verify_server.py
 .tmp_verify_data/
+
+# README files are not synced to the remote repository.
+README*.md
