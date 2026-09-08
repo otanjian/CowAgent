@@ -1,6 +1,6 @@
-# 容大AI Desktop
+# CowAgent Desktop
 
-Cross-platform desktop client for 容大AI, built with Electron + React + TypeScript.
+Cross-platform desktop client for CowAgent, built with Electron + React + TypeScript.
 
 ## Development
 

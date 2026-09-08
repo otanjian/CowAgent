@@ -1,9 +1,4 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="../images/rongda-ai-logo-dark.svg" />
-    <img src="../images/rongda-ai-logo.svg" alt="容大AI" width="420" />
-  </picture>
-</p>
+<p align="center"><img src= "https://github.com/user-attachments/assets/eca9a9ec-8534-4615-9e0f-96c5ac1d10a3" alt="CowAgent" width="420" /></p>
 
 <p align="center">
   <a href="https://github.com/zhayujie/CowAgent/releases/latest"><img src="https://img.shields.io/github/v/release/zhayujie/CowAgent?cacheSeconds=3600" alt="Latest release" /></a>
@@ -22,17 +17,17 @@
 [<a href="../../README.md">English</a>] | [<a href="README.md">中文</a>] | [繁體中文] | [<a href="../ja/README.md">日本語</a>]
 </p>
 
-**容大AI** 是一個開源的超級 AI 助理，能夠主動思考和規劃任務、操作電腦和外部資源、創造和執行 Skills、構建知識庫與長期記憶、透過自主進化與你一同成長，是 Agent Harness 工程的最佳實踐之一。
+**CowAgent** 是一個開源的超級 AI 助理，能夠主動思考和規劃任務、操作電腦和外部資源、創造和執行 Skills、構建知識庫與長期記憶、透過自主進化與你一同成長，是 Agent Harness 工程的最佳實踐之一。
 
-容大AI 輕量、易部署、可擴充，自由接入主流大模型，覆蓋微信、飛書、釘釘、企微、QQ、Telegram、Slack、網頁等多渠道，7×24 執行於個人電腦或伺服器中。
+CowAgent 輕量、易部署、可擴充，自由接入主流大模型，覆蓋微信、飛書、釘釘、企微、QQ、Telegram、Slack、網頁等多渠道，7×24 執行於個人電腦或伺服器中。
 
 <p align="center">
   <a href="https://cowagent.ai/?lang=zh">🌐 官網</a> &nbsp;·&nbsp;
   <a href="https://docs.cowagent.ai/zh/">📖 文件中心</a> &nbsp;·&nbsp;
   <a href="https://docs.cowagent.ai/zh/guide/quick-start">🚀 快速開始</a> &nbsp;·&nbsp;
   <a href="https://skills.cowagent.ai/">🧩 技能廣場</a> &nbsp;·&nbsp;
-  <a href="https://cowagent.ai/zh/download/">💻 上游项目 下載</a> &nbsp;·&nbsp;
-  <a href="https://link-ai.tech/cowagent/create">☁️ 上游项目 線上體驗</a>
+  <a href="https://cowagent.ai/zh/download/">💻 下載客戶端</a> &nbsp;·&nbsp;
+  <a href="https://link-ai.tech/cowagent/create">☁️ 線上體驗</a>
 </p>
 
 <br/>
@@ -67,17 +62,15 @@
 
 ## 🏗️ 架構總覽
 
-<img src="https://cdn.jsdelivr.net/gh/zhayujie/cowagent-assets@main/architecture/zh/architecture.jpg" alt="容大AI Architecture" width="750"/>
+<img src="https://cdn.jsdelivr.net/gh/zhayujie/cowagent-assets@main/architecture/zh/architecture.jpg" alt="CowAgent Architecture" width="750"/>
 
-容大AI 是一個完整的 **Agent Harness**：訊息從各類**通道**進入，**Agent Core** 結合記憶、知識庫與可用工具/技能進行任務規劃與決策，呼叫**模型**生成結果，再回傳至原通道。各模組解耦清晰，按需擴充。
+CowAgent 是一個完整的 **Agent Harness**：訊息從各類**通道**進入，**Agent Core** 結合記憶、知識庫與可用工具/技能進行任務規劃與決策，呼叫**模型**生成結果，再回傳至原通道。各模組解耦清晰，按需擴充。
 
 詳見 [專案架構](https://docs.cowagent.ai/zh/intro/architecture)。
 
 <br/>
 
 ## 🚀 快速開始
-
-本頁公開安裝腳本、儲存庫地址及容器映像來自上游项目。若要執行包含本儲存庫品牌和修改的 **容大AI**，請使用本儲存庫原始碼及本機建置產物。
 
 專案提供一鍵安裝指令碼，自動完成依賴安裝、設定和啟動：
 
@@ -116,13 +109,13 @@ cow skill install <名稱>           # 安裝技能
 cow install-browser                # 安裝瀏覽器工具
 ```
 
-> 💻 桌面客戶端：前往 **[下載上游项目 桌面客戶端](https://cowagent.ai/zh/download/)**（macOS / Windows），內建 Agent 執行環境，開箱即用。
+> 💻 桌面客戶端：前往 **[下載 CowAgent 桌面客戶端](https://cowagent.ai/zh/download/)**（macOS / Windows），內建 Agent 執行環境，開箱即用。
 
 <br/>
 
 ## 🤖 模型支援
 
-容大AI 支援國內外主流廠商的大語言模型。**文字對話、影像理解、影像生成、語音識別/合成、向量** 等能力均可獨立設定廠商。
+CowAgent 支援國內外主流廠商的大語言模型。**文字對話、影像理解、影像生成、語音識別/合成、向量** 等能力均可獨立設定廠商。
 
 | 廠商 | 代表模型 | 文字 | 影像理解 | 影像生成 | 語音識別 | 語音合成 | 向量 |
 | --- | --- | :-: | :-: | :-: | :-: | :-: | :-: |
@@ -165,7 +158,7 @@ cow install-browser                # 安裝瀏覽器工具
 
 > 飛書、企微智慧機器人支援在 Web 控制台內**掃碼一鍵接入**，無需公有 IP。詳見 [通道概覽](https://docs.cowagent.ai/zh/channels)。
 
-<img src="https://cdn.jsdelivr.net/gh/zhayujie/cowagent-assets@main/screenshots/zh/web-console-chat.png" alt="容大AI Web 控制台" width="800"/>
+<img src="https://cdn.jsdelivr.net/gh/zhayujie/cowagent-assets@main/screenshots/zh/web-console-chat.png" alt="CowAgent Web 控制台" width="800"/>
 
 *Web 控制台是預設通道，也是統一的 Agent 設定和管理入口*
 
@@ -262,7 +255,7 @@ cow install-browser                # 安裝瀏覽器工具
 
 ## 🔗 相關專案
 
-- **[Cow Skill Hub](https://github.com/zhayujie/cow-skill-hub)** — 開源的 AI Agent 技能廣場，支援 容大AI、OpenClaw、Claude Code 等多種 Agent
+- **[Cow Skill Hub](https://github.com/zhayujie/cow-skill-hub)** — 開源的 AI Agent 技能廣場，支援 CowAgent、OpenClaw、Claude Code 等多種 Agent
 - **[bot-on-anything](https://github.com/zhayujie/bot-on-anything)** — 輕量大模型應用框架，支援 Slack、Telegram、Discord、Gmail 等海外平臺
 - **[AgentMesh](https://github.com/MinimalFuture/AgentMesh)** — 開源多智慧體（Multi-Agent）框架，透過團隊協同解決複雜問題
 
@@ -272,9 +265,9 @@ cow install-browser                # 安裝瀏覽器工具
 
 <a href="https://link-ai.tech" target="_blank"><img width="650" src="https://cdn.link-ai.tech/image/link-ai-intro.jpg" /></a>
 
-> [LinkAI](https://link-ai.tech/) 是面向企業和個人的一站式 AI 智慧體平臺，為上游项目 提供雲端託管和企業級支援：
+> [LinkAI](https://link-ai.tech/) 是面向企業和個人的一站式 AI 智慧體平臺，為 CowAgent 提供雲端託管和企業級支援：
 >
-> - **🚀 免部署線上執行**：無需伺服器即可建立 [上游项目 線上助理](https://link-ai.tech/cowagent/create)，1 分鐘擁有專屬 Agent
+> - **🚀 免部署線上執行**：無需伺服器即可建立 [CowAgent 線上助理](https://link-ai.tech/cowagent/create)，1 分鐘擁有專屬 Agent
 > - **🧠 Agent 基礎設施**：聚合主流大模型、知識庫、資料庫、技能、工作流，提供開箱即用的 Agent 能力擴充
 > - **🏢 企業級協作**：提供團隊協作、許可權分級、審計日誌、私有化部署等能力，讓 Agent 安全落地企業場景
 
@@ -300,10 +293,10 @@ cow install-browser                # 安裝瀏覽器工具
 
 1. 本專案遵循 [MIT 開源協議](/LICENSE)，主要用於技術研究和學習。使用時請遵守所在地法律法規及相關政策，因使用本專案所產生的一切後果由使用者自行承擔。
 2. **成本與安全：** Agent 模式 Token 消耗顯著高於普通對話，請根據效果與成本權衡選擇模型；Agent 具備訪問本地作業系統的能力，請謹慎選擇部署環境。
-3. 容大AI 專案專注於開源技術開發，不會參與、授權或發行任何加密貨幣。
+3. CowAgent 專案專注於開源技術開發，不會參與、授權或發行任何加密貨幣。
 
 <br/>
 
 ## 📌 專案更名說明
 
-目前產品名稱為 **容大AI（RongAI）**，基於上游项目 專案（原名 `chatgpt-on-wechat`）。現有儲存庫地址、`cow` 命令及技術識別名稱保留，以相容既有安裝和整合。
+本專案原名 `chatgpt-on-wechat`，於 2026.04.13 正式更名為 **CowAgent**。原 GitHub 地址已自動重定向，老使用者可選擇執行 `git remote set-url origin https://github.com/zhayujie/CowAgent.git` 更新本地遠端地址。
