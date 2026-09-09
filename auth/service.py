@@ -1707,6 +1707,7 @@ class IdentityService:
             "chat": {"available": True, "reason": ""},
             "tools": {"available": True, "reason": ""},
             "files": {"available": True, "reason": ""},
+            "projects": {"available": True, "reason": ""},
             "scheduler": {"available": False, "reason": "deferred"},
             "openai_api": {"available": True, "reason": ""},
             "desktop_enterprise": {"available": False, "reason": "deferred"},

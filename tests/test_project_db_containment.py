@@ -11,6 +11,14 @@ from common.runtime_identity import RuntimeIdentity, use_identity
 from agent.workspace import project_store
 
 
+def test_consumer_availability_marks_projects_available():
+    """The capability report must advertise the project workspace consumer."""
+    from auth.service import IdentityService
+    svc = IdentityService(os.path.join(tempfile.mkdtemp(), "identity.db"))
+    consumers = svc._consumer_availability()
+    assert consumers["projects"] == {"available": True, "reason": ""}
+
+
 def test_store_file_uses_user_root_in_database(monkeypatch, tmp_path):
     # user_root() = shared_root()/users/<user_id>; stub shared_root to the temp.
     import common.state_dir as sd
