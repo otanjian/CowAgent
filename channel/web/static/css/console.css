@@ -301,16 +301,92 @@
     color: #969da5;
 }
 .account-profile-grid {
-    display: grid;
-    grid-template-columns: minmax(96px, auto) 1fr;
-    gap: 6px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
     margin: 0;
     font-size: 13px;
     line-height: 1.5;
 }
-.account-profile-grid dt { color: #969da5; }
-.account-profile-grid dd { margin: 0; color: #e8eee9; overflow-wrap: anywhere; }
-.account-profile-grid dd.muted { color: #bdc5bf; font-style: italic; }
+/* Each field is a labelled row; the value cell holds either the read-only text
+   or (in edit mode) an input. */
+.account-profile-row {
+    display: grid;
+    grid-template-columns: minmax(96px, auto) 1fr;
+    gap: 6px 14px;
+    align-items: center;
+    min-width: 0;
+}
+.account-profile-row dt { color: #969da5; }
+.account-profile-row dd { margin: 0; color: #e8eee9; overflow-wrap: anywhere; min-width: 0; }
+.account-profile-row dd.muted { color: #bdc5bf; font-style: italic; }
+/* The editable input cell is hidden unless the row is in edit mode. */
+.account-profile-edit { display: none; }
+.account-profile-row.editing .account-profile-edit { display: block; }
+.account-profile-row.editing .account-profile-read { display: none; }
+.account-profile-edit .account-field-input { padding: 7px 11px; }
+
+/* Profile hero: avatar disc + name/username + edit action. */
+.account-profile-hero {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px 24px 4px;
+}
+.account-profile-avatar {
+    flex: none;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, .08);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    color: #e8eee9;
+}
+.account-profile-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.account-profile-avatar-initial {
+    font-size: 22px;
+    font-weight: 600;
+}
+.account-profile-avatar-btn {
+    cursor: pointer;
+    border: none;
+    padding: 0;
+}
+.account-profile-avatar-btn:hover { box-shadow: 0 0 0 3px rgba(116, 216, 149, .3); }
+.account-profile-avatar.is-uploading { opacity: .6; pointer-events: none; }
+.account-profile-hero-copy { min-width: 0; flex: 1; }
+.account-profile-hero-name {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #e8eee9;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.account-profile-hero-username {
+    margin: 2px 0 0;
+    font-size: 13px;
+    color: #969da5;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.account-profile-avatar-tip {
+    margin: 3px 0 0;
+    font-size: 11px;
+    color: #7d8a84;
+    opacity: .85;
+}
+.account-profile-edit-btn { flex: none; }
 
 /* Change-password modal fields. */
 .account-password-note,
@@ -339,6 +415,16 @@
     box-shadow: 0 0 0 3px rgba(116, 216, 149, .18);
 }
 .account-field-input:focus-visible { outline: 2px solid #74d895; outline-offset: -2px; }
+.account-field-input.invalid {
+    border-color: #f87171;
+    box-shadow: 0 0 0 3px rgba(248, 113, 113, .15);
+}
+.account-field-error {
+    margin: 4px 0 0;
+    font-size: 11px;
+    color: #f87171;
+    min-height: 0;
+}
 
 .dark .account-field-input {
     border-color: #3a413c;
@@ -4166,6 +4252,226 @@ textarea.doc-editor {
    scrollbar and trap the options). The card itself scrolls if a form ever
    outgrows the viewport. */
 .agent-modal-body { padding: 12px 24px; overflow: visible; }
+
+/* ---- Role create/edit page (replaces modal for roles) ---- */
+.role-editor {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    background: #f8fafc;
+}
+.dark .role-editor { background: #121212; }
+.role-editor.hidden { display: none; }
+.role-editor-head {
+    flex-shrink: 0;
+    background: #fff;
+    border-bottom: 1px solid #e2e8f0;
+    padding: 16px 28px 0;
+}
+.dark .role-editor-head {
+    background: #1A1A1A;
+    border-bottom-color: rgba(255,255,255,.08);
+}
+.role-editor-back {
+    border: 0;
+    background: none;
+    color: #64748b;
+    font-size: 12px;
+    padding: 0;
+    margin-bottom: 10px;
+    cursor: pointer;
+}
+.role-editor-back:hover { color: #0f172a; }
+.dark .role-editor-back:hover { color: #f1f5f9; }
+.role-editor-title-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+}
+.role-editor-tabs {
+    display: flex;
+    gap: 2px;
+    overflow-x: auto;
+}
+.role-editor-tab {
+    border: 0;
+    background: transparent;
+    padding: 12px 14px;
+    font-size: 13px;
+    color: #64748b;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+}
+.role-editor-tab:hover { color: #0f172a; }
+.dark .role-editor-tab:hover { color: #f1f5f9; }
+.role-editor-tab.active {
+    color: #16a34a;
+    font-weight: 600;
+    border-bottom-color: #16a34a;
+}
+.role-editor-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: #f1f5f9;
+    color: #64748b;
+}
+.role-editor-tab.active .role-editor-badge {
+    background: #dcfce7;
+    color: #166534;
+}
+.role-editor-body {
+    flex: 1;
+    overflow: auto;
+    padding: 22px 28px 28px;
+}
+.role-editor-panel { display: none; max-width: 920px; }
+.role-editor-panel.active { display: block; }
+.role-editor-block-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 22px 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #64748b;
+}
+.role-editor-block-title:first-child { margin-top: 0; }
+.role-editor-block-title::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: #e2e8f0;
+}
+.dark .role-editor-block-title::after { background: rgba(255,255,255,.08); }
+.role-perm-group {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    margin-bottom: 12px;
+    overflow: hidden;
+}
+.dark .role-perm-group {
+    background: #1A1A1A;
+    border-color: rgba(255,255,255,.08);
+}
+.role-perm-group-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    background: #fafbfc;
+    border-bottom: 1px solid #e2e8f0;
+    gap: 12px;
+}
+.dark .role-perm-group-head {
+    background: rgba(255,255,255,.03);
+    border-bottom-color: rgba(255,255,255,.06);
+}
+.role-perm-group-body {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 4px;
+    padding: 10px;
+}
+.role-perm-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    color: #334155;
+}
+.role-perm-item:hover { background: #f8fafc; }
+.dark .role-perm-item { color: #e2e8f0; }
+.dark .role-perm-item:hover { background: rgba(255,255,255,.04); }
+.role-perm-item.checked {
+    background: #dcfce7;
+    color: #14532d;
+}
+.dark .role-perm-item.checked {
+    background: rgba(34,197,94,.15);
+    color: #bbf7d0;
+}
+.role-perm-item input { accent-color: #16a34a; }
+.role-res-picker {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 14px;
+}
+.dark .role-res-picker {
+    background: #1A1A1A;
+    border-color: rgba(255,255,255,.08);
+}
+.role-res-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+.role-res-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 12px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+}
+.dark .role-res-item {
+    background: #121212;
+    border-color: rgba(255,255,255,.08);
+    color: #e2e8f0;
+}
+.role-res-item.checked {
+    border-color: #86efac;
+    background: #f0fdf4;
+}
+.dark .role-res-item.checked {
+    border-color: rgba(34,197,94,.45);
+    background: rgba(34,197,94,.12);
+}
+.role-res-item input { accent-color: #16a34a; margin-top: 2px; }
+.role-editor-foot {
+    flex-shrink: 0;
+    background: #fff;
+    border-top: 1px solid #e2e8f0;
+    padding: 12px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+.dark .role-editor-foot {
+    background: #1A1A1A;
+    border-top-color: rgba(255,255,255,.08);
+}
+.role-dirty-pill {
+    display: none;
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #fff7ed;
+    color: #c2410c;
+    border: 1px solid #fed7aa;
+}
+.role-dirty-pill.show { display: inline-flex; }
+@media (max-width: 860px) {
+    .role-res-list { grid-template-columns: 1fr; }
+    .role-editor-head, .role-editor-body, .role-editor-foot { padding-left: 16px; padding-right: 16px; }
+}
 .agent-modal-foot {
     display: flex; align-items: center; gap: 10px;
     padding: 16px 24px 20px; border-top: 1px solid #f1f5f9;
@@ -4198,6 +4504,15 @@ textarea.doc-editor {
     outline: none; border-color: #4ABE6E;
     box-shadow: 0 0 0 3px rgba(74, 190, 110, .12); background: #fff;
 }
+/* Icon-prefixed input (matches the oneagent admin modal look). The icon sits in
+   an absolutely-positioned span inside a relative wrapper; the control gets
+   left padding so the text clears the glyph. */
+.agent-input-wrap { width: 100%; }
+.agent-icon-abs {
+    position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+    color: #94a3b8; font-size: 13px; pointer-events: none;
+}
+.agent-input[data-with-icon="1"] { padding-left: 34px; }
 /* Responsibilities is a paragraph, not a line: let it breathe and wrap. */
 .agent-textarea {
     height: auto; min-height: 84px; padding: 10px 12px;
@@ -4686,4 +5001,29 @@ button.composer-menu-item.joined:hover .joined-remove { display: inline; color: 
     display: flex;
     flex-direction: column;
     min-height: 0;
+}
+
+/* Path-based nav areas: /chat vs /admin show only their shell */
+#app[data-nav-area="workbench"] [data-nav-shell="admin"] { display: none !important; }
+#app[data-nav-area="admin"] [data-nav-shell="workbench"] { display: none !important; }
+#app[data-nav-area="admin"] #sidebar-new-chat { display: none !important; }
+.admin-home-shortcuts .admin-home-shortcut {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.875rem 1rem;
+    border-radius: 0.75rem;
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    background: rgba(255, 255, 255, 0.4);
+    cursor: pointer;
+    text-align: left;
+    width: 100%;
+    color: inherit;
+}
+.dark .admin-home-shortcuts .admin-home-shortcut {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.08);
+}
+.admin-home-shortcuts .admin-home-shortcut:hover {
+    border-color: rgba(74, 190, 110, 0.45);
 }

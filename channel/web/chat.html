@@ -165,7 +165,8 @@
             </button>
             <!-- Navigation -->
             <nav id="sidebar-nav" class="flex-1 min-h-0 overflow-y-auto py-4 px-3 space-y-1">
-                <!-- Workbench Area -->
+                <!-- Workbench Area (visible on /chat) -->
+                <div data-nav-shell="workbench">
                 <div class="menu-group open" data-group="chat">
                     <button class="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 hover:text-neutral-300 cursor-pointer transition-colors duration-150">
                         <i class="fas fa-chevron-right text-[10px] chevron"></i>
@@ -211,7 +212,21 @@
                     </div>
                 </div>
 
-                <!-- Admin Console Area -->
+                <a id="nav-open-admin" href="/admin" target="cow-admin" rel="noopener"
+                   class="sidebar-item hidden flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px] mt-2">
+                    <i class="fas fa-gauge-high item-icon text-xs w-5 text-center"></i>
+                    <span data-i18n="nav_admin_console">管理控制台</span>
+                </a>
+                </div>
+
+                <!-- Admin Console Area (visible on /admin) -->
+                <div data-nav-shell="admin">
+                <a id="nav-return-workbench" href="/chat" target="cow-workbench" rel="noopener"
+                   class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px] mb-2">
+                    <i class="fas fa-arrow-left item-icon text-xs w-5 text-center"></i>
+                    <span data-i18n="nav_return_workbench">返回工作台</span>
+                </a>
+
                 <p class="sidebar-section-label sidebar-hidden-admin-area" data-i18n="nav_admin_console">管理控制台</p>
 
                 <!-- 智能体开发 -->
@@ -318,6 +333,7 @@
                         </a>
                     </div>
                 </div>
+                </div>
             </nav>
 
             <!-- Account card stays outside the independently scrolling navigation. -->
@@ -416,7 +432,7 @@
         </div>
 
         <!-- ================================================================ -->
-        <!-- Account profile drawer (read-only, database identity mode)       -->
+        <!-- Account profile drawer (editable, database identity mode)         -->
         <!-- ================================================================ -->
         <div id="account-profile-drawer" class="agent-modal hidden" role="dialog" aria-modal="true" aria-labelledby="account-profile-title">
             <div class="agent-modal-card agent-modal-card-wide">
@@ -424,42 +440,81 @@
                     <h3 id="account-profile-title" class="agent-modal-title" data-i18n="account_profile_title">个人资料</h3>
                     <button type="button" class="agent-modal-close" onclick="closeAccountProfile()" aria-label="Close" data-i18n-aria-label="close">×</button>
                 </div>
+                <!-- Avatar header -->
+                <div class="account-profile-hero">
+                    <button type="button" id="account-profile-avatar" class="account-profile-avatar account-profile-avatar-btn" onclick="document.getElementById('account-profile-avatar-input').click()" aria-label="上传头像">
+                        <input id="account-profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onchange="uploadAccountProfileAvatar(this.files && this.files[0])">
+                    </button>
+                    <div class="account-profile-hero-copy">
+                        <p id="account-profile-hero-name" class="account-profile-hero-name">—</p>
+                        <p id="account-profile-hero-username" class="account-profile-hero-username">—</p>
+                        <p class="account-profile-avatar-tip" data-i18n="account_profile_avatar_hint">点击可更换头像</p>
+                    </div>
+                    <button id="account-profile-edit-btn" type="button" class="agent-btn agent-btn-text account-profile-edit-btn" onclick="startAccountProfileEdit()">
+                        <i class="fas fa-pen mr-1"></i><span data-i18n="account_profile_edit">编辑资料</span>
+                    </button>
+                </div>
                 <div class="agent-modal-body">
                     <p id="account-profile-status" class="account-field-status hidden" role="status"></p>
                     <div id="account-profile-content" class="account-profile-content">
+                        <!-- Global account section -->
                         <div class="account-profile-section">
                             <h4 class="account-profile-subtitle" data-i18n="account_profile_global">全局账号</h4>
-                            <dl class="account-profile-grid">
-                                <dt data-i18n="account_profile_display_name">姓名</dt>
-                                <dd id="ap-display-name">—</dd>
-                                <dt data-i18n="account_profile_username">登录账号</dt>
-                                <dd id="ap-username">—</dd>
-                                <dt data-i18n="account_profile_platform">平台身份</dt>
-                                <dd id="ap-platform">—</dd>
-                            </dl>
+                            <div class="account-profile-grid">
+                                <div class="account-profile-row" data-field="display_name">
+                                    <dt data-i18n="account_profile_display_name">姓名</dt>
+                                    <dd id="ap-display-name" class="account-profile-read">—</dd>
+                                    <dd class="account-profile-edit"><input id="ap-display-name-input" type="text" class="account-field-input" data-i18n-placeholder="account_profile_display_name" maxlength="80"><p id="ap-display-name-input-error" class="account-field-error hidden"></p></dd>
+                                </div>
+                                <div class="account-profile-row">
+                                    <dt data-i18n="account_profile_username">登录账号</dt>
+                                    <dd id="ap-username" class="account-profile-read">—</dd>
+                                </div>
+                                <div class="account-profile-row">
+                                    <dt data-i18n="account_profile_platform">平台身份</dt>
+                                    <dd id="ap-platform" class="account-profile-read">—</dd>
+                                </div>
+                            </div>
                         </div>
+                        <!-- Current tenant member section -->
                         <div id="account-profile-member-section" class="account-profile-section">
                             <h4 class="account-profile-subtitle" data-i18n="account_profile_member">当前租户成员</h4>
-                            <dl class="account-profile-grid">
-                                <dt data-i18n="account_profile_tenant">当前租户</dt>
-                                <dd id="ap-tenant">—</dd>
-                                <dt data-i18n="account_profile_member_name">成员姓名</dt>
-                                <dd id="ap-member-name">—</dd>
-                                <dt data-i18n="account_profile_role">实际角色</dt>
-                                <dd id="ap-role">—</dd>
-                                <dt data-i18n="account_profile_department">部门</dt>
-                                <dd id="ap-department">—</dd>
-                                <dt data-i18n="account_profile_position">岗位</dt>
-                                <dd id="ap-position">—</dd>
-                            </dl>
+                            <div class="account-profile-grid">
+                                <div class="account-profile-row">
+                                    <dt data-i18n="account_profile_tenant">当前租户</dt>
+                                    <dd id="ap-tenant" class="account-profile-read">—</dd>
+                                </div>
+                                <div class="account-profile-row" data-field="member_display_name">
+                                    <dt data-i18n="account_profile_member_name">成员姓名</dt>
+                                    <dd id="ap-member-name" class="account-profile-read">—</dd>
+                                    <dd class="account-profile-edit"><input id="ap-member-name-input" type="text" class="account-field-input" data-i18n-placeholder="account_profile_member_name" maxlength="80"><p id="ap-member-name-input-error" class="account-field-error hidden"></p></dd>
+                                </div>
+                                <div class="account-profile-row">
+                                    <dt data-i18n="account_profile_role">实际角色</dt>
+                                    <dd id="ap-role" class="account-profile-read">—</dd>
+                                </div>
+                                <div class="account-profile-row">
+                                    <dt data-i18n="account_profile_department">部门</dt>
+                                    <dd id="ap-department" class="account-profile-read">—</dd>
+                                </div>
+                                <div class="account-profile-row" data-field="position_text">
+                                    <dt data-i18n="account_profile_position">岗位</dt>
+                                    <dd id="ap-position" class="account-profile-read">—</dd>
+                                    <dd class="account-profile-edit"><input id="ap-position-input" type="text" class="account-field-input" data-i18n-placeholder="account_profile_position" maxlength="120"></dd>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
                 <div class="agent-modal-foot">
-                    <button onclick="closeAccountProfile()" class="agent-btn agent-btn-text" data-i18n="close">关闭</button>
+                    <span id="account-profile-action-status" class="agent-field-hint mr-auto hidden" role="status"></span>
+                    <button id="account-profile-cancel-btn" type="button" onclick="cancelAccountProfileEdit()" class="agent-btn agent-btn-text hidden" data-i18n="cancel">取消</button>
+                    <button id="account-profile-save-btn" type="button" onclick="submitAccountProfile()" class="agent-btn agent-btn-primary hidden" data-i18n="save">保存</button>
+                    <button id="account-profile-close-btn" type="button" onclick="closeAccountProfile()" class="agent-btn agent-btn-text" data-i18n="close">关闭</button>
                 </div>
             </div>
         </div>
+
 
         <!-- ================================================================ -->
         <!-- Change-password modal (database identity mode)                   -->
@@ -2121,6 +2176,17 @@
             </div>
             <div id="audit-pagination" class="mt-4 flex items-center justify-between"></div>
             <div id="audit-status" class="mt-4 text-sm text-primary-500 opacity-0 transition-opacity duration-300 text-left"></div>
+        </div>
+    </div>
+
+    <!-- Admin console overview (default landing on /admin). -->
+    <div id="view-admin-home" class="view">
+        <div class="p-6 h-full overflow-y-auto">
+            <div class="admin-home max-w-3xl">
+                <h1 class="text-2xl font-semibold text-slate-800 dark:text-slate-100" data-i18n="admin_home_title">管理控制台</h1>
+                <p class="mt-2 text-sm text-slate-500 dark:text-slate-400" data-i18n="admin_home_hint">选择左侧菜单管理智能体、组织与平台配置。</p>
+                <div id="admin-home-shortcuts" class="admin-home-shortcuts mt-6 grid gap-3 sm:grid-cols-2"></div>
+            </div>
         </div>
     </div>
 

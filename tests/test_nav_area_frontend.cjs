@@ -46,3 +46,12 @@ test('nav area helpers: path, open, qualify entry', () => {
         identityMode: 'legacy', isPlatformAdmin: false, isTenantAdmin: false,
     }), true);
 });
+
+test('chat.html has area markers and admin home', () => {
+    const htmlSource = fs.readFileSync(path.join(__dirname, '../channel/web/chat.html'), 'utf8');
+    assert.match(htmlSource, /id="nav-open-admin"/);
+    assert.match(htmlSource, /id="nav-return-workbench"/);
+    assert.match(htmlSource, /id="view-admin-home"/);
+    assert.match(htmlSource, /data-nav-shell="workbench"/);
+    assert.match(htmlSource, /data-nav-shell="admin"/);
+});
