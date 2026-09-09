@@ -102,7 +102,7 @@ def test_manual_run_is_exposed_by_explicit_web_and_desktop_controls():
     assert "fetch('/api/scheduler/run'" in web_console
     web_run = web_console[web_console.index("function runTaskNow(task, button)"):]
     assert "showConfirmDialog({" in web_run[:2500]
-    assert "async runTask(taskId: string)" in desktop_client
+    assert "async runTask(taskId: string, agentId = ''): Promise<ApiResult>" in desktop_client
     assert "'/api/scheduler/run'" in desktop_client
     assert "const runNow = async ()" in desktop_page
     assert "window.confirm(t('task_run_confirm'))" in desktop_page

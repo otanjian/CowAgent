@@ -693,6 +693,7 @@ const I18N = {
         nav_chat: '工作台', nav_manage: '管理', nav_monitor: '监控', nav_system: '系统设置',
         nav_workbench: '工作台', nav_admin_console: '管理控制台',
         nav_return_workbench: '返回工作台',
+        nav_admin_overview: '控制台概览',
         admin_home_title: '管理控制台',
         admin_home_hint: '选择左侧菜单管理智能体、组织与平台配置。',
         nav_admin_denied: '当前账号无权进入管理控制台。',
@@ -1427,6 +1428,7 @@ const I18N = {
         nav_chat: '工作台', nav_manage: '管理', nav_monitor: '監控', nav_system: '系統設定',
         nav_workbench: '工作台', nav_admin_console: '管理控制台',
         nav_return_workbench: '返回工作台',
+        nav_admin_overview: '控制台概覽',
         admin_home_title: '管理控制台',
         admin_home_hint: '選擇左側選單管理智慧體、組織與平台設定。',
         nav_admin_denied: '目前帳號無權進入管理控制台。',
@@ -2152,6 +2154,7 @@ const I18N = {
         nav_chat: 'Workbench', nav_manage: 'Management', nav_monitor: 'Monitor', nav_system: 'System Settings',
         nav_workbench: 'Workbench', nav_admin_console: 'Admin Console',
         nav_return_workbench: 'Back to Workbench',
+        nav_admin_overview: 'Console Overview',
         admin_home_title: 'Admin Console',
         admin_home_hint: 'Use the sidebar to manage agents, organization, and platform settings.',
         nav_admin_denied: 'Your account cannot open the admin console.',
@@ -3636,7 +3639,7 @@ const VIEW_META = {
     branding:    { group: 'nav_group_platform_ops', page: 'menu_branding', console: 'admin.branding' },
     logs:        { group: 'nav_group_platform_ops', page: 'menu_logs', console: 'admin.logs' },
     audit:       { group: 'nav_group_platform_ops', page: 'menu_audit', console: 'admin.settings' },
-    'admin-home': { group: 'nav_admin_console', page: 'admin_home_title', console: null },
+    'admin-home': { group: 'nav_admin_console', page: 'nav_admin_overview', console: null },
 };
 
 function _viewTargetArea(viewId) {

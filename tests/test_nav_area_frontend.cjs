@@ -51,6 +51,8 @@ test('chat.html has area markers and admin home', () => {
     const htmlSource = fs.readFileSync(path.join(__dirname, '../channel/web/chat.html'), 'utf8');
     assert.match(htmlSource, /id="nav-open-admin"/);
     assert.match(htmlSource, /id="nav-return-workbench"/);
+    assert.match(htmlSource, /id="nav-admin-home"/);
+    assert.match(htmlSource, /data-view="admin-home"/);
     assert.match(htmlSource, /id="view-admin-home"/);
     assert.match(htmlSource, /data-nav-shell="workbench"/);
     assert.match(htmlSource, /data-nav-shell="admin"/);
@@ -59,12 +61,15 @@ test('chat.html has area markers and admin home', () => {
 test('chat.html pins admin entry above account footer', () => {
     const htmlSource = fs.readFileSync(path.join(__dirname, '../channel/web/chat.html'), 'utf8');
     const adminIdx = htmlSource.indexOf('id="nav-open-admin"');
+    const workbenchIdx = htmlSource.indexOf('id="nav-return-workbench"');
     const footerIdx = htmlSource.indexOf('id="sidebar-account-footer"');
     const navOpen = htmlSource.indexOf('id="sidebar-nav"');
     const navClose = htmlSource.indexOf('</nav>', navOpen);
     assert.ok(adminIdx > 0 && footerIdx > adminIdx, 'nav-open-admin must sit above sidebar-account-footer');
+    assert.ok(workbenchIdx > 0 && footerIdx > workbenchIdx, 'nav-return-workbench must sit above sidebar-account-footer');
     assert.match(htmlSource, /sidebar-admin-entry-wrap/);
     assert.ok(adminIdx > navClose, 'admin entry must be outside scrolling sidebar-nav');
+    assert.ok(workbenchIdx > navClose, 'workbench entry must be outside scrolling sidebar-nav');
 });
 
 test('chat.html pins recent sessions under scenes', () => {

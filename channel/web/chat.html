@@ -225,10 +225,10 @@
 
                 <!-- Admin Console Area (visible on /admin) -->
                 <div data-nav-shell="admin" class="admin-nav-shell">
-                <a id="nav-return-workbench" href="/chat" target="cow-workbench" rel="noopener"
-                   class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px] mb-2">
-                    <i class="fas fa-arrow-left item-icon text-xs w-5 text-center"></i>
-                    <span data-i18n="nav_return_workbench">返回工作台</span>
+                <a id="nav-admin-home" class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px] mb-1"
+                   data-view="admin-home">
+                    <i class="fas fa-border-all item-icon text-xs w-5 text-center"></i>
+                    <span data-i18n="nav_admin_overview">控制台概览</span>
                 </a>
 
                 <!-- 智能体开发 -->
@@ -338,12 +338,19 @@
                 </div>
             </nav>
 
-            <!-- Pinned above account: open admin console (workbench only). -->
+            <!-- Pinned above account: open admin (workbench) / return workbench (admin). -->
             <div data-nav-shell="workbench" class="sidebar-admin-entry-wrap">
                 <a id="nav-open-admin" href="/admin" target="cow-admin" rel="noopener"
                    class="sidebar-item sidebar-admin-entry hidden">
                     <i class="fas fa-gauge-high item-icon" aria-hidden="true"></i>
                     <span data-i18n="nav_admin_console">管理控制台</span>
+                </a>
+            </div>
+            <div data-nav-shell="admin" class="sidebar-admin-entry-wrap">
+                <a id="nav-return-workbench" href="/chat" target="cow-workbench" rel="noopener"
+                   class="sidebar-item sidebar-admin-entry">
+                    <i class="fas fa-table-columns item-icon" aria-hidden="true"></i>
+                    <span data-i18n="nav_workbench">工作台</span>
                 </a>
             </div>
 
