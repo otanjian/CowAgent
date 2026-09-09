@@ -60,6 +60,7 @@ from channel.web.admin_handlers import (
     PlatformTenantAuthorizationCatalogHandler,
     PlatformTenantResourcesHandler,
 )
+from channel.web.admin_overview import AdminOverviewHandler
 from common import const
 from common import i18n
 from common.log import logger
@@ -1368,6 +1369,7 @@ _WEB_URLS = (
     '/api/tenant/departments/([^/]+)', 'TenantDepartmentHandler',
     '/api/identity/audit', 'IdentityAuditHandler',
     '/api/identity/administered-tenants', 'IdentityAdministeredTenantsHandler',
+    '/api/admin/overview', 'AdminOverviewHandler',
     '/message', 'MessageHandler',
     '/upload', 'UploadHandler',
     '/uploads/(.*)', 'UploadsHandler',
