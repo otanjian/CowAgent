@@ -313,6 +313,62 @@ class AgentLLMModel(LLMModel):
         )
         return bool(capability.get("thinking_only"))
 
+    def _authorized_model_ids(self) -> Optional[set]:
+        """Return the ``model.use`` grant set the current identity may use.
+
+        Returns ``None`` when runtime authorization is not in play (legacy mode
+        or no identity), meaning "unrestricted" — the historical behaviour. In
+        database mode it derives the ambient identity's ``model.use`` grants so
+        only authorized models reach the provider. Recomputed on every call,
+        never cached across a request, so a grant revoked mid-session takes
+        effect on the very next call.
+        """
+        from common.runtime_identity import current_identity
+
+        ident = current_identity()
+        if not ident.user_id or not ident.tenant_id:
+            return None
+        try:
+            from auth.service import get_identity_service
+            svc = get_identity_service()
+            ids = svc.resource_ids_for(ident.user_id, ident.tenant_id, "model", "use",
+                                       permission="model.use")
+        except Exception:
+            return None
+        # A platform admin (dynamic all) / legacy derivation returns None for
+        # "unrestricted". A normal member returns an explicit set (possibly empty).
+        return ids
+
+    def _model_use_denial(self, model_code: str) -> Optional[str]:
+        """Return a reason the resolved model may not be used, else None.
+
+        Mirrors the ``skill.use`` gate: unrestricted (no identity / platform all
+        / service unavailable) returns None. When a grant set exists, the model
+        must be explicitly allowed — matched on the exact model code and on the
+        trailing ``:{code}`` segment of a catalog resource_id
+        (``provider:{pid}:{code}``). An empty grant set denies every model, which
+        is the "no authorized candidate" case and must not degrade to
+        "unrestricted".
+        """
+        allowed = self._authorized_model_ids()
+        if allowed is None:
+            return None
+        if model_code in allowed:
+            return None
+        for rid in allowed:
+            parts = str(rid).split(":")
+            if parts and parts[-1] == model_code:
+                return None
+        if not allowed:
+            return "No model is currently authorized for you; select one to continue."
+        return f"You are not authorized to use model '{model_code}'."
+
+    def _require_model_use(self, model_code: str) -> None:
+        """Raise when the resolved model is outside the caller's grant set."""
+        denial = self._model_use_denial(model_code)
+        if denial is not None:
+            raise RuntimeError(denial)
+
     @property
     def bot(self):
         """Lazy load the bot, re-create when model or bot_type changes"""
@@ -331,6 +387,12 @@ class AgentLLMModel(LLMModel):
         Call the model using COW's bot infrastructure
         """
         try:
+            # Fine-grained model authorization: the resolved model must be in
+            # the caller's model.use grant set. Recomputed per call (never
+            # cached) so a revoked grant applies to the next call. Legacy mode
+            # / platform all pass through (unrestricted); an explicit grant
+            # set that excludes the model is rejected before any side effect.
+            self._require_model_use(self.model)
             # For non-streaming calls, we'll use the existing reply method
             # This is a simplified implementation
             if hasattr(self.bot, 'call_with_tools'):
@@ -396,6 +458,9 @@ class AgentLLMModel(LLMModel):
         Call the model with streaming using COW's bot infrastructure
         """
         try:
+            # Fine-grained model authorization (see `call`): the resolved model,
+            # including an engaged fallback, must be in the caller's grant set.
+            self._require_model_use(self.model)
             if hasattr(self.bot, 'call_with_tools'):
                 # Use tool-enabled streaming call if available
                 # Extract system prompt if present
@@ -478,13 +543,11 @@ class AgentBridge:
     
     def __init__(self, bridge: Bridge):
         self.bridge = bridge
-        from config import conf
-        self._database_identity_mode = (
-            str(conf().get("identity_mode", "legacy") or "legacy") == "database"
-        )
-        # In database identity mode the runtime path (chat / model execution) is
-        # closed server-side (task 3.11 / design.md §deferred capabilities): the
-        # bridge constructs WITHOUT initializing the registry/router/initializer.
+        # Runtime consumers are open in both identity modes: the AgentBridge
+        # always builds the registry/router/initializer (task 2.2,
+        # open-database-runtime). Authorization for *who* may run what is
+        # enforced per request at the transport layer (chat.use / agent.use /
+        # model.use) — never by refusing to construct the runtime.
         self.agents = {}
         self.default_agent = None
         self.agent = None
@@ -493,10 +556,8 @@ class AgentBridge:
         self._agent_instances = {}
         self._default_agents = {}
         self._agents_lock = threading.RLock()
-        if self._database_identity_mode:
-            return
-        # Legacy mode: resolve the registry/router and build the initializer so a
-        # message can route to an Agent and run lazily.
+        # Resolve the registry/router and build the initializer so a message
+        # can route to an Agent and run lazily.
         from agent.registry import get_agent_registry
         from agent.routing import AgentRouter, get_agent_router
         self.agent_registry = get_agent_registry()
@@ -874,6 +935,7 @@ class AgentBridge:
                 host_id,
                 owns_conversation=resolved_agent_id == host_id,
             )
+            self._apply_scene_context(agent, session_id)
             return agent
 
     def _apply_session_project(self, agent, session_id: str, agent_id: str) -> None:
@@ -890,6 +952,34 @@ class AgentBridge:
                 agent.apply_project_dir(project_dir)
         except Exception as e:
             logger.debug(f"[AgentBridge] apply_session_project failed: {e}")
+
+    def _apply_scene_context(self, agent, session_id: str) -> None:
+        """Apply an activated scene's context to the session Agent.
+
+        Reads the session's scene context (``scenes.service``) and, when a scene
+        is active, appends its ``system_prompt`` via ``extra_system_suffix`` and
+        adds its mapped skills to the skill selection. A no-op for sessions
+        without an active scene; failures are swallowed so a missing scene module
+        never breaks the chat.
+        """
+        if agent is None or not session_id:
+            return
+        try:
+            from scenes import service as scenes_service
+
+            scene = scenes_service.get_scene_context(session_id)
+            if not scene:
+                return
+            if scene.get("system_prompt"):
+                agent.extra_system_suffix = scene["system_prompt"]
+            names = scenes_service.resolve_skill_names(scene)
+            if names and agent.skill_manager is not None:
+                # Only widen an existing restricted selection; ``None`` already
+                # means "all skills", so a loaded scene skill is visible as-is.
+                if agent.skill_manager.selection is not None:
+                    agent.skill_manager.selection.update(names)
+        except Exception as e:
+            logger.debug(f"[AgentBridge] apply_scene_context failed: {e}")
 
     def apply_session_prefs(
         self, agent, session_id: str, agent_id: str = None, owns_conversation: bool = True

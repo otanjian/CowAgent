@@ -198,17 +198,26 @@ html[data-web-palette] #sidebar .sidebar-account-menu {
     background-color: var(--web-sidebar-menu);
     border-color: var(--web-sidebar-border);
     color: var(--web-sidebar-title);
-    box-shadow: var(--web-shadow);
+    box-shadow: 0 12px 32px rgba(15, 23, 42, .12), 0 2px 6px rgba(15, 23, 42, .06);
 }
 html[data-web-palette] #sidebar .account-menu-username,
-html[data-web-palette] #sidebar .account-menu-status { color: var(--web-sidebar-muted); }
+html[data-web-palette] #sidebar .account-menu-status,
+html[data-web-palette] #sidebar .account-menu-icon,
+html[data-web-palette] #sidebar .account-menu-trailing { color: var(--web-sidebar-muted); }
 html[data-web-palette] #sidebar .account-menu-action { color: var(--web-sidebar-title); }
+html[data-web-palette] #sidebar .account-menu-identity,
+html[data-web-palette] #sidebar .account-menu-group,
 html[data-web-palette] #sidebar .account-menu-version { border-color: var(--web-sidebar-border); }
-html[data-web-palette] #sidebar .account-menu-version a { color: var(--web-sidebar-accent); }
+html[data-web-palette] #sidebar .account-menu-version a { color: var(--web-sidebar-muted); }
 html[data-web-palette] #sidebar .account-menu-action:hover:not(:disabled),
 html[data-web-palette] #sidebar .account-menu-version a:hover {
     background-color: var(--web-sidebar-hover);
     color: var(--web-sidebar-title);
+}
+html[data-web-palette] #sidebar .account-menu-action:hover:not(:disabled) .account-menu-icon { color: inherit; }
+html[data-web-palette] #sidebar .account-menu-logout:hover:not(:disabled) {
+    background-color: var(--web-danger-soft);
+    color: var(--web-danger);
 }
 html[data-web-palette] #sidebar :is(a, button):focus-visible {
     outline: 2px solid var(--web-sidebar-accent);
@@ -647,8 +656,7 @@ html[data-web-palette] #sidebar-resources > summary:focus-visible {
     outline: 2px solid var(--web-sidebar-accent);
     outline-offset: -3px;
 }
-html[data-web-palette] #sidebar-account-footer { margin: 0 16px; }
-html[data-web-palette] #sidebar-account-toggle { padding: 14px 4px; min-height: 80px; }
+html[data-web-palette] #sidebar-account-footer { margin: 0 12px; }
 
 html[data-web-palette] #main-content > .workbench-header {
     height: 64px;
@@ -850,8 +858,8 @@ html[data-web-palette] #composer-card #optimize-btn.text-primary-500 { color: va
     #app.sidebar-collapsed #sidebar-nav .menu-group > button { justify-content: center; gap: 0; padding: 8px 0; }
     #app.sidebar-collapsed #sidebar-resources > summary { justify-content: center; gap: 0; padding: 10px 0; }
     #app.sidebar-collapsed #sidebar-resources > summary::after { display: none; }
-    #app.sidebar-collapsed #sidebar-account-footer { margin: 0 10px; }
-    #app.sidebar-collapsed #sidebar-account-toggle { justify-content: center; padding: 14px 0; }
+    html[data-web-palette] #app.sidebar-collapsed #sidebar-account-footer { margin: 0 10px; }
+    html[data-web-palette] #app.sidebar-collapsed #sidebar-account-toggle { justify-content: center; padding: 6px 0; }
     #app.sidebar-collapsed #sidebar-account-menu { width: 224px; left: calc(100% + 12px); right: auto; bottom: 8px; }
     #app.sidebar-collapsed #sidebar :is(.sidebar-brand-copy, .sidebar-new-chat > span, .sidebar-item > span, .menu-group > button > span, .sidebar-section-label, #sidebar-resources > summary > span, .sidebar-account-copy, .sidebar-account-chevron) {
         position: absolute;

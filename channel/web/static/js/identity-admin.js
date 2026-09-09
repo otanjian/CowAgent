@@ -111,6 +111,73 @@
     let _auditPage = 1;
     let _auditPageSize = 25;
 
+    // Platform-admin target-tenant role editing scope (task 3.2). When a
+    // platform admin edits another tenant's roles, this holds that tenant id;
+    // when null, the role UI targets the *current* tenant via /api/tenant/roles.
+    // role base helpers route role CRUD + the assign catalog accordingly.
+    let _rolePlatformTarget = null;
+
+    function _roleApiBase() {
+        return _rolePlatformTarget
+            ? '/api/platform/tenants/' + encodeURIComponent(_rolePlatformTarget) + '/roles'
+            : '/api/tenant/roles';
+    }
+
+    function _roleCatalogBase() {
+        return _rolePlatformTarget
+            ? '/api/platform/tenants/' + encodeURIComponent(_rolePlatformTarget) + '/authorization/catalog'
+            : '/api/tenant/authorization/catalog';
+    }
+
+    // Resource-authorization selection state (task 3.1). Selections are kept
+    // here (not just in checked DOM boxes) so search/pagination across pages does
+    // not drop an already-checked resource. Each kind keeps its own q/page and
+    // a Set of selected resource_id. `_resourceActions` maps kind -> the grant
+    // actions emitted when a resource is selected (defaults to the kind's full
+    // set, mirroring the backend RESOURCE_ACTIONS).
+    let _resourceState = {};
+    let _resourceActions = {
+        menu: ['view'],
+        skill: ['read', 'use', 'edit', 'enable'],
+        tool: ['read', 'execute', 'configure'],
+        model: ['read', 'use'],
+        agent: ['read', 'use', 'edit', 'enable'],
+    };
+    let _resourceKinds = ['menu', 'skill', 'tool', 'model', 'agent'];
+    function _resourceKindLabel(k) {
+        return t('admin_resource_kind_' + k) || k;
+    }
+    let _modelCapabilities = ['chat', 'chat_fallback', 'vision', 'asr', 'tts', 'embedding', 'image', 'search'];
+    let _modelDefaultSel = {}; // capability -> model resource_id
+
+    // Tenant-model grant picker (edit-tenant modal): the platform admin picks
+    // models to allocate to a tenant. Kept apart from _resourceState (which is
+    // the role-assign picker) because the catalog source (platform all-mode)
+    // and the produced grants (tenant_resource_grants) differ.
+    let _tenantGrantSel = new Set();   // selected model resource_ids
+    let _tenantGrantCatalog = [];      // cached platform all-mode model items
+    let _tenantGrantLoaded = false;    // whether we've fetched the catalog yet
+    let _tenantGrantApiBase = '';      // platform tenant catalog base
+    let _tenantGrantResourcesBase = ''; // platform tenant resources base
+    let _tenantGrantVersion = 0;       // expected_version for the resources PUT
+
+    function _resetResourceState(initialGrants, modelDefaults) {
+        _resourceState = {};
+        _resourceKinds.forEach(function (k) {
+            _resourceState[k] = { q: '', page: 1, pageSize: 12, selected: new Set(), loaded: false };
+        });
+        _modelDefaultSel = {};
+        (initialGrants || []).forEach(function (g) {
+            if (!g || !_resourceKinds.includes(g.resource_kind)) return;
+            if (!_resourceState[g.resource_kind]) return;
+            _resourceState[g.resource_kind].selected.add(g.resource_id);
+        });
+        Object.keys(modelDefaults || {}).forEach(function (k) {
+            const v = modelDefaults[k];
+            if (v) _modelDefaultSel[k] = v;
+        });
+    }
+
     // ---- reusable create/edit modal --------------------------------------
     let _adminModal = { open: false, dirty: false, fields: [], submit: null, onConflictReload: null, statusEl: null };
 
@@ -121,8 +188,8 @@
         el.id = 'admin-modal';
         el.className = 'fixed inset-0 bg-black/50 z-[200] hidden flex items-center justify-center';
         el.innerHTML =
-            '<div class="bg-white dark:bg-[#1A1A1A] rounded-2xl border border-slate-200 dark:border-white/10 shadow-xl w-full max-w-lg mx-4 overflow-hidden flex flex-col" style="max-height:86vh;">' +
-            '<div class="px-6 pt-6 pb-3">' +
+            '<div class="bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10 shadow-xl w-full h-full m-2 overflow-hidden flex flex-col">' +
+            '<div class="px-6 pt-6 pb-3 flex-shrink-0">' +
             '<div class="flex items-center gap-3 mb-4">' +
             '<div class="w-10 h-10 rounded-xl bg-primary-50 dark:bg-primary-900/20 flex items-center justify-center flex-shrink-0">' +
             '<i id="admin-modal-icon" class="fas fa-plus text-primary-500"></i>' +
@@ -133,10 +200,10 @@
             '</div>' +
             '<button class="admin-modal-close p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-white/5 text-slate-400 cursor-pointer"><i class="fas fa-xmark"></i></button>' +
             '</div>' +
-            '<div id="admin-modal-body" class="space-y-4"></div>' +
+            '<div id="admin-modal-body" class="flex-1 overflow-y-auto px-6 py-3 flex flex-wrap gap-4 content-start"></div>' +
             '<p id="admin-modal-error" class="hidden mt-2 text-xs text-red-500"></p>' +
             '</div>' +
-            '<div class="flex justify-end gap-3 px-6 py-4 border-t border-slate-100 dark:border-white/5">' +
+            '<div class="flex justify-end gap-3 px-6 py-4 border-t border-slate-100 dark:border-white/5 flex-shrink-0">' +
             '<button id="admin-modal-cancel" class="admin-modal-close px-4 py-2 rounded-lg border border-slate-200 dark:border-white/10 text-slate-600 dark:text-slate-300 text-sm hover:bg-slate-50 dark:hover:bg-white/5 cursor-pointer"></button>' +
             '<button id="admin-modal-submit" class="px-4 py-2 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium disabled:opacity-50"></button>' +
             '</div>' +
@@ -181,17 +248,393 @@
         } else if (f.type === 'locked') {
             label = '<label class="agent-field-label">' + escapeHtml(f.label) + '</label>';
             control = '<div class="agent-input-locked">' + escapeHtml(val) + '</div>';
+        } else if (f.type === 'resourcegroup') {
+            control = resourceGroupHtml(f);
+        } else if (f.type === 'modeldefaults') {
+            control = modelDefaultsHtml(f);
+        } else if (f.type === 'modelgrant') {
+            control = tenantModelGrantHtml(f);
         } else {
             const type = f.type || 'text';
             label = '<label class="agent-field-label" for="' + id + '">' + escapeHtml(f.label) + req + '</label>';
             control = '<input type="' + type + '" id="' + id + '" class="agent-input" value="' + escapeHtml(val) + '" placeholder="' + escapeHtml(f.placeholder || '') + '">';
         }
-        return '<div class="agent-field">' + label + control +
+        const wrapClass = f.inline ? 'agent-field agent-field-inline flex-1 min-w-[220px]' : 'agent-field w-full';
+        return '<div class="' + wrapClass + '">' + label + control +
             (f.hint ? '<div class="agent-field-hint">' + escapeHtml(f.hint) + '</div>' : '') +
             '</div>';
     }
 
+    // ---- resource-authorization pickers (task 3.1) -------------------------
+    function _resCount(kind) {
+        const st = _resourceState[kind];
+        return st ? st.selected.size : 0;
+    }
+
+    function resourceGroupHtml(f) {
+        // Renders a compact block listing the five resource kinds, each with a
+        // live selection count and an expandable management area (search + paged
+        // checkbox list). The whole block is a single field; collectField reads
+        // the selections from _resourceState.
+        const rows = _resourceKinds.map(function (k) {
+            const n = _resCount(k);
+            const summary = n ? t('admin_resources_selected').replace('{n}', n) : t('admin_resources_none');
+            return '<div class="resource-kind-row" data-kind="' + escapeHtml(k) + '">' +
+                '<div class="flex items-center justify-between py-1.5 cursor-pointer resource-kind-toggle">' +
+                '<span class="text-sm font-medium text-slate-700 dark:text-slate-200">' + escapeHtml(_resourceKindLabel(k)) + '</span>' +
+                '<span class="text-xs text-slate-400 resource-kind-summary">' + escapeHtml(summary) + '</span>' +
+                '</div>' +
+                '<div class="resource-kind-manage hidden pl-3 border-l border-slate-200 dark:border-white/10"></div>' +
+                '</div>';
+        }).join('');
+        return '<div id="adm-fld-' + escapeHtml(f.name) + '" class="space-y-1">' + rows + '</div>';
+    }
+
+    async function _loadResourceCatalog(kind, q, page, pageSize) {
+        const query = qs({ purpose: 'assign', kind: kind, q: q || '', page: page, page_size: pageSize });
+        const data = await apiFetch(_roleCatalogBase() + '?' + query);
+        return data;
+    }
+
+    function _resourceKindRowFind(kind) {
+        const container = document.getElementById('adm-fld-resource_grants');
+        if (!container) return null;
+        // kind is one of a fixed small set (menu/skill/tool/model/agent), safe to
+        // embed directly.
+        return container.querySelector('.resource-kind-row[data-kind="' + kind + '"]');
+    }
+
+    async function _openResourceManage(kind) {
+        const row = _resourceKindRowFind(kind);
+        if (!row) return;
+        const manage = row.querySelector('.resource-kind-manage');
+        manage.classList.remove('hidden');
+        const st = _resourceState[kind];
+        if (!st) return;
+        st.kind = kind;
+        await _renderResourceList(kind);
+    }
+
+    function _closeResourceManage(kind) {
+        const row = _resourceKindRowFind(kind);
+        if (!row) return;
+        const manage = row.querySelector('.resource-kind-manage');
+        manage.classList.add('hidden');
+    }
+
+    async function _renderResourceList(kind) {
+        const row = _resourceKindRowFind(kind);
+        if (!row) return;
+        const manage = row.querySelector('.resource-kind-manage');
+        const st = _resourceState[kind];
+        if (!st) return;
+        manage.innerHTML = '<div class="py-1 text-xs text-slate-400">' + escapeHtml(t('admin_loading')) + '</div>';
+        try {
+            const data = await _loadResourceCatalog(kind, st.q, st.page, st.pageSize);
+            const items = data.items || [];
+            const total = data.total || 0;
+            const actions = data.resource_actions || _resourceActions[kind] || [];
+            st.actions = actions;
+            const fn = function (selected) {
+                return function (r) {
+                    const checked = selected.has(r.resource_id);
+                    const rid = r.resource_id;
+                    const idSuffix = rid && rid.indexOf('nav:') === 0 ? rid.slice(4) : rid;
+                    return '<label class="inline-flex items-start gap-2 text-xs text-slate-600 dark:text-slate-300 py-1 px-1.5 rounded hover:bg-slate-50 dark:hover:bg-white/5 cursor-pointer">' +
+                        '<input type="checkbox" value="' + escapeHtml(rid) + '"' + (checked ? ' checked' : '') + '>' +
+                        '<span class="flex flex-col leading-tight"><span class="truncate">' + escapeHtml(r.name) + '</span>' +
+                        (idSuffix && idSuffix !== r.name ? '<span class="text-[10px] text-slate-400 dark:text-slate-500 truncate">' + escapeHtml(idSuffix) + '</span>' : '') +
+                        '</span></label>';
+                };
+            };
+            const listHtml = items.length
+                ? items.map(fn(st.selected)).join('')
+                : '<div class="text-xs text-slate-400 py-1">' + escapeHtml(t('admin_resources_none')) + '</div>';
+            manage.innerHTML =
+                '<div class="pt-1 pb-2">' +
+                '<div class="flex gap-2 items-center pb-2">' +
+                '<input type="text" class="agent-input resource-kind-search" placeholder="' + escapeHtml(t('admin_resource_search_placeholder')) + '" value="' + escapeHtml(st.q || '') + '">' +
+                '<button type="button" class="admin-row-btn resource-kind-clear">' + escapeHtml(t('admin_resource_clear')) + '</button>' +
+                '</div>' +
+                '<div class="grid grid-cols-2 gap-x-2 resource-kind-list">' + listHtml + '</div>' +
+                '<div class="flex items-center justify-between pt-2">' +
+                '<button type="button" class="admin-row-btn resource-kind-selectall">' + escapeHtml(t('admin_resource_selectall')) + '</button>' +
+                '<span class="text-xs text-slate-400">' + escapeHtml(t('admin_total_label')) +
+                ' <span class="font-medium">' + total + '</span></span>' +
+                '</div>' +
+                '<div class="resource-kind-pagination pt-1"></div>' +
+                '</div>';
+            // Wire search (reset to page 1).
+            const search = manage.querySelector('.resource-kind-search');
+            search.addEventListener('input', function () {
+                st.q = search.value;
+                st.page = 1;
+                markModalDirty();
+                clearTimeout(this._deb);
+                this._deb = setTimeout(function () { _renderResourceList(kind); }, 250);
+            });
+            search.addEventListener('keyup', function (e) { if (e.key === 'Enter') { st.page = 1; _renderResourceList(kind); } });
+            // Wire select-all (this page).
+            manage.querySelector('.resource-kind-selectall').addEventListener('click', function () {
+                items.forEach(function (r) { st.selected.add(r.resource_id); });
+                _afterResourceSelectChanged(kind);
+            });
+            // Wire clear (deselect all for this kind).
+            manage.querySelector('.resource-kind-clear').addEventListener('click', function () {
+                st.selected.clear();
+                _afterResourceSelectChanged(kind);
+            });
+            // Wire each checkbox.
+            manage.querySelectorAll('.resource-kind-list input[type=checkbox]').forEach(function (cb) {
+                cb.addEventListener('change', function () {
+                    if (cb.checked) st.selected.add(cb.value);
+                    else st.selected.delete(cb.value);
+                    _afterResourceSelectChanged(kind);
+                });
+            });
+            // Pagination.
+            renderPagination(manage.querySelector('.resource-kind-pagination'), st.page, st.pageSize, total, function (p) {
+                st.page = p;
+                _renderResourceList(kind);
+            });
+        } catch (e) {
+            manage.innerHTML = '<div class="py-1 text-xs text-red-500">' + escapeHtml(e.message || t('load_error')) + '</div>';
+        }
+    }
+
+    function _updateResourceSummary(kind) {
+        const row = _resourceKindRowFind(kind);
+        if (!row) return;
+        const n = _resCount(kind);
+        const summaryEl = row.querySelector('.resource-kind-summary');
+        if (summaryEl) {
+            summaryEl.textContent = n ? t('admin_resources_selected').replace('{n}', n) : t('admin_resources_none');
+        }
+    }
+
+    function _afterResourceSelectChanged(kind) {
+        _updateResourceSummary(kind);
+        markModalDirty();
+        if (kind === 'model') {
+            // Rebuild the model-default capability options from the new set.
+            _refreshModelDefaultOptions();
+        }
+        _renderResourceList(kind);
+    }
+
+    function _collectResourceGrants() {
+        const grants = [];
+        _resourceKinds.forEach(function (k) {
+            const st = _resourceState[k];
+            if (!st || !st.selected.size) return;
+            const actions = st.actions || _resourceActions[k] || [];
+            st.selected.forEach(function (rid) {
+                actions.forEach(function (a) {
+                    grants.push({ resource_kind: k, resource_id: rid, action: a });
+                });
+            });
+        });
+        return grants;
+    }
+
+    function modelDefaultsHtml(f) {
+        const id = 'adm-fld-modeldefaults';
+        // Build model options from the currently selected model resources.
+        const modelSel = (_resourceState && _resourceState.model && _resourceState.model.selected) ? _resourceState.model.selected : new Set();
+        const options = Array.from(modelSel).map(function (rid) { return { value: rid, label: rid }; });
+        const rows = _modelCapabilities.map(function (cap) {
+            const val = _modelDefaultSel[cap] || '';
+            const opts = '<option value="">' + escapeHtml(t('admin_resources_none')) + '</option>' +
+                options.map(function (o) {
+                    return '<option value="' + escapeHtml(o.value) + '"' + (String(o.value) === val ? ' selected' : '') + '>' +
+                        escapeHtml(o.label) + '</option>';
+                }).join('');
+            return '<div class="flex items-center gap-2 py-1">' +
+                '<span class="w-32 text-xs text-slate-500 dark:text-slate-400">' + escapeHtml(cap) + '</span>' +
+                '<select class="agent-input model-default-select" data-cap="' + escapeHtml(cap) + '">' + opts + '</select>' +
+                '</div>';
+        }).join('');
+        return '<div id="' + id + '" class="space-y-1">' +
+            '<div class="text-xs text-slate-400 mb-1">' + escapeHtml(t('admin_resource_model_capabilities')) + '</div>' +
+            rows + '</div>';
+    }
+
+    function _collectModelDefaults() {
+        const out = {};
+        _modelCapabilities.forEach(function (cap) {
+            const v = _modelDefaultSel[cap];
+            if (v) out[cap] = v;
+        });
+        return out;
+    }
+
+    // ---- tenant-level model grant picker (edit-tenant modal) --------------
+    function tenantModelGrantHtml(f) {
+        // Renders a search + paged checkbox list of the platform all-mode model
+        // catalog. Selections are tracked in _tenantGrantSel and emitted as
+        // tenant_resource_grants entries ({resource_kind:model, read+use}).
+        const id = 'adm-fld-' + f.name;
+        _tenantGrantApiBase = f.apiBase || '';
+        _tenantGrantResourcesBase = f.resourcesBase || '';
+        _tenantGrantVersion = f.version || 0;
+        // Seed selection from the field value (existing granted model ids).
+        _tenantGrantSel = new Set();
+        (f.value || []).forEach(function (g) {
+            if (g && g.resource_kind === 'model' && g.resource_id) _tenantGrantSel.add(g.resource_id);
+        });
+        _tenantGrantLoaded = false;
+        const label = f.label ? '<div class="text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">' + escapeHtml(f.label) + '</div>' : '';
+        return '<div id="' + id + '" class="tenant-model-grant">' +
+            label +
+            '<div class="flex gap-2 items-center pb-2">' +
+            '<input type="text" class="agent-input resource-kind-search" placeholder="' + escapeHtml(t('admin_resource_search_placeholder')) + '">' +
+            '<button type="button" class="admin-row-btn resource-kind-clear">' + escapeHtml(t('admin_resource_clear')) + '</button>' +
+            '</div>' +
+            '<div class="grid grid-cols-2 gap-x-2 resource-kind-list">' +
+            '<div class="py-1 text-xs text-slate-400 col-span-2">' + escapeHtml(t('admin_loading')) + '</div>' +
+            '</div>' +
+            '<div class="flex items-center justify-between pt-2">' +
+            '<button type="button" class="admin-row-btn resource-kind-selectall">' + escapeHtml(t('admin_resource_selectall')) + '</button>' +
+            '<span class="text-xs text-slate-400"><span class="resource-kind-selcount font-medium"></span></span>' +
+            '</div>' +
+            '<div class="resource-kind-pagination pt-1"></div>' +
+            '</div>';
+    }
+
+    function _collectTenantModelGrants() {
+        const grants = [];
+        _tenantGrantSel.forEach(function (rid) {
+            grants.push({ resource_kind: 'model', resource_id: rid, action: 'read' });
+            grants.push({ resource_kind: 'model', resource_id: rid, action: 'use' });
+        });
+        return grants;
+    }
+
+    async function _initTenantModelGrant(node) {
+        if (!_tenantGrantApiBase) return;
+        const list = node.querySelector('.resource-kind-list');
+        const search = node.querySelector('.resource-kind-search');
+        const selCount = node.querySelector('.resource-kind-selcount');
+        if (!list || !search) return;
+        let q = '';
+        let page = 1;
+        const pageSize = 12;
+        function updateCount() {
+            if (selCount) selCount.textContent = t('admin_resources_selected').replace('{n}', _tenantGrantSel.size);
+        }
+        async function render() {
+            const query = qs({ kind: 'model', q: q, page: page, page_size: pageSize });
+            try {
+                const data = await apiFetch(_tenantGrantApiBase + '?' + query);
+                _tenantGrantCatalog = data.items || [];
+                const total = data.total || 0;
+                if (!_tenantGrantCatalog.length) {
+                    list.innerHTML = '<div class="py-1 text-xs text-slate-400 col-span-2">' + escapeHtml(t('admin_resources_none')) + '</div>';
+                } else {
+                    list.innerHTML = _tenantGrantCatalog.map(function (r) {
+                        const checked = _tenantGrantSel.has(r.resource_id);
+                        const idSuffix = r.resource_id.indexOf('provider:') === 0 ? r.resource_id : '';
+                        return '<label class="inline-flex items-start gap-2 text-xs text-slate-600 dark:text-slate-300 py-1 px-1.5 rounded hover:bg-slate-50 dark:hover:bg-white/5 cursor-pointer">' +
+                            '<input type="checkbox" value="' + escapeHtml(r.resource_id) + '"' + (checked ? ' checked' : '') + '>' +
+                            '<span class="flex flex-col leading-tight"><span class="truncate">' + escapeHtml(r.name) + '</span>' +
+                            (idSuffix && idSuffix !== r.name ? '<span class="text-[10px] text-slate-400 dark:text-slate-500 truncate">' + escapeHtml(idSuffix) + '</span>' : '') +
+                            '</span></label>';
+                    }).join('');
+                }
+                list.querySelectorAll('input[type=checkbox]').forEach(function (cb) {
+                    cb.addEventListener('change', function () {
+                        if (cb.checked) _tenantGrantSel.add(cb.value);
+                        else _tenantGrantSel.delete(cb.value);
+                        markModalDirty();
+                        updateCount();
+                    });
+                });
+                const pag = node.querySelector('.resource-kind-pagination');
+                renderPagination(pag, page, pageSize, total, function (p) { page = p; render(); });
+            } catch (e) {
+                list.innerHTML = '<div class="py-1 text-xs text-red-500 col-span-2">' + escapeHtml(e.message || t('load_error')) + '</div>';
+            }
+        }
+        function setSearch(v) {
+            q = v; page = 1;
+        }
+        search.addEventListener('input', function () {
+            setSearch(search.value);
+            clearTimeout(this._deb);
+            this._deb = setTimeout(render, 250);
+        });
+        search.addEventListener('keyup', function (e) { if (e.key === 'Enter') { setSearch(search.value); render(); } });
+        node.querySelector('.resource-kind-clear').addEventListener('click', function () {
+            _tenantGrantSel.clear();
+            markModalDirty();
+            updateCount();
+            render();
+        });
+        node.querySelector('.resource-kind-selectall').addEventListener('click', function () {
+            (_tenantGrantCatalog || []).forEach(function (r) { _tenantGrantSel.add(r.resource_id); });
+            markModalDirty();
+            updateCount();
+            render();
+        });
+        updateCount();
+        await render();
+    }
+
+
+    function _initResourceGroup(node) {
+        // Bind the kind toggle (expand/collapse the management area).
+        node.querySelectorAll('.resource-kind-toggle').forEach(function (toggle) {
+            toggle.addEventListener('click', function () {
+                const row = toggle.closest('.resource-kind-row');
+                const kind = row && row.getAttribute('data-kind');
+                const manage = row && row.querySelector('.resource-kind-manage');
+                if (!kind) return;
+                if (manage.classList.contains('hidden')) {
+                    _openResourceManage(kind);
+                } else {
+                    _closeResourceManage(kind);
+                }
+            });
+        });
+    }
+
+    function _refreshModelDefaultOptions() {
+        const node = document.getElementById('adm-fld-modeldefaults');
+        if (!node) return;
+        const modelSel = (_resourceState.model && _resourceState.model.selected) ? _resourceState.model.selected : new Set();
+        const options = Array.from(modelSel).map(function (rid) { return { value: rid, label: rid }; });
+        node.querySelectorAll('.model-default-select').forEach(function (sel) {
+            const cur = sel.value;
+            sel.innerHTML = '<option value="">' + escapeHtml(t('admin_resources_none')) + '</option>' +
+                options.map(function (o) {
+                    return '<option value="' + escapeHtml(o.value) + '"' + (String(o.value) === cur ? ' selected' : '') + '>' +
+                        escapeHtml(o.label) + '</option>';
+                }).join('');
+        });
+    }
+
+    function _initModelDefaults(node) {
+        node.querySelectorAll('.model-default-select').forEach(function (sel) {
+            sel.addEventListener('change', function () {
+                const cap = sel.getAttribute('data-cap');
+                const v = sel.value;
+                if (v) _modelDefaultSel[cap] = v;
+                else delete _modelDefaultSel[cap];
+                markModalDirty();
+            });
+        });
+    }
+
     function collectField(f) {
+        if (f.type === 'resourcegroup') {
+            return _collectResourceGrants();
+        }
+        if (f.type === 'modeldefaults') {
+            return _collectModelDefaults();
+        }
+        if (f.type === 'modelgrant') {
+            return _collectTenantModelGrants();
+        }
         const el = document.getElementById('adm-fld-' + f.name);
         if (!el) return undefined;
         if (f.type === 'checkbox') return !!el.checked;
@@ -222,13 +665,25 @@
         body.innerHTML = (cfg.fields || []).map(fieldHtml).join('');
         closeAdminErr();
         (cfg.fields || []).forEach(function (f) {
-            const node = document.getElementById('adm-fld-' + f.name);
+            // The modal-control container id is stamped by the field renderer.
+            // resourcegroup uses `adm-fld-resource_grants` (matches f.name), while
+            // modeldefaults renders `adm-fld-modeldefaults`; resolve the id the
+            // same way the renderer did so _initModelDefaults can bind.
+            const nodeId = f.type === 'modeldefaults' ? 'adm-fld-modeldefaults' : ('adm-fld-' + f.name);
+            const node = document.getElementById(nodeId);
             if (!node) return;
             node.addEventListener('input', markModalDirty);
             if (f.type === 'multi') {
                 node.querySelectorAll('input[type=checkbox]').forEach(function (cb) { cb.addEventListener('change', markModalDirty); });
             } else {
                 node.addEventListener('change', markModalDirty);
+            }
+            if (f.type === 'resourcegroup') {
+                _initResourceGroup(node);
+            } else if (f.type === 'modeldefaults') {
+                _initModelDefaults(node);
+            } else if (f.type === 'modelgrant') {
+                _initTenantModelGrant(node);
             }
         });
         el.classList.remove('hidden');
@@ -475,7 +930,8 @@
                     + '<div class="text-xs text-slate-400">' + escapeHtml(tn.code) + ' · ' + fmtActive(tn.active) + '</div></div></div>'
                     + '<div class="flex items-center gap-2"><div class="text-xs text-slate-400">' + t('tenant_version_label') + ' ' + tn.version + '</div>'
                     + '<button class="admin-row-btn" onclick="adminRowAction(\'tenant\',\'edit\',\'' + escapeHtml(tn.id) + '\')"><i class="fas fa-pen mr-1"></i>' + escapeHtml(t('admin_edit')) + '</button>'
-                    + '<button class="admin-row-btn" onclick="adminRowAction(\'tenant\',\'admin\',\'' + escapeHtml(tn.id) + '\')"><i class="fas fa-user-shield mr-1"></i>' + escapeHtml(t('admin_tenant_admin')) + '</button>'
+                    + '<button class="admin-row-btn" onclick="adminRowAction(\'tenant\',\'roles\',\'' + escapeHtml(tn.id) + '\')"><i class="fas fa-users-cog mr-1"></i>' + escapeHtml(t('admin_tenant_roles')) + '</button>'
+                    + '<button class="admin-row-btn" onclick="adminRowAction(\'tenant\',\'admin\',\'' + escapeHtml(tn.id) + '\')"><i class="fas fa-user-shield mr-1"></i>' + escapeHtml(t('admin_tenant_admin')) + '</button>' + '</div></div>';
                     + '</div></div>';
             }).join('');
             list.innerHTML = rows;
@@ -520,10 +976,10 @@
             title: t('tenant_create'),
             icon: 'fa-plus',
             fields: [
-                { name: 'code', label: t('admin_field_code'), type: 'text', required: true, hint: t('admin_field_code_hint') },
-                { name: 'name', label: t('admin_field_name'), type: 'text', required: true },
-                { name: 'admin_username', label: t('admin_field_admin_username'), type: 'text', required: true },
-                { name: 'admin_display', label: t('admin_field_admin_display'), type: 'text' },
+                { name: 'code', label: t('admin_field_code'), type: 'text', required: true, hint: t('admin_field_code_hint'), inline: true },
+                { name: 'name', label: t('admin_field_name'), type: 'text', required: true, inline: true },
+                { name: 'admin_username', label: t('admin_field_admin_username'), type: 'text', required: true, inline: true },
+                { name: 'admin_display', label: t('admin_field_admin_display'), type: 'text', inline: true },
                 { name: 'admin_password', label: t('admin_field_admin_password'), type: 'password', required: true, hint: t('admin_field_password_hint') },
                 { name: 'recent_password', label: t('admin_field_recent_password'), type: 'password', required: true, hint: t('admin_field_recent_password_hint') },
             ],
@@ -537,11 +993,26 @@
         });
     }
 
-    function openTenantEdit(id) {
+    async function openTenantEdit(id) {
         const tn = _tenantById[id];
         if (!tn) return;
         // Name + status are separate operations (task 5.4). Status form surfaces
-        // the last-admin/version-context; name form is a plain rename.
+        // the last-admin/version-context; name form is a plain rename. We also
+        // load the tenant's current model grants so the platform admin can
+        // re-allocate which models this tenant may assign to roles.
+        let currentGrants = [];
+        let grantVersion = tn.version || 0;
+        try {
+            const res = await apiFetch('/api/platform/tenants/' + encodeURIComponent(id) + '/resources');
+            currentGrants = (res && res.grants) || [];
+            grantVersion = tn.version || 0;
+        } catch (e) {
+            // Best-effort: if grants can't be loaded, show an empty picker so the
+            // edit still works for name/status.
+            currentGrants = [];
+        }
+        const catalogBase = '/api/platform/tenants/' + encodeURIComponent(id) + '/authorization/catalog';
+        const resourcesBase = '/api/platform/tenants/' + encodeURIComponent(id) + '/resources';
         openAdminModal({
             title: t('tenant_edit_title'),
             subtitle: tn.code || '',
@@ -549,13 +1020,26 @@
             fields: [
                 { name: 'name', label: t('admin_field_name'), type: 'text', value: tn.name, required: true },
                 { name: 'active', label: t('admin_field_active'), type: 'checkbox', value: !!tn.active },
+                { name: 'model_grants', label: t('admin_field_model_grants'), type: 'modelgrant',
+                  value: currentGrants, apiBase: catalogBase, resourcesBase: resourcesBase,
+                  version: grantVersion, hint: t('admin_field_model_grants_hint') },
                 { name: 'recent_password', label: t('admin_field_recent_password'), type: 'password', required: true, hint: t('admin_field_recent_password_hint') },
             ],
             submitLabel: t('admin_save'),
             statusEl: document.getElementById('tenant-status'),
             submit: async function (body) {
-                body.expected_version = tn.version;
-                await apiFetch('/api/platform/tenants/' + encodeURIComponent(id), { method: 'POST', body: body });
+                const modelGrants = body.model_grants || [];
+                delete body.model_grants;
+                body.expected_version = grantVersion;
+                const res = await apiFetch('/api/platform/tenants/' + encodeURIComponent(id), { method: 'POST', body: body });
+                // PUT the tenant's model grants (replaces wholesale). The rename
+                // /status POST increments version by exactly one, so use that
+                // (the handler response carries no version field).
+                const newVersion = grantVersion + 1;
+                await apiFetch(resourcesBase, {
+                    method: 'PUT',
+                    body: { grants: modelGrants, expected_version: newVersion },
+                });
                 await loadTenantView();
             },
             onConflictReload: function () { loadTenantView(); },
@@ -669,8 +1153,8 @@
             title: t('member_create'),
             icon: 'fa-plus',
             fields: [
-                { name: 'username', label: t('admin_field_username'), type: 'text', required: true, hint: t('admin_field_username_hint') },
-                { name: 'display_name', label: t('admin_field_display_name'), type: 'text', required: true },
+                { name: 'username', label: t('admin_field_username'), type: 'text', required: true, hint: t('admin_field_username_hint'), inline: true },
+                { name: 'display_name', label: t('admin_field_display_name'), type: 'text', required: true, inline: true },
                 { name: 'temporary_password', label: t('admin_field_temp_password'), type: 'password', required: true, hint: t('admin_field_password_hint') },
                 { name: 'roles', label: t('admin_field_roles'), type: 'multi', options: roleOptions(roles), value: ['member'], hint: t('admin_field_roles_hint') },
                 { name: 'department_id', label: t('admin_field_department'), type: 'select', options: memberDeptOptions(depts), hint: t('admin_field_department_hint') },
@@ -853,7 +1337,7 @@
         if (!list) return;
         list.innerHTML = '<div class="text-sm text-slate-400 dark:text-slate-500">' + t('tenant_loading') + '</div>';
         try {
-            const data = await apiFetch('/api/tenant/roles');
+            const data = await apiFetch(_roleApiBase());
             if (!data.items || !data.items.length) {
                 list.innerHTML = '<div class="text-sm text-slate-400">' + t('role_empty') + '</div>';
                 btn.classList.add('hidden');
@@ -915,18 +1399,23 @@
     async function openRoleCreate() {
         const perms = await ensurePermCatalog();
         if (!perms) return;
+        _resetResourceState([], {});
         openAdminModal({
             title: t('role_create'),
             icon: 'fa-plus',
             fields: [
-                { name: 'code', label: t('admin_field_code'), type: 'text', required: true, hint: t('admin_field_code_hint') },
-                { name: 'name', label: t('admin_field_name'), type: 'text', required: true },
+                { name: 'code', label: t('admin_field_code'), type: 'text', required: true, hint: t('admin_field_code_hint'), inline: true },
+                { name: 'name', label: t('admin_field_name'), type: 'text', required: true, inline: true },
                 { name: 'permissions', label: t('admin_field_permissions'), type: 'multi', options: permOptions(perms), hint: t('admin_field_permissions_hint') },
+                { name: 'resource_grants', label: t('admin_field_resource_grants'), type: 'resourcegroup', hint: t('admin_field_resource_grants_hint') },
+                { name: 'model_defaults', label: t('admin_field_model_defaults'), type: 'modeldefaults', hint: t('admin_field_model_defaults_hint') },
             ],
             submitLabel: t('admin_create'),
             statusEl: document.getElementById('role-status'),
             submit: async function (body) {
-                await apiFetch('/api/tenant/roles', { method: 'POST', body: body });
+                body.resource_grants = _collectResourceGrants();
+                body.model_defaults = _collectModelDefaults();
+                await apiFetch(_roleApiBase(), { method: 'POST', body: body });
                 await loadRolesView();
             },
             onConflictReload: function () { loadRolesView(); },
@@ -938,20 +1427,25 @@
         if (!r) return;
         const perms = await ensurePermCatalog();
         if (!perms) return;
+        _resetResourceState(r.resource_grants || [], r.model_defaults || {});
         openAdminModal({
             title: t('role_edit_title'),
             subtitle: r.code || '',
             icon: 'fa-pen',
             fields: [
-                { name: 'code', label: t('admin_field_code'), type: 'locked', value: r.code },
-                { name: 'name', label: t('admin_field_name'), type: 'text', value: r.name, required: true },
+                { name: 'code', label: t('admin_field_code'), type: 'locked', value: r.code, inline: true },
+                { name: 'name', label: t('admin_field_name'), type: 'text', value: r.name, required: true, inline: true },
                 { name: 'permissions', label: t('admin_field_permissions'), type: 'multi', options: permOptions(perms), value: r.permissions || [] },
+                { name: 'resource_grants', label: t('admin_field_resource_grants'), type: 'resourcegroup', hint: t('admin_field_resource_grants_hint') },
+                { name: 'model_defaults', label: t('admin_field_model_defaults'), type: 'modeldefaults', hint: t('admin_field_model_defaults_hint') },
             ],
             submitLabel: t('admin_save'),
             statusEl: document.getElementById('role-status'),
             submit: async function (body) {
                 body.expected_version = r.version;
-                await apiFetch('/api/tenant/roles/' + encodeURIComponent(id), { method: 'POST', body: body });
+                body.resource_grants = _collectResourceGrants();
+                body.model_defaults = _collectModelDefaults();
+                await apiFetch(_roleApiBase() + '/' + encodeURIComponent(id), { method: 'POST', body: body });
                 await loadRolesView();
             },
             onConflictReload: function () { loadRolesView(); },
@@ -969,6 +1463,7 @@
         const copyablePermissions = (r.permissions || []).filter(function (pid) {
             return assignableSet[pid] && assignableSet[pid].assignable !== false;
         });
+        _resetResourceState(r.resource_grants || [], r.model_defaults || {});
         openAdminModal({
             title: t('role_copy_title'),
             subtitle: r.name || '',
@@ -977,11 +1472,15 @@
                 { name: 'code', label: t('admin_field_code'), type: 'text', required: true, hint: t('admin_field_code_hint') },
                 { name: 'name', label: t('admin_field_name'), type: 'text', required: true },
                 { name: 'permissions', label: t('admin_field_permissions'), type: 'multi', options: permOptions(perms), value: copyablePermissions },
+                { name: 'resource_grants', label: t('admin_field_resource_grants'), type: 'resourcegroup', hint: t('admin_field_resource_grants_hint') },
+                { name: 'model_defaults', label: t('admin_field_model_defaults'), type: 'modeldefaults', hint: t('admin_field_model_defaults_hint') },
             ],
             submitLabel: t('admin_create'),
             statusEl: document.getElementById('role-status'),
             submit: async function (body) {
-                await apiFetch('/api/tenant/roles', { method: 'POST', body: body });
+                body.resource_grants = _collectResourceGrants();
+                body.model_defaults = _collectModelDefaults();
+                await apiFetch(_roleApiBase(), { method: 'POST', body: body });
                 await loadRolesView();
             },
             onConflictReload: function () { loadRolesView(); },
@@ -993,13 +1492,31 @@
         if (!r) return;
         if (!window.confirm(t('admin_delete_confirm_role').replace('{name}', r.name))) return;
         try {
-            await apiFetch('/api/tenant/roles/' + encodeURIComponent(id), { method: 'DELETE' });
+            await apiFetch(_roleApiBase() + '/' + encodeURIComponent(id), { method: 'DELETE' });
             status(document.getElementById('role-status'), t('admin_deleted'), true);
             await loadRolesView();
         } catch (err) {
             status(document.getElementById('role-status'), err.message || t('admin_save_failed'), false);
             if (err.status === 409 || err.code === 'conflict' || err.code === 'in_use') await loadRolesView();
         }
+    }
+
+    function openTenantRoles(id) {
+        // Platform-admin target-tenant role editing (task 3.2). Set the platform
+        // target so role CRUD and the assign catalog route to the platform
+        // endpoints for this tenant, then show the roles view. If an admin form
+        // has unsaved changes, confirm discard FIRST so the target is not
+        // switched away while a stale draft still references the previous target.
+        const tn = _tenantById[id];
+        if (!tn) return;
+        if (typeof window.__identityAdminDirtyGuard__ === 'function'
+            && !window.__identityAdminDirtyGuard__()) return;
+        _rolePlatformTarget = id;
+        try {
+            if (typeof window.navigateTo === 'function') window.navigateTo('roles');
+            else if (typeof navigateTo === 'function') navigateTo('roles');
+        } catch (e) {}
+        setTimeout(function () { loadRolesView(); }, 50);
     }
 
     function viewRoleMembers(code) {
@@ -1226,6 +1743,8 @@
             else if (kind === 'dept') deleteDept(id);
         } else if (action === 'admin') {
             if (kind === 'tenant') openTenantAdmin(id);
+        } else if (action === 'roles') {
+            if (kind === 'tenant') openTenantRoles(id);
         } else if (action === 'copy') {
             if (kind === 'role') copyRole(id);
         } else if (action === 'members') {

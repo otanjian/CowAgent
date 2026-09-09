@@ -1,31 +1,10 @@
 # encoding:utf-8
 import os
 import sys
-import types
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-if "web" not in sys.modules:
-    web_stub = types.ModuleType("web")
-    web_stub.HTTPError = type("HTTPError", (Exception,), {})
-    web_stub.cookies = lambda: {}
-    web_stub.header = lambda *args, **kwargs: None
-    web_stub.data = lambda: b"{}"
-    web_stub.input = lambda **kwargs: types.SimpleNamespace(**kwargs)
-    web_stub.setcookie = lambda *args, **kwargs: None
-    web_stub.seeother = lambda *args, **kwargs: Exception("seeother")
-    web_stub.notfound = lambda *args, **kwargs: Exception("notfound")
-    web_stub.badrequest = lambda *args, **kwargs: Exception("badrequest")
-    web_stub.application = lambda *args, **kwargs: types.SimpleNamespace(wsgifunc=lambda: None)
-    web_stub.httpserver = types.SimpleNamespace(
-        LogMiddleware=type("LogMiddleware", (), {"log": lambda *args, **kwargs: None}),
-        StaticMiddleware=lambda app: app,
-        WSGIServer=lambda *args, **kwargs: types.SimpleNamespace(serve_forever=lambda: None),
-    )
-    sys.modules["web"] = web_stub
-
 
 def _catalog_with(config):
     from channel.web import web_channel

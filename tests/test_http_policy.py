@@ -55,7 +55,6 @@ class HttpPolicyTests(unittest.TestCase):
         for p in patchers:
             p.start()
             self.addCleanup(p.stop)
-            break  # build_web_app uses config.conf via http_policy
 
     def test_unknown_url_returns_404(self):
         resp = self._request("/does/not/exist", method="GET")
@@ -67,15 +66,24 @@ class HttpPolicyTests(unittest.TestCase):
         self.assertEqual(resp.status, "405 Method Not Allowed")
 
     def test_closed_consumer_503_in_database(self):
+        # Consumers still without a tenant boundary (scheduler is opened only
+        # with its own slice, group 5) stay 503 database_unavailable.
         self._patch_db()
-        resp = self._request("/upload", method="POST", data=b"")
+        resp = self._request("/api/scheduler", method="GET")
         self.assertEqual(resp.status, "503 Service Unavailable")
         self.assertIn("database_unavailable", resp.data.decode("utf-8"))
 
-    def test_closed_file_serve_503_in_database(self):
+    def test_file_serve_requires_auth_in_database(self):
+        # /api/file is now open under a tenant policy (task 2.4); an anonymous
+        # database request must be rejected by authentication, not a blanket 503.
         self._patch_db()
         resp = self._request("/api/file", method="GET")
-        self.assertEqual(resp.status, "503 Service Unavailable")
+        self.assertTrue(str(resp.status).startswith("401"), resp.data)
+
+    def test_upload_requires_auth_in_database(self):
+        self._patch_db()
+        resp = self._request("/upload", method="POST", data=b"")
+        self.assertTrue(str(resp.status).startswith("401"), resp.data)
 
     def test_public_route_unaffected_by_database_gate(self):
         self._patch_db()
@@ -89,11 +97,12 @@ class HttpPolicyTests(unittest.TestCase):
             resp = self._request("/upload", method="POST", data=b"")
         self.assertNotEqual(resp.status, "503 Service Unavailable")
 
-    def test_tenant_admin_cannot_override_closed_consumer(self):
-        # A valid database login must NOT let admin status bypass closure.
+    def test_admin_cannot_override_still_closed_consumer(self):
+        # A valid database login must NOT let admin status bypass closure of a
+        # consumer that remains closed (scheduler until its slice lands).
         self._patch_db()
         token = self.svc.login("root", "Str0ngAdminPass").token
-        resp = self._request("/upload", method="POST", data=b"",
+        resp = self._request("/api/scheduler", method="GET",
                              headers={"Cookie": f"cow_session={token}"})
         self.assertEqual(resp.status, "503 Service Unavailable")
 
@@ -127,6 +136,20 @@ class HttpPolicyTests(unittest.TestCase):
             entry, matched = _match_policy(path, method)
             self.assertTrue(matched, path)
             self.assertEqual(entry["policy"], "platform", path)
+
+    def test_session_settings_get_registered(self):
+        """The composer's model/agent selectors read /api/sessions/:id/settings
+        (GET); the completeness gate must not reject it with 405. The handler
+        implements GET and the frontend requires it to populate the effective
+        model/permission/team, so both GET and POST must be registered."""
+        from auth.http_policy import ROUTE_POLICY, _match_policy
+        # Both the read (GET) and write (POST) path are registered.
+        entry, matched = _match_policy("/api/sessions/sess_a/settings", "GET")
+        self.assertTrue(matched)
+        self.assertEqual(entry["policy"], "tenant")
+        entry, matched = _match_policy("/api/sessions/sess_a/settings", "POST")
+        self.assertTrue(matched)
+        self.assertEqual(entry["policy"], "tenant")
 
     def test_require_platform_console_rejects_non_admin_in_database(self):
         # The config/models console guard must reject a resolved context that is

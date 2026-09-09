@@ -72,6 +72,9 @@ class SkillManager:
         """
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         self.builtin_dir = builtin_dir or os.path.join(project_root, 'skills')
+        # 场景应用关联技能：顶层 ``scenes/skills`` 作为额外可发现目录，与
+        # builtin 同为随仓库分发的技能（同名时 builtin/custom 优先）。
+        self.scenes_dir = os.path.join(project_root, 'scenes', 'skills')
         self.custom_dir = custom_dir or os.path.join(project_root, 'workspace', 'skills')
         self.config = config or {}
         self._skills_config_path = os.path.join(self.custom_dir, SKILLS_CONFIG_FILE)
@@ -97,6 +100,12 @@ class SkillManager:
             builtin_dir=self.builtin_dir,
             custom_dir=self.custom_dir,
         )
+        # 场景技能作为额外可发现集合并入（同名时以 builtin/custom 为准）。
+        if os.path.isdir(self.scenes_dir):
+            result = self.loader.load_skills_from_dir(self.scenes_dir, source='scenes')
+            for skill in result.skills:
+                if skill.name not in self.skills:
+                    self.skills[skill.name] = self.loader._create_skill_entry(skill)
         self._sync_skills_config()
         logger.debug(f"SkillManager: Loaded {len(self.skills)} skills")
 
@@ -147,12 +156,17 @@ class SkillManager:
             else:
                 enabled = entry.metadata.default_enabled if entry.metadata else True
 
+            source = prev.get("source") or skill.source
             entry_dict = {
                 "name": name,
                 "description": skill.description,
-                "source": prev.get("source") or skill.source,
+                "source": source,
                 "enabled": enabled,
                 "category": category,
+                # Stable namespace:source identity. A rename keeps this id; a
+                # different source (builtin vs custom) never collides. This is
+                # what resource authorization references.
+                "resource_id": f"{source}:{name}",
             }
             display_name = prev.get("display_name")
             if display_name:
@@ -237,6 +251,55 @@ class SkillManager:
                             normalized.append(name)
         return normalized or None
 
+    def _authorized_skill_ids(self) -> Optional[set]:
+        """Return the skill ``resource_id`` set the current identity may *use*.
+
+        Returns ``None`` when runtime authorization is not in play (legacy mode
+        or no identity), meaning "unrestricted". In database mode it intersects
+        the ambient identity's ``skill.use`` grants so only authorized skills
+        reach the prompt. Recomputed on every call — never cached across a
+        request — so a grant granted mid-session takes effect immediately.
+        """
+        from common.runtime_identity import current_identity
+
+        ident = current_identity()
+        if not ident.user_id or not ident.tenant_id:
+            return None
+        try:
+            from auth.service import get_identity_service
+            svc = get_identity_service()
+            ids = svc.resource_ids_for(ident.user_id, ident.tenant_id, "skill", "use",
+                                       permission="skill.use")
+        except Exception:
+            return None
+        # Platform admin / legacy derivation: resource_ids_for returns None for
+        # "unrestricted".
+        return ids
+
+    def _apply_skill_use_auth(self, entries: List[SkillEntry]) -> List[SkillEntry]:
+        """Narrow entries to those the current identity is allowed to use.
+
+        A grant may reference a catalog ``resource_id`` (``{source}:{name}``).
+        The runtime skill directory may report the same skill under a different
+        source namespace (a workspace copy of a builtin, or a not-yet-copied
+        builtin), so we match on the trailing ``:{name}`` as well as the exact id
+        to avoid a grant turning into a silent denial when the two disagree.
+        """
+        allowed = self._authorized_skill_ids()
+        if allowed is None:
+            return entries
+        names = {rid.split(":", 1)[-1] for rid in allowed}
+        return [
+            e for e in entries
+            if self._skill_resource_id(e) in allowed or e.skill.name in names
+        ]
+
+    def _skill_resource_id(self, entry: SkillEntry) -> str:
+        """Stable ``source:name`` id for a loaded skill entry."""
+        source = self.skills_config.get(entry.skill.name, {}).get("source") or entry.skill.source
+        ns = source if source in ("builtin", "custom") else "builtin"
+        return f"{ns}:{entry.skill.name}"
+
     def filter_skills(
         self,
         skill_filter: Optional[List[str]] = None,
@@ -266,6 +329,8 @@ class SkillManager:
         if not conf().get("knowledge", True):
             entries = [e for e in entries if e.skill.name != "knowledge-wiki"]
 
+        entries = self._apply_skill_use_auth(entries)
+
         return entries
 
     def filter_unavailable_skills(
@@ -289,6 +354,10 @@ class SkillManager:
         normalized = self._normalize_skill_filter(skill_filter)
         if normalized is not None:
             entries = [e for e in entries if e.skill.name in normalized]
+
+        # A skill that is not authorized for use is not even advertised as
+        # "unavailable" — it is simply not part of this identity's library.
+        entries = self._apply_skill_use_auth(entries)
 
         # Keep only those that fail should_include_skill (requirements not met)
         unavailable = []
@@ -410,4 +479,42 @@ class SkillManager:
                 return entry
             if entry.skill.name == skill_key:
                 return entry
+        return None
+
+    def get_skill_by_resource_id(self, resource_id: str) -> Optional[SkillEntry]:
+        """Resolve a skill by its stable ``{source}:{name}`` resource id.
+
+        A custom skill shadows a builtin of the same name, but they remain
+        distinct authorization objects; this resolver returns exactly the source
+        requested. Returns None when no entry matches (or the id is malformed).
+        """
+        if not resource_id or ":" not in resource_id:
+            return None
+        source, _, name = resource_id.partition(":")
+        for entry in self.skills.values():
+            sk = entry.skill
+            entry_source = self.skills_config.get(sk.name, {}).get("source") or sk.source
+            if sk.name == name and entry_source == source:
+                return entry
+            # Fall back to the loaded source when config is not yet synced.
+            if sk.name == name and sk.source == source:
+                return entry
+        return None
+
+    def resolve_skill(self, *, resource_id: Optional[str] = None,
+                      name: Optional[str] = None) -> Optional[SkillEntry]:
+        """Resolve a skill uniquely by resource_id (preferred) or compatible name.
+
+        ``name`` is only accepted when it maps to exactly one loaded skill in the
+        current tenant/scope; an ambiguity (builtin + custom same name) is
+        reported by raising ``ValueError`` so the caller can demand ``resource_id``.
+        """
+        if resource_id:
+            return self.get_skill_by_resource_id(resource_id)
+        if name:
+            matches = [e for e in self.skills.values() if e.skill.name == name]
+            if len(matches) > 1:
+                raise ValueError(
+                    f"skill name {name!r} is ambiguous; pass resource_id to disambiguate")
+            return matches[0] if matches else None
         return None

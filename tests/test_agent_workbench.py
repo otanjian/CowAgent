@@ -127,14 +127,80 @@ class TestWorkbenchProjection(unittest.TestCase):
 
     def test_readiness_defaults_to_runnable_in_legacy(self):
         from channel.web.web_channel import _workbench_chat_readiness
-        self.assertEqual(_workbench_chat_readiness("any-agent"), (True, None))
+        self.assertEqual(_workbench_chat_readiness(None, "any-agent"), (True, None))
 
-    def test_readiness_closed_in_database_mode(self):
+    def test_readiness_database_requires_permission(self):
+        """Database mode: read-only caller gets a permission reason, never the
+        old ``runtime_not_enabled`` version closure."""
+        from auth.runtime import RequestContext
         from channel.web.web_channel import _workbench_chat_readiness
-        with patch("channel.web.web_channel._is_database_identity", return_value=True):
-            can_chat, reason = _workbench_chat_readiness("any-agent")
+
+        def _ctx(**over):
+            base = dict(user_id="u1", username="u1", display_name="U1",
+                        is_platform_admin=False, must_change_password=False,
+                        tenant_id="t1", membership=None,
+                        permissions={"agent.read"}, is_tenant_admin=False)
+            base.update(over)
+            return RequestContext(**base)
+
+        class _DenySvc:
+            def check_resource_action(self, *a, **kw):
+                return False
+
+        with patch("auth.service.get_identity_service",
+                   return_value=_DenySvc()):
+            can_chat, reason = _workbench_chat_readiness(
+                _ctx(), "any-agent")
         self.assertFalse(can_chat)
-        self.assertEqual(reason, "runtime_not_enabled")
+        self.assertEqual(reason, "permission_denied")
+
+    def test_readiness_database_chat_use_gate(self):
+        """Member with agent.use but without chat.use is still not runnable."""
+        from auth.runtime import RequestContext
+        from channel.web.web_channel import _workbench_chat_readiness
+
+        ctx = RequestContext(
+            user_id="u1", username="u1", display_name="U1",
+            is_platform_admin=False, must_change_password=False,
+            tenant_id="t1", membership=None,
+            permissions={"agent.read", "agent.use"}, is_tenant_admin=False)
+
+        class _AllowAgentSvc:
+            def check_resource_action(self, *a, **kw):
+                return True
+
+        with patch("auth.service.get_identity_service",
+                   return_value=_AllowAgentSvc()):
+            can_chat, reason = _workbench_chat_readiness(ctx, "any-agent")
+        self.assertFalse(can_chat)
+        self.assertEqual(reason, "permission_denied")
+
+    def test_readiness_database_authorized_runnable(self):
+        """Platform admin (and a member with both gates) is runnable."""
+        from auth.runtime import RequestContext
+        from channel.web.web_channel import _workbench_chat_readiness
+
+        admin = RequestContext(
+            user_id="root", username="root", display_name="Root",
+            is_platform_admin=True, must_change_password=False,
+            tenant_id="t1", membership=None,
+            permissions={"agent.read"}, is_tenant_admin=False)
+        member = RequestContext(
+            user_id="u1", username="u1", display_name="U1",
+            is_platform_admin=False, must_change_password=False,
+            tenant_id="t1", membership=None,
+            permissions={"agent.read", "chat.use", "agent.use"},
+            is_tenant_admin=False)
+
+        class _AllowSvc:
+            def check_resource_action(self, *a, **kw):
+                return True
+
+        with patch("auth.service.get_identity_service", return_value=_AllowSvc()):
+            self.assertEqual(_workbench_chat_readiness(admin, "any-agent"),
+                             (True, None))
+            self.assertEqual(_workbench_chat_readiness(member, "any-agent"),
+                             (True, None))
 
 
 class TestWorkbenchFrontEnd(unittest.TestCase):
@@ -157,8 +223,8 @@ class TestWorkbenchFrontEnd(unittest.TestCase):
 
     def test_view_meta_moves_agents_to_manage(self):
         js = self._read("channel/web/static/js/console.js")
-        assert "agents:   { group: 'nav_manage',  page: 'menu_agent_config' }" in js
-        assert "'agent-workbench': { group: 'nav_chat', page: 'menu_agents' }" in js
+        assert "agents:   { group: 'nav_group_agent_dev', page: 'menu_agent_config', console: 'admin.agents' }" in js
+        assert "'agent-workbench': { group: 'nav_workbench', page: 'menu_agents', console: 'workbench.agents' }" in js
 
     def test_config_page_title_and_menu_label(self):
         html = self._read("channel/web/chat.html")
@@ -178,8 +244,16 @@ class TestWorkbenchFrontEnd(unittest.TestCase):
         js = self._read("channel/web/static/js/console.js")
         for key in ("agent_workbench_title", "agent_workbench_refresh",
                     "agent_workbench_empty", "agent_workbench_failed",
-                    "agent_target_unavailable", "start_chat"):
+                    "agent_target_unavailable", "agent_permission_denied",
+                    "start_chat"):
             assert key in js
+
+    def test_workbench_permission_denied_label_and_notice(self):
+        js = self._read("channel/web/static/js/console.js")
+        # Card label + start-failure notice distinguish the permission case from
+        # the old version-closure message (task 3.3).
+        assert "if (reason === 'permission_denied') return t('agent_permission_denied');" in js
+        assert "reason === 'permission_denied'\n        ? 'agent_permission_denied'" in js
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required for console behavior tests")
     def test_frontend_behavior(self):

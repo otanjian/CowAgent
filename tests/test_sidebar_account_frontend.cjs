@@ -136,6 +136,7 @@ function setup(transport = async () => response(database()), { agentWrapper = fa
     }
     node('account-menu-identity').appendChild(node('account-menu-name'));
     node('account-menu-identity').appendChild(node('account-menu-username'));
+    node('account-menu-logout').appendChild(node('account-menu-logout-label'));
     node('sidebar-version').tagName = 'A';
     node('sidebar-version').setAttribute('href', 'https://github.com/zhayujie/CowAgent/releases');
     for (const id of ['sidebar-account-menu', 'account-menu-identity', 'account-menu-status',
@@ -160,6 +161,7 @@ function setup(transport = async () => response(database()), { agentWrapper = fa
         t: key => key, escapeHtml: value => String(value).replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
         effectiveBrandName: () => ctx.brandName,
         effectiveLogoUrl: () => '/logo.svg', effectiveLogoDescription: () => '',
+        welcomeHeroDescription: () => '',
         effectiveFaviconUrl: () => '/favicon.ico', brandWordmarkHTML: value => value,
         _brandArmFallback() {}, applyTheme() {}, applyI18n() {}, _applyInputTooltips() {},
         _resetHistorySearch() {}, bumpTenantGeneration() {},
@@ -996,4 +998,26 @@ test('chat initialization restores scoped selections and waits for the Agent cat
     await ready;
     assert.deepEqual(steps, [['catalog', 'new-agent'], ['session', 'new-agent'],
         ['workspace', 'new-session'], ['settings', 'new-session'], ['history', 'new-session']]);
+});
+
+test('navigation availability gate reads the authoritative /auth/context projection, not a client role array', () => {
+    const h = setup(async url => url === '/auth/check' ? response(database())
+        : response({ status: 'success', identity_mode: 'database' }));
+    // Force database mode so _viewNavDenied actually evaluates.
+    h.ctx._identityMode = () => 'database';
+    // The VM does not load VIEW_META (defined in a non-selected section), so we
+    // stub the getter with the mapping that _viewNavDenied relies on.
+    h.run("_consolePageForView = v => v === 'roles' ? 'admin.roles' : (v === 'skills' ? 'admin.skills' : '')");
+    // A member (not platform admin) with a known projection that denies 'roles'.
+    h.run("_authContext = { status: 'success', authorization_mode: 'role', is_tenant_admin: false, console_pages: { 'admin.roles': { available: false, read_allowed: false, reason: 'no_resource_grant' } } }");
+    const denied = h.run('_viewNavDenied("roles")');
+    assert.equal(denied && denied.reason, 'denied');
+    // 'skills' is not signed by this projection -> allowed (do not guess).
+    assert.equal(h.run('_viewNavDenied("skills")'), null);
+    // Platform 'all' mode overrides the same denial.
+    h.run("_authContext = { status: 'success', authorization_mode: 'all', console_pages: {} }");
+    assert.equal(h.run('_viewNavDenied("roles")'), null);
+    // No projection loaded yet -> unknown -> allowed (must not block startup).
+    h.run('_authContext = null');
+    assert.equal(h.run('_viewNavDenied("roles")'), null);
 });

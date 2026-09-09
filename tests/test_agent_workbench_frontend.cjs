@@ -100,14 +100,14 @@ test('removed target is rejected despite stale enabled management entry', async 
     assert.equal(node('agent-workbench-status').classList.contains('opacity-0'), false);
 });
 
-test('runtime-disabled target cannot launch and explains why', async () => {
+test('permission-denied target cannot launch and explains why', async () => {
     const { ctx, events, node } = setup(async () => response([agent('B', {
-        can_chat: false, unavailable_reason: 'runtime_not_enabled',
+        can_chat: false, unavailable_reason: 'permission_denied',
     })]));
     await ctx.startChatWithAgent('B');
     assert.equal(events.filter(e => e[0] === 'newChat').length, 0);
     assert.match(node('agent-workbench-grid').innerHTML, /disabled aria-disabled="true"/);
-    assert.match(node('agent-workbench-grid').innerHTML, /agent_runtime_not_enabled/);
+    assert.match(node('agent-workbench-grid').innerHTML, /agent_permission_denied/);
 });
 
 test('double-click while validation is pending submits one session', async () => {

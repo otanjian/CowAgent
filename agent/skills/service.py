@@ -90,14 +90,33 @@ class SkillService:
         """
         self.manager.refresh_skills()
         config = self.manager.get_skills_config()
-        result = list(config.values())
+        result = []
+        for item in config.values():
+            item = dict(item)
+            # Guarantee a stable resource_id even for config persisted before
+            # this field existed.
+            if not item.get("resource_id"):
+                item["resource_id"] = f"{item.get('source', 'builtin')}:{item.get('name', '')}"
+            result.append(item)
         logger.info(f"[SkillService] query: {len(result)} skills found")
         return result
+
+    def resolve(self, *, resource_id: Optional[str] = None, name: Optional[str] = None) -> SkillEntry:
+        """Resolve a skill uniquely, returning the loaded SkillEntry.
+
+        Delegates to :meth:`SkillManager.resolve_skill`. Ambiguity on ``name``
+        raises ValueError so the console can prompt for ``resource_id``.
+        """
+        entry = self.manager.resolve_skill(resource_id=resource_id, name=name)
+        if entry is None:
+            raise FileNotFoundError(
+                f"skill not found: {resource_id or name}")
+        return entry
 
     # ------------------------------------------------------------------
     # content — read and edit a skill's definition file
     # ------------------------------------------------------------------
-    def read_content(self, name: str) -> dict:
+    def read_content(self, name: str, resource_id: Optional[str] = None) -> dict:
         """
         Read a skill's definition file, for viewing or editing in a console.
 
@@ -105,16 +124,19 @@ class SkillService:
         be accepted, and is false for one that ships with the installation.
 
         :param name: skill name as listed by :meth:`query`
+        :param resource_id: stable ``{source}:{name}`` id (preferred) to
+            disambiguate a builtin from a custom skill of the same name.
         :return: the fields of :meth:`WorkspaceService.read_text` plus the skill
             ``name``, its ``source``, the ``filename`` being shown, and
             ``ships_with_install`` to explain a refusal.
         :raises FileNotFoundError: if no skill of that name is loaded.
         """
-        skill, svc, rel = self._locate(name)
+        skill, svc, rel = self._locate(name, resource_id)
         shipped = self._ships_with_install(skill)
         result = svc.read_text(rel)
         result["name"] = skill.name
         result["source"] = skill.source
+        result["resource_id"] = resource_id or f"{skill.source}:{skill.name}"
         result["filename"] = rel
         # Reported separately from `source`, which stays `custom` for the
         # workspace copy of a builtin: the console needs this to say *why* it is
@@ -124,17 +146,19 @@ class SkillService:
         return result
 
     def write_content(self, name: str, content: str,
-                      expected_mtime: Optional[float] = None) -> dict:
+                      expected_mtime: Optional[float] = None,
+                      resource_id: Optional[str] = None) -> dict:
         """
         Overwrite a skill's definition file.
 
         :param expected_mtime: the mtime the caller read, forwarded to
             :meth:`WorkspaceService.write_text` so a rewrite that happened
             mid-edit raises rather than being overwritten silently.
+        :param resource_id: stable ``{source}:{name}`` id (preferred).
         :raises ValueError: for a skill that ships with the installation, whose
             files do not survive an edit. See :meth:`_ships_with_install`.
         """
-        skill, svc, rel = self._locate(name)
+        skill, svc, rel = self._locate(name, resource_id)
         if self._ships_with_install(skill):
             raise ValueError(f"skill ships with the installation and is read-only: {name}")
 
@@ -163,9 +187,10 @@ class SkillService:
                                 os.path.basename(skill.base_dir))
         return os.path.isfile(os.path.join(shadowed, "SKILL.md"))
 
-    def _locate(self, name: str):
+    def _locate(self, name: str, resource_id: Optional[str] = None):
         """
-        Resolve a skill name to ``(skill, service, path within its directory)``.
+        Resolve a skill (by ``resource_id`` preferred, else ``name``) to
+        ``(skill, service, path within its directory)``.
 
         Skills are addressed by name because the loader is what knows where a
         name lands: a workspace skill shadows a builtin one of the same name,
@@ -177,11 +202,12 @@ class SkillService:
         """
         from agent.workspace.service import WorkspaceService
 
-        if not name or not name.strip():
-            raise ValueError("skill name is required")
-        entry = self.manager.get_skill(name)
+        if not resource_id:
+            if not name or not name.strip():
+                raise ValueError("skill name is required")
+        entry = self.manager.resolve_skill(resource_id=resource_id, name=name)
         if entry is None:
-            raise FileNotFoundError(f"skill not found: {name}")
+            raise FileNotFoundError(f"skill not found: {resource_id or name}")
         skill = entry.skill
         return skill, WorkspaceService(skill.base_dir), os.path.basename(skill.file_path)
 
@@ -317,27 +343,39 @@ class SkillService:
     # ------------------------------------------------------------------
     def open(self, payload: dict) -> None:
         """
-        Enable a skill by name.
+        Enable a skill.
 
-        :param payload: {"name": "skill_name"}
+        :param payload: {"name": "skill_name"} or {"resource_id": "source:name"}
         """
+        resource_id = payload.get("resource_id")
         name = payload.get("name")
-        if not name:
-            raise ValueError("skill name is required")
-        self.manager.set_skill_enabled(name, enabled=True)
-        logger.info(f"[SkillService] open: skill '{name}' enabled")
+        # Enable must target the exact authorization object, so a bare name that
+        # is ambiguous between builtin/custom is rejected rather than guessed.
+        entry = self._resolve_target(resource_id=resource_id, name=name)
+        self.manager.set_skill_enabled(entry.skill.name, enabled=True)
+        logger.info(f"[SkillService] open: skill '{entry.skill.name}' enabled")
 
     def close(self, payload: dict) -> None:
         """
-        Disable a skill by name.
+        Disable a skill.
 
-        :param payload: {"name": "skill_name"}
+        :param payload: {"name": "skill_name"} or {"resource_id": "source:name"}
         """
+        resource_id = payload.get("resource_id")
         name = payload.get("name")
-        if not name:
-            raise ValueError("skill name is required")
-        self.manager.set_skill_enabled(name, enabled=False)
-        logger.info(f"[SkillService] close: skill '{name}' disabled")
+        entry = self._resolve_target(resource_id=resource_id, name=name)
+        self.manager.set_skill_enabled(entry.skill.name, enabled=False)
+        logger.info(f"[SkillService] close: skill '{entry.skill.name}' disabled")
+
+    def _resolve_target(self, *, resource_id: Optional[str] = None,
+                        name: Optional[str] = None) -> SkillEntry:
+        """Resolve an action target, enforcing that one identifer is supplied.
+
+        Requires a ``resource_id`` when the bare ``name`` is ambiguous.
+        """
+        if not resource_id and not name:
+            raise ValueError("skill name or resource_id is required")
+        return self.resolve(resource_id=resource_id, name=name)
 
     # ------------------------------------------------------------------
     # delete
@@ -346,11 +384,12 @@ class SkillService:
         """
         Delete a skill by removing its directory entirely.
 
-        :param payload: {"name": "skill_name"}
+        :param payload: {"name": "skill_name"} or {"resource_id": "source:name"}
         """
+        resource_id = payload.get("resource_id")
         name = payload.get("name")
-        if not name:
-            raise ValueError("skill name is required")
+        entry = self._resolve_target(resource_id=resource_id, name=name)
+        name = entry.skill.name
 
         skill_dir = self._safe_skill_dir(name)
         if os.path.exists(skill_dir):

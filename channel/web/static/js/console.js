@@ -121,6 +121,7 @@ function _renderSidebarAccount() {
     const trigger = document.getElementById('sidebar-account-toggle');
     if (trigger) trigger.title = [name, subtitle].filter(Boolean).join('\n');
     _accountText('sidebar-account-avatar', hasUser ? Array.from(name.trim())[0] || '' : '');
+    _accountText('account-menu-avatar', hasUser ? Array.from(name.trim())[0] || '' : '');
     _accountHidden('sidebar-account-avatar', !hasUser);
     _accountHidden('sidebar-account-avatar-icon', hasUser);
     _accountText('account-menu-name', hasUser ? name : '');
@@ -131,12 +132,13 @@ function _renderSidebarAccount() {
     _accountHidden('account-menu-status', hasUser || local || state.phase === 'unauthenticated');
     _accountHidden('account-menu-retry', !['error', 'logout_error', 'loading'].includes(state.phase));
     _accountHidden('account-menu-logout', !canLogout);
-    _accountText('account-menu-logout', t(leaving ? 'account_logging_out' : logoutError ? 'account_retry_logout' : 'account_logout'));
+    _accountText('account-menu-logout-label', t(leaving ? 'account_logging_out' : logoutError ? 'account_retry_logout' : 'account_logout'));
     _accountHidden('logout-btn-header', !canLogout);
     // Six-item menu (database identity mode, authenticated account). The items
     // are only available to a real database user; legacy/error/logout states
     // hide the whole group.
     const dbUser = hasUser && state.mode === 'database';
+    _accountHidden('account-menu-settings', !(dbUser || local));
     ['account-menu-profile', 'account-menu-password', 'account-menu-tenant'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.disabled = !!_accountWritePending;
@@ -323,10 +325,19 @@ function _enterAccountApp() {
                 _accountAppVisible = true;
                 _renderSidebarAccount();
                 // Gate permission-sensitive sidebar entries (platform/audit)
-                // once the self profile is known; refresh /auth/me so the
-                // current-tenant admin qualification is accurate.
+                // once the self profile AND the current tenant's authoritative
+                // capability projection are known. The tenant admin qualification
+                // and per-page availability now come from /auth/context, not from
+                // a client-side role array.
                 fetchAccountSelf().then(function (self) {
-                    if (current()) _applySidebarPermissions(self);
+                    if (!current()) return;
+                    _applySidebarPermissions(self);
+                    return _fetchTenantAuthorization();
+                }).then(function (ctx) {
+                    if (!current()) return;
+                    // Re-apply with the authoritative projection when it arrives.
+                    _applySidebarPermissions(_baseAccountSelf());
+                    if (ctx) _applySidebarPermissions(_baseAccountSelf());
                 });
                 if (_identityMode() === 'database') _setupHeaderTenantSelector();
                 chatInput.focus();
@@ -646,6 +657,8 @@ const I18N = {
         menu_audit: '审计', menu_backup: '备份升级', menu_open_api: '开放 API',
         nav_unavailable: '功能尚未开放',
         nav_unavailable_hint: '该功能正在筹备或尚未在当前配置开放，请返回其他可用页面。',
+        nav_denied: '无权访问',
+        nav_denied_hint: '您的账号无权访问该页面或当前未开通对应能力，请返回其他可用页面，或联系管理员开通权限。',
         nav_go_back: '返回可用页面',
         branding_title: '品牌设置',
         branding_subtitle: '设置控制台的品牌标识与说明',
@@ -733,9 +746,28 @@ const I18N = {
         admin_field_parent: '上级部门', admin_field_parent_none: '无（根目录）',
         admin_field_sort_order: '排序',
         admin_field_permissions: '权限', admin_field_permissions_hint: '从目录中选择权限点',
+        admin_field_resource_grants: '资源授权',
+        admin_field_resource_grants_hint: '为角色分配菜单 / 技能 / 工具 / 模型 / 智能体的可访问资源',
+        admin_field_model_defaults: '模型默认值',
+        admin_field_model_defaults_hint: '为已接通能力选择角色默认模型，须属于已授权的模型',
+        admin_field_model_grants: '模型授权',
+        admin_field_model_grants_hint: '为租户分配可分配角色/会话使用的模型',
+        admin_resources_selected: '已选 {n} 项',
+        admin_resources_none: '未选择资源',
+        admin_resource_manage: '管理资源',
+        admin_resource_search_placeholder: '搜索资源…',
+        admin_resource_selectall: '全选当前页',
+        admin_resource_clear: '清空',
+        admin_resource_model_capabilities: '能力',
+        admin_resource_kind_menu: '菜单',
+        admin_resource_kind_skill: '技能',
+        admin_resource_kind_tool: '工具',
+        admin_resource_kind_model: '模型',
+        admin_resource_kind_agent: '智能体',
         admin_field_platform_admin: '平台管理员',
         admin_field_admin_user_id: '管理员账号 ID', admin_field_admin_user_id_hint: '已有有效账号的用户 ID',
         admin_tenant_admin: '管理员',
+        admin_tenant_roles: '角色',
         admin_tenant_admin_edit: '配置租户管理员',
         admin_reset: '重置密码', admin_reset_do: '确认重置', admin_reset_confirm: '确定重置「{name}」的密码？',
         admin_reset_temp_result: '一次性临时密码', admin_forbidden: '无权限',
@@ -820,6 +852,7 @@ const I18N = {
         agent_starting: '正在进入…',
         agent_start_failed: '暂时无法开始对话，请重试',
         agent_runtime_not_enabled: '当前版本尚未开放对话',
+        agent_permission_denied: '暂无对话权限，请联系管理员开通',
         agents_delete: '删除',
         agents_delete_title: '删除智能体',
         agents_delete_confirm: '确定删除智能体「{name}」吗？其工作空间和会话将一并移除，且无法恢复。',
@@ -862,7 +895,7 @@ const I18N = {
         settings_tab_basic: '基础配置',
         settings_tab_models: '模型配置',
         knowledge_shared_hint: '知识库默认全员共享，在侧栏「知识」查看和编辑。',
-        menu_memory: '记忆管理', menu_knowledge: '知识库', menu_channels: '消息渠道', menu_tasks: '定时任务',
+        menu_memory: '记忆管理', menu_knowledge: '知识库', menu_scenes: '场景应用', menu_channels: '消息渠道', menu_tasks: '定时任务',
         menu_logs: '运行日志', menu_todo: '我的待办', menu_scenarios: '场景应用',
         models_title: '模型管理',
         models_desc: '统一管理对话、图像、语音、向量、搜索能力',
@@ -1101,6 +1134,7 @@ const I18N = {
         todo_source_manual: '手动创建', todo_source_conversation: '会话来源',
         todo_load_error: '加载失败', todo_retry: '重试',
         tasks_coming: '即将推出', tasks_coming_desc: '定时任务管理功能即将在此提供',
+        tasks_unavailable: '定时任务暂不可用', tasks_unavailable_desc: '当前身份模式未开放定时任务，请在 legacy 模式下使用，或由管理员适配后开启。',
         task_add_btn: '新增任务',
         task_edit_title: '编辑定时任务',
         task_add_title: '新增定时任务',
@@ -1301,6 +1335,8 @@ const I18N = {
         menu_audit: '稽核', menu_backup: '備份升級', menu_open_api: '開放 API',
         nav_unavailable: '功能尚未開放',
         nav_unavailable_hint: '該功能正在籌備或尚未在當前配置開放，請返回其他可用頁面。',
+        nav_denied: '無權存取',
+        nav_denied_hint: '您的帳號無權存取該頁面或目前未開通對應能力，請返回其他可用頁面，或聯絡管理員開通權限。',
         nav_go_back: '返回可用頁面',
         branding_title: '品牌設定',
         branding_subtitle: '設定控制台的品牌標識與說明',
@@ -1387,9 +1423,28 @@ const I18N = {
         admin_field_parent: '上級部門', admin_field_parent_none: '無（根目錄）',
         admin_field_sort_order: '排序',
         admin_field_permissions: '權限', admin_field_permissions_hint: '從目錄中選擇權限點',
+        admin_field_resource_grants: '資源授權',
+        admin_field_resource_grants_hint: '為角色分配選單 / 技能 / 工具 / 模型 / 智能體的可存取資源',
+        admin_field_model_defaults: '模型預設值',
+        admin_field_model_defaults_hint: '為已接通能力選擇角色預設模型，須屬於已授權的模型',
+        admin_field_model_grants: '模型授權',
+        admin_field_model_grants_hint: '為租戶分配可供角色/會話使用的模型',
+        admin_resources_selected: '已選 {n} 項',
+        admin_resources_none: '未選擇資源',
+        admin_resource_manage: '管理資源',
+        admin_resource_search_placeholder: '搜尋資源…',
+        admin_resource_selectall: '全選當前頁',
+        admin_resource_clear: '清空',
+        admin_resource_model_capabilities: '能力',
+        admin_resource_kind_menu: '選單',
+        admin_resource_kind_skill: '技能',
+        admin_resource_kind_tool: '工具',
+        admin_resource_kind_model: '模型',
+        admin_resource_kind_agent: '智慧體',
         admin_field_platform_admin: '平台管理員',
         admin_field_admin_user_id: '管理員帳號 ID', admin_field_admin_user_id_hint: '已有有效帳號的使用者 ID',
         admin_tenant_admin: '管理員',
+        admin_tenant_roles: '角色',
         admin_tenant_admin_edit: '設定租戶管理員',
         admin_reset: '重設密碼', admin_reset_do: '確認重設', admin_reset_confirm: '確定重設「{name}」的密碼？',
         admin_reset_temp_result: '一次性臨時密碼', admin_forbidden: '無權限',
@@ -1474,6 +1529,7 @@ const I18N = {
         agent_starting: '正在進入…',
         agent_start_failed: '暫時無法開始對話，請重試',
         agent_runtime_not_enabled: '目前版本尚未開放對話',
+        agent_permission_denied: '暫無對話權限，請聯絡管理員開通',
         agents_delete: '刪除',
         agents_delete_title: '刪除智慧體',
         agents_delete_confirm: '確定刪除智慧體「{name}」嗎？其工作空間與會話將一併移除，且無法復原。',
@@ -1516,7 +1572,7 @@ const I18N = {
         settings_tab_basic: '基礎設定',
         settings_tab_models: '模型設定',
         knowledge_shared_hint: '知識庫預設全員共享，在側欄「知識」查看和編輯。',
-        menu_memory: '記憶管理', menu_knowledge: '知識庫', menu_channels: '訊息管道', menu_tasks: '定時任務',
+        menu_memory: '記憶管理', menu_knowledge: '知識庫', menu_scenes: '場景應用', menu_channels: '訊息管道', menu_tasks: '定時任務',
         menu_logs: '執行日誌', menu_todo: '我的待辦', menu_scenarios: '場景應用',
         models_title: '模型管理',
         models_desc: '統一管理對話、影像、語音、向量、搜尋能力',
@@ -1755,6 +1811,7 @@ const I18N = {
         todo_source_manual: '手動建立', todo_source_conversation: '會話來源',
         todo_load_error: '載入失敗', todo_retry: '重試',
         tasks_coming: '即將推出', tasks_coming_desc: '定時任務管理功能即將在此提供',
+        tasks_unavailable: '定時任務暫不可用', tasks_unavailable_desc: '當前身分模式未開放定時任務，請在 legacy 模式下使用，或由管理員適配後開啟。',
         task_add_btn: '新增任務',
         task_edit_title: '編輯定時任務',
         task_add_title: '新增定時任務',
@@ -1950,6 +2007,8 @@ const I18N = {
         menu_audit: 'Audit', menu_backup: 'Backup & Upgrade', menu_open_api: 'Open API',
         nav_unavailable: 'Feature not available yet',
         nav_unavailable_hint: 'This feature is in preparation or is not enabled in the current configuration. Please return to another available page.',
+        nav_denied: 'Access denied',
+        nav_denied_hint: 'Your account does not have access to this page, or the capabilities it relies on are not enabled. Please return to another available page or contact an administrator to grant access.',
         nav_go_back: 'Back to available pages',
         branding_title: 'Branding',
         branding_subtitle: 'Customize the console brand identity and description',
@@ -2036,9 +2095,28 @@ const I18N = {
         admin_field_parent: 'Parent department', admin_field_parent_none: 'None (root)',
         admin_field_sort_order: 'Sort order',
         admin_field_permissions: 'Permissions', admin_field_permissions_hint: 'Pick permission points from the catalog',
+        admin_field_resource_grants: 'Resource grants',
+        admin_field_resource_grants_hint: 'Grant the role access to menus / skills / tools / models / agents',
+        admin_field_model_defaults: 'Model defaults',
+        admin_field_model_defaults_hint: 'Pick a default model per connected capability; must be an authorized model',
+        admin_field_model_grants: 'Model grants',
+        admin_field_model_grants_hint: 'Allocate models this tenant may assign to roles / sessions',
+        admin_resources_selected: '{n} selected',
+        admin_resources_none: 'No resources selected',
+        admin_resource_manage: 'Manage resources',
+        admin_resource_search_placeholder: 'Search resources…',
+        admin_resource_selectall: 'Select this page',
+        admin_resource_clear: 'Clear',
+        admin_resource_model_capabilities: 'Capabilities',
+        admin_resource_kind_menu: 'Menus',
+        admin_resource_kind_skill: 'Skills',
+        admin_resource_kind_tool: 'Tools',
+        admin_resource_kind_model: 'Models',
+        admin_resource_kind_agent: 'Agents',
         admin_field_platform_admin: 'Platform admin',
         admin_field_admin_user_id: 'Admin account ID', admin_field_admin_user_id_hint: 'User ID of an existing active account',
         admin_tenant_admin: 'Admin',
+        admin_tenant_roles: 'Roles',
         admin_tenant_admin_edit: 'Configure tenant admin',
         admin_reset: 'Reset password', admin_reset_do: 'Reset', admin_reset_confirm: 'Reset password for "{name}"?',
         admin_reset_temp_result: 'One-time temporary password', admin_forbidden: 'Forbidden',
@@ -2123,6 +2201,7 @@ const I18N = {
         agent_starting: 'Opening…',
         agent_start_failed: 'Could not start the chat. Please try again.',
         agent_runtime_not_enabled: 'Chat is not enabled in this version',
+        agent_permission_denied: 'No permission to chat yet — ask an administrator to grant access',
         agents_delete: 'Delete',
         agents_delete_title: 'Delete Agent',
         agents_delete_confirm: 'Delete Agent "{name}"? Its workspace and conversations will be removed for good.',
@@ -2165,7 +2244,7 @@ const I18N = {
         settings_tab_basic: 'General',
         settings_tab_models: 'Models',
         knowledge_shared_hint: 'Knowledge is shared by every Agent. Open it from the Knowledge page.',
-        menu_memory: 'Memory Management', menu_knowledge: 'Knowledge Base', menu_channels: 'Channels', menu_tasks: 'Scheduled Tasks',
+        menu_memory: 'Memory Management', menu_knowledge: 'Knowledge Base', menu_scenes: 'Scenario Apps', menu_channels: 'Channels', menu_tasks: 'Scheduled Tasks',
         menu_logs: 'Runtime Logs', menu_todo: 'My Todos', menu_scenarios: 'Scenarios',
         models_title: 'Models',
         models_desc: 'Manage chat, image, voice, embedding and search capabilities in one place',
@@ -2404,6 +2483,7 @@ const I18N = {
         todo_source_manual: 'Manual', todo_source_conversation: 'Conversation',
         todo_load_error: 'Failed to load', todo_retry: 'Retry',
         tasks_coming: 'Coming Soon', tasks_coming_desc: 'Scheduled task management will be available here',
+        tasks_unavailable: 'Scheduled tasks unavailable', tasks_unavailable_desc: 'Scheduled tasks are not enabled in the current identity mode. Use legacy mode or ask an administrator to adapt them.',
         task_add_btn: 'Add Task',
         task_edit_title: 'Edit Task',
         task_add_title: 'Add Task',
@@ -3217,7 +3297,21 @@ Object.assign(I18N["zh"], {
     "home_commands_prompt": "/help",
     "home_footer": "清晰描述目标，让每一次对话更有成果",
     "home_input_placeholder": "描述你的任务，或直接提问…",
-    "home_composer_hint": "/ 使用指令 · @ 引用智能体或文件"
+    "home_composer_hint": "/ 使用指令 · @ 引用智能体或文件",
+    "scenes_title": "场景应用",
+    "scenes_subtitle": "选择一个业务场景，进入专用工作台或对话上下文。",
+    "scenes_loading": "加载场景中...",
+    "scenes_empty": "当前分类没有可用的场景。",
+    "scenes_no_category": "当前分类没有可用的场景。",
+    "scenes_go_chat": "开始对话",
+    "scenes_all": "全部",
+    "scenes_workbench": "工作台",
+    "scenes_activate_failed": "场景激活失败，请稍后重试。",
+    "scenes_picker_title": "选择场景",
+    "scenes_picker_placeholder": "搜索场景...",
+    "scenes_picker_empty": "没有匹配的场景",
+    "scenes_greeting": "已进入「{name}」场景。",
+    "slash_scenes": "打开场景选择器"
 });
 Object.assign(I18N["zh-Hant"], {
     "home_new_chat": "新增對話",
@@ -3248,7 +3342,21 @@ Object.assign(I18N["zh-Hant"], {
     "home_commands_prompt": "/help",
     "home_footer": "清晰描述目標，讓每一次對話更有成果",
     "home_input_placeholder": "描述你的任務，或直接提問…",
-    "home_composer_hint": "/ 使用指令 · @ 引用智慧體或檔案"
+    "home_composer_hint": "/ 使用指令 · @ 引用智慧體或檔案",
+    "scenes_title": "場景應用",
+    "scenes_subtitle": "選擇一個業務場景，進入專用工作台或對話上下文。",
+    "scenes_loading": "載入場景中...",
+    "scenes_empty": "目前分類沒有可用的場景。",
+    "scenes_no_category": "目前分類沒有可用的場景。",
+    "scenes_go_chat": "開始對話",
+    "scenes_all": "全部",
+    "scenes_workbench": "工作台",
+    "scenes_activate_failed": "場景啟用失敗，請稍後重試。",
+    "scenes_picker_title": "選擇場景",
+    "scenes_picker_placeholder": "搜尋場景...",
+    "scenes_picker_empty": "沒有符合的場景",
+    "scenes_greeting": "已進入「{name}」場景。",
+    "slash_scenes": "開啟場景選擇器"
 });
 Object.assign(I18N["en"], {
     "home_new_chat": "New chat",
@@ -3279,40 +3387,62 @@ Object.assign(I18N["en"], {
     "home_commands_prompt": "/help",
     "home_footer": "Describe your goal clearly to get more from every conversation.",
     "home_input_placeholder": "Describe your task, or ask a question…",
-    "home_composer_hint": "/ Commands · @ Reference agents or files"
+    "home_composer_hint": "/ Commands · @ Reference agents or files",
+    "scenes_title": "Scenario Apps",
+    "scenes_subtitle": "Pick a business scenario to open its workbench or conversation context.",
+    "scenes_loading": "Loading scenarios...",
+    "scenes_empty": "No scenarios available in this category.",
+    "scenes_no_category": "No scenarios available in this category.",
+    "scenes_go_chat": "Start chatting",
+    "scenes_all": "All",
+    "scenes_workbench": "Workbench",
+    "scenes_activate_failed": "Failed to activate the scenario, please try again.",
+    "scenes_picker_title": "Choose a scenario",
+    "scenes_picker_placeholder": "Search scenarios...",
+    "scenes_picker_empty": "No matching scenarios",
+    "scenes_greeting": "Switched to the \"{name}\" scenario.",
+    "slash_scenes": "Open the scenario picker"
 });
 
 // =====================================================================
 // Sidebar & Navigation
 // =====================================================================
 const VIEW_META = {
-    chat:     { group: 'nav_workbench', page: 'menu_chat' },
-    history:  { group: 'nav_workbench', page: 'session_history' },
-    'agent-workbench': { group: 'nav_workbench', page: 'menu_agents' },
-    todo:     { group: 'nav_workbench', page: 'menu_todo' },
-    tasks:    { group: 'nav_workbench', page: 'menu_tasks' },
-    knowledge:{ group: 'nav_workbench', page: 'menu_knowledge' },
-    agents:   { group: 'nav_group_agent_dev', page: 'menu_agent_config' },
-    skills:   { group: 'nav_group_agent_dev', page: 'menu_skills' },
-    memory:   { group: 'nav_group_agent_dev', page: 'menu_memory' },
-    config:   { group: 'nav_group_model_access', page: 'menu_config' },
-    channels: { group: 'nav_group_model_access', page: 'menu_channels' },
-    system_user: { group: 'nav_group_org_perm', page: 'menu_system_user' },
-    roles:       { group: 'nav_group_org_perm', page: 'menu_roles' },
-    org:         { group: 'nav_group_org_perm', page: 'menu_org' },
-    tenant:      { group: 'nav_group_platform_ops', page: 'menu_tenant' },
-    platform:    { group: 'nav_group_platform_ops', page: 'menu_platform' },
-    branding:    { group: 'nav_group_platform_ops', page: 'menu_branding' },
-    logs:        { group: 'nav_group_platform_ops', page: 'menu_logs' },
-    audit:       { group: 'nav_group_platform_ops', page: 'menu_audit' },
+    chat:     { group: 'nav_workbench', page: 'menu_chat', console: 'workbench.chat' },
+    history:  { group: 'nav_workbench', page: 'session_history', console: 'workbench.history' },
+    'agent-workbench': { group: 'nav_workbench', page: 'menu_agents', console: 'workbench.agents' },
+    todo:     { group: 'nav_workbench', page: 'menu_todo', console: 'workbench.todos' },
+    tasks:    { group: 'nav_workbench', page: 'menu_tasks', console: 'workbench.schedules' },
+    knowledge:{ group: 'nav_workbench', page: 'menu_knowledge', console: 'workbench.knowledge' },
+    scenes:   { group: 'nav_workbench', page: 'menu_scenes', console: 'workbench.scenes' },
+    agents:   { group: 'nav_group_agent_dev', page: 'menu_agent_config', console: 'admin.agents' },
+    skills:   { group: 'nav_group_agent_dev', page: 'menu_skills', console: 'admin.skills' },
+    memory:   { group: 'nav_group_agent_dev', page: 'menu_memory', console: 'admin.memory' },
+    config:   { group: 'nav_group_model_access', page: 'menu_config', console: 'admin.models' },
+    channels: { group: 'nav_group_model_access', page: 'menu_channels', console: 'admin.channels' },
+    system_user: { group: 'nav_group_org_perm', page: 'menu_system_user', console: 'admin.roles' },
+    roles:       { group: 'nav_group_org_perm', page: 'menu_roles', console: 'admin.roles' },
+    org:         { group: 'nav_group_org_perm', page: 'menu_org', console: 'admin.organization' },
+    tenant:      { group: 'nav_group_platform_ops', page: 'menu_tenant', console: 'admin.tenants' },
+    platform:    { group: 'nav_group_platform_ops', page: 'menu_platform', console: 'admin.tenants' },
+    branding:    { group: 'nav_group_platform_ops', page: 'menu_branding', console: 'admin.branding' },
+    logs:        { group: 'nav_group_platform_ops', page: 'menu_logs', console: 'admin.logs' },
+    audit:       { group: 'nav_group_platform_ops', page: 'menu_audit', console: 'admin.settings' },
 };
 
 // Known previously-visible targets whose feature is not yet enabled. These are
 // removed from the normal sidebar, but old internal IDs and direct links must
 // not silently no-op: route them to a clear "not available" view with a return.
-const UNAVAILABLE_VIEWS = new Set(['scenarios', 'backup', 'open_api']);
+// 场景应用（scenes）已由本变更转为真实入口，其旧占位 id「scenarios」在
+// navigateTo 中重定向到 scenes，不再走「功能尚未开放」分支。
+const UNAVAILABLE_VIEWS = new Set(['backup', 'open_api']);
 
-function showUnavailableView(viewId) {
+function showUnavailableView(viewId, reason) {
+    // reason: undefined/'' -> feature not yet open (nav_unavailable);
+    // 'denied' -> the identity lacks read access (nav_denied, distinct copy).
+    // A denied target does NOT silently switch scope: we render the denial
+    // explanation and only offer a way back.
+    const denied = reason === 'denied';
     currentView = viewId;
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     const target = document.getElementById('view-unavailable');
@@ -3323,8 +3453,22 @@ function showUnavailableView(viewId) {
     });
     document.getElementById('breadcrumb-group').textContent = t('nav_system');
     document.getElementById('breadcrumb-group').dataset.i18n = 'nav_system';
-    document.getElementById('breadcrumb-page').textContent = t('nav_unavailable');
-    document.getElementById('breadcrumb-page').dataset.i18n = 'nav_unavailable';
+    const pageKey = denied ? 'nav_denied' : 'nav_unavailable';
+    document.getElementById('breadcrumb-page').textContent = t(pageKey);
+    document.getElementById('breadcrumb-page').dataset.i18n = pageKey;
+    // Swap the title/hint copy and icon for the denied case.
+    const title = document.getElementById('nav-unavailable-title');
+    const hint = document.getElementById('nav-unavailable-hint');
+    const icon = target.querySelector('i.fas');
+    if (denied) {
+        if (title) { title.textContent = t('nav_denied'); title.dataset.i18n = 'nav_denied'; }
+        if (hint) { hint.textContent = t('nav_denied_hint'); hint.dataset.i18n = 'nav_denied_hint'; }
+        if (icon) icon.classList.replace('fa-hourglass-half', 'fa-lock');
+    } else {
+        if (title) { title.textContent = t('nav_unavailable'); title.dataset.i18n = 'nav_unavailable'; }
+        if (hint) { hint.textContent = t('nav_unavailable_hint'); hint.dataset.i18n = 'nav_unavailable_hint'; }
+        if (icon) icon.classList.replace('fa-lock', 'fa-hourglass-half');
+    }
     document.getElementById('chat-agent-identity')?.classList.toggle('hidden', true);
     document.getElementById('workspace-toggle-btn')?.classList.toggle('hidden', true);
     if (window.innerWidth < 1024) closeSidebar();
@@ -3334,11 +3478,22 @@ let currentView = 'chat';
 let agentNavigationVersion = 0;
 
 function navigateTo(viewId) {
+    // 旧「场景应用」占位 id 重定向到真实 scenes 视图（收藏/直链不失效）。
+    if (viewId === 'scenarios') viewId = 'scenes';
     if (UNAVAILABLE_VIEWS.has(viewId)) {
         showUnavailableView(viewId);
         return;
     }
     if (!VIEW_META[viewId]) return;
+    // Authoritative availability gate (database mode only). A target the
+    // identity may not read and that is not open is rendered as a denial, NOT
+    // silently switched to another scope. Works only once the /auth/context
+    // projection is known; until then navigation is not spuriously blocked.
+    const deny = _viewNavDenied(viewId);
+    if (deny) {
+        showUnavailableView(viewId, deny.reason);
+        return;
+    }
     // Leaving the branding page with unsaved changes: ask to discard first.
     if (currentView === 'branding' && viewId !== 'branding' && brandingDirty) {
         brandingConfirmDiscard(() => {
@@ -3425,6 +3580,8 @@ function navigateTo(viewId) {
         loadAgentCatalog();
     } else if (viewId === 'agent-workbench') {
         loadAgentWorkbench();
+    } else if (viewId === 'scenes') {
+        if (typeof window.loadScenesView === 'function') window.loadScenesView();
     }
 
     // Clear status messages when navigating away
@@ -3814,6 +3971,7 @@ function applyAgentWorkbench(agents) {
 }
 
 function agentUnavailableLabel(reason) {
+    if (reason === 'permission_denied') return t('agent_permission_denied');
     return t(reason === 'runtime_not_enabled' ? 'agent_runtime_not_enabled' : 'agent_cannot_run');
 }
 
@@ -4820,8 +4978,11 @@ function focusChatComposer() {
 // the workbench list and surface a short notice instead of silently reusing a
 // default Agent or a stale card.
 function refreshWorkbenchAfterUnavailable(agentId, reason) {
-    showAgentStartNotice(reason === 'runtime_not_enabled'
-        ? 'agent_runtime_not_enabled' : 'agent_target_unavailable');
+    showAgentStartNotice(reason === 'permission_denied'
+        ? 'agent_permission_denied'
+        : reason === 'runtime_not_enabled'
+            ? 'agent_runtime_not_enabled'
+            : 'agent_target_unavailable');
 }
 
 function showAgentStartNotice(key) {
@@ -7246,6 +7407,8 @@ const SLASH_COMMANDS = [
     { cmd: '/knowledge list',      desc: 'slash_knowledge_list' },
     { cmd: '/knowledge on',        desc: 'slash_knowledge_on' },
     { cmd: '/knowledge off',       desc: 'slash_knowledge_off' },
+    { cmd: '/场景',                 desc: 'slash_scenes' },
+    { cmd: '/scenes',              desc: 'slash_scenes' },
     { cmd: '/config',              desc: 'slash_config' },
     { cmd: '/cancel',              desc: 'slash_cancel' },
     { cmd: '/steer ',              desc: 'slash_steer' },
@@ -7804,6 +7967,13 @@ function sendMessage() {
 
     const text = chatInput.value.trim();
     if (!text && pendingAttachments.length === 0) return;
+
+    // `/场景`（或 `/scenes`）打开场景选择器，不发送给后端。
+    if ((text === '/场景' || text === '/scenes') && typeof window.showScenePicker === 'function') {
+        chatInput.value = '';
+        window.showScenePicker();
+        return;
+    }
 
     if (text) {
         inputHistory.push(text);
@@ -15672,15 +15842,29 @@ function loadTasksView() {
     // The list tags each task with an owning Agent; make sure the roster is in
     // hand first so findAgent()/multiAgentMode() can resolve the avatar + name.
     const rosterReady = agentCatalog.length ? Promise.resolve() : loadAgentCatalog();
-    rosterReady.then(() => {
+    return rosterReady.then(() => {
     // Explicit empty agent_id so the global fetch wrapper doesn't inject the
     // active chat Agent: the task list is the whole team's schedule and must
     // NOT follow whichever Agent the conversation is currently on. The backend
     // treats an empty agent_id as "aggregate across all Agents".
-    fetch('/api/scheduler?agent_id=').then(r => r.json()).then(data => {
-        if (data.status !== 'success') return;
+    return fetch('/api/scheduler?agent_id=').then(r => r.json()).then(data => {
         const emptyEl = document.getElementById('tasks-empty');
         const listEl = document.getElementById('tasks-list');
+        if (data.status !== 'success') {
+            // Backend closed the consumer (e.g. database identity mode returns
+            // 503 "unavailable in database identity mode"). Instead of hanging on
+            // the hardcoded "Loading...", surface a readable reason so the user
+            // knows the feature is off, not stalled.
+            const code = data.code || data.message || '';
+            const isClosed = code === 'database_unavailable'
+                || /unavailable in database identity mode/i.test(String(data.message || ''));
+            emptyEl.querySelector('p').textContent = isClosed
+                ? t('tasks_unavailable') : (data.message || t('tasks_unavailable'));
+            emptyEl.classList.remove('hidden');
+            listEl.classList.add('hidden');
+            tasksLoaded = true;
+            return;
+        }
         const allTasks = data.tasks || [];
         // Backend already sorted by enabled and next_run_at, no need to re-sort on frontend
         if (allTasks.length === 0) {
@@ -15790,7 +15974,16 @@ function loadTasksView() {
             listEl.appendChild(card);
         });
         tasksLoaded = true;
-    }).catch(() => {});
+    }).catch(() => {
+        const emptyEl = document.getElementById('tasks-empty');
+        const listEl = document.getElementById('tasks-list');
+        if (emptyEl && listEl) {
+            emptyEl.querySelector('p').textContent = t('tasks_unavailable');
+            emptyEl.classList.remove('hidden');
+            listEl.classList.add('hidden');
+            tasksLoaded = true;
+        }
+    });
     });
 }
 
@@ -17211,6 +17404,13 @@ function initApp() {
 let _accountSelf = null;
 let _accountSelfSeq = 0;
 let _accountSelfRequest = null;
+// Current tenant's authoritative /auth/context capability summary, cached per
+// account/epoch. This is the *display* projection used to gate the sidebar and
+// navigation availability (console_pages / authorization_mode / is_tenant_admin);
+// the server still independently authorizes every API call.
+let _authContext = null;
+let _authContextSeq = 0;
+let _authContextRequest = null;
 let _activeAccountPanel = null;  // 'profile' | 'password' | 'prefs' | 'tenant' | 'about'
 
 function _db() { return _identityMode() === 'database'; }
@@ -17278,42 +17478,126 @@ function _baseAccountSelf() {
     return _accountSelf && _accountSelf.status === 'success' ? _accountSelf : null;
 }
 
+// Best-effort sync view of the last successful /auth/context. Returns null
+// until the first fetch resolves; callers must treat null as "unknown", not as
+// a privilege denial (menus stay as-is until the projection is known).
+function _baseAuthContext() {
+    return _authContext && _authContext.status === 'success' ? _authContext : null;
+}
+
+// Fetch the current tenant's authoritative capability summary (/auth/context)
+// for the *display* projection only. Dedupes concurrent calls and bails on any
+// epoch change (account switch/logout). No X-Tenant-ID present -> null (unknown);
+// this function never throws.
+async function _fetchTenantAuthorization() {
+    if (_identityMode() !== 'database') return null;
+    if (_authContextRequest) return _authContextRequest;
+    const tenantId = sessionStorage.getItem('cow_tenant_id') || '';
+    if (!tenantId) return null;
+    const seq = ++_authContextSeq;
+    const epoch = _authEpoch;
+    const request = Promise.resolve().then(async () => {
+        try {
+            const resp = await fetch('/auth/context', {
+                credentials: 'same-origin', cache: 'no-store',
+                headers: { 'X-Tenant-ID': tenantId },
+            });
+            const data = await resp.json();
+            if (seq !== _authContextSeq) return null;
+            if (epoch !== _authEpoch) return null;
+            if (resp.status === 401 || resp.status === 403 || data.status !== 'success') {
+                _authContext = null;
+                return null;
+            }
+            _authContext = data;
+            return data;
+        } catch (_) {
+            if (seq === _authContextSeq && epoch === _authEpoch) _authContext = null;
+            return null;
+        } finally {
+            if (_authContextRequest === request) _authContextRequest = null;
+        }
+    });
+    _authContextRequest = request;
+    return request;
+}
+
+// Reset the cached /auth/context when the tenant selection changes, so stale
+// capability data from a previous tenant is never used to gate navigation.
+function _invalidateAuthContext() {
+    _authContext = null;
+}
+
+// Map a view id to its authoritative console_pages key (or '' if none). Server
+// returns the projection; unknown views fall back to "available" so navigation
+// is never spuriously blocked for pages the backend does not sign.
+function _consolePageForView(viewId) {
+    const meta = VIEW_META[viewId];
+    return meta && meta.console ? meta.console : '';
+}
+
+// Return {reason:'denied'} when the target view is genuinely unavailable to the
+// current identity (no read grant and page not open), in database mode with a
+// known projection. Returns falsy to allow navigation. Platform "all" mode and
+// any view the backend didn't sign are allowed. A denied read (but open) page is
+// also a denial, since the identity cannot use it.
+function _viewNavDenied(viewId) {
+    if (_identityMode() !== 'database') return null;
+    const ctx = _baseAuthContext();
+    if (!ctx) return null; // projection unknown -> don't guess / don't block
+    if (ctx.authorization_mode === 'all') return null; // platform all
+    const key = _consolePageForView(viewId);
+    if (!key) return null; // backend didn't sign this page -> leave as-is
+    // Only the admin-management pages are gated by the projection. Workbench
+    // pages (chat/history/agents/todo/tasks/knowledge) are normal business
+    // entry points and are never denied — their consumer availability is
+    // reported separately (e.g. "closed consumer" on the page itself).
+    if (key.indexOf('admin.') !== 0) return null;
+    const pages = ctx.console_pages && typeof ctx.console_pages === 'object' ? ctx.console_pages : null;
+    if (!pages || !pages[key]) return null; // unknown key -> don't guess
+    if (pages[key].available || pages[key].read_allowed) return null;
+    return { reason: 'denied' };
+}
+
 // Gate the permission-sensitive sidebar entries (task 5.7/5.8). The "platform
 // accounts" entry is visible only to a platform admin. The "identity audit"
 // entry is visible only to a platform admin OR the current tenant's tenant_admin
 // (or anyone holding a tenant-scoped audit privilege). Rows that fail the check
 // are hidden; the authorization decision always stays server-side.
 function _applySidebarPermissions(self) {
+    // is_platform_admin still comes from the verified /auth/me self profile
+    // (it is NOT tenant-scoped, so /auth/context cannot report it). The current
+    // tenant's admin qualification and page availability come from the
+    // authoritative /auth/context projection — never from a client role array.
     const gotSelf = self || _baseAccountSelf();
     const user = gotSelf && gotSelf.user ? gotSelf.user : null;
     const isPlatformAdmin = !!(user && user.is_platform_admin);
-    // Determine current-tenant tenant_admin: match the stored tenant id against
-    // the self tenants' membership role codes.
-    const tenantId = sessionStorage.getItem('cow_tenant_id') || '';
-    let isTenantAdmin = false;
-    if (gotSelf && Array.isArray(gotSelf.tenants) && tenantId) {
-        const cur = gotSelf.tenants.find(function (tn) { return tn.id === tenantId; });
-        if (cur && cur.membership && Array.isArray(cur.membership.roles)) {
-            isTenantAdmin = cur.membership.roles.some(function (r) { return r.code === 'tenant_admin'; });
-        }
-    }
-    // Admin console is shown only when the identity actually has an admin
-    // capability (platform admin or a tenant admin for the selected tenant).
-    // Display projection only: every page still re-authorizes server-side, and
-    // the backend console_pages projection drives the authoritative check.
-    const canAdmin = isPlatformAdmin || isTenantAdmin;
+    const ctx = _baseAuthContext();
+    const isTenantAdmin = !!(ctx && (ctx.is_tenant_admin === true));
+    const mode = (ctx && ctx.authorization_mode) || 'role';
+    const pages = (ctx && ctx.console_pages && typeof ctx.console_pages === 'object')
+        ? ctx.console_pages : null;
 
-    // In legacy mode there is no tenant/membership permission model, so the
-    // operator keeps the full navigation (no role-based hiding). In database
-    // mode, the 管理控制台 area and its four groups are hidden for a plain
-    // member (no admin capability). Authorization is never derived client-side;
-    // this is the read-availability presentation for the currently open
-    // identity-management consumers.
+    // Admin console is shown only when the identity actually has a readable
+    // admin page (or platform "all"). Decide from the authoritative projection
+    // when available (spec: "没有可读管理页面时隐藏管理区"), falling back to
+    // admin-qualification only while the projection is still unknown. This is a
+    // display projection only — every page re-authorizes server-side.
     const isDb = _identityMode() === 'database';
+    let canAdmin = isPlatformAdmin || isTenantAdmin;
+    if (isDb && ctx && pages) {
+        const anyAdminPageReadable = Object.keys(pages).some(function (key) {
+            if (key.indexOf('admin.') !== 0) return false;
+            const p = pages[key];
+            const allOk = (mode === 'all');
+            return !!p && (allOk || !!(p.available) || !!(p.read_allowed));
+        });
+        canAdmin = isPlatformAdmin || anyAdminPageReadable;
+    }
+
     if (isDb) {
         document.querySelectorAll('#sidebar-nav .sidebar-hidden-admin-area')
             .forEach(el => el.classList.toggle('hidden', !canAdmin));
-        // Platform-scope groups are visible only to a platform admin.
         document.querySelectorAll('#sidebar-nav .sidebar-hidden-platform-scope')
             .forEach(el => el.classList.toggle('hidden', !isPlatformAdmin));
     } else {
@@ -17321,6 +17605,29 @@ function _applySidebarPermissions(self) {
             .forEach(el => el.classList.toggle('hidden', false));
         document.querySelectorAll('#sidebar-nav .sidebar-hidden-platform-scope')
             .forEach(el => el.classList.toggle('hidden', false));
+    }
+
+    // Per-item availability from the authoritative projection. In "all" mode a
+    // page is available if the backend signed it (available flag) regardless of
+    // a read grant. When the projection is unknown (not yet loaded / legacy),
+    // leave items as-is rather than hiding a page on a guess. Only admin.* pages
+    // are gated; workbench pages are normal business entries and stay visible.
+    const allMode = (mode === 'all');
+    if (isDb && ctx) {
+        document.querySelectorAll('#sidebar-nav .sidebar-item[data-view]').forEach(item => {
+            const viewId = item.getAttribute('data-view');
+            const key = _consolePageForView(viewId);
+            if (!key || key.indexOf('admin.') !== 0) return; // not admin page -> leave as-is
+            const pageInfo = pages && pages[key];
+            if (!pageInfo) return; // unknown key -> don't guess
+            const available = allMode ? true : !!(pageInfo.available);
+            const readOk = allMode ? true : !!(pageInfo.read_allowed);
+            // A page is shown when it is available; if the identity may read it
+            // but the consumer is closed, still show it as read-only/explained
+            // rather than hiding a granted page (spec: keep consumer states
+            // separate). Hide only when it is genuinely unavailable/denied.
+            item.classList.toggle('hidden', !(available || readOk));
+        });
     }
 
     // Per-item: platform entries only for a platform admin.

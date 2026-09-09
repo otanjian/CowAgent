@@ -11,6 +11,11 @@ const catalog = ['tenant.info.read', 'tenant.members.read', 'tenant.org.read'];
 const role = {
     id: 'role-reviewer', code: 'reviewer', name: 'Organization reviewer',
     version: 7, builtin: false, permissions: ['tenant.info.read', 'tenant.org.read'],
+    resource_grants: [
+        { resource_kind: 'skill', resource_id: 'custom:knowledge-wiki', action: 'read' },
+        { resource_kind: 'model', resource_id: 'provider:deepseek:deepseek-v4-flash', action: 'use' },
+    ],
+    model_defaults: { chat: 'provider:deepseek:deepseek-v4-flash' },
 };
 
 function eventTarget() {
@@ -41,16 +46,31 @@ function element(tag = 'div') {
             remove: (...names) => names.forEach(c => classes.delete(c)),
             contains: name => classes.has(name),
         },
-        appendChild(child) { this.children.push(child); return child; },
+        appendChild(child) { this.children.push(child); child.__parent = this; return child; },
         focus() {},
+        closest(selector) {
+            let node = this;
+            while (node) { if (node.matches && node.matches(selector)) return node; node = node.__parent; }
+            return null;
+        },
+        getAttribute(name) { return this[name] != null ? String(this[name]) : null; },
         matches(selector) {
             if (selector.startsWith('#')) return this.id === selector.slice(1);
+            // support ".cls[attr=val]" before the plain ".class" branch
+            const clsAttr = selector.match(/^\.([\w-]+)\[([\w-]+)=(?:"|')([^"']*)(?:"|')?\]$/);
+            if (clsAttr) return classes.has(clsAttr[1]) && String(this[clsAttr[2]] || '') === clsAttr[3];
             if (selector.startsWith('.')) return classes.has(selector.slice(1));
             if (selector === 'input:checked') return this.tagName === 'input' && this.checked;
             if (selector === 'input[type=checkbox]') return this.tagName === 'input' && this.type === 'checkbox';
+            const attrMatch = selector.match(/^\[([\w-]+)=(?:"|')([^"']*)(?:"|')?\]$/);
+            if (attrMatch) return String(this[attrMatch[1]] || '') === attrMatch[2];
             return this.tagName === selector;
         },
         querySelectorAll(selector) {
+            // Simple recursive match. Only single-part (non-descendant) selectors
+            // are needed by the code under test; browser acceptance owns the full
+            // CSS engine. Descendant combinators are handled in the test helpers
+            // that need them (see resourceToggleIn/resourceListIn).
             const selectors = selector.split(',').map(s => s.trim());
             return this.children.flatMap(child => [
                 ...(selectors.some(s => child.matches(s)) ? [child] : []),
@@ -71,7 +91,7 @@ function element(tag = 'div') {
                 for (const attr of match[2].matchAll(/([\w-]+)(?:="([^"]*)")?/g)) {
                     const [, name, content = ''] = attr;
                     if (name === 'class') child.className = content;
-                    else if (['id', 'value', 'type'].includes(name)) child[name] = content;
+                    else if (['id', 'value', 'type', 'data-kind'].includes(name)) child[name] = content;
                     else if (['checked', 'disabled'].includes(name)) child[name] = true;
                 }
                 stack[stack.length - 1].appendChild(child);
@@ -105,6 +125,15 @@ function setup(permissionResponse = () => response({ status: 'success', permissi
             if (url === '/api/tenant/permissions') return permissionResponse();
             if (url === '/api/tenant/roles') return response({ status: 'success', items: [role] });
             if (url === '/api/tenant/roles/' + role.id) return response({ status: 'success' });
+            if (url.startsWith('/api/tenant/authorization/catalog?')) {
+                const parsed = new URL(url, 'http://test');
+                const kind = parsed.searchParams.get('kind');
+                const itembyKind = {
+                    skill: [{ resource_id: 'custom:knowledge-wiki', name: 'knowledge-wiki', capability: 'skill' }],
+                    model: [{ resource_id: 'provider:deepseek:deepseek-v4-flash', name: 'deepseek-v4-flash', capability: 'model', provider: 'deepseek' }],
+                };
+                return response({ status: 'success', kind, items: itembyKind[kind] || [], total: (itembyKind[kind] || []).length, page: 1, resource_actions: { skill: ['read', 'use', 'edit', 'enable'], model: ['read', 'use'] }[kind] || [] });
+            }
             throw Error('Unexpected request: ' + url);
         },
     };
@@ -114,6 +143,16 @@ function setup(permissionResponse = () => response({ status: 'success', permissi
     return {
         ctx, calls, node: id => document.getElementById(id),
         permissions: () => document.getElementById('adm-fld-permissions')?.querySelectorAll('input[type=checkbox]') || [],
+        resourceRow: kind => document.getElementById('adm-fld-resource_grants')?.querySelector('[data-kind="' + kind + '"]'),
+        resourceToggle: kind => {
+            const row = document.getElementById('adm-fld-resource_grants')?.querySelector('[data-kind="' + kind + '"]');
+            return row ? row.querySelector('.resource-kind-toggle') : null;
+        },
+        resourceList: kind => {
+            const row = document.getElementById('adm-fld-resource_grants')?.querySelector('[data-kind="' + kind + '"]');
+            const list = row ? row.querySelector('.resource-kind-list') : null;
+            return list ? list.querySelectorAll('input[type=checkbox]') : [];
+        },
         modalOpen: () => {
             const modal = document.getElementById('admin-modal');
             return !!modal && !modal.classList.contains('hidden');
@@ -140,9 +179,24 @@ test('editing renders the permission catalog, preselects existing grants, and pr
     h.node('admin-modal-submit').dispatch('click');
     await settle();
     const saved = h.calls.find(call => call.url === '/api/tenant/roles/' + role.id);
-    assert.deepEqual(JSON.parse(saved.options.body), {
-        name: role.name, permissions: role.permissions, expected_version: role.version,
-    });
+    const body = JSON.parse(saved.options.body);
+    assert.equal(body.name, role.name);
+    assert.deepEqual(body.permissions, role.permissions);
+    assert.equal(body.expected_version, role.version);
+    // The unified save (task 3.1) carries the role's resource grants expanded to
+    // the kind's allowed actions, plus its model defaults.
+    const grants = body.resource_grants;
+    assert.deepEqual(grants.filter(g => g.resource_kind === 'skill'), [
+        { resource_kind: 'skill', resource_id: 'custom:knowledge-wiki', action: 'read' },
+        { resource_kind: 'skill', resource_id: 'custom:knowledge-wiki', action: 'use' },
+        { resource_kind: 'skill', resource_id: 'custom:knowledge-wiki', action: 'edit' },
+        { resource_kind: 'skill', resource_id: 'custom:knowledge-wiki', action: 'enable' },
+    ]);
+    assert.deepEqual(grants.filter(g => g.resource_kind === 'model'), [
+        { resource_kind: 'model', resource_id: 'provider:deepseek:deepseek-v4-flash', action: 'read' },
+        { resource_kind: 'model', resource_id: 'provider:deepseek:deepseek-v4-flash', action: 'use' },
+    ]);
+    assert.deepEqual(body.model_defaults, { chat: 'provider:deepseek:deepseek-v4-flash' });
     assert.equal(h.modalOpen(), false);
     await editRole(h);
     assert.equal(h.catalogRequests().length, 1, 'successful catalog is reused');
@@ -193,4 +247,17 @@ test('new-role button blocks an unavailable catalog and renders choices after re
     assert.equal(h.permissions().some(p => p.checked), false);
     assert.equal(h.node('admin-modal-title').textContent, 'role_create');
     assert.equal(h.catalogRequests().length, 2);
+});
+
+test('resource picker preselects existing grants and shows a searchable, paged list', async () => {
+    const h = setup();
+    await editRole(h);
+    assert.equal(h.modalOpen(), true);
+    // Expand the skill resource group. The catalog mock returns one skill.
+    h.resourceToggle('skill').dispatch('click');
+    await settle(); await settle();
+    const boxes = h.resourceList('skill');
+    assert.ok(boxes.length >= 1, 'skill list renders from the catalog');
+    const checked = boxes.filter(b => b.checked).map(b => b.value);
+    assert.ok(checked.includes('custom:knowledge-wiki'), 'existing grant is preselected');
 });

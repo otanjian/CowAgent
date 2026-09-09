@@ -1,0 +1,128 @@
+{
+  "chen-yiwei-perspective": {
+    "skill_dir": null,
+    "name": null,
+    "note": "陈义威视角/知识库，OneAgent 无独立技能目录",
+    "mapped": false
+  },
+  "finance-analysis": {
+    "skill_dir": "fin-report-analysis",
+    "name": "financial-report-analysis",
+    "note": "财务报表分析",
+    "mapped": true
+  },
+  "finance-expert": {
+    "skill_dir": "taxation-expert",
+    "name": "财税专家",
+    "note": "财税专家（财务/税务咨询）",
+    "mapped": true
+  },
+  "finance-voucher": {
+    "skill_dir": "finance-ledger-generator",
+    "name": "finance-ledger-generator",
+    "note": "财务会计凭证生成",
+    "mapped": true
+  },
+  "financial-report-audit": {
+    "skill_dir": "financial-reprot-audit",
+    "name": "financial-report-audit",
+    "note": "财务报表合规审查",
+    "mapped": true
+  },
+  "hr-labor": {
+    "skill_dir": null,
+    "name": null,
+    "note": "人事劳动关系，OneAgent 无独立技能目录",
+    "mapped": false
+  },
+  "hr-performance": {
+    "skill_dir": null,
+    "name": null,
+    "note": "人事绩效管理，OneAgent 无独立技能目录",
+    "mapped": false
+  },
+  "hr-recruit": {
+    "skill_dir": null,
+    "name": null,
+    "note": "人事招聘，OneAgent 无独立技能目录",
+    "mapped": false
+  },
+  "pmc-scheduler-hmt-qd": {
+    "skill_dir": "pmc-scheduler-hmt-qd",
+    "name": "pmc-scheduler-hmt-qd",
+    "note": "生产排产（气袋/华懋，同名目录）",
+    "mapped": true
+  },
+  "procurement-analysis": {
+    "skill_dir": "procurement-comparison",
+    "name": "procurement-comparison",
+    "note": "采购历史价格分析",
+    "mapped": true
+  },
+  "procurement-execution": {
+    "skill_dir": null,
+    "name": null,
+    "note": "采购执行，OneAgent 无独立技能目录",
+    "mapped": false
+  },
+  "procurement-supplier": {
+    "skill_dir": "procurement-supplier-risk",
+    "name": "procurement-supplier-risk",
+    "note": "供应商风险预警",
+    "mapped": true
+  },
+  "procurement-tender": {
+    "skill_dir": "bid-analysis",
+    "name": "bid-analysis",
+    "note": "招标文件解析与投标辅助",
+    "mapped": true
+  },
+  "production-plan": {
+    "skill_dir": "pmc-scheduler",
+    "name": "production-scheduling",
+    "note": "智能生产排产",
+    "mapped": true
+  },
+  "production-quality": {
+    "skill_dir": null,
+    "name": null,
+    "note": "生产质量管理，OneAgent 无独立技能目录",
+    "mapped": false
+  },
+  "production-safety": {
+    "skill_dir": null,
+    "name": null,
+    "note": "生产安全管理，OneAgent 无独立技能目录",
+    "mapped": false
+  },
+  "quality-trace": {
+    "skill_dir": "quality-trace",
+    "name": "quality-trace",
+    "note": "质量智能追溯（同名目录）",
+    "mapped": true
+  },
+  "sales-contract": {
+    "skill_dir": "合同审查专家",
+    "name": "合同审查专家",
+    "note": "合同审查",
+    "mapped": true
+  },
+  "sales-customer": {
+    "skill_dir": "sales-quotation",
+    "name": "sales-quotation",
+    "note": "销售智能报价（客户询价/报价）",
+    "mapped": true
+  },
+  "sales-strategy": {
+    "skill_dir": null,
+    "name": null,
+    "note": "销售策略分析，OneAgent 无独立技能目录",
+    "mapped": false
+  },
+  "sap-integration": {
+    "skill_dir": "sap-integration",
+    "name": "sap-integration",
+    "note": "SAP 数据分析（同名目录）",
+    "mapped": true
+  }
+}

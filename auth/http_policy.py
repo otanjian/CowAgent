@@ -64,6 +64,13 @@ ROUTE_POLICY: Dict[str, Dict[str, dict]] = {
     "/api/platform/users/([^/]+)/password": {
         "POST": {"policy": "platform", "comment": "reset platform account password"},
     },
+    "/api/platform/users/([^/]+)/external-identities": {
+        "GET": {"policy": "platform", "comment": "list external identity bindings for a user"},
+        "POST": {"policy": "platform", "comment": "bind external identity to a user"},
+    },
+    "/api/platform/users/([^/]+)/external-identities/([^/]+)": {
+        "DELETE": {"policy": "platform", "comment": "delete an external identity binding"},
+    },
     "/api/platform/users/([^/]+)": {
         # PATCH is the only supported method (enable/disable / admin flag).
         # A GET detail is not part of the platform account contract; leaving it
@@ -100,6 +107,24 @@ ROUTE_POLICY: Dict[str, Dict[str, dict]] = {
         "POST": {"policy": "tenant", "comment": "update role (tenant_admin)"},
         "DELETE": {"policy": "tenant", "comment": "delete role (tenant_admin)"},
     },
+    "/api/tenant/authorization/catalog": {
+        "GET": {"policy": "tenant", "comment": "authorization resource catalog (assign/use)"},
+    },
+    "/api/platform/tenants/([^/]+)/roles": {
+        "GET": {"policy": "platform", "comment": "target-tenant role list (platform)"},
+        "POST": {"policy": "platform", "comment": "target-tenant role create (platform)"},
+    },
+    "/api/platform/tenants/([^/]+)/roles/([^/]+)": {
+        "POST": {"policy": "platform", "comment": "target-tenant role update (platform)"},
+        "DELETE": {"policy": "platform", "comment": "target-tenant role delete (platform)"},
+    },
+    "/api/platform/tenants/([^/]+)/authorization/catalog": {
+        "GET": {"policy": "platform", "comment": "target-tenant auth catalog (platform)"},
+    },
+    "/api/platform/tenants/([^/]+)/resources": {
+        "GET": {"policy": "platform", "comment": "tenant global resource grants (platform)"},
+        "PUT": {"policy": "platform", "comment": "set tenant global resource grants (platform)"},
+    },
     "/api/tenant/permissions": {"GET": {"policy": "tenant", "comment": "permission catalog"}},
     "/api/tenant/departments": {
         "GET": {"policy": "tenant", "permission": "tenant.org.read", "comment": "list departments"},
@@ -117,11 +142,26 @@ ROUTE_POLICY: Dict[str, Dict[str, dict]] = {
     "/cancel": {"POST": {"policy": "tenant", "comment": "cancel request"}},
     "/chat": {"GET": {"policy": "tenant", "comment": "chat page"}},
     "/v1/chat/completions": {"POST": {"policy": "tenant", "comment": "OpenAI-compatible chat"}},
-    # --- deferred consumers (closed in database mode) ---
-    "/upload": {"POST": {"policy": "closed", "comment": "file upload (deferred)"}},
-    "/uploads/(.*)": {"GET": {"policy": "closed", "comment": "serve upload (deferred)"}},
-    "/api/file": {"GET": {"policy": "closed", "comment": "file serve (deferred)"}},
-    "/preview/(.+)": {"GET": {"policy": "closed", "comment": "preview (deferred)"}},
+    # --- open file/voice/scheduler consumers (database: tenant-scoped) ---
+    # These consumers are now identity+permission revalidated inside their
+    # handlers (open-database-runtime task 2.4). /preview stays public because
+    # the sandboxed preview iframe (opaque origin) cannot send the session
+    # cookie; it is capability-authorized by its HMAC directory token.
+    "/upload": {"POST": {"policy": "tenant", "comment": "file upload"}},
+    "/uploads/(.*)": {"GET": {"policy": "tenant", "comment": "serve upload"}},
+    "/api/file": {"GET": {"policy": "tenant", "comment": "file serve"}},
+    "/preview/(.+)": {"GET": {"policy": "public", "comment": "preview (capability token)"}},
+    "/api/voice/asr": {"POST": {"policy": "tenant", "comment": "voice ASR"}},
+    "/api/voice/tts": {"POST": {"policy": "tenant", "comment": "voice TTS"}},
+    # --- scheduler management stays closed until the scheduler slice (group 5)
+    # adds trigger-time identity snapshots + revalidation (open-database-runtime
+    # task 5.x); opening it now would expose a consumer with no tenant boundary.
+    "/api/scheduler": {"GET": {"policy": "closed", "comment": "scheduler (group 5)"}},
+    "/api/scheduler/run": {"POST": {"policy": "closed", "comment": "scheduler run (group 5)"}},
+    "/api/scheduler/toggle": {"POST": {"policy": "closed", "comment": "scheduler toggle (group 5)"}},
+    "/api/scheduler/update": {"POST": {"policy": "closed", "comment": "scheduler update (group 5)"}},
+    "/api/scheduler/delete": {"POST": {"policy": "closed", "comment": "scheduler delete (group 5)"}},
+    # --- deferred consumers (still closed in database mode) ---
     "/api/workspace/tree": {"GET": {"policy": "closed", "comment": "workspace tree (deferred)"}},
     "/api/workspace/search": {"GET": {"policy": "closed", "comment": "workspace search (deferred)"}},
     "/api/workspace/resolve": {"GET": {"policy": "closed", "comment": "workspace resolve (deferred)"}},
@@ -134,8 +174,6 @@ ROUTE_POLICY: Dict[str, Dict[str, dict]] = {
     "/api/projects/browse": {"GET": {"policy": "closed", "comment": "project browse (deferred)"}},
     "/api/projects/order": {"POST": {"policy": "closed", "comment": "project order (deferred)"}},
     "/api/projects/manage": {"POST": {"policy": "closed", "comment": "project manage (deferred)"}},
-    "/api/voice/asr": {"POST": {"policy": "closed", "comment": "voice ASR (deferred)"}},
-    "/api/voice/tts": {"POST": {"policy": "closed", "comment": "voice TTS (deferred)"}},
     "/config": {"GET": {"policy": "platform", "comment": "platform config"},
                 "POST": {"policy": "platform", "comment": "platform config save"}},
     "/api/models": {"GET": {"policy": "platform", "comment": "models (platform admin)"},
@@ -155,11 +193,6 @@ ROUTE_POLICY: Dict[str, Dict[str, dict]] = {
     "/api/knowledge/graph": {"GET": {"policy": "closed", "comment": "knowledge graph (deferred)"}},
     "/api/knowledge/action": {"POST": {"policy": "closed", "comment": "knowledge action (deferred)"}},
     "/api/knowledge/import": {"POST": {"policy": "closed", "comment": "knowledge import (deferred)"}},
-    "/api/scheduler": {"GET": {"policy": "closed", "comment": "scheduler (deferred)"}},
-    "/api/scheduler/run": {"POST": {"policy": "closed", "comment": "scheduler run (deferred)"}},
-    "/api/scheduler/toggle": {"POST": {"policy": "closed", "comment": "scheduler toggle (deferred)"}},
-    "/api/scheduler/update": {"POST": {"policy": "closed", "comment": "scheduler update (deferred)"}},
-    "/api/scheduler/delete": {"POST": {"policy": "closed", "comment": "scheduler delete (deferred)"}},
     "/api/todos": {"GET": {"policy": "tenant", "comment": "todos (own)"}},
     "/api/todos/summary": {"GET": {"policy": "tenant", "comment": "todo summary"}},
     "/api/todos/(.*)/events": {"GET": {"policy": "tenant", "comment": "todo events"}},
@@ -172,7 +205,10 @@ ROUTE_POLICY: Dict[str, Dict[str, dict]] = {
     "/api/sessions/(.*)/generate_title": {"POST": {"policy": "tenant", "comment": "session title"}},
     "/api/prompt/optimize": {"POST": {"policy": "tenant", "comment": "prompt optimize"}},
     "/api/sessions/(.*)/clear_context": {"POST": {"policy": "tenant", "comment": "clear context"}},
-    "/api/sessions/(.*)/settings": {"POST": {"policy": "tenant", "comment": "session settings"}},
+    "/api/sessions/(.*)/settings": {
+        "GET": {"policy": "tenant", "comment": "session settings (read effective model/permission)"},
+        "POST": {"policy": "tenant", "comment": "session settings"},
+    },
     "/api/sessions/(.*)": {"GET": {"policy": "tenant", "comment": "session detail"}},
     "/api/history": {"GET": {"policy": "tenant", "comment": "history"}},
     "/api/messages/delete": {"POST": {"policy": "tenant", "comment": "delete message"}},

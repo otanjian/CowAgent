@@ -223,11 +223,14 @@ def _stream_completion(
     completion_id: str,
     created: int,
     model: str,
+    agent_id: str | None = None,
 ) -> Iterator[str]:
     from agent.protocol import get_cancel_registry
 
     registry = get_cancel_registry()
-    cancel_key, scoped_session_key = _request_cancel_scope(completion_id, session_id)
+    cancel_key, scoped_session_key = _request_cancel_scope(
+        completion_id, session_id, agent_id
+    )
     registry.register(cancel_key, session_id=scoped_session_key)
 
     output = queue.Queue(maxsize=256)
@@ -272,7 +275,7 @@ def _stream_completion(
                     session_id,
                     send_chunk,
                     channel_type="openai_api",
-                    agent_id=None,
+                    agent_id=agent_id,
                     request_id=completion_id,
                 )
         except Exception:  # noqa: BLE001 - worker boundary becomes an SSE error
@@ -284,8 +287,13 @@ def _stream_completion(
             finally:
                 registry.unregister(cancel_key)
 
+    # Run the chat in a context-copied worker so a database-mode caller's
+    # resolved RuntimeIdentity (user/tenant/web session) is inherited by the
+    # model-authorization and tenant path scoping inside the run.
+    from common.runtime_identity import wrap
+
     worker = threading.Thread(
-        target=execute, name="openai-chat-completion", daemon=True
+        target=wrap(execute), name="openai-chat-completion", daemon=True
     )
     try:
         worker.start()
@@ -296,7 +304,7 @@ def _stream_completion(
         first_item = output.get(timeout=_FIRST_EVENT_TIMEOUT_SECONDS)
     except queue.Empty as error:
         closed.set()
-        _cancel_agent_request(completion_id)
+        _cancel_agent_request(completion_id, agent_id)
         raise OpenAIAPIError(
             500, "容大AI timed out before producing a response.", "timeout"
         ) from error
@@ -346,7 +354,7 @@ def _stream_completion(
         finally:
             closed.set()
             if not completed:
-                _cancel_agent_request(completion_id)
+                _cancel_agent_request(completion_id, agent_id)
 
     return frames()
 
@@ -358,6 +366,7 @@ def _non_stream_completion(
     completion_id: str,
     created: int,
     model: str,
+    agent_id: str | None = None,
 ) -> dict:
     content = []
     reasoning = []
@@ -380,7 +389,7 @@ def _non_stream_completion(
                 session_id,
                 send_chunk,
                 channel_type="openai_api",
-                agent_id=None,
+                agent_id=agent_id,
                 request_id=completion_id,
             )
     except Exception as error:
@@ -427,19 +436,116 @@ def handle_chat_completions(
     run_chat: Callable,
     created: int | None = None,
     completion_id: str | None = None,
+    *,
+    preauthenticated: bool = False,
+    agent_id: str | None = None,
 ):
-    """Validate one request and return a completion dict or SSE iterator."""
-    _authenticate(authorization, external_api_token)
+    """Validate one request and return a completion dict or SSE iterator.
+
+    ``preauthenticated`` marks a database-mode request whose identity was
+    already resolved by the handler (DB session + X-Tenant-ID + agent binding);
+    the legacy ``external_api_token`` check is then skipped.
+    """
+    if not preauthenticated:
+        _authenticate(authorization, external_api_token)
     completion_id = completion_id or f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time()) if created is None else int(created)
     model, query, session_id, stream = _request_values(payload, completion_id)
     if stream:
         return _stream_completion(
-            run_chat, query, session_id, completion_id, created, model
+            run_chat, query, session_id, completion_id, created, model, agent_id
         )
     return _non_stream_completion(
-        run_chat, query, session_id, completion_id, created, model
+        run_chat, query, session_id, completion_id, created, model, agent_id
     )
+
+
+def _is_database_mode() -> bool:
+    from config import conf
+    return str(conf().get("identity_mode", "legacy") or "legacy") == "database"
+
+
+def _db_request_identity_and_agent() -> "tuple":
+    """Resolve identity + tenant-bound agent for a database-mode API request.
+
+    Database mode uses the same identity stack as the Web console: the
+    ``Authorization: Bearer`` carries the database session token (or the login
+    cookie is accepted), ``X-Tenant-ID`` selects the tenant and an optional
+    ``X-Agent-ID`` selects the target agent (defaults to the tenant's only
+    bound agent; ambiguous defaults are rejected). ``external_api_token`` has no
+    meaning here (design decision 11). Raises ``OpenAIAPIError``.
+    """
+    import web
+
+    from auth.runtime import IdentityContextError, to_runtime_identity
+    from auth.service import get_identity_service
+    from channel.web.auth_handlers import _get_service, _resolve_ctx_svc, _session_token
+
+    try:
+        if not _session_token():
+            raise OpenAIAPIError(401, "Authentication required.", "unauthorized")
+        ctx = _resolve_ctx_svc(_get_service(), require_tenant=True)
+    except IdentityContextError as error:
+        raise OpenAIAPIError(
+            error.status, error.args[0] if error.args else "authentication failed",
+            getattr(error, "code", "error"),
+        ) from error
+    # Functional chat.use gate (platform/tenant admins pass).
+    if not (ctx.is_platform_admin or ctx.is_tenant_admin
+            or "chat.use" in (ctx.permissions or ())):
+        raise OpenAIAPIError(
+            403, "You are not authorized to use the chat API.", "forbidden"
+        )
+    svc = get_identity_service()
+    bound_ids = svc.tenant_agent_ids(ctx.tenant_id)
+    header_agent = (web.ctx.env.get("HTTP_X_AGENT_ID", "") or "").strip()
+    if header_agent:
+        if header_agent not in bound_ids:
+            raise OpenAIAPIError(
+                403, "Agent is not bound to your tenant.", "forbidden"
+            )
+        agent_id = header_agent
+    elif len(bound_ids) == 1:
+        agent_id = bound_ids[0]
+    elif not bound_ids:
+        raise OpenAIAPIError(404, "No agent is bound to your tenant.", "no_agent")
+    else:
+        raise OpenAIAPIError(
+            400,
+            "Multiple agents are available; select one with X-Agent-ID.",
+            "agent_ambiguous",
+        )
+    if not svc.check_resource_action(
+        ctx.user_id, ctx.tenant_id, "agent", f"agent:{agent_id}", "use",
+        permission="agent.use",
+    ):
+        raise OpenAIAPIError(
+            403, "You are not authorized to use this agent.", "forbidden"
+        )
+    return to_runtime_identity(ctx), agent_id
+
+
+def _scoped_run_chat(ident, agent_id: str) -> Callable:
+    """Wrap the chat runner with the request's database runtime identity.
+
+    The ambient ``RuntimeIdentity`` (user + tenant + web session) is applied for
+    the duration of each run so downstream model.authorization and tenant path
+    scoping read the API caller — never a pooled/worker ambient. The Agent is
+    pinned to the tenant-bound ``agent_id`` (defaults resolved by the caller).
+    """
+
+    def _run(*args, **kwargs):
+        from common.runtime_identity import use_identity
+
+        kwargs["agent_id"] = agent_id
+        with use_identity(ident):
+            try:
+                return _run_chat_service(*args, **kwargs)
+            except RuntimeError as error:
+                # The runtime model/agent authorization gate denies the caller.
+                raise OpenAIAPIError(403, str(error), "forbidden") from error
+
+    return _run
 
 
 def _run_chat_service(*args, **kwargs):
@@ -470,22 +576,22 @@ class OpenAIChatCompletionsHandler:
     def POST(self):
         import web
 
-        # Server-side closure of the OpenAI-compatible API in database identity
-        # mode (task 3.11). Closed even for an explicit token: the identity
-        # console only opens identity management + restricted reads.
-        try:
-            from config import conf
-            if str(conf().get("identity_mode", "legacy") or "legacy") == "database":
-                raise OpenAIAPIError(
-                    503, "OpenAI-compatible API is disabled in database identity mode.",
-                    "database_unavailable",
-                )
-        except OpenAIAPIError:
-            raise
-        except Exception:
-            pass
+        from config import conf
 
+        # Database identity mode shares the Web console identity stack (design
+        # decision 11): DB session Bearer/cookie + X-Tenant-ID (+ optional
+        # X-Agent-ID) authorize the call; the legacy bare external_api_token is
+        # a legacy-mode-only contract.
+        run_chat = _run_chat_service
+        preauthenticated = False
+        ident = None
+        agent_id = None
         try:
+            if _is_database_mode():
+                ident, agent_id = _db_request_identity_and_agent()
+                preauthenticated = True
+                run_chat = _scoped_run_chat(ident, agent_id)
+
             raw_body = web.data()
             try:
                 payload = json.loads(raw_body) if raw_body else {}
@@ -494,16 +600,30 @@ class OpenAIChatCompletionsHandler:
                     400, "Request body must be valid JSON.", "invalid_json"
                 ) from error
 
-            result = handle_chat_completions(
-                payload,
-                authorization=web.ctx.env.get("HTTP_AUTHORIZATION", ""),
-                external_api_token=conf().get("external_api_token", ""),
-                run_chat=_run_chat_service,
-            )
+            if preauthenticated:
+                from common.runtime_identity import use_identity
+                with use_identity(ident):
+                    result = handle_chat_completions(
+                        payload,
+                        authorization="",
+                        external_api_token="",
+                        run_chat=run_chat,
+                        preauthenticated=True,
+                        agent_id=agent_id,
+                    )
+            else:
+                result = handle_chat_completions(
+                    payload,
+                    authorization=web.ctx.env.get("HTTP_AUTHORIZATION", ""),
+                    external_api_token=conf().get("external_api_token", ""),
+                    run_chat=_run_chat_service,
+                )
         except OpenAIAPIError as error:
             statuses = {
                 400: "400 Bad Request",
                 401: "401 Unauthorized",
+                403: "403 Forbidden",
+                404: "404 Not Found",
                 500: "500 Internal Server Error",
                 503: "503 Service Unavailable",
             }

@@ -17,6 +17,8 @@ import web
 from auth.policy import (
     BUILTIN_ROLES,
     PERMISSION_CATALOG,
+    RESOURCE_KINDS,
+    RESOURCE_ACTIONS,
     permission_catalog_with_metadata,
 )
 from auth.service import IdentityService, IdentityServiceError
@@ -164,6 +166,67 @@ class PlatformUserPasswordHandler:
         except IdentityServiceError as e:
             return _service_error(e)
         return _json({"status": "success", **result})
+
+
+class PlatformUserExternalIdentitiesHandler:
+    """GET/POST /api/platform/users/{id}/external-identities (platform admin).
+
+    Lists the external IM identity bindings for one account and binds a new
+    triple (``provider``, ``issuer``, ``subject``) to it. Bindings are the
+    admin-only bridge that lets an external IM user map to a real account in
+    database mode; a normal member must never reach these.
+    """
+
+    def GET(self, user_id: str):
+        _guard_database()
+        ctx = _require_context()
+        _require_platform_admin(ctx)
+        svc = _get_service()
+        try:
+            result = svc.list_external_identities(
+                user_id=user_id,
+                provider=web.input(provider="").provider or None,
+            )
+        except IdentityServiceError as e:
+            return _service_error(e)
+        return _json({"status": "success", **result})
+
+    def POST(self, user_id: str):
+        _guard_database()
+        ctx = _require_context()
+        _require_platform_admin(ctx)
+        try:
+            data = json.loads(web.data())
+        except Exception:
+            return _error("Invalid request", 400, "invalid_request")
+        svc = _get_service()
+        try:
+            binding = svc.bind_external_identity(
+                actor_user_id=ctx.user_id,
+                user_id=user_id,
+                provider=str(data.get("provider", "") or ""),
+                issuer=str(data.get("issuer", "") or ""),
+                subject=str(data.get("subject", "") or ""),
+            )
+        except IdentityServiceError as e:
+            return _service_error(e)
+        return _json({"status": "success", "binding": binding})
+
+
+class PlatformUserExternalIdentityHandler:
+    """DELETE /api/platform/users/{id}/external-identities/{binding_id}."""
+
+    def DELETE(self, user_id: str, binding_id: str):
+        _guard_database()
+        ctx = _require_context()
+        _require_platform_admin(ctx)
+        svc = _get_service()
+        try:
+            svc.delete_external_identity(
+                actor_user_id=ctx.user_id, binding_id=binding_id)
+        except IdentityServiceError as e:
+            return _service_error(e)
+        return _json({"status": "success"})
 
 
 # --- Platform tenants -----------------------------------------------------
@@ -398,6 +461,8 @@ class TenantRolesHandler:
                 code=str(data.get("code", "")),
                 name=str(data.get("name", "")),
                 permissions=data.get("permissions", []),
+                resource_grants=data.get("resource_grants", []),
+                model_defaults=data.get("model_defaults"),
             )
         except IdentityServiceError as e:
             return _service_error(e)
@@ -415,6 +480,8 @@ class TenantRoleHandler:
             return _error("Invalid request", 400, "invalid_request")
         svc = _get_service()
         try:
+            # ``resource_grants``/``model_defaults`` presence distinguishes
+            # "preserve" (omitted) from "replace" (present, explicit []/{}=clear).
             role = svc.update_role(
                 actor_user_id=ctx.user_id,
                 tenant_id=ctx.tenant_id,
@@ -422,6 +489,8 @@ class TenantRoleHandler:
                 name=str(data.get("name", "")),
                 permissions=data.get("permissions", []),
                 expected_version=int(data.get("expected_version", 0)),
+                resource_grants=data["resource_grants"] if "resource_grants" in data else None,
+                model_defaults=data["model_defaults"] if "model_defaults" in data else None,
             )
         except IdentityServiceError as e:
             return _service_error(e)
@@ -556,3 +625,210 @@ class IdentityAuditHandler:
         except (TypeError, ValueError):
             return _error("invalid filter", 400, "bad_request")
         return _json({"status": "success", **result})
+
+
+# --- Platform target-tenant authorization adapter ------------------------
+
+class PlatformTenantRolesHandler:
+    """GET/POST /api/platform/tenants/{tenant_id}/roles - target-tenant roles.
+
+    A thin adapter over the tenant role service. The *target* tenant is explicit
+    in the URL; it is independently validated and audited, and the platform
+    admin's own ``all`` is NOT copied onto the target role (the service re-checks
+    the target tenant's resource limit). Does not create a fake tenancy.
+    """
+
+    def GET(self, tenant_id: str):
+        _guard_database()
+        ctx = _require_context()
+        _require_platform_admin(ctx)
+        svc = _get_service()
+        if not svc.get_tenant(tenant_id):
+            return _error("tenant not found", 404, "not_found")
+        return _json({"status": "success", "items": svc.list_roles(tenant_id)})
+
+    def POST(self, tenant_id: str):
+        _guard_database()
+        ctx = _require_context()
+        _require_platform_admin(ctx)
+        try:
+            data = json.loads(web.data())
+        except Exception:
+            return _error("Invalid request", 400, "invalid_request")
+        svc = _get_service()
+        try:
+            role = svc.create_role(
+                actor_user_id=ctx.user_id,
+                tenant_id=tenant_id,
+                code=str(data.get("code", "")),
+                name=str(data.get("name", "")),
+                permissions=data.get("permissions", []),
+                resource_grants=data.get("resource_grants", []),
+                model_defaults=data.get("model_defaults"),
+            )
+        except IdentityServiceError as e:
+            return _service_error(e)
+        return _json({"status": "success", "role": role})
+
+
+class PlatformTenantRoleHandler:
+    """POST/DELETE /api/platform/tenants/{tenant_id}/roles/{role_id}.
+
+    Mirrors the tenant role methods but targets an explicit tenant and requires
+    platform-admin qualification (the target tenant's own tenant_admin is NOT
+    required and no Membership is forged).
+    """
+
+    def POST(self, tenant_id: str, role_id: str):
+        _guard_database()
+        ctx = _require_context()
+        _require_platform_admin(ctx)
+        try:
+            data = json.loads(web.data())
+        except Exception:
+            return _error("Invalid request", 400, "invalid_request")
+        svc = _get_service()
+        try:
+            role = svc.update_role(
+                actor_user_id=ctx.user_id,
+                tenant_id=tenant_id,
+                role_id=role_id,
+                name=str(data.get("name", "")),
+                permissions=data.get("permissions", []),
+                expected_version=int(data.get("expected_version", 0)),
+                resource_grants=data["resource_grants"] if "resource_grants" in data else None,
+                model_defaults=data["model_defaults"] if "model_defaults" in data else None,
+            )
+        except IdentityServiceError as e:
+            return _service_error(e)
+        return _json({"status": "success", "role": role})
+
+    def DELETE(self, tenant_id: str, role_id: str):
+        _guard_database()
+        ctx = _require_context()
+        _require_platform_admin(ctx)
+        svc = _get_service()
+        try:
+            result = svc.delete_role(
+                actor_user_id=ctx.user_id, tenant_id=tenant_id, role_id=role_id)
+        except IdentityServiceError as e:
+            return _service_error(e)
+        return _json({"status": "success", **result})
+
+
+# --- Authorization catalog (purpose=assign | use) ------------------------
+
+class TenantAuthorizationCatalogHandler:
+    """GET /api/tenant/authorization/catalog - resource catalog for role assign.
+
+    ``purpose`` distinguishes the two read targets:
+      * ``assign`` (admin)  - the live catalog of allocatable resources, scoped
+        to the current tenant's limit; requires an administrator.
+      * ``use`` (member)    - the *user's own* business-usable resource minimal
+        projection (id/name/capability only), never configuration or credentials.
+
+    Catalog/config/execution are reported separately. No full personal-resource
+    list is returned, and the response never leaks config or skill bodies.
+    """
+
+    def GET(self):
+        _guard_database()
+        ctx = _require_context(require_tenant=True)
+        inp = web.input(purpose="assign", kind="", q="", page="1", page_size="100")
+        kind = (inp.kind or "").strip()
+        purpose = (inp.purpose or "assign").strip()
+        if kind not in RESOURCE_KINDS:
+            return _error("invalid resource kind", 400, "invalid_kind")
+        svc = _get_service()
+        can_assign = ctx.is_platform_admin or ctx.is_tenant_admin
+        if purpose == "assign" and not can_assign:
+            return _error("forbidden", 403, "forbidden")
+        target_tenant_id = ctx.tenant_id
+        try:
+            page = int(inp.page or 1)
+            page_size = int(inp.page_size or 100)
+        except (TypeError, ValueError):
+            return _error("invalid paging", 400, "bad_request")
+        if purpose == "assign":
+            result = svc.authorization_catalog(
+                target_tenant_id, kind=kind, q=inp.q or None,
+                page=page, page_size=page_size, all_mode=(ctx.is_platform_admin and not ctx.tenant_id))
+        else:
+            # purpose=use: only the caller's own authorized resources, minimal.
+            if ctx.is_platform_admin:
+                result = svc.authorization_catalog(
+                    target_tenant_id, kind=kind, q=inp.q or None,
+                    page=page, page_size=page_size, all_mode=True, minimal=True)
+            else:
+                result = svc.authorization_catalog_minimal(
+                    ctx.user_id, target_tenant_id, kind=kind, q=inp.q or None,
+                    page=page, page_size=page_size)
+        return _json({"status": "success", **result})
+
+
+class PlatformTenantAuthorizationCatalogHandler:
+    """GET /api/platform/tenants/{tenant_id}/authorization/catalog.
+
+    The platform-management projection of the same catalog, targeting an explicit
+    tenant. Reuses the shared catalog implementation; requires platform admin.
+    """
+
+    def GET(self, tenant_id: str):
+        _guard_database()
+        ctx = _require_context()
+        _require_platform_admin(ctx)
+        inp = web.input(kind="", q="", page="1", page_size="100")
+        kind = (inp.kind or "").strip()
+        if kind not in RESOURCE_KINDS:
+            return _error("invalid resource kind", 400, "invalid_kind")
+        svc = _get_service()
+        if not svc.get_tenant(tenant_id):
+            return _error("tenant not found", 404, "not_found")
+        try:
+            page = int(inp.page or 1)
+            page_size = int(inp.page_size or 100)
+        except (TypeError, ValueError):
+            return _error("invalid paging", 400, "bad_request")
+        result = svc.authorization_catalog(
+            tenant_id, kind=kind, q=inp.q or None,
+            page=page, page_size=page_size, all_mode=True)
+        return _json({"status": "success", **result})
+
+
+# --- Tenant global resource limits (platform) ---------------------------
+
+class PlatformTenantResourcesHandler:
+    """GET/PUT /api/platform/tenants/{tenant_id}/resources - global resource limits.
+
+    GET returns the current tenant-level allocatable grants; PUT replaces them
+    (wholesale) using the tenant's ``expected_version``. Platform admin only.
+    """
+
+    def GET(self, tenant_id: str):
+        _guard_database()
+        ctx = _require_context()
+        _require_platform_admin(ctx)
+        svc = _get_service()
+        if not svc.get_tenant(tenant_id):
+            return _error("tenant not found", 404, "not_found")
+        return _json({"status": "success", "grants": svc.tenant_resource_grants(tenant_id)})
+
+    def PUT(self, tenant_id: str):
+        _guard_database()
+        ctx = _require_context()
+        _require_platform_admin(ctx)
+        try:
+            data = json.loads(web.data())
+        except Exception:
+            return _error("Invalid request", 400, "invalid_request")
+        svc = _get_service()
+        try:
+            result = svc.set_tenant_resource_grants(
+                actor_user_id=ctx.user_id,
+                tenant_id=tenant_id,
+                grants=data.get("grants", []),
+                expected_version=int(data.get("expected_version", 0)),
+            )
+        except IdentityServiceError as e:
+            return _service_error(e)
+        return _json({"status": "success", "grants": result})

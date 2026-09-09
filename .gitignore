@@ -43,6 +43,10 @@ client_config.json
 # Local-only chinese startup runbook: contains a developer's absolute path and
 # test-account plaintext password. Never share.
 /启动说明.md
+
+# Local POC demo artifacts (plan HTML, demo scripts, screenshots, recordings).
+# Never commit these to the remote repository.
+/doc/
 ref/
 **/.dev.vars
 .cursor/

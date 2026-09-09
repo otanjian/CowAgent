@@ -38,8 +38,13 @@ def _runner(events, calls):
 
 
 def _http_app(monkeypatch, run_chat, configured_token="secret"):
+    import config
+
+    # These HTTP-level tests exercise the legacy external_api_token contract, so
+    # pin identity_mode to legacy regardless of the developer config.json.
     monkeypatch.setattr(
-        openai_api, "conf", lambda: {"external_api_token": configured_token}
+        config, "conf", lambda: {"external_api_token": configured_token,
+                                 "identity_mode": "legacy"}
     )
     monkeypatch.setattr(openai_api, "_run_chat_service", run_chat)
     return web.application(

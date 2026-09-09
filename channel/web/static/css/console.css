@@ -101,22 +101,26 @@
 }
 .sidebar-item.active .item-icon { color: #4ABE6E; }
 
-/* Account identity and upward-opening menu share the sidebar's dark surface. */
+/* Compact account switcher and grouped popover. Palette tokens are applied in
+   appearance.css; these defaults also support the original dark sidebar. */
 .sidebar-account-footer {
     position: relative;
     flex-shrink: 0;
     min-width: 0;
-    border-top: 1px solid rgba(255, 255, 255, .1);
+    margin: 0 10px;
+    padding: 4px 0;
+    border-top: 1px solid rgba(255, 255, 255, .08);
     background: #0a0a0a;
 }
 .sidebar-account-toggle {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 9px;
     width: 100%;
-    min-height: 72px;
-    padding: 12px;
+    min-height: 40px;
+    padding: 6px 8px;
     border: 0;
+    border-radius: 9px;
     background: transparent;
     color: #f1f5f9;
     text-align: left;
@@ -130,23 +134,30 @@
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    width: 36px;
-    height: 36px;
+    width: 32px;
+    height: 32px;
     overflow: hidden;
-    border-radius: 50%;
+    border-radius: 10px;
     background: #20382a;
     color: #8ae1a6;
-    font-size: 16px;
+    font-size: 14px;
     font-weight: 600;
     line-height: 1;
 }
 .sidebar-account-avatar > i { font-size: 15px; }
+.sidebar-account-toggle > .sidebar-account-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 9px;
+    font-size: 13px;
+}
+.sidebar-account-toggle > .sidebar-account-avatar > i { font-size: 13px; }
 .sidebar-account-copy {
     display: flex;
     flex: 1;
     flex-direction: column;
     min-width: 0;
-    gap: 3px;
+    gap: 1px;
 }
 .sidebar-account-name,
 .sidebar-account-subtitle {
@@ -155,16 +166,28 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.sidebar-account-name { font-size: 14px; font-weight: 500; line-height: 1.5; }
-.sidebar-account-subtitle { color: #969da5; font-size: 12px; line-height: 1.5; }
+.sidebar-account-name { font-size: 13px; font-weight: 500; line-height: 20px; }
+.sidebar-account-subtitle { color: #969da5; font-size: 11px; line-height: 1.5; }
+/* Keep the compact trigger on one line. Identity details remain in its native
+   tooltip, accessible name, and the expanded account menu. */
+.sidebar-account-toggle .sidebar-account-subtitle {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
 .sidebar-account-subtitle:empty { display: none; }
-.sidebar-account-chevron { flex-shrink: 0; color: #929aa3; font-size: 10px; transition: transform .15s ease; }
-.sidebar-account-toggle[aria-expanded="true"] .sidebar-account-chevron { transform: rotate(180deg); }
+.sidebar-account-chevron { flex-shrink: 0; color: #929aa3; opacity: .7; transition: opacity .15s ease; }
+.sidebar-account-toggle:is(:hover, [aria-expanded="true"]) .sidebar-account-chevron { opacity: 1; }
 .sidebar-account-menu {
     position: absolute;
-    left: 8px;
-    right: 8px;
-    bottom: calc(100% + 8px);
+    left: 0;
+    right: 0;
+    bottom: calc(100% + 4px);
     z-index: 70;
     max-height: min(360px, calc(100vh - 128px));
     max-height: min(360px, calc(100dvh - 128px));
@@ -172,62 +195,89 @@
     overflow-y: auto;
     overscroll-behavior: contain;
     border: 1px solid #363b39;
-    border-radius: 12px;
+    border-radius: 14px;
     background: #1b1e1c;
     color: #e8eee9;
-    box-shadow: 0 14px 40px rgba(0, 0, 0, .4);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, .18), 0 2px 6px rgba(0, 0, 0, .08);
+    transform-origin: bottom left;
+    animation: accountMenuIn .14s ease-out;
+}
+@keyframes accountMenuIn {
+    from { opacity: 0; transform: translateY(4px) scale(.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
 }
 .sidebar-account-menu.hidden,
 .sidebar-account-footer .hidden { display: none; }
-.account-menu-identity { padding: 9px 10px 12px; }
+.account-menu-identity {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 4px 4px;
+    padding: 10px 4px 12px;
+    border-bottom: 1px solid #363b39;
+}
+.account-menu-identity-copy { min-width: 0; flex: 1; }
+.account-menu-avatar { width: 30px; height: 30px; font-size: 13px; border-radius: 9px; }
 .account-menu-name,
 .account-menu-username,
 .account-menu-status { margin: 0; overflow-wrap: anywhere; }
-.account-menu-name { font-size: 14px; font-weight: 500; line-height: 1.5; }
-.account-menu-username { margin-top: 4px; color: #a8b0aa; font-size: 12px; line-height: 1.5; }
+.account-menu-name { font-size: 13px; font-weight: 600; line-height: 1.5; }
+.account-menu-username { margin-top: 2px; color: #a8b0aa; font-size: 11px; line-height: 1.5; }
 .account-menu-status { padding: 9px 10px; color: #bdc5bf; font-size: 12px; line-height: 1.6; }
+.account-menu-group { margin-bottom: 4px; padding-bottom: 5px; border-bottom: 1px solid #363b39; }
 .account-menu-action,
 .account-menu-version a {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 10px;
     width: 100%;
-    padding: 10px;
+    min-height: 36px;
+    padding: 8px 10px;
     border: 0;
-    border-radius: 7px;
+    border-radius: 8px;
     background: transparent;
     color: #e8eee9;
     font-size: 13px;
-    line-height: 1.5;
+    line-height: 20px;
     text-align: left;
     overflow-wrap: anywhere;
     cursor: pointer;
     transition: background .15s ease, color .15s ease;
 }
+.account-menu-action > span { min-width: 0; }
+.account-menu-icon,
+.account-menu-trailing {
+    display: block;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+.account-menu-icon { color: #a8b0aa; }
+.account-menu-trailing { width: 13px; height: 13px; margin-left: auto; color: #a8b0aa; }
 .account-menu-action:hover:not(:disabled),
 .account-menu-version a:hover { background: rgba(255, 255, 255, .07); color: #fff; }
+.account-menu-action:hover:not(:disabled) .account-menu-icon { color: inherit; }
+.account-menu-logout:hover:not(:disabled) { background: #492c35; color: #fca5a5; }
 .account-menu-action:disabled { opacity: .55; cursor: wait; }
-.account-menu-version { margin-top: 4px; padding-top: 4px; border-top: 1px solid #363b39; }
-.account-menu-version a { color: #99bba3; font-size: 12px; }
+.account-menu-version { position: relative; margin-top: 5px; padding-top: 5px; border-top: 1px solid #363b39; }
+.account-menu-version a { min-height: 28px; padding: 4px 30px 4px 10px; color: #a8b0aa; font-size: 11px; line-height: 20px; }
+.account-menu-version > svg { position: absolute; right: 10px; top: calc(50% + 2.5px); transform: translateY(-50%); pointer-events: none; }
 .sidebar-account-toggle:focus-visible,
 .account-menu-action:focus-visible,
 .account-menu-version a:focus-visible { outline: 2px solid #74d895; outline-offset: -3px; }
-
-/* Account menu action items (profile / password / prefs / tenant / about). */
-.account-menu-item {
-    display: flex;
-    align-items: center;
-    gap: 9px;
+@media (pointer: coarse) {
+    .sidebar-account-toggle, .account-menu-action { min-height: 44px; }
 }
-.account-menu-item::before {
-    content: "";
-    flex: 0 0 auto;
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
-    background: currentColor;
-    opacity: 0;
-    transition: opacity .1s ease;
+@media (prefers-reduced-motion: reduce) {
+    .sidebar-account-menu { animation: none; }
+    .sidebar-account-toggle, .sidebar-account-chevron,
+    .account-menu-action, .account-menu-version a { transition: none; }
 }
-.account-menu-item:hover::before { opacity: .5; }
 
 /* Read-only account profile drawer. */
 .account-field-status {
@@ -275,13 +325,28 @@
 .account-field-input {
     width: 100%;
     padding: 9px 11px;
-    border: 1px solid #363b39;
+    border: 1px solid #dde3e1;
     border-radius: 7px;
-    background: #121412;
-    color: #e8eee9;
+    background: #f6f8f7;
+    color: #1e293b;
     font-size: 14px;
+    transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+.account-field-input:hover { border-color: #b8c2be; }
+.account-field-input:focus {
+    outline: none;
+    border-color: #74d895;
+    box-shadow: 0 0 0 3px rgba(116, 216, 149, .18);
 }
 .account-field-input:focus-visible { outline: 2px solid #74d895; outline-offset: -2px; }
+
+.dark .account-field-input {
+    border-color: #3a413c;
+    background: #20241f;
+    color: #e8eee9;
+}
+.dark .account-field-input:hover { border-color: #4d564f; }
+.dark .account-field-input:focus { border-color: #74d895; }
 
 /* Preferences modal (theme + language, browser-local). */
 .account-prefs-section { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }

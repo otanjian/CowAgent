@@ -14,12 +14,19 @@ administrator.
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
 #: The fixed permission directory, in catalog order. Only these strings may be
 #: assigned to a role (or granted by a built-in). Write privileges are *not*
 #: enumerated here — they are conferred by the ``tenant_admin`` qualification.
+#:
+#: The catalogue is intentionally finite. The original nine business ids are
+#: retained verbatim; the resource-authorization milestone adds the thirteen
+#: explicit resource actions (skill/tool/model/agent/chat) so that custom roles
+#: can grant access to specific skills, tools, models, agents and the chat
+#: consumer without relying on ``agent.read`` as a blanket write privilege.
 PERMISSION_CATALOG: Tuple[str, ...] = (
+    # -- original nine (unchanged) ---------------------------------------
     "tenant.info.read",  # view own tenant basics
     "tenant.members.read",  # list/read current-tenant members
     "tenant.org.read",  # read department tree + member org
@@ -29,6 +36,20 @@ PERMISSION_CATALOG: Tuple[str, ...] = (
     "memory.read",  # read personal memory
     "todo.read",  # read own personal todos
     "todo.write",  # create/update own personal todos
+    # -- resource-authorization additions (task 1.4) ---------------------
+    "skill.read",  # read skill directory / content
+    "skill.use",  # assemble/load a skill at runtime
+    "skill.edit",  # write content back to a skill
+    "skill.enable",  # toggle a skill's enabled state
+    "tool.read",  # read tool directory / schema
+    "tool.execute",  # actually run a tool
+    "tool.configure",  # manage tool configuration
+    "model.read",  # read allowed model metadata
+    "model.use",  # select/use a model at runtime
+    "agent.use",  # launch/restore a chat with an agent
+    "agent.edit",  # edit agent configuration
+    "agent.enable",  # enable/disable an agent
+    "chat.use",  # use the chat consumer with a chosen model
 )
 
 #: Stable metadata for the nine permission ids. ``group`` / ``label`` /
@@ -80,6 +101,71 @@ PERMISSION_METADATA: Dict[str, Dict[str, object]] = {
         "group": "待办", "label": "管理待办",
         "description": "创建/更新本人个人待办",
         "scope": "personal", "assignable": True,
+    },
+    "skill.read": {
+        "group": "技能", "label": "查看技能",
+        "description": "读取技能目录与正文",
+        "scope": "tenant", "assignable": True,
+    },
+    "skill.use": {
+        "group": "技能", "label": "使用技能",
+        "description": "装配并加载已授权技能",
+        "scope": "tenant", "assignable": True,
+    },
+    "skill.edit": {
+        "group": "技能", "label": "编辑技能",
+        "description": "写回技能正文内容",
+        "scope": "tenant", "assignable": True,
+    },
+    "skill.enable": {
+        "group": "技能", "label": "启停技能",
+        "description": "切换技能启用状态",
+        "scope": "tenant", "assignable": True,
+    },
+    "tool.read": {
+        "group": "工具", "label": "查看工具",
+        "description": "读取工具目录与描述",
+        "scope": "tenant", "assignable": True,
+    },
+    "tool.execute": {
+        "group": "工具", "label": "执行工具",
+        "description": "实际运行获准工具",
+        "scope": "tenant", "assignable": True,
+    },
+    "tool.configure": {
+        "group": "工具", "label": "配置工具",
+        "description": "管理工具配置",
+        "scope": "tenant", "assignable": True,
+    },
+    "model.read": {
+        "group": "模型", "label": "查看模型",
+        "description": "读取获准模型元数据",
+        "scope": "tenant", "assignable": True,
+    },
+    "model.use": {
+        "group": "模型", "label": "使用模型",
+        "description": "选择并使用获准模型",
+        "scope": "tenant", "assignable": True,
+    },
+    "agent.use": {
+        "group": "智能体", "label": "使用智能体",
+        "description": "启动/恢复智能体会话",
+        "scope": "tenant", "assignable": True,
+    },
+    "agent.edit": {
+        "group": "智能体", "label": "编辑智能体",
+        "description": "编辑智能体配置",
+        "scope": "tenant", "assignable": True,
+    },
+    "agent.enable": {
+        "group": "智能体", "label": "启停智能体",
+        "description": "启用/停用智能体",
+        "scope": "tenant", "assignable": True,
+    },
+    "chat.use": {
+        "group": "对话", "label": "使用对话",
+        "description": "在对话中使用获准模型",
+        "scope": "tenant", "assignable": True,
     },
 }
 
@@ -198,3 +284,106 @@ def permission_catalog_with_metadata() -> List[Dict[str, object]]:
         {"id": pid, **PERMISSION_METADATA[pid]}
         for pid in PERMISSION_CATALOG
     ]
+
+
+#: The five resource kinds a role may be granted against.
+RESOURCE_KINDS: Tuple[str, ...] = (
+    "menu", "skill", "tool", "model", "agent",
+)
+
+#: Resource-kind -> the set of *enabled actions* that may be granted. ``configure``
+#: and ``edit``/``enable`` are maintenance actions; they never imply ``execute``/
+#: ``use``. A resource may be granted multiple actions (each is independent).
+RESOURCE_ACTIONS: Dict[str, Tuple[str, ...]] = {
+    "menu": ("view",),
+    "skill": ("read", "use", "edit", "enable"),
+    "tool": ("read", "execute", "configure"),
+    "model": ("read", "use"),
+    "agent": ("read", "use", "edit", "enable"),
+}
+
+#: A stable resource_id namespace marks the origin/source of a resource so a
+#: rename never loses an authorization and two same-name resources from different
+#: sources never collide.
+RESOURCE_NAMESPACES: Dict[str, str] = {
+    "menu": "nav",        # navigation-registered pages/tabs
+    "skill": "builtin",   # builtin vs custom are distinct namespaces
+    "tool": "builtin",    # builtin vs mcp:<connection-id> are distinct
+    "model": "provider",  # provider:<config-id>
+    "agent": "agent",     # agent:<agent-id>
+}
+
+#: Namespaced skill origins. A same-named skill in ``custom`` shadows ``builtin``
+#: for display, but remains a distinct authorization object.
+SKILL_SOURCE_NAMESPACES: Tuple[str, ...] = ("builtin", "custom")
+
+
+def normalize_resource_grants(grants: Iterable[Dict[str, object]]) -> List[Dict[str, str]]:
+    """Validate and canonicalize a list of grant dicts.
+
+    Each grant is ``{resource_kind, resource_id, action}``. Rejects unknown kinds,
+    unknown actions for the kind, empty ids and duplicated (kind,id,action). Raises
+    :class:`PermissionError` on invalid input. The returned list is sorted for
+    deterministic storage.
+    """
+    seen: Set[Tuple[str, str, str]] = set()
+    out: List[Dict[str, str]] = []
+    for g in grants:
+        if not isinstance(g, dict):
+            raise PermissionError("grant must be an object")
+        kind = str(g.get("resource_kind", "") or "").strip()
+        rid = str(g.get("resource_id", "") or "").strip()
+        action = str(g.get("action", "") or "").strip()
+        if kind not in RESOURCE_ACTIONS:
+            raise PermissionError(f"unknown resource kind: {kind!r}")
+        if action not in RESOURCE_ACTIONS[kind]:
+            raise PermissionError(
+                f"unknown action {action!r} for resource kind {kind!r}")
+        if not rid:
+            raise PermissionError(f"empty resource_id for kind {kind!r}")
+        if not (kind, rid, action) in seen:
+            seen.add((kind, rid, action))
+            out.append({"resource_kind": kind, "resource_id": rid, "action": action})
+    return sorted(out, key=lambda x: (x["resource_kind"], x["resource_id"], x["action"]))
+
+
+def validate_model_defaults(defaults: Optional[Mapping[str, str]]) -> Dict[str, str]:
+    """Validate an optional ``{capability: model_resource_id}`` default map.
+
+    Rejects unknown capabilities and empty model ids. Returns a normalized dict
+    (or ``{}`` when ``defaults`` is falsy). Applies the same finite capability
+    set used by the model policy: ``chat``, ``chat_fallback``, ``vision``,
+    ``asr``, ``tts``, ``embedding``, ``image``, ``search``.
+    """
+    KNOWN_CAPABILITIES = {
+        "chat", "chat_fallback", "vision", "asr", "tts",
+        "embedding", "image", "search",
+    }
+    if not defaults:
+        return {}
+    out: Dict[str, str] = {}
+    for cap, model in defaults.items():
+        cap = str(cap).strip()
+        if cap not in KNOWN_CAPABILITIES:
+            raise PermissionError(f"unknown model capability: {cap!r}")
+        model = str(model or "").strip()
+        if not model:
+            raise PermissionError(f"empty model resource_id for capability {cap!r}")
+        out[cap] = model
+    return {k: out[k] for k in sorted(out)}
+
+
+def resource_granted(grants: Iterable[Dict[str, str]], kind: str, rid: str, action: str) -> bool:
+    """True when a normalized grant list contains the (kind, resource_id, action)."""
+    return any(
+        g["resource_kind"] == kind and g["resource_id"] == rid and g["action"] == action
+        for g in grants
+    )
+
+
+def resource_ids_for(grants: Iterable[Dict[str, str]], kind: str, action: str) -> Set[str]:
+    """Return the set of resource ids granted for a given kind+action."""
+    return {
+        g["resource_id"] for g in grants
+        if g["resource_kind"] == kind and g["action"] == action
+    }

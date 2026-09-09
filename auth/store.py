@@ -71,7 +71,7 @@ def refuse_legacy_after_migration(identity_mode: str, db_path: str) -> bool:
     return has_migration_signature(db_path)
 
 
-__schema_version__ = 1
+__schema_version__ = 3
 
 
 def _migration_1(con: sqlite3.Connection) -> None:
@@ -213,6 +213,91 @@ def _migration_1(con: sqlite3.Connection) -> None:
 
 
 _migrations.append(_migration_1)
+
+
+def _migration_2(con: sqlite3.Connection) -> None:
+    """Resource-authorization schema (task 1.2).
+
+    Two grant tables plus a per-role default-model field. No separate resource
+    catalog or model policy table is created: resource identity is projected from
+    the live sources; model defaults are a role column reusing the role version.
+    The tenant-level "what may this tenant allocate" limit lives in
+    ``tenant_resource_grants``; the per-role "what may a member use" lives in
+    ``role_resource_grants``. Both reuse the owning role/tenant ``version`` for
+    optimistic concurrency and audit in the same transaction.
+    """
+    con.executescript(
+        """
+        -- Platform-to-tenant global resource limits. Only global/model/tool/MCP
+        -- resources need an explicit platform grant; tenant-owned resources are
+        -- derived from their origin (agent_bindings, skills dir, tools registry).
+        CREATE TABLE tenant_resource_grants (
+            id            TEXT PRIMARY KEY,
+            tenant_id     TEXT NOT NULL REFERENCES tenants(id),
+            resource_kind TEXT NOT NULL,
+            resource_id   TEXT NOT NULL,
+            action        TEXT NOT NULL,
+            created_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+            UNIQUE (tenant_id, resource_kind, resource_id, action)
+        );
+        CREATE INDEX idx_tenant_resource_grants_tenant ON tenant_resource_grants(tenant_id);
+
+        -- Per-role resource grants. The role's tenant_id (via roles) is the true
+        -- tenant scope; the application layer validates the resource belongs to
+        -- that tenant before insert. A role's full grant set is versioned with
+        -- the parent roles.version.
+        CREATE TABLE role_resource_grants (
+            id            TEXT PRIMARY KEY,
+            role_id       TEXT NOT NULL REFERENCES roles(id),
+            resource_kind TEXT NOT NULL,
+            resource_id   TEXT NOT NULL,
+            action        TEXT NOT NULL,
+            created_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+            UNIQUE (role_id, resource_kind, resource_id, action)
+        );
+        CREATE INDEX idx_role_resource_grants_role ON role_resource_grants(role_id);
+
+        -- Per-role optional default model per capability: {capability: model_id}.
+        -- Stored on the role so it shares the role's version/audit transaction.
+        ALTER TABLE roles ADD COLUMN model_defaults_json TEXT;
+        """
+    )
+
+
+_migrations.append(_migration_2)
+
+
+def _migration_3(con: sqlite3.Connection) -> None:
+    """External identity bindings (task 1.1, open-database-runtime).
+
+    Maps an external IM identity triple ``(provider, issuer/corp_id, subject)``
+    to exactly one global User. Only administrators create bindings; inbound
+    channel messages resolve through here before any execution so the runtime
+    identity is always a real account, never a channel service principal.
+    ``issuer`` is the provider's corp/tenant identifier (empty string means a
+    provider without a corp scope, e.g. a personal consumer bot); uniqueness is
+    still enforced on the triple as stored.
+    """
+    con.executescript(
+        """
+        CREATE TABLE external_identities (
+            id            TEXT PRIMARY KEY,
+            user_id       TEXT NOT NULL REFERENCES users(id),
+            provider      TEXT NOT NULL,
+            issuer        TEXT NOT NULL DEFAULT '',
+            subject       TEXT NOT NULL,
+            created_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+            last_used_at  INTEGER
+        );
+        CREATE UNIQUE INDEX idx_external_identities_triple
+            ON external_identities(provider, issuer, subject);
+        CREATE INDEX idx_external_identities_user
+            ON external_identities(user_id);
+        """
+    )
+
+
+_migrations.append(_migration_3)
 
 
 class IdentityStoreError(RuntimeError):

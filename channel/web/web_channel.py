@@ -37,6 +37,8 @@ from channel.web.auth_handlers import (
 from channel.web.admin_handlers import (
     PlatformUsersHandler,
     PlatformUserPasswordHandler,
+    PlatformUserExternalIdentitiesHandler,
+    PlatformUserExternalIdentityHandler,
     PlatformTenantsHandler,
     PlatformTenantHandler,
     PlatformTenantAdminsHandler,
@@ -49,6 +51,11 @@ from channel.web.admin_handlers import (
     TenantDepartmentsHandler,
     TenantDepartmentHandler,
     IdentityAuditHandler,
+    PlatformTenantRolesHandler,
+    PlatformTenantRoleHandler,
+    TenantAuthorizationCatalogHandler,
+    PlatformTenantAuthorizationCatalogHandler,
+    PlatformTenantResourcesHandler,
 )
 from common import const
 from common import i18n
@@ -80,6 +87,8 @@ from channel.web.todo_handlers import (
     TodoEventsHandler,
     TodoSourceHandler,
 )
+from scenes.api import ScenesHandler, SceneActivateHandler
+from scenes.api_workbench import SceneWorkbenchImportHandler
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"}
 VIDEO_EXTENSIONS = {".mp4", ".webm", ".avi", ".mov", ".mkv"}
@@ -439,6 +448,164 @@ def _require_read_permission(ctx: "Optional[RequestContext]", permission: str) -
                                         "code": "forbidden"}))
 
 
+def _resource_ids(ctx: "Optional[RequestContext]", kind: str, action: str,
+                  permission: Optional[str] = None):
+    """Return the resource ids a caller may act on for ``kind``+``action``.
+
+    Returns ``None`` for a platform admin (unrestricted, the caller projects the
+    live catalog), ``set()`` for a member with no grant, or an explicit set of
+    ``{source}:{name}`` ids. Legacy mode (``ctx is None``) is unrestricted.
+    """
+    if ctx is None:
+        return None
+    from auth.service import get_identity_service
+    return get_identity_service().resource_ids_for(
+        ctx.user_id, ctx.tenant_id, kind, action, permission=permission)
+
+
+def _require_resource_action(ctx: "Optional[RequestContext]", kind: str, resource_id: str,
+                             action: str, permission: Optional[str] = None) -> None:
+    """Enforce fine-grained resource authorization for a single resource.
+
+    In database mode the caller must hold the functional ``permission`` (when
+    supplied) and an explicit resource grant for ``kind``/``resource_id``/``action``
+    — or be a platform admin. Legacy mode is a no-op.
+    """
+    if ctx is None:
+        return
+    from auth.service import get_identity_service
+    if not get_identity_service().check_resource_action(
+            ctx.user_id, ctx.tenant_id, kind, resource_id, action, permission=permission):
+        raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
+                            json.dumps({"status": "error", "message": "forbidden",
+                                        "code": "forbidden"}))
+
+
+def _require_agent_action(ctx: "Optional[RequestContext]", agent_id: str, action: str,
+                          permission: str) -> None:
+    """Enforce fine-grained agent authorization for a single agent resource.
+
+    ``agent_id`` addresses a tenant-bound agent. The tenant binding is validated
+    separately by the caller; here we only require the resource grant for the
+    action. An agent already bound to the tenant is checked by resource_id.
+    """
+    if ctx is None:
+        return
+    _require_resource_action(ctx, "agent", f"agent:{agent_id}", action, permission)
+
+
+def _require_agent_create(ctx: "Optional[RequestContext]") -> None:
+    """Require the caller to be able to create a new agent resource.
+
+    There is no resource id yet, so the check is the functional ``agent.edit``
+    permission (or platform/tenant admin), enforced via a synthetic grant on the
+    agent kind. A tenant admin or platform admin passes; a member must hold the
+    functional permission and any single agent grant to demonstrate the habit.
+    """
+    if ctx is None:
+        return
+    if ctx.is_platform_admin or ctx.is_tenant_admin:
+        return
+    if "agent.edit" not in ctx.permissions:
+        raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
+                            json.dumps({"status": "error", "message": "forbidden",
+                                        "code": "forbidden"}))
+
+
+def _require_chat_use(ctx: "Optional[RequestContext]") -> None:
+    """Require the functional ``chat.use`` permission to run a chat.
+
+    The chat consumer is gated by ``chat.use``; a member holding ``agent.use``
+    but not ``chat.use`` cannot start a conversation. Platform/tenant admins and
+    legacy mode pass. Recomputed per request (never cached).
+    """
+    if ctx is None:
+        return
+    if ctx.is_platform_admin or ctx.is_tenant_admin:
+        return
+    if "chat.use" not in ctx.permissions:
+        raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
+                            json.dumps({"status": "error", "message": "forbidden",
+                                        "code": "forbidden"}))
+
+
+def _require_model_use(ctx: "Optional[RequestContext]", model_code: str,
+                       resource_ids: Optional[set] = None) -> None:
+    """Require the caller to be allowed to use a specific model.
+
+    The model is addressed by its catalog ``resource_id`` (``provider:{pid}:{code}``).
+    A platform admin passes; a member must hold ``model.use`` and an explicit
+    ``model`` grant whose resource_id ends with ``:{model_code}`` or equals the
+    model code. Legacy mode (no ctx) passes. Recomputed per call (never cached).
+    """
+    if ctx is None:
+        return
+    if ctx.is_platform_admin or ctx.is_tenant_admin:
+        return
+    if resource_ids is None:
+        from auth.service import get_identity_service
+        resource_ids = get_identity_service().resource_ids_for(
+            ctx.user_id, ctx.tenant_id, "model", "use", permission="model.use")
+    if resource_ids is None:
+        return  # unrestricted
+    if model_code in resource_ids:
+        return
+    for rid in resource_ids:
+        parts = rid.split(":")
+        if parts and parts[-1] == model_code:
+            return
+    raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
+                        json.dumps({"status": "error", "message": "forbidden",
+                                    "code": "forbidden"}))
+
+
+def _current_db_identity():
+    """Return the current RuntimeIdentity when running in database mode, else None.
+
+    Used by console-side projections that need the caller's tenant for
+    role-default resolution. In legacy mode there is no tenant, so returning
+    None lets those projections fall back to the historical behaviour.
+    """
+    from common.runtime_identity import current_identity
+
+    ident = current_identity()
+    if not ident.user_id or not ident.tenant_id:
+        return None
+    return ident
+
+
+def _authorized_model_codes() -> Optional[set]:
+    """The ``model.use`` model-code set the current identity may select.
+
+    Returns ``None`` when unrestricted (legacy mode, platform all, or no DB
+    identity) so the session picker keeps the whole catalog. Otherwise returns
+    the set of model codes granted across the identity's roles, derived from
+    the catalog ``resource_id`` (``provider:{pid}:{code}``) trailing segment.
+    Recomputed per call — never cached — so a grant change is reflected on the
+    next render.
+    """
+    from common.runtime_identity import current_identity
+
+    ident = current_identity()
+    if not ident.user_id or not ident.tenant_id:
+        return None
+    try:
+        from auth.service import get_identity_service
+        svc = get_identity_service()
+        ids = svc.resource_ids_for(ident.user_id, ident.tenant_id, "model", "use",
+                                   permission="model.use")
+    except Exception:
+        return None
+    if ids is None:
+        return None  # platform all / unrestricted
+    codes: set = set()
+    for rid in ids:
+        parts = str(rid).split(":")
+        if parts:
+            codes.add(parts[-1])
+    return codes
+
+
 def _web_runtime_identity_snapshot() -> dict:
     """Carry verified Web delegation across the chat worker thread boundary.
 
@@ -498,10 +665,16 @@ def _authorize_chat_session(ctx, session_id, agent_id, *, create=False) -> str:
     SELECT followed by asynchronous persistence would let two users race for
     the same new key. Claim it before dispatch, preserving all existing owners
     (including legacy owner='') and never borrowing another Agent's workspace.
+
+    Database-mode authorization mirrors ``_workbench_chat_readiness`` exactly
+    (functional ``chat.use`` + the target Agent's ``agent.use`` resource grant,
+    platform/tenant admin bypass), so a caller that only reads the card can
+    never start/resume a conversation. Recomputed on every call — never cached —
+    so a revoked grant applies to the next send/poll/steer. Legacy mode
+    (``ctx is None``) stays open.
     """
     if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256:
         _chat_error("valid session_id required", "400 Bad Request", "bad_request")
-    _require_read_permission(ctx, "agent.read")
     agent_id = _require_tenant_agent_binding(ctx, agent_id)
     _require_private_owner(ctx, agent_id)
     from agent.registry import get_agent_registry
@@ -515,19 +688,42 @@ def _authorize_chat_session(ctx, session_id, agent_id, *, create=False) -> str:
         con = store._connect()
         try:
             with con:
-                if create:
-                    now = int(time.time())
-                    con.execute(
-                        "INSERT OR IGNORE INTO sessions "
-                        "(session_id, channel_type, owner, created_at, last_active, msg_count) "
-                        "VALUES (?, 'web', ?, ?, ?, 0)",
-                        (session_id, ctx.user_id, now, now),
-                    )
+                # A session that exists but is not *this caller's own* is a 404:
+                # masking its existence keeps one member from probing another
+                # member's conversation ids. Only after the session is confirmed
+                # to be the caller's (or brand new) do the execution gates run.
                 row = con.execute(
                     "SELECT owner, channel_type FROM sessions WHERE session_id=?", (session_id,),
                 ).fetchone()
-                if not row or row[0] != ctx.user_id or row[1] != "web":
+                if row is not None and (row[0] != ctx.user_id or row[1] != "web"):
                     _chat_error("session not found", "404 Not Found", "not_found")
+                if row is None:
+                    # Brand-new session: this caller is its first claimant. The
+                    # usage gates still run before INSERT so a denied caller
+                    # never leaves an orphaned session row behind.
+                    _require_chat_use(ctx)
+                    _require_agent_action(ctx, agent_id, "use", "agent.use")
+                    if create:
+                        now = int(time.time())
+                        con.execute(
+                            "INSERT OR IGNORE INTO sessions "
+                            "(session_id, channel_type, owner, created_at, last_active, msg_count) "
+                            "VALUES (?, 'web', ?, ?, ?, 0)",
+                            (session_id, ctx.user_id, now, now),
+                        )
+                        # Two callers may race to claim the same new key; only
+                        # the winner's owner survives the IGNORE above.
+                        claimed = con.execute(
+                            "SELECT owner FROM sessions WHERE session_id=?", (session_id,),
+                        ).fetchone()
+                        if not claimed or claimed[0] != ctx.user_id:
+                            _chat_error("session not found", "404 Not Found", "not_found")
+                else:
+                    # Resuming the caller's own conversation re-validates the
+                    # execution gates (never cached: a revoked grant blocks the
+                    # very next send/poll/steer on this session).
+                    _require_chat_use(ctx)
+                    _require_agent_action(ctx, agent_id, "use", "agent.use")
         finally:
             con.close()
     return agent_id
@@ -1104,15 +1300,22 @@ _WEB_URLS = (
     # database identity-mode handlers (active only when identity_mode=database)
     '/api/platform/users', 'PlatformUsersHandler',
     '/api/platform/users/([^/]+)/password', 'PlatformUserPasswordHandler',
+    '/api/platform/users/([^/]+)/external-identities', 'PlatformUserExternalIdentitiesHandler',
+    '/api/platform/users/([^/]+)/external-identities/([^/]+)', 'PlatformUserExternalIdentityHandler',
     '/api/platform/users/([^/]+)', 'PlatformUsersHandler',
     '/api/platform/tenants', 'PlatformTenantsHandler',
     '/api/platform/tenants/([^/]+)/admins', 'PlatformTenantAdminsHandler',
+    '/api/platform/tenants/([^/]+)/roles', 'PlatformTenantRolesHandler',
+    '/api/platform/tenants/([^/]+)/roles/([^/]+)', 'PlatformTenantRoleHandler',
+    '/api/platform/tenants/([^/]+)/authorization/catalog', 'PlatformTenantAuthorizationCatalogHandler',
+    '/api/platform/tenants/([^/]+)/resources', 'PlatformTenantResourcesHandler',
     '/api/platform/tenants/([^/]+)', 'PlatformTenantHandler',
     '/api/tenant', 'TenantInfoHandler',
     '/api/tenant/members', 'TenantMembersHandler',
     '/api/tenant/members/([^/]+)', 'TenantMemberHandler',
     '/api/tenant/roles/([^/]+)', 'TenantRoleHandler',
     '/api/tenant/roles', 'TenantRolesHandler',
+    '/api/tenant/authorization/catalog', 'TenantAuthorizationCatalogHandler',
     '/api/tenant/permissions', 'TenantPermissionsHandler',
     '/api/tenant/departments', 'TenantDepartmentsHandler',
     '/api/tenant/departments/([^/]+)', 'TenantDepartmentHandler',
@@ -1184,6 +1387,9 @@ _WEB_URLS = (
     '/api/branding', 'BrandingManageHandler',
     '/api/branding/reset', 'BrandingResetHandler',
     '/api/branding/assets/(.*)', 'BrandingAssetHandler',
+    '/api/scenes', 'ScenesHandler',
+    '/api/scenes/activate', 'SceneActivateHandler',
+    '/api/scenes/workbench/import', 'SceneWorkbenchImportHandler',
     '/mcp/oauth/callback', 'McpOAuthCallbackHandler',
     '/assets/(.*)', 'AssetsHandler',
 )
@@ -1832,8 +2038,13 @@ class WebChannel(ChatChannel):
         except Exception as e:
             logger.warning(f"[WebChannel] voice cleanup failed: {e}")
 
-    def upload_file(self):
-        """Handle file or directory upload via multipart/form-data."""
+    def upload_file(self, *, agent_id: str = None):
+        """Handle file or directory upload via multipart/form-data.
+
+        ``agent_id`` is set by database-mode callers that have already resolved
+        and authorized the tenant-bound target agent; it overrides the raw form
+        field so a cross-tenant ``agent_id`` can never steer the write.
+        """
 
         def _reject(message):
             logger.warning("[WebChannel] Upload rejected: %s", message)
@@ -1870,7 +2081,7 @@ class WebChannel(ChatChannel):
 
             is_directory_upload = bool(directory_files) or bool(directory_rel_paths) or bool(relative_path) or bool(upload_id)
 
-            upload_dir = _get_upload_dir(_request_agent_id(params))
+            upload_dir = _get_upload_dir(agent_id or _request_agent_id(params))
             if is_directory_upload:
                 if not upload_id:
                     return _reject("Missing upload_id for directory upload")
@@ -2128,6 +2339,9 @@ class WebChannel(ChatChannel):
                 if auth_context is not None:
                     _require_tenant_agent_binding(auth_context, addressed)
                     _require_private_owner(auth_context, addressed)
+                    # Handing the turn to a teammate still runs that Agent, so it
+                    # needs the same execution grant as a direct dispatch.
+                    _require_agent_action(auth_context, addressed, "use", "agent.use")
                 context["speaker_agent_id"] = addressed
             if is_voice_input:
                 # Web channel runs its own TTS post-pipeline via
@@ -2732,9 +2946,11 @@ def _unavailable() -> str:
 def _guard_not_database() -> None:
     """Keep consumers without a verified tenant boundary closed in database mode.
 
-    Chat transport has dedicated login, tenant and personal-session ownership
-    checks. File serve/upload and the other adapters still using this gate
-    remain closed server-side (task 3.11). Legacy mode is unaffected.
+    Chat transport, file upload/serve/preview and voice have dedicated
+    identity/permission boundaries (task 2.4, open-database-runtime). The
+    consumers still using this gate — knowledge write (action/import) and the
+    host project browser — remain closed server-side until their own slices
+    land. Legacy mode is unaffected.
     """
     if _is_database_identity():
         raise web.HTTPError("503 Service Unavailable",
@@ -2825,65 +3041,85 @@ class MessageHandler:
 
 class UploadHandler:
     def POST(self):
-        _guard_not_database()
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
-        return WebChannel().upload_file()
+        web.header('Cache-Control', 'no-store')
+        with _db_scope() as ctx:
+            if ctx is None:
+                return WebChannel().upload_file()
+            # Database mode: an upload writes into a tenant-bound agent's upload
+            # dir, so the target agent must be bound to the caller's tenant and
+            # execution-authorized (attachments belong to the chat workflow).
+            _require_chat_csrf()
+            params = _raw_web_input()
+            agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
+            _require_private_owner(ctx, agent_id)
+            _require_agent_action(ctx, agent_id, "use", "agent.use")
+            return WebChannel().upload_file(agent_id=agent_id)
 
 
 class VoiceAsrHandler:
     """Receive a mic recording, persist it under uploads/ and run ASR.
     Returns {status, text, audio_url} so the UI can render a playback bubble."""
     def POST(self):
-        _guard_not_database()
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
 
         saved_path = None
         try:
             params = _raw_web_input()
-            agent_id = _request_agent_id(params)
-            file_obj = params.get("file")
-            if file_obj is None:
-                return json.dumps({"status": "error", "message": "no audio file"})
+            with _db_scope() as ctx:
+                if ctx is None:
+                    agent_id = _request_agent_id(params)
+                else:
+                    # Database mode: the mic recording lands in a tenant-bound
+                    # agent's upload dir; voice input is part of the chat flow.
+                    agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
+                    _require_private_owner(ctx, agent_id)
+                    _require_agent_action(ctx, agent_id, "use", "agent.use")
+                file_obj = params.get("file")
+                if file_obj is None:
+                    return json.dumps({"status": "error", "message": "no audio file"})
 
-            filename = getattr(file_obj, "filename", "") or "recording.webm"
-            ext = os.path.splitext(filename)[1].lower() or ".webm"
-            if ext not in (".webm", ".ogg", ".opus", ".mp4", ".m4a", ".mp3", ".wav"):
-                ext = ".webm"
+                filename = getattr(file_obj, "filename", "") or "recording.webm"
+                ext = os.path.splitext(filename)[1].lower() or ".webm"
+                if ext not in (".webm", ".ogg", ".opus", ".mp4", ".m4a", ".mp3", ".wav"):
+                    ext = ".webm"
 
-            upload_dir = _get_upload_dir(agent_id)
-            os.makedirs(upload_dir, exist_ok=True)
-            ts = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-            saved_name = f"voice_input_{ts}_{random.randint(0, 9999)}{ext}"
-            saved_path = os.path.join(upload_dir, saved_name)
-            with open(saved_path, "wb") as f:
-                f.write(file_obj.file.read() if hasattr(file_obj, "file") else file_obj.value)
+                upload_dir = _get_upload_dir(agent_id)
+                os.makedirs(upload_dir, exist_ok=True)
+                ts = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+                saved_name = f"voice_input_{ts}_{random.randint(0, 9999)}{ext}"
+                saved_path = os.path.join(upload_dir, saved_name)
+                with open(saved_path, "wb") as f:
+                    f.write(file_obj.file.read() if hasattr(file_obj, "file") else file_obj.value)
 
-            suffix = f"?agent_id={agent_id}" if agent_id else ""
-            audio_url = f"/uploads/{saved_name}{suffix}"
+                suffix = f"?agent_id={agent_id}" if agent_id else ""
+                audio_url = f"/uploads/{saved_name}{suffix}"
 
-            from bridge.bridge import Bridge
-            reply = Bridge().fetch_voice_to_text(saved_path)
-            if reply is None:
+                from bridge.bridge import Bridge
+                reply = Bridge().fetch_voice_to_text(saved_path)
+                if reply is None:
+                    return json.dumps({
+                        "status": "error",
+                        "message": "ASR returned no reply",
+                        "audio_url": audio_url,
+                    })
+
+                from bridge.reply import ReplyType
+                if reply.type == ReplyType.TEXT:
+                    return json.dumps({
+                        "status": "success",
+                        "text": reply.content or "",
+                        "audio_url": audio_url,
+                    })
                 return json.dumps({
                     "status": "error",
-                    "message": "ASR returned no reply",
+                    "message": reply.content or "ASR failed",
                     "audio_url": audio_url,
                 })
-
-            from bridge.reply import ReplyType
-            if reply.type == ReplyType.TEXT:
-                return json.dumps({
-                    "status": "success",
-                    "text": reply.content or "",
-                    "audio_url": audio_url,
-                })
-            return json.dumps({
-                "status": "error",
-                "message": reply.content or "ASR failed",
-                "audio_url": audio_url,
-            })
+        except web.HTTPError:
+            raise
         except Exception as e:
             logger.exception(f"[VoiceAsrHandler] failed: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -2893,43 +3129,52 @@ class VoiceTtsHandler:
     """On-demand TTS for the in-chat "read aloud" button. Returns the
     audio URL and (when session_id is given) persists it onto the message."""
     def POST(self):
-        _guard_not_database()
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             data = json.loads(web.data() or b"{}")
             text = (data.get("text") or "").strip()
             session_id = (data.get("session_id") or "").strip()
-            agent_id = data.get("agent_id")
             if not text:
                 return json.dumps({"status": "error", "message": "empty text"})
-            # `@singleton` makes WebChannel a factory function — go via instance.
-            channel = WebChannel()
-            if not channel._tts_provider_ready():
-                return json.dumps({"status": "error", "message": "tts not configured"})
+            with _db_scope() as ctx:
+                if ctx is not None:
+                    # Database mode: TTS output attaches to a tenant-bound
+                    # agent's session; the caller must be chat-authorized for it.
+                    agent_id = _require_tenant_agent_binding(ctx, data.get("agent_id"))
+                    _require_private_owner(ctx, agent_id)
+                    _require_agent_action(ctx, agent_id, "use", "agent.use")
+                else:
+                    agent_id = data.get("agent_id")
+                # `@singleton` makes WebChannel a factory function — go via instance.
+                channel = WebChannel()
+                if not channel._tts_provider_ready():
+                    return json.dumps({"status": "error", "message": "tts not configured"})
 
-            from bridge.bridge import Bridge
-            reply = Bridge().fetch_text_to_voice(text)
-            if reply is None or reply.type != ReplyType.VOICE or not reply.content:
-                msg = getattr(reply, "content", "") or "tts failed"
-                return json.dumps({"status": "error", "message": str(msg)})
+                from bridge.bridge import Bridge
+                reply = Bridge().fetch_text_to_voice(text)
+                if reply is None or reply.type != ReplyType.VOICE or not reply.content:
+                    msg = getattr(reply, "content", "") or "tts failed"
+                    return json.dumps({"status": "error", "message": str(msg)})
 
-            url = channel._publish_tts_audio(reply.content, agent_id)
-            if not url:
-                return json.dumps({"status": "error", "message": "publish failed"})
+                url = channel._publish_tts_audio(reply.content, agent_id)
+                if not url:
+                    return json.dumps({"status": "error", "message": "publish failed"})
 
-            if session_id:
-                try:
-                    from agent.memory import get_conversation_store
-                    from agent.registry import get_agent_registry
-                    profile = get_agent_registry().get(agent_id)
-                    get_conversation_store(profile.workspace).attach_extras_to_last_assistant(
-                        session_id, {"audio": {"url": url, "kind": "tts"}},
-                    )
-                except Exception as e:
-                    logger.debug(f"[VoiceTtsHandler] persist skipped: {e}")
+                if session_id:
+                    try:
+                        from agent.memory import get_conversation_store
+                        from agent.registry import get_agent_registry
+                        profile = get_agent_registry().get(agent_id)
+                        get_conversation_store(profile.workspace).attach_extras_to_last_assistant(
+                            session_id, {"audio": {"url": url, "kind": "tts"}},
+                        )
+                    except Exception as e:
+                        logger.debug(f"[VoiceTtsHandler] persist skipped: {e}")
 
-            return json.dumps({"status": "success", "audio_url": url})
+                return json.dumps({"status": "success", "audio_url": url})
+        except web.HTTPError:
+            raise
         except Exception as e:
             logger.exception(f"[VoiceTtsHandler] failed: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -2937,59 +3182,104 @@ class VoiceTtsHandler:
 
 class UploadsHandler:
     def GET(self, file_name):
-        _guard_not_database()
         _require_auth()
+        with _db_scope() as ctx:
+            try:
+                params = web.input(agent_id='')
+                if ctx is None:
+                    upload_dir = _get_upload_dir(_request_agent_id(params))
+                else:
+                    # Database mode: the served upload must belong to a
+                    # tenant-bound agent the caller may read.
+                    agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
+                    _require_private_owner(ctx, agent_id)
+                    _require_agent_action(ctx, agent_id, "read", "agent.read")
+                    upload_dir = _get_upload_dir(agent_id)
+                full_path = os.path.normpath(os.path.join(upload_dir, file_name))
+                if not os.path.abspath(full_path).startswith(os.path.abspath(upload_dir)):
+                    raise web.notfound()
+                if not os.path.isfile(full_path):
+                    raise web.notfound()
+                content_type = mimetypes.guess_type(full_path)[0] or "application/octet-stream"
+                web.header('Content-Type', content_type)
+                web.header('Cache-Control', 'public, max-age=86400')
+                with open(full_path, 'rb') as f:
+                    return f.read()
+            except web.HTTPError:
+                raise
+            except Exception as e:
+                logger.error(f"[WebChannel] Error serving upload: {e}")
+                raise web.notfound()
+
+
+def _db_file_serve_roots(ctx) -> list:
+    """Roots a database-mode caller may serve files from.
+
+    Confined to the caller's tenant shared root and the workspaces of every
+    agent bound to that tenant. Never the operator's home / global serve root:
+    an operator-level ``web_file_serve_root`` is a legacy-mode concept and must
+    not widen a tenant's read surface.
+    """
+    from auth.service import get_identity_service
+    svc = get_identity_service()
+    roots = []
+    shared = svc.tenant_shared_root(ctx.tenant_id)
+    if shared:
+        roots.append(os.path.realpath(shared))
+    from agent.registry import get_agent_registry
+    registry = get_agent_registry()
+    for agent_id in svc.tenant_agent_ids(ctx.tenant_id):
         try:
-            params = web.input(agent_id='')
-            upload_dir = _get_upload_dir(_request_agent_id(params))
-            full_path = os.path.normpath(os.path.join(upload_dir, file_name))
-            if not os.path.abspath(full_path).startswith(os.path.abspath(upload_dir)):
-                raise web.notfound()
-            if not os.path.isfile(full_path):
-                raise web.notfound()
-            content_type = mimetypes.guess_type(full_path)[0] or "application/octet-stream"
-            web.header('Content-Type', content_type)
-            web.header('Cache-Control', 'public, max-age=86400')
-            with open(full_path, 'rb') as f:
-                return f.read()
-        except web.HTTPError:
-            raise
-        except Exception as e:
-            logger.error(f"[WebChannel] Error serving upload: {e}")
-            raise web.notfound()
+            profile = registry.get(agent_id)
+            roots.append(os.path.realpath(profile.workspace))
+        except (KeyError, ValueError):
+            continue
+    return roots
 
 
 class FileServeHandler:
     def GET(self):
-        _guard_not_database()
         _require_auth()
-        try:
-            params = web.input(path="")
-            file_path = params.path
-            if not file_path or not os.path.isabs(file_path):
+        with _db_scope() as ctx:
+            try:
+                params = web.input(path="", agent_id="")
+                file_path = params.path
+                if not file_path or not os.path.isabs(file_path):
+                    raise web.notfound()
+                # Resolve symlinks and confine access to the allowed root dirs,
+                # so this endpoint can't be abused to read arbitrary files (e.g. /etc/passwd, ~/.ssh).
+                # Defaults to the user home dir plus the agent workspace; set web_file_serve_root="/"
+                # to allow the whole filesystem.
+                file_path = os.path.realpath(file_path)
+                if ctx is not None:
+                    # Database mode: restrict to the tenant's own roots and
+                    # require an agent.read grant on the named agent (if any).
+                    if params.agent_id:
+                        agent_id = _require_tenant_agent_binding(ctx, params.agent_id)
+                        _require_private_owner(ctx, agent_id)
+                        _require_agent_action(ctx, agent_id, "read", "agent.read")
+                    if not any(
+                        os.path.commonpath([file_path, root]) == root
+                        for root in _db_file_serve_roots(ctx)
+                    ):
+                        raise web.notfound()
+                elif not _is_path_allowed(file_path):
+                    raise web.notfound()
+                if not os.path.isfile(file_path):
+                    raise web.notfound()
+                content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+                file_name = os.path.basename(file_path)
+                from urllib.parse import quote
+                web.header('Content-Type', content_type)
+                web.header('Content-Disposition', f"inline; filename*=UTF-8''{quote(file_name)}")
+                web.header('Cache-Control', 'public, max-age=3600')
+                with open(file_path, 'rb') as f:
+                    return f.read()
+            except web.HTTPError:
+                raise
+            except Exception as e:
+                logger.error(f"[WebChannel] Error serving file: {e}")
                 raise web.notfound()
-            # Resolve symlinks and confine access to the allowed root dirs,
-            # so this endpoint can't be abused to read arbitrary files (e.g. /etc/passwd, ~/.ssh).
-            # Defaults to the user home dir plus the agent workspace; set web_file_serve_root="/"
-            # to allow the whole filesystem.
-            file_path = os.path.realpath(file_path)
-            if not _is_path_allowed(file_path):
-                raise web.notfound()
-            if not os.path.isfile(file_path):
-                raise web.notfound()
-            content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
-            file_name = os.path.basename(file_path)
-            from urllib.parse import quote
-            web.header('Content-Type', content_type)
-            web.header('Content-Disposition', f"inline; filename*=UTF-8''{quote(file_name)}")
-            web.header('Cache-Control', 'public, max-age=3600')
-            with open(file_path, 'rb') as f:
-                return f.read()
-        except web.HTTPError:
-            raise
-        except Exception as e:
-            logger.error(f"[WebChannel] Error serving file: {e}")
-            raise web.notfound()
 
 
 # Injected into previewed HTML so the iframe's scrollbars match the app chrome
@@ -3033,7 +3323,10 @@ class PreviewHandler:
     """
 
     def GET(self, path_info):
-        _guard_not_database()
+        # Preview is capability-authorized: the URL carries an HMAC-signed
+        # directory token because the sandboxed iframe (opaque origin) cannot
+        # send the session cookie. This holds in database mode too, so the old
+        # blanket 503 gate is gone (task 2.4, open-database-runtime).
         try:
             token, _, rel_path = (path_info or "").partition("/")
             if not token or not rel_path:
@@ -6874,7 +7167,7 @@ class ToolsHandler:
             from agent.tools.tool_manager import ToolManager
             from common import i18n
             with _db_scope() as ctx:
-                _require_read_permission(ctx, "agent.read")
+                _require_read_permission(ctx, "tool.read")
                 tm = ToolManager()
                 if not tm.tool_classes:
                     tm.load_tools()
@@ -6892,11 +7185,23 @@ class ToolsHandler:
                                 "⚠️ IMPORTANT: Only use this tool when delayed or periodic execution is needed."
                             )
                         tools.append({
+                            "resource_id": f"builtin:{name}",
                             "name": name,
                             "description": desc,
                         })
                     except Exception:
-                        tools.append({"name": name, "description": ""})
+                        tools.append({"resource_id": f"builtin:{name}", "name": name, "description": ""})
+                # MCP tools: namespaced by their connection/server name, matching
+                # the auth catalog projection convention.
+                mcp_instances = getattr(tm, "_mcp_tool_instances", None) or {}
+                for tname, mcp_tool in mcp_instances.items():
+                    conn = getattr(mcp_tool, "server_name", "default")
+                    tools.append({
+                        "resource_id": f"mcp:{conn}:{tname}",
+                        "name": tname,
+                        "description": mcp_tool.description or "",
+                    })
+                tools = _filter_tool_catalog(ctx, tools, "read")
             return json.dumps({"status": "success", "tools": tools}, ensure_ascii=False)
         except web.HTTPError:
             raise
@@ -6922,6 +7227,44 @@ def _skill_service(agent_id: str = ''):
     return SkillService(SkillManager(custom_dir=custom_dir))
 
 
+def _filter_skill_catalog(ctx: "Optional[RequestContext]", skills: List[dict], action: str) -> List[dict]:
+    """Narrow a skill list to those the caller may act on (``read``/``use``/...).
+
+    A platform admin is unrestricted. A database-mode member sees only skills
+    explicitly granted for ``action`` (a skill's ``resource_id`` must be present;
+    skills persisted before this field get one from their ``source``/``name``).
+    Legacy mode is unrestricted.
+    """
+    allowed = _resource_ids(ctx, "skill", action, permission="skill.read" if action != "read" else None)
+    if allowed is None:
+        return skills
+    out = []
+    for skill in skills:
+        rid = skill.get("resource_id")
+        if not rid:
+            rid = f"{skill.get('source', 'builtin')}:{skill.get('name', '')}"
+        if rid in allowed:
+            out.append(skill)
+    return out
+
+
+def _filter_tool_catalog(ctx: "Optional[RequestContext]", tools: List[dict], action: str) -> List[dict]:
+    """Narrow a tool list to entries the caller may act on (``read``/``execute``/...).
+
+    A platform admin is unrestricted. A database-mode member sees only tools
+    explicitly granted for ``action`` via their ``resource_id``. Legacy mode is
+    unrestricted.
+    """
+    allowed = _resource_ids(ctx, "tool", action, permission="tool.read" if action != "read" else None)
+    if allowed is None:
+        return tools
+    out = []
+    for tool in tools:
+        if tool.get("resource_id") in allowed:
+            out.append(tool)
+    return out
+
+
 class SkillsHandler:
     def GET(self):
         _require_auth()
@@ -6929,13 +7272,14 @@ class SkillsHandler:
         try:
             from common import i18n
             with _db_scope() as ctx:
-                _require_read_permission(ctx, "agent.read")
+                _require_read_permission(ctx, "skill.read")
                 params = web.input(agent_id='')
                 # The library page lists everything installed, unnarrowed by the
                 # Agent's selection: a skill it has not selected still has to be
                 # visible here for the selection to be editable at all.
                 service = _skill_service(_request_agent_id(params))
                 skills = service.query()
+                skills = _filter_skill_catalog(ctx, skills, "read")
                 if i18n.get_language() == i18n.ZH_HANT:
                     for skill in skills:
                         if isinstance(skill, dict):
@@ -6954,17 +7298,23 @@ class SkillsHandler:
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             with _db_scope() as ctx:
-                _require_read_permission(ctx, "agent.read")
+                _require_read_permission(ctx, "skill.read")
                 body = json.loads(web.data())
                 action = body.get("action")
                 name = body.get("name")
-                if not action or not name:
-                    return json.dumps({"status": "error", "message": "action and name are required"})
+                resource_id = body.get("resource_id")
+                if not action:
+                    return json.dumps({"status": "error", "message": "action is required"})
+                if not name and not resource_id:
+                    return json.dumps({"status": "error", "message": "name or resource_id is required"})
                 service = _skill_service(_request_agent_id(body))
+                target = {"name": name} if name else {"resource_id": resource_id}
                 if action == "open":
-                    service.open({"name": name})
+                    _require_resource_action(ctx, "skill", resource_id or name, "enable", "skill.enable")
+                    service.open(target)
                 elif action == "close":
-                    service.close({"name": name})
+                    _require_resource_action(ctx, "skill", resource_id or name, "enable", "skill.enable")
+                    service.close(target)
                 else:
                     return json.dumps({"status": "error", "message": f"unknown action: {action}"})
             return json.dumps({"status": "success"}, ensure_ascii=False)
@@ -6995,12 +7345,18 @@ class SkillContentHandler:
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             with _db_scope() as ctx:
-                _require_read_permission(ctx, "agent.read")
-                params = web.input(name='', agent_id='')
-                name = (params.name or '').strip()
-                if not name:
-                    return json.dumps({"status": "error", "message": "name is required"})
-                result = _skill_service(_request_agent_id(params)).read_content(name)
+                _require_read_permission(ctx, "skill.read")
+                params = web.input(name='', resource_id='', agent_id='')
+                name = (getattr(params, 'name', '') or '').strip()
+                resource_id = (getattr(params, 'resource_id', '') or '').strip()
+                if not name and not resource_id:
+                    return json.dumps({"status": "error", "message": "name or resource_id is required"})
+                service = _skill_service(_request_agent_id(params))
+                # Resolve to the exact authorization object, then check the grant.
+                entry = service.resolve(resource_id=resource_id or None, name=name or None)
+                rid = resource_id or f"{entry.skill.source}:{entry.skill.name}"
+                _require_resource_action(ctx, "skill", rid, "read", "skill.read")
+                result = service.read_content(entry.skill.name, resource_id=rid)
             return json.dumps({"status": "success", **result}, ensure_ascii=False)
         except (ValueError, FileNotFoundError) as e:
             return json.dumps({"status": "error", "message": str(e)})
@@ -7017,23 +7373,30 @@ class SkillContentHandler:
             from agent.workspace.service import WorkspaceConflictError
 
             with _db_scope() as ctx:
-                _require_read_permission(ctx, "agent.read")
+                _require_read_permission(ctx, "skill.read")
                 body = json.loads(web.data() or b'{}')
                 name = (body.get("name") or "").strip()
-                if not name:
-                    return json.dumps({"status": "error", "message": "name is required"})
+                resource_id = (body.get("resource_id") or "").strip()
+                if not name and not resource_id:
+                    return json.dumps({"status": "error", "message": "name or resource_id is required"})
                 content = body.get("content")
                 if not isinstance(content, str):
                     return json.dumps({"status": "error", "message": "content must be a string"})
+                service = _skill_service(_request_agent_id(body))
+                # Resolve to the exact authorization object, then enforce edit.
+                entry = service.resolve(resource_id=resource_id or None, name=name or None)
+                rid = resource_id or f"{entry.skill.source}:{entry.skill.name}"
+                _require_resource_action(ctx, "skill", rid, "edit", "skill.edit")
 
                 try:
-                    result = _skill_service(_request_agent_id(body)).write_content(
-                        name, content, expected_mtime=body.get("expected_mtime"),
+                    result = service.write_content(
+                        name or None, content, expected_mtime=body.get("expected_mtime"),
+                        resource_id=rid,
                     )
                 except WorkspaceConflictError as e:
                     return json.dumps({"status": "error", "code": "conflict", "message": str(e)})
 
-                logger.info(f"[WebChannel] Skill saved: {name} ({result['size']} bytes)")
+                logger.info(f"[WebChannel] Skill saved: {name or resource_id} ({result['size']} bytes)")
                 return json.dumps({"status": "success", **result}, ensure_ascii=False)
         except (ValueError, FileNotFoundError) as e:
             return json.dumps({"status": "error", "message": str(e)})
@@ -7359,7 +7722,7 @@ def _workbench_agents_projection() -> Dict:
         # localizable reason (e.g. ``runtime_not_enabled``) rather than silently
         # enabling the entry. Today the database mode is not validated, so this
         # never trips; the hook is left explicit for that consumer.
-        can_chat, unavailable_reason = _workbench_chat_readiness(profile.id)
+        can_chat, unavailable_reason = _workbench_chat_readiness(None, profile.id)
         agents.append({
             "id": profile.id,
             "name": profile.name,
@@ -7429,13 +7792,17 @@ def _tenant_agents_projection(ctx: "Optional[RequestContext]") -> Dict:
     registry = get_agent_registry()
     visible = _tenant_ids_for_context(ctx)
     tenant_default = _tenant_default_agent_id(ctx)
+    # Fine-grained resource grant: only show agents the caller may read.
+    allowed_agent_ids = _resource_ids(ctx, "agent", "read", permission="agent.read")
     agents = []
     for profile in sorted(registry.list(), key=lambda item: (item.id != tenant_default, item.id)):
         if visible is not None and profile.id not in visible:
             continue
         if not profile.enabled:
             continue
-        can_chat, unavailable_reason = _workbench_chat_readiness(profile.id)
+        if allowed_agent_ids is not None and f"agent:{profile.id}" not in allowed_agent_ids:
+            continue
+        can_chat, unavailable_reason = _workbench_chat_readiness(ctx, profile.id)
         agents.append({
             "id": profile.id,
             "name": profile.name,
@@ -7448,22 +7815,38 @@ def _tenant_agents_projection(ctx: "Optional[RequestContext]") -> Dict:
     return {"agents": agents}
 
 
-def _workbench_chat_readiness(agent_id: str) -> Tuple[bool, Optional[str]]:
-    """Whether a chat may be started for ``agent_id`` in the current mode.
+def _workbench_chat_readiness(ctx: "Optional[RequestContext]",
+                              agent_id: str) -> Tuple[bool, Optional[str]]:
+    """Whether the caller may start a chat with ``agent_id`` right now.
 
     Returns ``(can_chat, unavailable_reason)``. ``unavailable_reason`` is a
-    stable code (never an internal config leak) and only set when the mode
-    blocks runtime.
+    stable, localizable code (never an internal config leak); it is set only
+    when the caller is *read* but not *execution*-authorized for the target.
 
-    Legacy deployment: publishing/运行 consumer is open, so an enabled Agent is
-    runnable. In database identity mode the chat consumer is not yet accepted
-    (task 3.11/Bridge stays closed), so the workbench renders a controlled read
-    page rather than silently enabling chat: ``can_chat=False`` with the stable
-    ``runtime_not_enabled`` reason. The server rejects the run independently of
-    the frontend hint.
+    Legacy mode (``ctx is None``): the publishing/运行 consumer is open, so an
+    enabled Agent is runnable (``(True, None)``).
+
+    Database mode: mirrors the send-path gates exactly — the caller must be
+    authorized for the functional ``chat.use`` (platform/tenant admin bypass,
+    matching ``_require_chat_use``) AND hold the ``agent.use`` resource grant
+    for this agent (platform admin all bypass, matching
+    ``_require_agent_action(..., "use", "agent.use")``). A caller that only has
+    ``agent.read`` sees the card with ``can_chat=False`` and a permission reason
+    — never the historical ``runtime_not_enabled`` version-closure message.
     """
-    if _is_database_identity():
-        return False, "runtime_not_enabled"
+    if ctx is None:
+        return True, None
+    # agent.use resource grant (platform admin all passes).
+    from auth.service import get_identity_service
+    svc = get_identity_service()
+    if not svc.check_resource_action(
+            ctx.user_id, ctx.tenant_id, "agent", f"agent:{agent_id}",
+            "use", permission="agent.use"):
+        return False, "permission_denied"
+    # Functional chat.use: platform/tenant admin bypass; members need the grant.
+    if not (ctx.is_platform_admin or ctx.is_tenant_admin
+            or "chat.use" in (ctx.permissions or ())):
+        return False, "permission_denied"
     return True, None
 
 
@@ -7631,89 +8014,96 @@ class AgentsHandler:
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
-            body = json.loads(web.data())
-            action = body.get("action")
-            service = _agent_admin_service()
-            revision = body.get("revision") or None
-            if action == "create":
-                result = service.create_agent(
-                    agent_id=body.get("id", ""),
-                    name=body.get("name", ""),
-                    # Blank means "put it where a new one goes", which is what
-                    # the console sends: it asks for a name, not a path.
-                    workspace=body.get("workspace") or None,
-                    clone_from=body.get("clone_from") or None,
-                    avatar=body.get("avatar") or None,
-                    description=body.get("description") or None,
-                    skills=body.get("skills"),
-                    knowledge=body.get("knowledge"),
-                    knowledge_mode=body.get("knowledge_mode") or None,
-                    revision=revision,
-                )
-            elif action == "update":
-                updates = {
-                    "name": body.get("name"),
-                    "enabled": body.get("enabled"),
-                    "make_default": bool(body.get("make_default", False)),
-                    "avatar": body.get("avatar"),
-                    "description": body.get("description"),
-                    "model": body.get("model"),
-                    "bot_type": body.get("bot_type"),
-                    "revision": revision,
-                }
-                if "skills" in body:
-                    updates["skills"] = body.get("skills")
-                if "knowledge" in body:
-                    updates["knowledge"] = body.get("knowledge")
-                result = service.update_agent(body.get("id", ""), **updates)
-            elif action == "archive":
-                result = service.archive_agent(body.get("id", ""), revision=revision)
-            elif action == "delete":
-                result = service.delete_agent(body.get("id", ""), revision=revision)
-            elif action == "set_knowledge_mode":
-                # A filesystem toggle (symlink vs own dir), not a roster edit, so
-                # it doesn't participate in the roster revision guard.
-                result = service.set_knowledge_mode(
-                    body.get("id", ""), body.get("mode", "")
-                )
-            elif action == "bind_channel_instance":
-                # members: list => set team; omitted/None => leave team untouched
-                raw_members = body.get("members", None)
-                members = raw_members if isinstance(raw_members, list) else None
-                result = _bind_channel_instance(
-                    channel_type=body.get("channel_type", ""),
-                    instance_id=body.get("instance_id", ""),
-                    agent_id=body.get("agent_id", ""),
-                    members=members,
-                )
-            else:
-                return json.dumps({
-                    "status": "error", "message": f"unknown action: {action}"
-                })
-            # Only the edited Agent needs its cached runtime dropped; a create
-            # has no live sessions yet. bind_channel_instance hot-updates the
-            # running channel's binding in place (see _bind_channel_instance),
-            # so it neither restarts a channel nor touches the roster runtime.
-            if action == "bind_channel_instance":
+            with _db_scope() as ctx:
+                body = json.loads(web.data())
+                action = body.get("action")
+                service = _agent_admin_service()
+                revision = body.get("revision") or None
+                agent_id = (body.get("id") or "").strip()
+
+                if action == "create":
+                    _require_agent_create(ctx)
+                    result = service.create_agent(
+                        agent_id=body.get("id", ""),
+                        name=body.get("name", ""),
+                        # Blank means "put it where a new one goes", which is what
+                        # the console sends: it asks for a name, not a path.
+                        workspace=body.get("workspace") or None,
+                        clone_from=body.get("clone_from") or None,
+                        avatar=body.get("avatar") or None,
+                        description=body.get("description") or None,
+                        skills=body.get("skills"),
+                        knowledge=body.get("knowledge"),
+                        knowledge_mode=body.get("knowledge_mode") or None,
+                        revision=revision,
+                    )
+                elif action == "update":
+                    _require_agent_action(ctx, agent_id, "edit", "agent.edit")
+                    updates = {
+                        "name": body.get("name"),
+                        "enabled": body.get("enabled"),
+                        "make_default": bool(body.get("make_default", False)),
+                        "avatar": body.get("avatar"),
+                        "description": body.get("description"),
+                        "model": body.get("model"),
+                        "bot_type": body.get("bot_type"),
+                        "revision": revision,
+                    }
+                    if "skills" in body:
+                        updates["skills"] = body.get("skills")
+                    if "knowledge" in body:
+                        updates["knowledge"] = body.get("knowledge")
+                    result = service.update_agent(agent_id, **updates)
+                elif action == "archive":
+                    _require_agent_action(ctx, agent_id, "edit", "agent.edit")
+                    result = service.archive_agent(agent_id, revision=revision)
+                elif action == "delete":
+                    _require_agent_action(ctx, agent_id, "edit", "agent.edit")
+                    result = service.delete_agent(agent_id, revision=revision)
+                elif action == "set_knowledge_mode":
+                    # A filesystem toggle (symlink vs own dir), not a roster edit, so
+                    # it doesn't participate in the roster revision guard.
+                    _require_agent_action(ctx, agent_id, "edit", "agent.edit")
+                    result = service.set_knowledge_mode(agent_id, body.get("mode", ""))
+                elif action == "bind_channel_instance":
+                    _require_agent_action(ctx, agent_id, "edit", "agent.edit")
+                    # members: list => set team; omitted/None => leave team untouched
+                    raw_members = body.get("members", None)
+                    members = raw_members if isinstance(raw_members, list) else None
+                    result = _bind_channel_instance(
+                        channel_type=body.get("channel_type", ""),
+                        instance_id=body.get("instance_id", ""),
+                        agent_id=agent_id,
+                        members=members,
+                    )
+                else:
+                    return json.dumps({
+                        "status": "error", "message": f"unknown action: {action}"
+                    })
+                # Only the edited Agent needs its cached runtime dropped; a create
+                # has no live sessions yet. bind_channel_instance hot-updates the
+                # running channel's binding in place (see _bind_channel_instance),
+                # so it neither restarts a channel nor touches the roster runtime.
+                if action == "bind_channel_instance":
+                    return json.dumps(
+                        {"status": "success", "result": result},
+                        ensure_ascii=False,
+                    )
+                changed = None
+                if action in ("update", "archive", "delete", "set_knowledge_mode"):
+                    changed = [agent_id] if agent_id else None
+                _reload_agent_runtime(service, changed_agent_ids=changed)
+                # Hand back the fresh revision so a client making rapid successive
+                # edits (e.g. ticking skill checkboxes) can chain them without a
+                # full reload and without tripping the stale-roster guard.
+                try:
+                    revision_after = service.snapshot().get("revision")
+                except Exception:
+                    revision_after = None
                 return json.dumps(
-                    {"status": "success", "result": result},
+                    {"status": "success", "result": result, "revision": revision_after},
                     ensure_ascii=False,
                 )
-            changed = None
-            if action in ("update", "archive", "delete", "set_knowledge_mode"):
-                changed = [body.get("id", "")] if body.get("id") else None
-            _reload_agent_runtime(service, changed_agent_ids=changed)
-            # Hand back the fresh revision so a client making rapid successive
-            # edits (e.g. ticking skill checkboxes) can chain them without a
-            # full reload and without tripping the stale-roster guard.
-            try:
-                revision_after = service.snapshot().get("revision")
-            except Exception:
-                revision_after = None
-            return json.dumps(
-                {"status": "success", "result": result, "revision": revision_after},
-                ensure_ascii=False,
-            )
         except Exception as e:
             from agent.admin import StaleRosterError
             code = None
@@ -8413,12 +8803,54 @@ def _session_settings_state(session_id: str, agent_id: Optional[str]) -> dict:
     except Exception as e:
         logger.debug(f"[WebChannel] agent default model unavailable: {e}")
 
+    # Role-default model resolution (spec 5.2): when the conversation has no
+    # pin and the owning Agent has no model, a unique role default for the chat
+    # capability is a valid "no source" fallback. A role-default *conflict*
+    # (two roles pinning chat to different models) is surfaced, not ranked.
+    role_default = None
+    role_default_state = None
+    ident = _current_db_identity()
+    if ident:
+        try:
+            from auth.service import get_identity_service
+            svc = get_identity_service()
+            resolved = svc.model_defaults_for(ident.user_id, ident.tenant_id, "chat")
+            if resolved["status"] == "default":
+                role_default = {
+                    "model": resolved["model"],
+                    "provider": (str(resolved["model"]).split(":", 1)[0])
+                    if ":" in str(resolved["model"]) else global_provider,
+                }
+                role_default_state = "default"
+            elif resolved["status"] == "conflict":
+                role_default_state = "conflict"
+        except Exception:
+            role_default_state = None
+
     if prefs.get("model"):
         effective_model, effective_provider, source = prefs["model"], prefs.get("provider"), "session"
     elif agent_default:
         effective_model, effective_provider, source = agent_default["model"], agent_default["provider"], "agent"
+    elif role_default:
+        effective_model, effective_provider, source = role_default["model"], role_default["provider"], "role"
     else:
         effective_model, effective_provider, source = global_model, global_provider, "global"
+
+    catalog = _session_model_catalog()
+    allowed = _authorized_model_codes()
+    if allowed is not None:
+        # Restrict the offered models to the caller's model.use grant set. Keep
+        # the provider groups but drop models the caller may not select, so the
+        # picker cannot offer a model the runtime gate would reject.
+        filtered = []
+        for group in catalog:
+            models = [m for m in group.get("models", []) if m in allowed]
+            if not models:
+                continue
+            kept = dict(group)
+            kept["models"] = models
+            filtered.append(kept)
+        catalog = filtered
 
     return {
         "model": {
@@ -8427,7 +8859,9 @@ def _session_settings_state(session_id: str, agent_id: Optional[str]) -> dict:
             "source": source,
             "global": {"model": global_model, "provider": global_provider},
             "agent": agent_default,
-            "providers": _session_model_catalog(),
+            "role_default": role_default,
+            "role_default_state": role_default_state,
+            "providers": catalog,
         },
         "permission": {
             "mode": (
@@ -8523,6 +8957,13 @@ class SessionSettingsHandler:
             if "model" in body or "provider" in body:
                 model = (body.get("model") or "").strip() or None
                 provider = (body.get("provider") or "").strip() or None
+                # Fine-grained model authorization: an explicit session model
+                # must be within the caller's model.use grant set (platform all
+                # or legacy mode pass). An out-of-scope explicit choice is
+                # rejected here rather than silently rerouted at the call site.
+                if model:
+                    with _db_scope() as ctx:
+                        _require_model_use(ctx, model)
                 # Clearing the model clears its provider too: a pinned provider
                 # with no model would route the global model to the wrong vendor.
                 updates["model"] = model

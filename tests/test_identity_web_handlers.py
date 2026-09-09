@@ -383,11 +383,14 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
         self.assertIsInstance(data["consumers"], dict)
 
     def test_context_admin_has_nine_permissions(self):
+        from auth.policy import default_permissions_for, TENANT_ADMIN_CODE
         token = self.svc.login("root", "Str0ngAdminPass").token
         resp = self._request("/auth/context", method="GET", token=token, tenant=self.tid)
         data = self._json(resp)
         self.assertEqual(data["status"], "success")
-        self.assertEqual(set(data["effective_permissions"]), set(PERMISSION_CATALOG))
+        # The built-in tenant_admin carries its explicit nine-id default set; the
+        # catalogue does NOT auto-widen it when new resource ids are added.
+        self.assertEqual(set(data["effective_permissions"]), set(default_permissions_for(TENANT_ADMIN_CODE)))
         self.assertTrue(data["is_tenant_admin"])
 
     def test_context_missing_membership_forbidden(self):

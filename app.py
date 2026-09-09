@@ -54,28 +54,6 @@ def _has_web_entry(channel_names: list) -> bool:
     return False
 
 
-def _identity_mode() -> str:
-    """Return the configured identity mode (default 'legacy')."""
-    return str(conf().get("identity_mode", "legacy") or "legacy")
-
-
-def _db_only_entry(entry):
-    """True when an entry should be kept in database identity mode (task 3.11).
-
-    database mode opens ONLY the verified web identity-management + restricted
-    read surface. External IM channels (feishu/dingtalk/wecom/telegram/slack/
-    discord/...) are closed server-side because their consumers are not yet
-    tenancy-aware. ``ChannelInstance`` entries are dropped alongside their type;
-    legacy strings are dropped by channel type. The web console is preserved
-    either way (it may arrive as a string or an instance).
-    """
-    from channel.channel_instances import ChannelInstance
-
-    if isinstance(entry, ChannelInstance):
-        return entry.channel_type == "web"
-    return entry == "web"
-
-
 def _resolve_startup_channels(raw_channel):
     """Startup channel list = config.json's channels plus team.json's instances,
     de-duplicated by channel *type* for multi-instance-ready types.
@@ -98,6 +76,12 @@ def _resolve_startup_channels(raw_channel):
 
     A legacy single-Agent install has no team.json / no channel_instances and
     this returns exactly ``_parse_channel_type(raw_channel)`` as before.
+
+    In database identity mode every configured channel now starts (task 2.3,
+    open-database-runtime): external IM channels participate, and inbound
+    messages are resolved to mapped local accounts before any execution
+    (external-identity-binding slice). The old "web only in database mode"
+    filter was removed with the runtime-consumer closure it served.
     """
     from channel.channel_instances import MULTI_INSTANCE_READY, _normalize_type
 
@@ -118,20 +102,6 @@ def _resolve_startup_channels(raw_channel):
             f"channel_type only: {e}"
         )
         instances = []
-
-    # database mode: only the verified web surface starts (task 3.11). External
-    # IM channels stay closed regardless of config/team.json entries. Log a hint
-    # so an operator who expected feishu is told why it did not come up.
-    if _identity_mode() == "database":
-        before = len(names) + len(instances)
-        names = [n for n in names if _db_only_entry(n)]
-        instances = [i for i in instances if _db_only_entry(i)]
-        dropped = before - (len(names) + len(instances))
-        if dropped:
-            logger.info(
-                f"[App] database identity mode: {dropped} external channel(s) "
-                f"closed; only the web console starts"
-            )
 
     # Types now owned by channel_instances (feishu, ...). Drop config.json's
     # flat entry for these so the instance records are the only source.
@@ -790,17 +760,15 @@ def run():
 
         # Parse channel_type into a list
         raw_channel = conf().get("channel_type", "web")
-        db_mode = _identity_mode() == "database"
 
         if "--cmd" in sys.argv:
-            # --cmd is an interactive terminal consumer; in database mode it is
-            # not tenancy-aware so it stays closed (task 3.11).
-            channel_names = ["terminal"] if not db_mode else ["web"]
+            # --cmd is an interactive terminal consumer and starts in either
+            # identity mode (task 2.3, open-database-runtime).
+            channel_names = ["terminal"]
         else:
             # Multi-instance opt-in: when team.json defines channel_instances,
             # start those (each with its own credentials + Agent binding).
             # Otherwise fall back to the legacy channel_type list untouched.
-            # In database mode this resolves to web only.
             channel_names = _resolve_startup_channels(raw_channel)
 
         # Auto-start web console unless explicitly disabled. The web entry stays
@@ -815,9 +783,8 @@ def run():
 
         # Kick off MCP server loading in the background so first-message
         # latency isn't dominated by npx package downloads. Skipped in desktop
-        # mode (MCP relies on external npx/uvx runtimes that aren't bundled) and
-        # in database mode (runtime consumers are closed, task 3.11).
-        if not DESKTOP_MODE and not db_mode:
+        # mode (MCP relies on external npx/uvx runtimes that aren't bundled).
+        if not DESKTOP_MODE:
             _warmup_mcp_tools()
 
         if DESKTOP_MODE:
@@ -826,12 +793,9 @@ def run():
             # The scheduler still starts; it just doesn't block UI readiness.
             _preload_heavy_imports()
             _start_web_watchdog()
-            if not db_mode:
-                threading.Thread(target=_warmup_scheduler, daemon=True).start()
-        elif not db_mode:
-            _warmup_scheduler()
+            threading.Thread(target=_warmup_scheduler, daemon=True).start()
         else:
-            logger.info("[App] database identity mode: scheduler/MCP warmup skipped")
+            _warmup_scheduler()
 
         logger.info(f"[App] Starting channels: {channel_names}")
 

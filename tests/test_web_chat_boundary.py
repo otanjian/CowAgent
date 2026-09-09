@@ -30,10 +30,20 @@ def boundary(tmp_path, monkeypatch):
         shared_root=str(tmp_path / "shared"), allow_weak=True,
     )["id"]
     root = service.list_platform_users()[0]["id"]
+    # A chat-authorized role: grants the functional chat.use + agent.use and the
+    # shared-agent resource grant. Used by tests that exercise a real (non-admin)
+    # member running conversations — membership/probe tests stay meaningful
+    # because session *ownership* checks run before these execution gates.
+    chat_op = service.create_role(
+        actor_user_id=root, tenant_id=tenant, code="chat-op", name="Chat operator",
+        permissions=["chat.use", "agent.use", "agent.read"],
+        resource_grants=[{"resource_kind": "agent", "resource_id": "agent:shared-agent",
+                          "action": "use"}],
+    )
     member = service.create_member(
         actor_user_id=root, tenant_id=tenant, operation="create-new",
         username="member", display_name="Member", temporary_password="TempPass123!",
-        roles=["member"],
+        roles=["member", chat_op["code"]],
     )["user_id"]
     member_token = service.login("member", "TempPass123!").token
     service.change_password(member_token, "TempPass123!", "MemberPass123!")
@@ -256,3 +266,49 @@ def test_cross_origin_cookie_writes_are_rejected(boundary, path):
     response = b.request(path, origin="http://foreign", body={"session_id": "historical", "message": "Continue"})
     assert status(response) == 403
     assert payload(response)["code"] == "csrf_failed"
+
+
+def _plain_member(boundary, username="denied"):
+    """Create a tenant member with only the built-in role (no chat grants)."""
+    b = boundary
+    m = b.service.create_member(
+        actor_user_id=b.root, tenant_id=b.tenant, operation="create-new",
+        username=username, display_name=username.title(), temporary_password="TempPass123!",
+        roles=["member"],
+    )["user_id"]
+    token = b.service.login(username, "TempPass123!").token
+    b.service.change_password(token, "TempPass123!", "MemberPass123!")
+    return m, b.service.login(username, "MemberPass123!").token
+
+
+def test_unauthorized_member_cannot_start_or_resume_a_chat(boundary):
+    """chat.use + agent.use gates (3.1): a member without them gets 403, not a run."""
+    b = boundary
+    denied, denied_token = _plain_member(b)
+    response = b.send("fresh-session", token=denied_token)
+    assert status(response) == 403
+    assert payload(response)["code"] == "forbidden"
+    b.channel.post_message.assert_not_called()
+    # Resuming somebody else's session still masks existence (owner check first).
+    b.seed("root-private")
+    response = b.send("root-private", token=denied_token)
+    assert status(response) == 404
+
+
+def test_agent_use_revocation_blocks_resume_of_own_session(boundary):
+    """A grant revoked mid-conversation blocks the very next send on the session."""
+    b = boundary
+    response = b.send("revoke-me", token=b.member_token)
+    assert status(response) == 200
+    b.channel.post_message.reset_mock()
+    membership = b.service._membership(b.member, b.tenant)
+    b.service.update_member(
+        actor_user_id=b.root, tenant_id=b.tenant, member_id=membership["id"],
+        display_name=membership["display_name"], active=True, department_id=None,
+        position_text=membership["position_text"] or "", roles=["member"],
+        expected_version=membership["version"],
+    )
+    response = b.send("revoke-me", token=b.member_token)
+    assert status(response) == 403
+    assert payload(response)["code"] == "forbidden"
+    b.channel.post_message.assert_not_called()

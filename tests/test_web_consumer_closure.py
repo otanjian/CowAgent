@@ -1,9 +1,9 @@
 # encoding:utf-8
-"""Database chat requires authentication; file/upload remain closed.
+"""Database-mode chat/file transport authentication (open-database-runtime).
 
-The four chat transport routes now have verified tenant/session ownership
-boundaries. They must reject anonymous access without the old blanket 503.
-File and upload consumers retain their database-mode closure.
+Chat and file consumers are no longer 503-closed in database mode: they run
+under per-request identity + permission checks. Anonymous requests are rejected
+with 401; closed consumers (scheduler, until its own slice) still 503.
 """
 
 import json
@@ -30,7 +30,7 @@ def _request(path, method="GET", data=""):
 
 
 def _handler_for(path):
-    # Chat authentication and the remaining file/upload closure routes.
+    # Chat authentication and the file/voice consumers.
     return {
         "/message": "MessageHandler",
         "/stream": "StreamHandler",
@@ -38,11 +38,12 @@ def _handler_for(path):
         "/cancel": "CancelHandler",
         "/upload": "UploadHandler",
         "/api/file": "FileServeHandler",
+        "/api/scheduler": "SchedulerHandler",
     }.get(path, "RootHandler")
 
 
-class ConsumerClosureTests:
-    """Database chat authentication and unchanged file/upload closure."""
+class ConsumerAuthTests:
+    """Database consumers demand login instead of the old blanket 503."""
 
     def _patch_mode(self, mode):
         return patch.object(web_channel, "_is_database_identity", lambda: mode == "database")
@@ -67,18 +68,18 @@ class ConsumerClosureTests:
             resp = _request("/cancel", "POST", json.dumps({}))
         self.assertTrue(resp.status.startswith("401"), resp.data)
 
-    def test_upload_closed_in_database(self):
+    def test_upload_requires_database_login(self):
         with self._patch_mode("database"):
             resp = _request("/upload", "POST", b"")
-        self.assertEqual(resp.status, "503 Service Unavailable")
+        self.assertTrue(resp.status.startswith("401"), resp.data)
 
-    def test_file_serve_closed_in_database(self):
+    def test_file_serve_requires_database_login(self):
         with self._patch_mode("database"):
             resp = _request("/api/file")
-        self.assertEqual(resp.status, "503 Service Unavailable")
+        self.assertTrue(resp.status.startswith("401"), resp.data)
 
 
-class DatabaseConsumerClosureTests(unittest.TestCase, ConsumerClosureTests):
+class DatabaseConsumerAuthTests(unittest.TestCase, ConsumerAuthTests):
     pass
 
 

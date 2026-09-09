@@ -1988,19 +1988,62 @@ class AgentStreamExecutor:
             from agent.permission import FULL_ACCESS, check_tool_call
 
             mode = agent.effective_permission_mode()
-            if mode == FULL_ACCESS:
-                return None
-            decision = check_tool_call(
-                mode,
-                tool_name,
-                arguments,
-                cwd=agent.effective_cwd(),
-                write_roots=agent.write_roots(),
-            )
-            return None if decision.allowed else decision.reason
+            if mode != FULL_ACCESS:
+                decision = check_tool_call(
+                    mode,
+                    tool_name,
+                    arguments,
+                    cwd=agent.effective_cwd(),
+                    write_roots=agent.write_roots(),
+                )
+                if not decision.allowed:
+                    return decision.reason
+
+            # Fine-grained resource authorization: in database mode the tool
+            # must also be granted for ``tool.execute`` to the current identity.
+            # Recomputed per call (never cached) so a grant made mid-session
+            # applies to the very next invocation.
+            denial = self._resource_tool_denial(tool_name)
+            return denial
         except Exception as e:
             logger.warning(f"[Permission] Check skipped for {tool_name}: {e}")
             return None
+
+    def _resource_tool_denial(self, tool_name: str) -> Optional[str]:
+        """Return a denial reason when tool.execution is not authorized.
+
+        Unrestricted (legacy mode / platform all / no identity) returns None.
+        """
+        from common.runtime_identity import current_identity
+        ident = current_identity()
+        if not ident.user_id or not ident.tenant_id:
+            return None
+        resource_id = self._tool_resource_id(tool_name)
+        try:
+            from auth.service import get_identity_service
+            svc = get_identity_service()
+            ok = svc.check_resource_action(
+                ident.user_id, ident.tenant_id, "tool", resource_id, "execute",
+                permission="tool.execute",
+            )
+        except Exception as e:
+            logger.warning(f"[Permission] Tool auth check skipped for {tool_name}: {e}")
+            return None
+        return None if ok else (
+            f"You are not authorized to use tool '{tool_name}' ({resource_id})."
+        )
+
+    def _tool_resource_id(self, tool_name: str) -> str:
+        """Stable authorization id for a tool name in this stream's tool set."""
+        tool = self.tools.get(tool_name)
+        try:
+            from agent.tools.mcp.mcp_tool import McpTool
+            if isinstance(tool, McpTool):
+                conn = getattr(tool, "server_name", "default")
+                return f"mcp:{conn}:{tool_name}"
+        except Exception:
+            pass
+        return f"builtin:{tool_name}"
 
     def _build_tool_not_found_message(self, tool_name: str) -> str:
         """Build a helpful error message when a tool is not found.

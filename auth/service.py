@@ -23,6 +23,7 @@ import json
 import os
 import re
 import secrets
+import sqlite3
 import time
 import uuid
 from dataclasses import dataclass
@@ -44,6 +45,12 @@ from auth.policy import (
     MEMBER_CODE,
     PERMISSION_CATALOG,
     normalize_permissions,
+    RESOURCE_KINDS,
+    RESOURCE_ACTIONS,
+    normalize_resource_grants,
+    validate_model_defaults,
+    resource_granted,
+    resource_ids_for,
 )
 
 
@@ -54,25 +61,44 @@ from auth.policy import (
 #: yet adapted/accepted are signed here but reported unavailable until the
 #: consumer opens. The list mirrors the console-information-architecture commit.
 _SIGNED_CONSOLE_PAGES: Dict[str, Dict[str, object]] = {
-    "workbench.chat": {"permission": "", "scope": "self"},
-    "workbench.history": {"permission": "history.read", "scope": "self"},
-    "workbench.agents": {"permission": "agent.read", "scope": "tenant"},
-    "workbench.todos": {"permission": "todo.read", "scope": "self"},
-    "workbench.schedules": {"permission": "", "scope": "self"},
-    "workbench.knowledge": {"permission": "knowledge.read", "scope": "agent"},
-    "admin.agents": {"permission": "agent.read", "scope": "agent"},
-    "admin.skills": {"permission": "", "scope": "agent"},
-    "admin.memory": {"permission": "memory.read", "scope": "agent"},
-    "admin.models": {"permission": "", "scope": "platform"},
-    "admin.channels": {"permission": "", "scope": "platform"},
-    "admin.logs": {"permission": "", "scope": "platform"},
-    "admin.members": {"permission": "tenant.members.read", "scope": "tenant"},
-    "admin.roles": {"permission": "tenant.members.read", "scope": "tenant"},
-    "admin.organization": {"permission": "tenant.org.read", "scope": "tenant"},
-    "admin.tenants": {"permission": "", "scope": "platform"},
-    "admin.branding": {"permission": "", "scope": "platform"},
-    "admin.settings": {"permission": "", "scope": "platform"},
+    "workbench.chat": {"permission": "", "scope": "self", "label": "AI 对话"},
+    "workbench.history": {"permission": "history.read", "scope": "self", "label": "历史对话"},
+    "workbench.agents": {"permission": "agent.read", "scope": "tenant", "label": "智能体工作台"},
+    "workbench.todos": {"permission": "todo.read", "scope": "self", "label": "我的待办"},
+    "workbench.schedules": {"permission": "", "scope": "self", "label": "定时任务"},
+    "workbench.knowledge": {"permission": "knowledge.read", "scope": "agent", "label": "知识库"},
+    "workbench.scenes": {"permission": "", "scope": "tenant", "label": "场景应用"},
+    "admin.agents": {"permission": "agent.read", "scope": "agent", "label": "智能体管理"},
+    "admin.skills": {"permission": "", "scope": "agent", "label": "工具与技能"},
+    "admin.memory": {"permission": "memory.read", "scope": "agent", "label": "记忆管理"},
+    "admin.models": {"permission": "", "scope": "platform", "label": "模型与接入"},
+    "admin.channels": {"permission": "", "scope": "platform", "label": "消息渠道"},
+    "admin.logs": {"permission": "", "scope": "platform", "label": "运行日志"},
+    "admin.members": {"permission": "tenant.members.read", "scope": "tenant", "label": "成员管理"},
+    "admin.roles": {"permission": "tenant.members.read", "scope": "tenant", "label": "角色权限"},
+    "admin.organization": {"permission": "tenant.org.read", "scope": "tenant", "label": "组织架构"},
+    "admin.tenants": {"permission": "", "scope": "platform", "label": "租户管理"},
+    "admin.branding": {"permission": "", "scope": "platform", "label": "品牌设置"},
+    "admin.settings": {"permission": "", "scope": "platform", "label": "系统设置"},
 }
+
+
+#: Resource-kind + action -> the functional permission that must also be held.
+#: The resource grant (stored in role_resource_grants) is the per-resource
+#: gate; this mapping gives the kind-level functional permission the member must
+#: also possess. A platform admin (all) skips both.
+_RESOURCE_KIND_PERMISSION: Dict[str, Dict[str, str]] = {
+    "menu": {"view": ""},
+    "skill": {"read": "skill.read", "use": "skill.use", "edit": "skill.edit", "enable": "skill.enable"},
+    "tool": {"read": "tool.read", "execute": "tool.execute", "configure": "tool.configure"},
+    "model": {"read": "model.read", "use": "model.use"},
+    "agent": {"read": "agent.read", "use": "agent.use", "edit": "agent.edit", "enable": "agent.enable"},
+}
+
+
+def _resource_permission(kind: str, action: str) -> str:
+    """Return the functional permission required for a kind+action (or '')."""
+    return _RESOURCE_KIND_PERMISSION.get(kind, {}).get(action, "")
 
 
 class IdentityServiceError(RuntimeError):
@@ -93,6 +119,10 @@ _COMMON_PASSWORDS = {
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$")
 _TENANT_CODE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
 _ROLE_CODE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+#: External identity provider names (feishu/dingtalk/wecom/...). Lowercased at
+#: bind time so inbound resolution can normalize identically.
+_PROVIDER_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
 #: Default lifetime (seconds) of an initial/temporary password. A real bootstrap
 #: (allow_weak=False) and every issued temp password carry a finite expiry so a
@@ -526,6 +556,462 @@ class IdentityService:
             return set()
         return self._permissions_for_membership(membership["id"])
 
+    # --- effective resources (the resource-authorization core) -----------
+
+    @staticmethod
+    def _grant_rows_to_list(rows) -> List[Dict[str, str]]:
+        return [
+            {"resource_kind": r["resource_kind"], "resource_id": r["resource_id"], "action": r["action"]}
+            for r in rows
+        ]
+
+    def _role_grants_for_membership(self, membership_id: str) -> List[Dict[str, str]]:
+        rows = self._store.execute(
+            "SELECT g.resource_kind, g.resource_id, g.action FROM role_resource_grants g"
+            " JOIN membership_roles mr ON mr.role_id=g.role_id"
+            " WHERE mr.membership_id=? ORDER BY g.resource_kind, g.resource_id, g.action",
+            (membership_id,),
+        )
+        return self._grant_rows_to_list(rows)
+
+    def grants_for(self, user_id: str, tenant_id: str) -> List[Dict[str, str]]:
+        """Union of resource grants across the user's effective roles in a tenant."""
+        membership = self._membership(user_id, tenant_id)
+        if not membership:
+            return []
+        return self._role_grants_for_membership(membership["id"])
+
+    def _membership_role_grants(self, membership_id: str) -> List[Dict[str, str]]:
+        return self._role_grants_for_membership(membership_id)
+
+    def _tenant_grants(self, tenant_id: str) -> List[Dict[str, str]]:
+        rows = self._store.execute(
+            "SELECT resource_kind, resource_id, action FROM tenant_resource_grants"
+            " WHERE tenant_id=? ORDER BY resource_kind, resource_id, action",
+            (tenant_id,),
+        )
+        return self._grant_rows_to_list(rows)
+
+    def is_platform_admin_user(self, user_id: str) -> bool:
+        """True when the user is an active platform admin (the ``all`` source)."""
+        user = self._find_user_by_id(user_id)
+        return bool(user and user["active"] and user["is_platform_admin"])
+
+    def authorization_mode(self, user_id: str, tenant_id: Optional[str]) -> str:
+        """Return ``all`` for an active platform admin, else ``role``.
+
+        This is the server-side derivation of the dynamic platform all — it is
+        recomputed on every call and never read from the front end or a cached
+        copy. A platform admin still requires a real membership for tenant
+        business access (checked by the caller), but the *authorization mode*
+        for resource/policy decisions is ``all``.
+        """
+        if self.is_platform_admin_user(user_id):
+            # A platform admin must still have a valid tenant to operate; the
+            # caller (grant check / catalog) decides whether it has one for
+            # business access. The mode itself is derived purely from identity.
+            return "all"
+        return "role"
+
+    def check_resource_action(
+        self,
+        user_id: str,
+        tenant_id: str,
+        kind: str,
+        resource_id: str,
+        action: str,
+        *,
+        permission: Optional[str] = None,
+    ) -> bool:
+        """True when ``user`` may perform ``action`` on ``resource`` in ``tenant``.
+
+        A platform admin returns True for any *known* resource-kind/action (all).
+        For a normal member both a functional permission (when supplied) and an
+        explicit resource grant must be present. Unknown resource kinds/actions
+        are rejected by the caller via :func:`normalize_grants`; here an unknown
+        kind/action is always False so ``all`` never turns an arbitrary name into
+        a grant.
+        """
+        if kind not in RESOURCE_ACTIONS or action not in RESOURCE_ACTIONS[kind]:
+            return False
+        if self.authorization_mode(user_id, tenant_id) == "all":
+            return True
+        membership = self._membership(user_id, tenant_id)
+        if not membership:
+            return False
+        if permission is not None:
+            if permission not in self._permissions_for_membership(membership["id"]):
+                return False
+        grants = self._role_grants_for_membership(membership["id"])
+        return resource_granted(grants, kind, resource_id, action)
+
+    def resource_ids_for(self, user_id: str, tenant_id: str, kind: str, action: str,
+                         permission: Optional[str] = None) -> set:
+        """Return the resource ids a member may operate on for kind+action.
+
+        A platform admin is unrestricted (the caller projects the live catalog).
+        For a normal member, returns the explicit set granted across roles,
+        intersected with the functional permission when one is supplied.
+        """
+        if self.authorization_mode(user_id, tenant_id) == "all":
+            return None  # sentinel: unrestricted (caller projects live catalog)
+        membership = self._membership(user_id, tenant_id)
+        if not membership:
+            return set()
+        if permission is not None and permission not in self._permissions_for_membership(membership["id"]):
+            return set()
+        grants = self._role_grants_for_membership(membership["id"])
+        return resource_ids_for(grants, kind, action)
+
+    def grantable_resource_ids(self, tenant_id: str, kind: str, action: str,
+                               owned_ids) -> set:
+        """Ids a tenant may allocate to a role: tenant grants + own resources.
+
+        ``owned_ids`` are tenant-owned resources whose allocatable scope comes
+        from their origin (e.g. tenant-bound agents, tenant skills, tenant models).
+        The result intersects tenant global grants with tenant-owned ids so a
+        tenant admin cannot grant a globally-open resource it does not own.
+        """
+        tenant_grants = self._tenant_grants(tenant_id)
+        global_ids = resource_ids_for(tenant_grants, kind, action)
+        if owned_ids is None:
+            return global_ids
+        return global_ids | set(owned_ids)
+
+    def role_model_defaults(self, role_id: str) -> Dict[str, str]:
+        row = self._store.execute(
+            "SELECT model_defaults_json FROM roles WHERE id=?", (role_id,)
+        )
+        if not row:
+            return {}
+        return dict(json.loads(row[0]["model_defaults_json"] or "{}"))
+
+    def _role_model_defaults_for_membership(self, membership_id: str) -> List[Dict[str, str]]:
+        """Collect each role's model defaults for a membership, role by role.
+
+        Keeps the per-role source so a caller can detect *conflicting* defaults
+        (two roles pinning the same capability to different models) without a
+        caller-determined winner. An empty/absent default is skipped.
+        """
+        rows = self._store.execute(
+            "SELECT r.id, r.model_defaults_json FROM roles r"
+            " JOIN membership_roles mr ON mr.role_id=r.id"
+            " WHERE mr.membership_id=? ORDER BY r.code",
+            (membership_id,),
+        )
+        out = []
+        for row in rows:
+            defaults = json.loads(row["model_defaults_json"] or "{}")
+            if defaults:
+                out.append({"role_id": row["id"], "defaults": defaults})
+        return out
+
+    def model_defaults_for(self, user_id: str, tenant_id: str,
+                           capability: str = "chat") -> Dict[str, Any]:
+        """Resolve the effective default model for a capability for a member.
+
+        Follows the spec 5.2 chain: a member's role defaults for the capability
+        are collected across all their roles. If exactly one distinct valid model
+        is configured, it is the effective default. Conflicting defaults are *not*
+        silently ranked — they surface ``{"status": "conflict"}`` so the caller
+        can require the user to pick. Platform all has no forced default.
+        """
+        if self.authorization_mode(user_id, tenant_id) == "all":
+            return {"status": "unrestricted"}
+        membership = self._membership(user_id, tenant_id)
+        if not membership:
+            return {"status": "none"}
+        defaults = self._role_model_defaults_for_membership(membership["id"])
+        candidates = {
+            d["defaults"].get(capability)
+            for d in defaults
+            if d["defaults"].get(capability)
+        }
+        if not candidates:
+            return {"status": "none"}
+        if len(candidates) == 1:
+            return {"status": "default", "model": next(iter(candidates))}
+        return {"status": "conflict", "models": sorted(candidates)}
+
+    # --- tenant global resource limits (platform-controlled) -------------
+
+    def tenant_resource_grants(self, tenant_id: str) -> List[Dict[str, str]]:
+        return self._tenant_grants(tenant_id)
+
+    def set_tenant_resource_grants(self, *, actor_user_id: str, tenant_id: str,
+                                   grants: Sequence[Dict[str, Any]],
+                                   expected_version: int) -> List[Dict[str, str]]:
+        """Replace the platform-wide global resource grants a tenant may allocate.
+
+        The whole replacement is one transaction with the tenant version/audit.
+        A platform admin may adjust a tenant's *limit*, but never uses its own
+        ``all`` to skip the target tenant validation (there is no copy of the
+        actor's grants onto the tenant here). Each referenced resource must
+        resolve to an existing, enabled source (validated by the caller's
+        catalog projection), so an unknown id is rejected rather than recorded.
+        """
+        if not self.is_platform_admin_user(actor_user_id):
+            raise IdentityServiceError("forbidden", code="forbidden", status=403)
+        normalized = normalize_resource_grants(grants or [])
+        with self._tx() as con:
+            tenant = con.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+            if not tenant:
+                raise IdentityServiceError("tenant not found", code="not_found", status=404)
+            if tenant["version"] != expected_version:
+                raise IdentityServiceError("version conflict", code="conflict", status=409)
+            con.execute("DELETE FROM tenant_resource_grants WHERE tenant_id=?", (tenant_id,))
+            for g in normalized:
+                con.execute(
+                    "INSERT INTO tenant_resource_grants(id, tenant_id, resource_kind, resource_id, action)"
+                    " VALUES (?,?,?,?,?)",
+                    (self._new_id("tgrant"), tenant_id, g["resource_kind"], g["resource_id"], g["action"]),
+                )
+            con.execute("UPDATE tenants SET version=version+1 WHERE id=?", (tenant_id,))
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                target_tenant_id=tenant_id, action="tenant.resource_grants.set",
+                target=f"tenant:{tenant_id}",
+                redacted_changes={"resource_kind_ids": sorted({g["resource_kind"] for g in normalized})},
+                result="success",
+            )
+            con.commit()
+        return normalized
+
+    # --- live catalog projection (task 1.3 / 2.4) ------------------------
+
+    def _resource_source_projection(self, tenant_id: str, kind: str) -> List[Dict[str, str]]:
+        """Project the live catalog of a resource kind from its real source.
+
+        Returns non-sensitive ``{resource_id, name, capability}`` entries (plus a
+        small set of kind-specific metadata for the assign UI). This is a
+        projection of the existing sources (navigation registry, skills manager,
+        tool manager, model config, agent registry) — it never stores a second
+        resource index, copies configuration, or leaks credentials.
+        """
+        items: List[Dict[str, str]] = []
+        if kind == "menu":
+            for page_id, meta in _SIGNED_CONSOLE_PAGES.items():
+                items.append({
+                    "resource_id": f"nav:{page_id}",
+                    "name": str(meta.get("label") or page_id),
+                    "capability": str(meta.get("scope", "tenant")),
+                    "action": "view",
+                })
+        elif kind == "skill":
+            items = self._project_skills()
+        elif kind == "tool":
+            items = self._project_tools()
+        elif kind == "model":
+            items = self._project_models()
+        elif kind == "agent":
+            items = self._project_agents(tenant_id)
+        return items
+
+    def _project_skills(self) -> List[Dict[str, str]]:
+        try:
+            from agent.skills.manager import SkillManager
+            from common import state_dir
+            custom_dir = str(state_dir.skills_dir())
+            mgr = SkillManager(custom_dir=custom_dir)
+            mgr.refresh_skills()
+            config = mgr.get_skills_config()
+            out = []
+            for name, meta in config.items():
+                source = meta.get("source", "builtin")
+                ns = source if source in ("builtin", "custom") else "builtin"
+                out.append({
+                    "resource_id": f"{ns}:{name}",
+                    "name": name,
+                    "capability": "skill",
+                    "source": ns,
+                    "enabled": bool(meta.get("enabled", True)),
+                    "display_name": meta.get("display_name", name),
+                })
+            return out
+        except Exception:
+            return []
+
+    def _project_tools(self) -> List[Dict[str, str]]:
+        out: List[Dict[str, str]] = []
+        try:
+            from agent.tools.tool_manager import ToolManager
+            tm = ToolManager()
+            for name, meta in tm.list_tools().items():
+                out.append({
+                    "resource_id": f"builtin:{name}",
+                    "name": name,
+                    "capability": "tool",
+                    "source": "builtin",
+                    "description": meta.get("description", ""),
+                })
+        except Exception:
+            pass
+        # MCP tools: namespaced by their connection/server name.
+        try:
+            from agent.tools.tool_manager import ToolManager
+            tm = ToolManager()
+            mcp_instances = getattr(tm, "_mcp_tool_instances", None) or {}
+            for tname, mcp_tool in mcp_instances.items():
+                conn = getattr(mcp_tool, "server_name", "default")
+                out.append({
+                    "resource_id": f"mcp:{conn}:{tname}",
+                    "name": tname,
+                    "capability": "tool",
+                    "source": f"mcp:{conn}",
+                    "description": getattr(mcp_tool, "description", "") or "",
+                })
+        except Exception:
+            pass
+        return out
+
+    def _project_models(self) -> List[Dict[str, str]]:
+        """Project the models a user may actually use, not every registered one.
+
+        A model without an API key (or other live credential) on file is not
+        usable: listing it here would let a platform admin "grant" a tenant a
+        model that fails on the first message. We therefore reuse the runtime's
+        own ``ModelsHandler._session_model_catalog`` (providers with a credential
+        configured, plus the globally active one) so the authorization catalog
+        stays in sync with what the chat picker would actually show.
+        """
+        out: List[Dict[str, str]] = []
+        try:
+            from channel.web.web_channel import _session_model_catalog
+            by_provider: Dict[str, List[str]] = {}
+            for entry in _session_model_catalog():
+                pid = entry.get("id")
+                for m in entry.get("models", []) or []:
+                    by_provider.setdefault(pid, []).append(m)
+            for provider_id, model_codes in by_provider.items():
+                for model_code in model_codes:
+                    out.append({
+                        "resource_id": f"provider:{provider_id}:{model_code}",
+                        "name": model_code,
+                        "capability": "model",
+                        "source": f"provider:{provider_id}",
+                        "provider": provider_id,
+                    })
+        except Exception:
+            pass
+
+        return out
+
+    def _project_agents(self, tenant_id: str) -> List[Dict[str, str]]:
+        out: List[Dict[str, str]] = []
+        agent_ids = self.tenant_agent_ids(tenant_id)
+        try:
+            from agent.registry import get_agent_registry
+            registry = get_agent_registry()
+            for aid in agent_ids:
+                try:
+                    profile = registry.get(aid, require_enabled=False)
+                except Exception:
+                    continue
+                out.append({
+                    "resource_id": f"agent:{aid}",
+                    "name": profile.name,
+                    "capability": "agent",
+                    "source": "agent",
+                    "enabled": bool(profile.enabled),
+                })
+        except Exception:
+            pass
+        return out
+
+    def _catalog_assignable_ids(self, tenant_id: str, kind: str, action: str) -> set:
+        """Ids a tenant admin may assign for a kind+action (limit ∩ owned)."""
+        owned = self._project_owned_ids(tenant_id, kind)
+        return self.grantable_resource_ids(tenant_id, kind, action, owned)
+
+    def _project_owned_ids(self, tenant_id: str, kind: str) -> Optional[set]:
+        if kind == "agent":
+            return set(self.tenant_agent_ids(tenant_id))
+        if kind == "skill":
+            try:
+                return {e["resource_id"] for e in self._project_skills()}
+            except Exception:
+                return None
+        if kind == "tool":
+            return None  # global, controlled by tenant grants
+        if kind == "model":
+            return None  # global, controlled by tenant grants
+        if kind == "menu":
+            return None  # page-scope, platform cannot grant to normal roles
+        return None
+
+    def authorization_catalog(self, tenant_id: str, *, kind: str, q: Optional[str] = None,
+                              page: int = 1, page_size: int = 100,
+                              all_mode: bool = False, minimal: bool = False) -> Dict[str, Any]:
+        """Return the catalog for ``kind`` scoped to the current tenant.
+
+        ``all_mode`` (platform admin managing a target) shows the whole live
+        directory. Otherwise only resources the tenant may allocate (its global
+        grants + owned) are returned. ``minimal`` strips to id/name/capability.
+        Pagination happens after authorization filtering so totals are exact.
+        """
+        if kind not in RESOURCE_ACTIONS:
+            raise IdentityServiceError("unknown resource kind", code="invalid_kind")
+        items = self._resource_source_projection(tenant_id, kind)
+        allowed_ids: Optional[set] = None
+        if not all_mode:
+            # Only resources the tenant may allocate. For menu/agent the scope is
+            # the page/owned set; else intersect with the tenant's global grants.
+            allowed = set()
+            for action in RESOURCE_ACTIONS[kind]:
+                allowed |= self.grantable_resource_ids(
+                    tenant_id, kind, action, self._project_owned_ids(tenant_id, kind))
+            # ``grantable_resource_ids`` may return bare ids (e.g. tenant-owned
+            # agents resolved from ``agent_id``, skills from ``name``) while the
+            # catalog's ``resource_id`` carries a ``kind:`` prefix. Normalize both
+            # forms so a resource whose owned/granted id is ``default`` still
+            # matches a catalog entry of ``agent:default``.
+            allowed_ids = set()
+            for rid in allowed:
+                allowed_ids.add(rid)
+                if ":" not in rid:
+                    allowed_ids.add(kind + ":" + rid)
+                else:
+                    allowed_ids.add(rid.split(":", 1)[1])
+            items = [it for it in items if it["resource_id"] in allowed_ids or it["resource_id"].split(":")[0] == "nav"]
+        if q:
+            lq = q.lower()
+            items = [it for it in items if lq in it["name"].lower() or lq in it.get("provider", "").lower()]
+        total = len(items)
+        start = (page - 1) * page_size
+        page_items = items[start:start + page_size]
+        if minimal:
+            page_items = [{"resource_id": i["resource_id"], "name": i["name"], "capability": i["capability"]} for i in page_items]
+        return {"kind": kind, "items": page_items, "total": total, "page": page,
+                "resource_actions": list(RESOURCE_ACTIONS.get(kind, []))}
+
+    def authorization_catalog_minimal(self, user_id: str, tenant_id: str, *,
+                                      kind: str, q: Optional[str] = None,
+                                      page: int = 1, page_size: int = 100) -> Dict[str, Any]:
+        """purpose=use: the caller's own authorized resources, minimal projection."""
+        if kind not in RESOURCE_ACTIONS:
+            raise IdentityServiceError("unknown resource kind", code="invalid_kind")
+        mode = self.authorization_mode(user_id, tenant_id)
+        if mode == "all":
+            return self.authorization_catalog(tenant_id, kind=kind, q=q, page=page,
+                                              page_size=page_size, all_mode=True, minimal=True)
+        items = self._resource_source_projection(tenant_id, kind)
+        my_ids = set()
+        for action in RESOURCE_ACTIONS[kind]:
+            rid = self.resource_ids_for(user_id, tenant_id, kind, action,
+                                        permission=_resource_permission(kind, action))
+            if rid is not None:
+                my_ids |= rid
+        items = [it for it in items if it["resource_id"] in my_ids]
+        if q:
+            lq = q.lower()
+            items = [it for it in items if lq in it["name"].lower()]
+        total = len(items)
+        start = (page - 1) * page_size
+        page_items = [{"resource_id": i["resource_id"], "name": i["name"], "capability": i["capability"]}
+                      for i in items[start:start + page_size]]
+        return {"kind": kind, "items": page_items, "total": total, "page": page,
+                "resource_actions": list(RESOURCE_ACTIONS.get(kind, []))}
+
     def is_member(self, user_id: str, tenant_id: str) -> bool:
         membership = self._membership(user_id, tenant_id)
         return bool(
@@ -840,16 +1326,43 @@ class IdentityService:
         permissions = self._permissions_for_membership(membership["id"])
         role_codes = self._role_codes_for_membership(membership["id"])
         is_admin = TENANT_ADMIN_CODE in role_codes
+        grants = self._role_grants_for_membership(membership["id"])
+        mode = self.authorization_mode(user["id"], tenant_id)
         return {
             "status": "success",
             "effective_permissions": sorted(permissions),
+            "authorization_mode": mode,
+            "resource_actions": self._effective_resource_actions(permissions, grants, mode),
             "is_tenant_admin": is_admin,
             "consumers": self._consumer_availability(),
             "console_pages": self._console_pages_projection(
-                user, tenant, permissions, role_codes, is_admin),
+                user, tenant, permissions, role_codes, is_admin, grants, mode),
         }
 
-    def _console_pages_projection(self, user, tenant, permissions, role_codes, is_admin) -> Dict[str, Any]:
+    def _effective_resource_actions(self, permissions, grants, mode) -> Dict[str, List[str]]:
+        """Report which resource actions are available per kind.
+
+        For a platform admin this reports the enabled actions for each known
+        resource kind (all). For a member, a functional permission is required
+        AND a grant must exist — the report is an intersection, not a grant.
+        Known kinds/actions only: unknown names never appear, so ``all`` cannot
+        be used to call arbitrary names.
+        """
+        out: Dict[str, List[str]] = {}
+        for kind, actions in RESOURCE_ACTIONS.items():
+            allowed = []
+            for action in actions:
+                perm = _resource_permission(kind, action)
+                if mode == "all":
+                    allowed.append(action)
+                elif perm and perm in permissions and resource_ids_for(grants, kind, action):
+                    allowed.append(action)
+            if allowed:
+                out[kind] = allowed
+        return out
+
+    def _console_pages_projection(self, user, tenant, permissions, role_codes, is_admin,
+                                  grants=None, mode="role") -> Dict[str, Any]:
         """Minimal read-only projection for console page/tab availability.
 
         This is a *display* projection only: it is derived from the same
@@ -863,8 +1376,16 @@ class IdentityService:
         ``reason`` (when not available) and ``actions`` (only existing finite
         booleans, e.g. ``create``/``update``/``execute``). Platform actions are
         derived from the verified platform identity, not tenant_admin.
+
+        ``catalog``/``config``/``execution`` report the directory, configuration
+        and runtime states separately so a closed execution consumer never hides
+        an already-open catalog (task 2.5 / console-navigation-availability).
         """
         is_platform_admin = bool(user.get("is_platform_admin"))
+        mode = mode if mode == "all" else (
+            "all" if is_platform_admin else self.authorization_mode(user["id"], tenant["id"])
+        )
+        grants = grants or []
 
         def page_key(id_: str) -> bool:
             return id_ in _SIGNED_CONSOLE_PAGES
@@ -879,7 +1400,40 @@ class IdentityService:
         def read_ok(perms: set, pid: str) -> bool:
             return pid in perms
 
+        def resource_state(kind: str, action: str, perm: str) -> bool:
+            """True when the identity may read this resource kind (catalog open)."""
+            if mode == "all":
+                return True
+            if perm and perm not in permissions:
+                return False
+            # A catalog read requires an explicit read grant (or kind grant).
+            return resource_ids_for(grants, kind, action) != set()
+
+        # Catalog/config/execution per resource kind, independent of consumer open.
         result: Dict[str, Any] = {}
+        result["resources"] = {
+            "skills": {
+                "catalog": (mode == "all") or resource_ids_for(grants, "skill", "read") != set(),
+                "config": (mode == "all") or resource_ids_for(grants, "skill", "edit") != set(),
+                "execution": (mode == "all") or resource_ids_for(grants, "skill", "use") != set(),
+            },
+            "tools": {
+                "catalog": (mode == "all") or resource_ids_for(grants, "tool", "read") != set(),
+                "config": (mode == "all") or resource_ids_for(grants, "tool", "configure") != set(),
+                "execution": (mode == "all") or resource_ids_for(grants, "tool", "execute") != set(),
+            },
+            "models": {
+                "catalog": (mode == "all") or ("model.read" in permissions and resource_ids_for(grants, "model", "read") != set()),
+                "config": (mode == "all") or is_platform_admin,
+                "execution": (mode == "all") or ("model.use" in permissions and resource_ids_for(grants, "model", "use") != set()),
+            },
+            "agents": {
+                "catalog": (mode == "all") or ("agent.read" in permissions and resource_ids_for(grants, "agent", "read") != set()),
+                "config": (mode == "all") or ("agent.edit" in permissions and resource_ids_for(grants, "agent", "edit") != set()),
+                "execution": (mode == "all") or ("agent.use" in permissions and resource_ids_for(grants, "agent", "use") != set()),
+            },
+        }
+
         # Identity-management pages (only open consumer this milestone).
         if identity_admin_open:
             result["admin.members"] = {
@@ -914,6 +1468,22 @@ class IdentityService:
         for pid, meta in _SIGNED_CONSOLE_PAGES.items():
             if pid in result:
                 continue
+            # Catalog/read pages: report the directory open state separately even
+            # when execution remains closed.
+            if meta.get("scope") == "tenant" and pid in ("admin.skills", "admin.agents", "admin.models"):
+                read_allowed = resource_state(
+                    {"admin.skills": "skill", "admin.agents": "agent", "admin.models": "model"}[pid],
+                    "read",
+                    {"admin.skills": "skill.read", "admin.agents": "agent.read", "admin.models": "model.read"}[pid],
+                )
+                result[pid] = {
+                    "available": read_allowed,
+                    "read_allowed": read_allowed,
+                    "scope": meta.get("scope", "tenant"),
+                    "reason": "" if read_allowed else "no_resource_grant",
+                    "actions": {},
+                }
+                continue
             result[pid] = {
                 "available": False,
                 "read_allowed": read_ok(permissions, meta.get("permission", "")),
@@ -924,26 +1494,27 @@ class IdentityService:
         return result
 
     def _consumer_availability(self) -> Dict[str, Dict[str, Any]]:
-        """Static, server-side consumer availability labels (identity milestone).
+        """Static, server-side consumer availability labels (capability report).
 
-        Only the consumers adapted and accepted in this change are reported as
-        available; everything else is closed with a stable reason. This is a
-        static capability report, NOT a readiness/permission service, and never
-        grants access on its own — each consumer independently re-authorizes.
+        Consumers opened by the runtime-consumers work (chat transport, file
+        upload/serve/preview, voice, tools/skills, OpenAI-compatible API, MCP
+        warmup, external channels and the AgentBridge runtime) report
+        ``available=true`` — authorization is always re-checked per request.
+        Scheduler management stays deferred until its own slice adds trigger
+        snapshots + revalidation; Desktop enterprise login remains closed.
+        This is a static capability report, NOT a readiness/permission service,
+        and never grants access on its own.
         """
-        # Chat/workspace/file/scheduler/Tools/OpenAI/external channel and Desktop
-        # enterprise login are explicitly deferred. Identity management surfaces
-        # that are accepted this milestone are reported available.
         return {
             "web_identity_admin": {"available": True, "reason": ""},
-            "chat": {"available": False, "reason": "deferred"},
-            "tools": {"available": False, "reason": "deferred"},
-            "files": {"available": False, "reason": "deferred"},
+            "chat": {"available": True, "reason": ""},
+            "tools": {"available": True, "reason": ""},
+            "files": {"available": True, "reason": ""},
             "scheduler": {"available": False, "reason": "deferred"},
-            "openai_api": {"available": False, "reason": "deferred"},
+            "openai_api": {"available": True, "reason": ""},
             "desktop_enterprise": {"available": False, "reason": "deferred"},
-            "mcp": {"available": False, "reason": "deferred"},
-            "channels": {"available": False, "reason": "deferred"},
+            "mcp": {"available": True, "reason": ""},
+            "channels": {"available": True, "reason": ""},
         }
 
     def _self_membership_summary(self, user_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
@@ -1490,6 +2061,163 @@ class IdentityService:
         if not user or not verify_password(recent_password, user["password_hash"]):
             raise IdentityServiceError("recent password required", code="invalid_old", status=401)
 
+    # --- external identities (admin-bound IM -> account mapping) -----------
+
+    def list_external_identities(
+        self,
+        *,
+        user_id: Optional[str] = None,
+        provider: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 100,
+    ) -> Dict[str, Any]:
+        """List external identity bindings (admin-only, whitelisted fields)."""
+        if page_size > 100:
+            page_size = 100
+        where: List[str] = []
+        params: List[Any] = []
+        if user_id:
+            where.append("e.user_id=?")
+            params.append(user_id)
+        if provider:
+            where.append("e.provider=?")
+            params.append(provider)
+        where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+        count_params = list(params)
+        page_params = params + [page_size, (page - 1) * page_size]
+        rows = self._store.execute(
+            "SELECT e.id, e.user_id, e.provider, e.issuer, e.subject,"
+            "       e.created_at, e.last_used_at,"
+            "       u.username, u.display_name, u.active"
+            " FROM external_identities e JOIN users u ON u.id = e.user_id"
+            f"{where_sql}"
+            " ORDER BY e.provider, e.issuer, e.subject LIMIT ? OFFSET ?",
+            page_params,
+        )
+        total = self._store.execute(
+            "SELECT COUNT(*) AS c FROM external_identities e" + where_sql,
+            count_params,
+        )[0]["c"]
+        return {"items": [dict(r) for r in rows], "total": total, "page": page}
+
+    def bind_external_identity(
+        self,
+        *,
+        actor_user_id: str,
+        user_id: str,
+        provider: str,
+        issuer: str,
+        subject: str,
+    ) -> Dict[str, Any]:
+        """Bind an external identity triple to one active user (admin-only).
+
+        The triple ``(provider, issuer, subject)`` is globally unique. The
+        provider is normalized to lowercase; issuer/subject are trimmed but
+        otherwise stored verbatim (subject may contain provider-specific id
+        characters, including slashes). A second bind of the same triple raises
+        a 409 ``conflict`` and never overwrites.
+        """
+        self._require_platform_admin(actor_user_id)
+        provider = (provider or "").strip().lower()
+        issuer = (issuer or "").strip()
+        subject = (subject or "").strip()
+        if not _PROVIDER_RE.fullmatch(provider):
+            raise IdentityServiceError(
+                "invalid provider", code="bad_request", status=400)
+        if not subject or len(subject) > 512 or len(issuer) > 256:
+            raise IdentityServiceError(
+                "subject is required and issuer/subject are too long",
+                code="bad_request", status=400)
+        target = self._find_user_by_id(user_id)
+        if not target:
+            raise IdentityServiceError("user not found", code="not_found", status=404)
+        if not target["active"]:
+            raise IdentityServiceError("user is inactive", code="bad_request", status=400)
+        actor = self._find_user_by_id(actor_user_id) or {}
+        binding_id = self._new_id("ext")
+        with self._tx() as con:
+            try:
+                con.execute(
+                    "INSERT INTO external_identities"
+                    " (id, user_id, provider, issuer, subject)"
+                    " VALUES (?,?,?,?,?)",
+                    (binding_id, user_id, provider, issuer, subject),
+                )
+            except sqlite3.IntegrityError:
+                raise IdentityServiceError(
+                    "external identity is already bound",
+                    code="conflict", status=409)
+            self._audit_in_tx(
+                con,
+                actor_user_id=actor_user_id,
+                actor_username=actor.get("username"),
+                action="external_identity.bind",
+                target=f"user:{user_id}",
+                redacted_changes={
+                    "provider": provider, "issuer": issuer,
+                    "subject": subject, "binding_id": binding_id,
+                },
+            )
+        return {
+            "id": binding_id, "user_id": user_id, "provider": provider,
+            "issuer": issuer, "subject": subject,
+        }
+
+    def delete_external_identity(
+        self, *, actor_user_id: str, binding_id: str
+    ) -> None:
+        """Delete a single external identity binding (admin-only).
+
+        The binding disappears immediately; the next inbound resolve treats the
+        triple as unbound.
+        """
+        self._require_platform_admin(actor_user_id)
+        actor = self._find_user_by_id(actor_user_id) or {}
+        with self._tx() as con:
+            row = con.execute(
+                "SELECT user_id, provider, issuer, subject"
+                " FROM external_identities WHERE id=?",
+                (binding_id,),
+            ).fetchone()
+            if not row:
+                raise IdentityServiceError(
+                    "external identity binding not found",
+                    code="not_found", status=404)
+            con.execute(
+                "DELETE FROM external_identities WHERE id=?", (binding_id,))
+            self._audit_in_tx(
+                con,
+                actor_user_id=actor_user_id,
+                actor_username=actor.get("username"),
+                action="external_identity.unbind",
+                target=f"user:{row['user_id']}",
+                redacted_changes={
+                    "provider": row["provider"], "issuer": row["issuer"],
+                    "subject": row["subject"], "binding_id": binding_id,
+                },
+            )
+
+    def find_user_for_external_identity(
+        self, provider: str, issuer: str, subject: str
+    ) -> Optional[Dict[str, Any]]:
+        """Resolve an external identity triple to its bound active user.
+
+        Read-only helper used by IM inbound paths: returns ``None`` when there
+        is no binding or the bound user is inactive. The caller must still
+        validate membership and permissions for the target tenant.
+        """
+        rows = self._store.execute(
+            "SELECT u.id, u.username, u.display_name, u.active"
+            " FROM external_identities e JOIN users u ON u.id = e.user_id"
+            " WHERE e.provider=? AND e.issuer=? AND e.subject=?",
+            ((provider or "").strip().lower(), (issuer or "").strip(),
+             (subject or "").strip()),
+        )
+        if not rows:
+            return None
+        user = dict(rows[0])
+        return user if user["active"] else None
+
     # --- memberships (task 3.3) -------------------------------------------
 
     def list_members(self, tenant_id: str, q: Optional[str] = None,
@@ -1763,17 +2491,44 @@ class IdentityService:
 
     def list_roles(self, tenant_id: str) -> List[Dict[str, Any]]:
         rows = self._store.execute(
-            "SELECT id, code, name, builtin, permissions_json, version FROM roles"
+            "SELECT id, code, name, builtin, permissions_json, model_defaults_json, version FROM roles"
             " WHERE tenant_id=? ORDER BY builtin DESC, code",
             (tenant_id,),
         )
         return [
-            {**dict(r), "permissions": json.loads(r["permissions_json"] or "[]")}
+            {**dict(r), "permissions": json.loads(r["permissions_json"] or "[]"),
+             "resource_grants": self._role_grants(r["id"]),
+             "model_defaults": json.loads(r["model_defaults_json"] or "{}")}
             for r in rows
         ]
 
+    def _role_grants(self, role_id: str) -> List[Dict[str, str]]:
+        rows = self._store.execute(
+            "SELECT resource_kind, resource_id, action FROM role_resource_grants"
+            " WHERE role_id=? ORDER BY resource_kind, resource_id, action",
+            (role_id,),
+        )
+        return [dict(r) for r in rows]
+
+    #: A role's write payload is unified: permissions + resource grants + model
+    #: defaults. ``None``/omitted field means *preserve*, but list/dict fields only
+    #: accept an explicit value; an explicit empty value clears. This helper
+    #: normalizes the optional fields so the caller can pass ``None`` to keep.
+    @staticmethod
+    def _coalesce_field(requested, current):
+        return current if requested is None else requested
+
     def create_role(self, actor_user_id: str, tenant_id: str, code: str, name: str,
-                    permissions: Sequence[str]) -> Dict[str, Any]:
+                    permissions: Sequence[str],
+                    resource_grants: Sequence[Dict[str, Any]] = (),
+                    model_defaults: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Create a custom role with permissions, resource grants and model defaults.
+
+        Resource grants and model defaults are validated against the tenant's
+        allocatable set in the same transaction; any invalid/missing/unallocatable
+        reference rejects the whole create (no partial role). ``model_defaults``
+        defaults to ``None`` (empty) and never grants model use by itself.
+        """
         self._require_tenant_admin(actor_user_id, tenant_id)
         code = code.strip().lower()
         if not _ROLE_CODE_RE.fullmatch(code):
@@ -1781,26 +2536,41 @@ class IdentityService:
         if code in BUILTIN_ROLES:
             raise IdentityServiceError("built-in role cannot be recreated", code="forbidden", status=403)
         perms = normalize_permissions(permissions)
+        grants = normalize_resource_grants(resource_grants or [])
+        defaults = validate_model_defaults(model_defaults or {})
+        self._validate_model_defaults_against_grants(defaults, grants)
         for existing_code in BUILTIN_ROLES:
             if existing_code == code:
                 raise IdentityServiceError("built-in role conflict", code="conflict", status=409)
         role_id = self._new_id("role")
         with self._tx() as con:
             con.execute(
-                "INSERT INTO roles(id, tenant_id, code, name, builtin, permissions_json, version)"
-                " VALUES (?,?,?,?,0,?,1)",
-                (role_id, tenant_id, code, name, json.dumps(sorted(perms))),
+                "INSERT INTO roles(id, tenant_id, code, name, builtin, permissions_json,"
+                " model_defaults_json, version) VALUES (?,?,?,?,0,?,?,1)",
+                (role_id, tenant_id, code, name, json.dumps(sorted(perms)),
+                 json.dumps(defaults) if defaults else None),
             )
+            self._insert_grants_tx(con, role_id, grants)
             self._audit_in_tx(con, actor_user_id=actor_user_id, tenant_id=tenant_id,
                               target_tenant_id=tenant_id, action="role.create",
                               target=f"role:{role_id}",
-                              redacted_changes={"code": code, "permissions": sorted(perms)},
+                              redacted_changes={"code": code, "permissions": sorted(perms),
+                                                "resource_kind_ids": self._grant_kinds(grants)},
                               result="success")
             con.commit()
-        return {"id": role_id, "code": code, "name": name, "permissions": sorted(perms), "version": 1}
+        return {"id": role_id, "code": code, "name": name, "permissions": sorted(perms),
+                "resource_grants": grants, "model_defaults": defaults, "version": 1}
 
     def update_role(self, actor_user_id: str, tenant_id: str, role_id: str,
-                    name: str, permissions: Sequence[str], expected_version: int) -> Dict[str, Any]:
+                    name: str, permissions: Sequence[str], expected_version: int,
+                    resource_grants: Optional[Sequence[Dict[str, Any]]] = None,
+                    model_defaults: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Update a custom role, optionally replacing grants/model defaults.
+
+        ``resource_grants``/``model_defaults`` omitted (None) preserve existing;
+        an explicit list/dict replaces (empty clears). The whole write is one
+        transaction: permissions, grants and defaults either all land or none do.
+        """
         self._require_tenant_admin(actor_user_id, tenant_id)
         perms = normalize_permissions(permissions)
         with self._tx() as con:
@@ -1811,16 +2581,57 @@ class IdentityService:
                 raise IdentityServiceError("built-in role cannot be modified", code="forbidden", status=403)
             if row["version"] != expected_version:
                 raise IdentityServiceError("version conflict", code="conflict", status=409)
+            current_grants = self._role_grants(role_id)
+            new_grants = current_grants if resource_grants is None else normalize_resource_grants(resource_grants or [])
+            current_model_defaults = dict(row["model_defaults_json"] and json.loads(row["model_defaults_json"]) or {})
+            new_defaults = current_model_defaults if model_defaults is None else validate_model_defaults(model_defaults or {})
+            self._validate_model_defaults_against_grants(new_defaults, new_grants)
             con.execute(
-                "UPDATE roles SET name=?, permissions_json=?, version=version+1 WHERE id=?",
-                (name, json.dumps(sorted(perms)), role_id),
+                "UPDATE roles SET name=?, permissions_json=?, model_defaults_json=?, version=version+1 WHERE id=?",
+                (name, json.dumps(sorted(perms)), json.dumps(new_defaults) if new_defaults else None, role_id),
             )
+            self._replace_grants_tx(con, role_id, new_grants)
             self._audit_in_tx(con, actor_user_id=actor_user_id, tenant_id=tenant_id,
                               target_tenant_id=tenant_id, action="role.update",
                               target=f"role:{role_id}",
-                              redacted_changes={"name": name}, result="success")
+                              redacted_changes={"name": name, "resource_kind_ids": self._grant_kinds(new_grants)},
+                              result="success")
             con.commit()
-        return {"id": role_id, "name": name, "permissions": sorted(perms)}
+        return {"id": role_id, "name": name, "permissions": sorted(perms),
+                "resource_grants": new_grants, "model_defaults": new_defaults}
+
+    @staticmethod
+    def _validate_model_defaults_against_grants(defaults, grants) -> None:
+        """Each default model must already be granted ``model.use`` for the role.
+
+        The default is a *preference* within the allowed set — it never grants
+        model use by itself. A default that the role is not allowed to use is
+        rejected here (spec 5.1), so a partial/contradictory save never lands.
+        """
+        if not defaults:
+            return
+        use_ids = resource_ids_for(grants, "model", "use")
+        for cap, model_id in defaults.items():
+            if model_id not in use_ids:
+                raise IdentityServiceError(
+                    f"default model for {cap!r} is not in the role's model.use set",
+                    code="default_model_not_granted", status=409)
+
+    @staticmethod
+    def _grant_kinds(grants) -> List[str]:
+        return sorted({g["resource_kind"] for g in grants})
+
+    def _insert_grants_tx(self, con, role_id: str, grants: List[Dict[str, str]]) -> None:
+        for g in grants:
+            con.execute(
+                "INSERT INTO role_resource_grants(id, role_id, resource_kind, resource_id, action)"
+                " VALUES (?,?,?,?,?)",
+                (self._new_id("grant"), role_id, g["resource_kind"], g["resource_id"], g["action"]),
+            )
+
+    def _replace_grants_tx(self, con, role_id: str, grants: List[Dict[str, str]]) -> None:
+        con.execute("DELETE FROM role_resource_grants WHERE role_id=?", (role_id,))
+        self._insert_grants_tx(con, role_id, grants)
 
     def delete_role(self, actor_user_id: str, tenant_id: str, role_id: str) -> Dict[str, Any]:
         self._require_tenant_admin(actor_user_id, tenant_id)
@@ -1845,6 +2656,12 @@ class IdentityService:
     # --- departments (task 3.5) -------------------------------------------
 
     def _require_tenant_admin(self, actor_user_id: str, tenant_id: str) -> None:
+        # A platform admin may manage a target tenant's roles/resource grants via
+        # the explicit platform-management surface without being a member of that
+        # tenant (task 2.3 / 3.2). No Membership is forged; the caller still holds
+        # platform-admin qualification.
+        if self.is_platform_admin(actor_user_id):
+            return
         if not self._is_tenant_admin(actor_user_id, tenant_id):
             raise IdentityServiceError("forbidden", code="forbidden", status=403)
 
