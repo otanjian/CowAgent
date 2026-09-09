@@ -9649,11 +9649,13 @@ def _project_state(session_id: str, agent_id: str = None) -> dict:
 
     current = project_store.get_project_dir(session_id, agent_id) if session_id else None
     ident = current_identity()
-    if ident.user_id:
-        # Database mode: resolve against the request identity (tenant + user) so
-        # the hint and projects root point at the caller's user-private root,
-        # not a bare agent id that resolves to the host agent workspace.
-        default_workspace = state_dir.state_root_str(ident)
+    if ident.user_id and ident.tenant_id:
+        # Database mode: resolve against the tenant's trusted shared root (same
+        # rule as _get_workspace_root), so the hint points at the caller's
+        # tenant root rather than a bare agent id (or host default workspace).
+        from auth.service import get_identity_service
+        shared = get_identity_service().tenant_shared_root(ident.tenant_id)
+        default_workspace = shared or state_dir.state_root_str(ident)
         projects_root = project_store.user_projects_root() or project_store.projects_root()
     else:
         # Legacy mode: default to the Agent this session belongs to so the

@@ -377,6 +377,8 @@ def create_project(name: str) -> str:
     name = (name or "").strip()
     if not name:
         raise ValueError("project name is required")
+    if "\x00" in name:
+        raise ValueError("project name must not contain NUL bytes")
     if os.sep in name or (os.altsep and os.altsep in name) or name in (".", ".."):
         raise ValueError("project name must not contain path separators")
 
