@@ -104,6 +104,15 @@ function _renderSidebarAccount() {
     if (hasUser) {
         name = state.displayName || state.username;
         subtitle = '@' + state.username;
+        // Database identity: prefer the *member* display name for the
+        // currently-selected tenant (per the "edit member" field) over the
+        // account-level display name. Falls back to the account name when the
+        // member projection is not yet loaded or the account has no active
+        // membership in the selected tenant.
+        if (state.mode === 'database' && _baseAccountSelf()) {
+            const memberName = _currentMemberDisplayName();
+            if (memberName) name = memberName;
+        }
     } else if (local) {
         name = t('account_local');
         subtitle = t(state.authRequired ? 'account_password_mode' : 'account_public_mode');
@@ -332,6 +341,10 @@ function _enterAccountApp() {
                 fetchAccountSelf().then(function (self) {
                     if (!current()) return;
                     _applySidebarPermissions(self);
+                    // The member-level display name arrives with /auth/me. Refresh
+                    // the sidebar account label once so it can swap from the
+                    // account-level name to the current tenant's member name.
+                    _renderSidebarAccount();
                     return _fetchTenantAuthorization();
                 }).then(function (ctx) {
                     if (!current()) return;
@@ -708,6 +721,13 @@ const I18N = {
         tenant_version_label: '版本',
         users_title: '用户管理',
         member_create: '新建成员',
+        member_section_account: '账号信息',
+        member_section_role: '角色与状态',
+        member_section_tenants: '所属租户',
+        member_tenants: '租户',
+        member_tenants_title: '调整所属租户',
+        admin_field_tenants: '目标租户', admin_field_tenants_hint: '可选择多个租户；新建账号将创建于所选租户',
+        admin_field_tenants_edit_hint: '勾选/取消以增删所属租户（仅限你有管理资格的租户）',
         member_search_placeholder: '搜索账号 / 姓名',
         member_empty: '暂无成员',
         roles_title: '角色权限',
@@ -783,6 +803,20 @@ const I18N = {
         tenant_edit_title: '编辑租户',
         member_edit_title: '编辑成员',
         role_edit_title: '编辑角色',
+        role_tab_basic: '基本信息',
+        role_editor_back: '返回角色列表',
+        role_dirty_pill: '有未保存更改',
+        role_section_basic: '基本信息',
+        role_basic_hint: '填写角色标识；下方配置功能权限。资源与模型在其他 Tab，保存时一并提交。',
+        role_perm_search_placeholder: '搜索权限…',
+        role_perm_select_group: '全选本组',
+        role_perm_clear_group: '清空本组',
+        role_section_model_assign: '可分配模型',
+        role_model_assign_hint: '勾选该角色可使用的模型；默认模型只能从已选项中选择。',
+        role_editor_foot_hint: '切换 Tab 不丢草稿 · 离开前若有改动会确认',
+        role_create_sub: '创建后编码不可修改',
+        role_copy_from: '从 {name} 复制',
+        role_copy_suffix: '（副本）',
         dept_edit_title: '编辑部门',
         admin_delete_confirm_role: '确定删除角色「{name}」吗？',
         admin_delete_confirm_dept: '确定删除部门「{name}」吗？',
@@ -1304,6 +1338,9 @@ const I18N = {
         account_profile_role: '实际角色', account_profile_department: '部门',
         account_profile_position: '岗位', account_profile_empty: '未设置',
         account_profile_no_tenant: '未加入任何租户', account_profile_error: '资料读取失败',
+        account_profile_edit: '编辑资料', account_profile_avatar_hint: '点击可更换头像',
+        account_profile_error_required: '该项不能为空',
+        saved: '已保存',
         account_password_title: '修改密码', account_password_note: '修改成功后，其他已登录会话也会失效，需要重新登录。',
         account_password_old: '原密码', account_password_new: '新密码', account_password_confirm: '确认新密码',
         account_password_submit: '提交修改', account_password_invalid_old: '原密码错误',
@@ -1385,6 +1422,13 @@ const I18N = {
         tenant_version_label: '版本',
         users_title: '用戶管理',
         member_create: '新增成員',
+        member_section_account: '帳號資訊',
+        member_section_role: '角色與狀態',
+        member_section_tenants: '所屬租戶',
+        member_tenants: '租戶',
+        member_tenants_title: '調整所屬租戶',
+        admin_field_tenants: '目標租戶', admin_field_tenants_hint: '可選擇多個租戶；新帳號將建立於所選租戶',
+        admin_field_tenants_edit_hint: '勾選/取消以增刪所屬租戶（僅限你有管理資格的租戶）',
         member_search_placeholder: '搜尋帳號 / 姓名',
         member_empty: '暫無成員',
         roles_title: '角色權限',
@@ -1460,6 +1504,20 @@ const I18N = {
         tenant_edit_title: '編輯租戶',
         member_edit_title: '編輯成員',
         role_edit_title: '編輯角色',
+        role_tab_basic: '基本資訊',
+        role_editor_back: '返回角色列表',
+        role_dirty_pill: '有未儲存變更',
+        role_section_basic: '基本資訊',
+        role_basic_hint: '填寫角色標識；下方設定功能權限。資源與模型在其他 Tab，儲存時一併提交。',
+        role_perm_search_placeholder: '搜尋權限…',
+        role_perm_select_group: '全選本組',
+        role_perm_clear_group: '清空本組',
+        role_section_model_assign: '可分配模型',
+        role_model_assign_hint: '勾選該角色可使用的模型；預設模型只能從已選項中選擇。',
+        role_editor_foot_hint: '切換 Tab 不丟草稿 · 離開前若有改動會確認',
+        role_create_sub: '建立後編碼不可修改',
+        role_copy_from: '從 {name} 複製',
+        role_copy_suffix: '（副本）',
         dept_edit_title: '編輯部門',
         admin_delete_confirm_role: '確定刪除角色「{name}」嗎？',
         admin_delete_confirm_dept: '確定刪除部門「{name}」嗎？',
@@ -1977,6 +2035,9 @@ const I18N = {
         account_profile_role: '實際角色', account_profile_department: '部門',
         account_profile_position: '崗位', account_profile_empty: '未設定',
         account_profile_no_tenant: '未加入任何租戶', account_profile_error: '資料讀取失敗',
+        account_profile_edit: '編輯資料', account_profile_avatar_hint: '點擊可更換頭像',
+        account_profile_error_required: '該項不能為空',
+        saved: '已儲存',
         account_password_title: '修改密碼', account_password_note: '修改成功後，其他已登入會話也會失效，需要重新登入。',
         account_password_old: '原密碼', account_password_new: '新密碼', account_password_confirm: '確認新密碼',
         account_password_submit: '提交修改', account_password_invalid_old: '原密碼錯誤',
@@ -2057,6 +2118,13 @@ const I18N = {
         tenant_version_label: 'Version',
         users_title: 'Users',
         member_create: 'New member',
+        member_section_account: 'Account Information',
+        member_section_role: 'Roles & Status',
+        member_section_tenants: 'Tenants',
+        member_tenants: 'Tenants',
+        member_tenants_title: 'Adjust member tenants',
+        admin_field_tenants: 'Target tenants', admin_field_tenants_hint: 'Select multiple; a new account is created in the selected tenants',
+        admin_field_tenants_edit_hint: 'Check/uncheck to add/remove membership (only tenants you administer)',
         member_search_placeholder: 'Search account / name',
         member_empty: 'No members',
         roles_title: 'Roles & Permissions',
@@ -2132,6 +2200,20 @@ const I18N = {
         tenant_edit_title: 'Edit tenant',
         member_edit_title: 'Edit member',
         role_edit_title: 'Edit role',
+        role_tab_basic: 'Basics',
+        role_editor_back: 'Back to roles',
+        role_dirty_pill: 'Unsaved changes',
+        role_section_basic: 'Basic info',
+        role_basic_hint: 'Set the role identity, then configure functional permissions below.',
+        role_perm_search_placeholder: 'Search permissions…',
+        role_perm_select_group: 'Select group',
+        role_perm_clear_group: 'Clear group',
+        role_section_model_assign: 'Assignable models',
+        role_model_assign_hint: 'Pick models this role may use. Defaults must come from the selected set.',
+        role_editor_foot_hint: 'Tab switches keep the draft. Leaving with changes asks for confirmation.',
+        role_create_sub: 'Code cannot be changed after create',
+        role_copy_from: 'Copied from {name}',
+        role_copy_suffix: ' (copy)',
         dept_edit_title: 'Edit department',
         admin_delete_confirm_role: 'Delete role "{name}"?',
         admin_delete_confirm_dept: 'Delete department "{name}"?',
@@ -2653,6 +2735,9 @@ const I18N = {
         account_profile_role: 'Role', account_profile_department: 'Department',
         account_profile_position: 'Position', account_profile_empty: 'Not set',
         account_profile_no_tenant: 'Not a member of any tenant', account_profile_error: 'Failed to load profile',
+        account_profile_edit: 'Edit profile', account_profile_avatar_hint: 'Click to change avatar',
+        account_profile_error_required: 'This field is required',
+        saved: 'Saved',
         account_password_title: 'Change password', account_password_note: 'After changing your password, other logged-in sessions will also expire. Please log in again.',
         account_password_old: 'Current password', account_password_new: 'New password', account_password_confirm: 'Confirm new password',
         account_password_submit: 'Submit', account_password_invalid_old: 'Current password is incorrect',
@@ -17085,6 +17170,25 @@ function _navigationMode() {
     return _NAVIGATION_MODES.indexOf(raw) >= 0 ? raw : 'classic';
 }
 
+// === NAV_AREA_BEGIN ===
+function _navAreaFromPath(pathname) {
+    const p = String(pathname || '');
+    return p === '/admin' || p.startsWith('/admin/') ? 'admin' : 'workbench';
+}
+const NAV_WINDOW_WORKBENCH = 'cow-workbench';
+const NAV_WINDOW_ADMIN = 'cow-admin';
+function _openNavArea(area, path) {
+    const name = area === 'admin' ? NAV_WINDOW_ADMIN : NAV_WINDOW_WORKBENCH;
+    const target = path || (area === 'admin' ? '/admin' : '/chat');
+    return window.open(target, name);
+}
+function _qualifyAdminConsoleEntry(opts) {
+    // opts: { identityMode, isPlatformAdmin, isTenantAdmin }
+    if (!opts || opts.identityMode !== 'database') return true;
+    return !!(opts.isPlatformAdmin || opts.isTenantAdmin);
+}
+// === NAV_AREA_END ===
+
 function _setupHeaderTenantSelector() {
     const sel = document.getElementById('tenant-selector');
     if (!sel) return;
@@ -17404,6 +17508,8 @@ function initApp() {
 let _accountSelf = null;
 let _accountSelfSeq = 0;
 let _accountSelfRequest = null;
+// Bump on each successful self-avatar upload so the hero image refetches.
+let _accountAvatarVersion = '';
 // Current tenant's authoritative /auth/context capability summary, cached per
 // account/epoch. This is the *display* projection used to gate the sidebar and
 // navigation availability (console_pages / authorization_mode / is_tenant_admin);
@@ -17476,6 +17582,25 @@ async function fetchAccountSelf() {
 // rather than as a privilege denial.
 function _baseAccountSelf() {
     return _accountSelf && _accountSelf.status === 'success' ? _accountSelf : null;
+}
+
+// Resolve the *member-level* display name for the currently-selected tenant from
+// the cached /auth/me projection. This is the per-tenant "display name" edited on
+// the member record (memberships.display_name), which may differ from the
+// account-level display name. Returns '' when there is no self projection, no
+// selected tenant, the account is not an active member of that tenant, or the
+// member has no display name.
+function _currentMemberDisplayName() {
+    const self = _baseAccountSelf();
+    if (!self) return '';
+    const tid = sessionStorage.getItem('cow_tenant_id') || '';
+    if (!tid) return '';
+    const tenants = (self.tenants || []).filter(tn => tn && tn.id === tid);
+    if (!tenants.length) return '';
+    const membership = tenants[0].membership || {};
+    const displayName = (typeof membership.display_name === 'string')
+        ? membership.display_name.trim() : '';
+    return displayName;
 }
 
 // Best-effort sync view of the last successful /auth/context. Returns null
@@ -17642,6 +17767,7 @@ function openAccountProfile() {
     _accountHidden('account-profile-drawer', false);
     _accountHidden('account-profile-content', true);
     _accountHidden('account-profile-status', true);
+    resetAccountProfileEditor();
     fetchAccountSelf().then(() => {
         renderAccountProfile();
         focusAccountPanel('account-profile-drawer');
@@ -17655,7 +17781,7 @@ function renderAccountProfile() {
     const box = document.getElementById('account-profile-content');
     if (!box) return;
     const ctx = _accountSelf;
-    _accountHidden(box, false);
+    box.classList.remove('hidden');
     _accountHidden('account-profile-status', true);
     if (!ctx || !ctx.user) {
         _accountText('account-profile-status', t('account_profile_error'));
@@ -17663,9 +17789,17 @@ function renderAccountProfile() {
         return;
     }
     const user = ctx.user;
-    _accountText(_ACCOUNT_PROFILE_SEL.displayName, user.display_name || user.username || '—');
+    const displayName = user.display_name || user.username || '—';
+
+    // Hero header (avatar + name + username)
+    renderAccountProfileAvatar(user);
+    _accountText('account-profile-hero-name', displayName);
+    _accountText('account-profile-hero-username', '@' + (user.username || ''));
+
+    // Read mode values
+    _accountText(_ACCOUNT_PROFILE_SEL.displayName, displayName);
     _accountText(_ACCOUNT_PROFILE_SEL.username, user.username || '—');
-    _accountText(_ACCOUNT_PROFILE_SEL.platform, user.is_platform_admin ? t('account_profile_platform') : t('account_public_mode'));
+    _accountText(_ACCOUNT_PROFILE_SEL.platform, user.is_platform_admin ? t('platform_admin_badge') : t('account_public_mode'));
 
     // Resolve the selected tenant's membership from the self list.
     const tid = sessionStorage.getItem('cow_tenant_id');
@@ -17676,8 +17810,10 @@ function renderAccountProfile() {
         _accountText(_ACCOUNT_PROFILE_SEL.role, t('account_profile_empty'));
         _accountText(_ACCOUNT_PROFILE_SEL.department, t('account_profile_empty'));
         _accountText(_ACCOUNT_PROFILE_SEL.position, t('account_profile_empty'));
+        _accountHidden('account-profile-member-section', true);
         return;
     }
+    _accountHidden('account-profile-member-section', false);
     const m = entry.membership || {};
     _accountText(_ACCOUNT_PROFILE_SEL.tenant, entry.name || entry.code || entry.id);
     _accountText(_ACCOUNT_PROFILE_SEL.memberName, m.display_name || t('account_profile_empty'));
@@ -17687,10 +17823,218 @@ function renderAccountProfile() {
 }
 
 function closeAccountProfile() {
+    resetAccountProfileEditor();
     _accountHidden('account-profile-drawer', true);
     if (_activeAccountPanel === 'profile') _setAccountPanel(null);
     if (_accountAppVisible) document.getElementById('sidebar-account-toggle')?.focus();
 }
+
+// --- profile edit (read -> edit state) -----------------------------------
+
+let _accountProfileEditing = false;
+let _accountProfileAvatarUploading = false;
+
+// Render the caller's own avatar (or an initial disc) in the hero + menu.
+function renderAccountProfileAvatar(user) {
+    const box = document.getElementById('account-profile-avatar');
+    if (!box) return;
+    if (user && user.avatar === 'image') {
+        const v = _accountAvatarVersion || user.id || Date.now();
+        box.innerHTML = `<img src="/auth/profile/avatar?v=${encodeURIComponent(v)}" alt="">`;
+    } else {
+        const initial = avatarInitial(user && (user.display_name || user.id));
+        box.innerHTML = `<span class="account-profile-avatar-initial">${escapeHtml(initial)}</span>`;
+    }
+}
+
+// Reset to the read-only state (clean inputs, exit edit mode).
+function resetAccountProfileEditor() {
+    _accountProfileEditing = false;
+    _accountProfileAvatarUploading = false;
+    const rows = document.querySelectorAll('#account-profile-content .account-profile-row');
+    rows.forEach(r => r.classList.remove('editing'));
+    _accountHidden('account-profile-edit-btn', false);
+    _accountHidden('account-profile-save-btn', true);
+    _accountHidden('account-profile-cancel-btn', true);
+    _accountHidden('account-profile-close-btn', false);
+    const hint = document.getElementById('account-profile-action-status');
+    if (hint) { hint.classList.add('hidden'); hint.textContent = ''; }
+    ['ap-display-name-input', 'ap-member-name-input', 'ap-position-input'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.value = ''; el.classList.remove('invalid'); el.removeAttribute('aria-invalid'); }
+        const err = document.getElementById(id + '-error');
+        if (err) err.classList.add('hidden');
+    });
+}
+
+// Enter edit mode: swap read rows for editable inputs and show save/cancel.
+function startAccountProfileEdit() {
+    const ctx = _accountSelf;
+    if (!ctx || !ctx.user) return;
+    if (_accountProfileEditing) return;
+    _accountProfileEditing = true;
+
+    // Populate inputs from the current projection.
+    const user = ctx.user;
+    const tid = sessionStorage.getItem('cow_tenant_id');
+    const entry = (ctx.tenants || []).find(tn => tn.id === tid) || (ctx.tenants || [])[0];
+    const m = (entry && entry.membership) || {};
+    setInputValue('ap-display-name-input', user.display_name || '');
+    setInputValue('ap-member-name-input', m.display_name || '');
+    setInputValue('ap-position-input', m.position_text || '');
+
+    // Only the editable rows are toggled; role/dept/tenant/username stay read.
+    document.querySelectorAll('#account-profile-content .account-profile-row[data-field]')
+        .forEach(r => r.classList.add('editing'));
+
+    _accountHidden('account-profile-edit-btn', true);
+    _accountHidden('account-profile-save-btn', false);
+    _accountHidden('account-profile-cancel-btn', false);
+    _accountHidden('account-profile-close-btn', true);
+    const hint = document.getElementById('account-profile-action-status');
+    if (hint) hint.classList.add('hidden');
+    // Clear a field's inline error the moment the user starts typing in it.
+    ['ap-display-name-input', 'ap-member-name-input', 'ap-position-input'].forEach(id => {
+        const input = document.getElementById(id);
+        if (!input || input.dataset.profileErrBound) return;
+        input.dataset.profileErrBound = '1';
+        input.addEventListener('input', () => {
+            input.classList.remove('invalid');
+            input.removeAttribute('aria-invalid');
+            const err = document.getElementById(id + '-error');
+            if (err) err.classList.add('hidden');
+        });
+    });
+    // Move focus to the first editable input so the user can type immediately
+    // (focusAccountPanel would land on the modal close/avatar button instead).
+    const firstInput = document.getElementById('ap-display-name-input');
+    if (firstInput) window.setTimeout(() => { firstInput.focus(); firstInput.select?.(); }, 0);
+}
+
+function setInputValue(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.value = value || '';
+}
+
+// Leave edit mode without saving (same as cancel).
+function cancelAccountProfileEdit() {
+    if (_accountProfileAvatarUploading) return;
+    resetAccountProfileEditor();
+    renderAccountProfile();
+}
+
+// Highlight a profile input as invalid and show its inline error message.
+function markFieldError(inputId, message) {
+    const input = document.getElementById(inputId);
+    if (input) {
+        input.classList.add('invalid');
+        input.setAttribute('aria-invalid', 'true');
+        input.focus();
+    }
+    const err = document.getElementById(inputId + '-error');
+    if (err) {
+        err.textContent = message;
+        err.classList.remove('hidden');
+    }
+}
+
+// Persist the edited fields (display_name + member name/position).
+function submitAccountProfile() {
+    if (_accountProfileAvatarUploading || _accountWritePending) return;
+    const ctx = _accountSelf;
+    if (!ctx || !ctx.user) return;
+    const displayName = document.getElementById('ap-display-name-input')?.value || '';
+    const memberName = document.getElementById('ap-member-name-input')?.value || '';
+    const position = document.getElementById('ap-position-input')?.value || '';
+    const hint = document.getElementById('account-profile-action-status');
+    const saveBtn = document.getElementById('account-profile-save-btn');
+
+    // Client-side validation mirroring the backend guards.
+    const displayNameVal = displayName.trim();
+    const memberNameVal = memberName.trim();
+    if (!displayNameVal) {
+        markFieldError('ap-display-name-input', t('account_profile_error_required'));
+        return;
+    }
+    // member name is optional only when no tenant; when editing a tenant member it
+    // is required just like display name (mirrors backend guard).
+    const tid = sessionStorage.getItem('cow_tenant_id');
+    const hasTenant = (ctx.tenants || []).some(tn => tn.id === tid);
+    if (hasTenant && !memberNameVal) {
+        markFieldError('ap-member-name-input', t('account_profile_error_required'));
+        return;
+    }
+
+    _accountWritePending = 'profile';
+    if (saveBtn) saveBtn.disabled = true;
+    if (hint) { hint.textContent = ''; hint.classList.add('hidden'); }
+    const body = { display_name: displayNameVal };
+    // Send member fields only when the caller belongs to a tenant.
+    if (hasTenant) {
+        body.member_display_name = memberNameVal;
+        body.position_text = position.trim();
+    }
+    fetch('/auth/profile', {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', ...(tid ? { 'X-Tenant-ID': tid } : {}) },
+        body: JSON.stringify(body),
+    }).then(r => r.json()).then(data => {
+        if (data && data.status === 'success') {
+            _accountSelf = data;
+            resetAccountProfileEditor();
+            renderAccountProfile();
+            if (hint) { hint.textContent = t('saved'); hint.classList.remove('hidden'); }
+        } else if (data && data.code === 'password_change_required') {
+            if (hint) { hint.textContent = t('account_password_note'); hint.classList.remove('hidden'); }
+        } else {
+            if (hint) { hint.textContent = (data && data.message) || t('account_profile_error'); hint.classList.remove('hidden'); }
+        }
+    }).catch(() => {
+        if (hint) { hint.textContent = t('account_profile_error'); hint.classList.remove('hidden'); }
+    }).finally(() => {
+        _accountWritePending = null;
+        if (saveBtn) saveBtn.disabled = false;
+        // Refresh the sidebar identity now that the write is no longer pending,
+        // so the account button picks up the new display name.
+        refreshAccountIdentity();
+    });
+}
+
+// Upload a new avatar for the caller.
+function uploadAccountProfileAvatar(file) {
+    if (!file) return;
+    if (_accountProfileAvatarUploading) return;
+    _accountProfileAvatarUploading = true;
+    const hint = document.getElementById('account-profile-action-status');
+    const loader = document.getElementById('account-profile-avatar');
+    if (loader) loader.classList.add('is-uploading');
+    const form = new FormData();
+    form.append('avatar', file);
+    fetch('/auth/profile/avatar', { method: 'POST', credentials: 'same-origin', body: form })
+        .then(r => r.json())
+        .then(data => {
+            if (data && data.status === 'success') {
+                _accountAvatarVersion = String(Date.now());
+                _accountSelf = data;
+                renderAccountProfileAvatar(data.user || {});
+                refreshAccountIdentity();
+                if (hint) { hint.textContent = t('saved'); hint.classList.remove('hidden'); }
+            } else {
+                if (hint) { hint.textContent = (data && data.message) || t('account_profile_error'); hint.classList.remove('hidden'); }
+            }
+        })
+        .catch(() => {
+            if (hint) { hint.textContent = t('account_profile_error'); hint.classList.remove('hidden'); }
+        })
+        .then(() => {
+            _accountProfileAvatarUploading = false;
+            if (loader) loader.classList.remove('is-uploading');
+        });
+}
+
+// Render the profile avatar picker (preview + upload trigger) in the hero.
+
 
 // --- change password ----------------------------------------------------
 
@@ -17964,6 +18308,10 @@ document.addEventListener('input', (e) => {
 window.openAccountProfile = openAccountProfile;
 window.openAccountPassword = openAccountPassword;
 window.closeAccountProfile = closeAccountProfile;
+window.startAccountProfileEdit = startAccountProfileEdit;
+window.cancelAccountProfileEdit = cancelAccountProfileEdit;
+window.submitAccountProfile = submitAccountProfile;
+window.uploadAccountProfileAvatar = uploadAccountProfileAvatar;
 window.closeAccountPassword = closeAccountPassword;
 window.cancelAccountPassword = cancelAccountPassword;
 window.openAccountPrefs = openAccountPrefs;
