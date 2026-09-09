@@ -936,6 +936,7 @@ class AgentBridge:
                 owns_conversation=resolved_agent_id == host_id,
             )
             self._apply_scene_context(agent, session_id)
+            self._apply_employee_context(agent)
             return agent
 
     def _apply_session_project(self, agent, session_id: str, agent_id: str) -> None:
@@ -980,6 +981,40 @@ class AgentBridge:
                     agent.skill_manager.selection.update(names)
         except Exception as e:
             logger.debug(f"[AgentBridge] apply_scene_context failed: {e}")
+
+    def _apply_employee_context(self, agent) -> None:
+        """Append the Agent's digital-employee persona/greeting to the prompt.
+
+        Injected after any scene context so both coexist: the scene establishes
+        the working persona, and the employee fields personalise this Agent.
+        Purely additive — the greeting is surfaced as a persona note, never
+        auto-sent to the user. A missing employee module or profile is a no-op.
+        """
+        profile = getattr(agent, "agent_profile", None)
+        if profile is None:
+            return
+        if (
+            not getattr(profile, "persona_summary", None)
+            and not getattr(profile, "greeting", None)
+            and not getattr(profile, "sops", None)
+            and not getattr(profile, "position", None)
+        ):
+            return
+        blocks = []
+        if getattr(profile, "position", None):
+            blocks.append(f"## 👤 职位\n{profile.position}\n")
+        if getattr(profile, "persona_summary", None):
+            blocks.append(f"## 👤 员工人设\n{profile.persona_summary}\n")
+        if getattr(profile, "greeting", None):
+            blocks.append(f"## 👋 问候语\n{profile.greeting}\n")
+        sops = tuple(getattr(profile, "sops", None) or ())
+        if sops:
+            blocks.append("## 📋 SOP\n" + "\n".join(f"- {name}" for name in sops) + "\n")
+        suffix = "\n".join(blocks).strip()
+        if not suffix:
+            return
+        existing = getattr(agent, "extra_system_suffix", None) or ""
+        agent.extra_system_suffix = f"{existing}\n\n{suffix}".strip() if existing else suffix
 
     def apply_session_prefs(
         self, agent, session_id: str, agent_id: str = None, owns_conversation: bool = True

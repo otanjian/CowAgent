@@ -93,15 +93,32 @@ def _engineering_root() -> Optional[str]:
         return None
 
 
+def _tenant_base_real() -> Optional[str]:
+    """The operator-configured base for new tenant shared roots, realpath'd.
+
+    A shared root under this base is as trusted as the engineering root: the
+    operator opted into it explicitly (config ``tenant_shared_base`` or env
+    ``COW_TENANT_BASE``), so the home/global-escape guard must not reject the
+    tenants that legitimately live there. Returns None when unset.
+    """
+    try:
+        from config import get_tenant_shared_base
+        return get_tenant_shared_base()
+    except Exception:
+        return None
+
+
 def _is_home_or_global_escape(path: str, home: str, engineering: Optional[str]) -> bool:
     """True when ``path`` escapes into home/config/global areas.
 
     Rejects a path that is (or sits inside) the user's home or a global data
     root, unless it is the verified engineering/workspace root (or a descendant)
-    — a default tenant legitimately lives there, and that root is already
-    verified rather than user-controlled.
+    or the operator-configured tenant data base (or a descendant) -- a default
+    tenant legitimately lives in the former and new tenants derive under the
+    latter, and both roots are verified rather than user-controlled.
     """
-    if _contains(home, path) and not (engineering and _contains(engineering, path)):
+    trusted = [t for t in (engineering, _tenant_base_real()) if t]
+    if _contains(home, path) and not any(_contains(t, path) for t in trusted):
         return True
     # Global data/config root: tenant data must never be stored in the config/
     # source tree or the shared data directory itself.
@@ -115,16 +132,48 @@ def _is_home_or_global_escape(path: str, home: str, engineering: Optional[str]) 
     return False
 
 
+def validate_tenant_shared_root(root: str, *, tenant_id: Optional[str] = None,
+                                svc=None) -> None:
+    """Reject a shared root that equals/contains/is contained by another tenant's.
+
+    Cross-tenant containment (3.9): two tenants must never share or overlap
+    roots, or one tenant could read the other's shared assets. ``tenant_id``
+    (when given) is skipped so its own historical nesting stays legal; pass
+    None to compare a brand-new tenant against every existing root. Uses
+    ``os.path.realpath`` so symlinks cannot smuggle a path out. Throws
+    ``StateDirError`` on violation.
+
+    Shared by read-time resolution (``shared_root()``) and by tenant creation
+    (``auth.service``), so a root that can never resolve is refused at write
+    time instead of poisoning the other tenant's resolution.
+    """
+    from auth.service import get_identity_service
+    svc = svc if svc is not None else get_identity_service()
+    target = _real(root)
+    for other in svc.tenant_shared_roots():
+        # Skip the tenant being validated: its own nested paths are legal.
+        if tenant_id is not None and other["id"] == tenant_id:
+            continue
+        other_root = _real(other["shared_root"])
+        # Equal, or one contains the other -> cross-tenant containment.
+        if _contains(target, other_root) or _contains(other_root, target):
+            who = f"tenant {tenant_id!r} " if tenant_id else ""
+            raise StateDirError(
+                f"{who}shared root {target!r} overlaps tenant {other['id']!r} "
+                f"root {other_root!r}"
+            )
+
+
 def _assert_tenant_roots_do_not_contain(ident, root) -> None:
     """Reject a tenant root that escapes into home/config or another tenant (3.9).
 
     ``shared_root()`` and the tenant base resolvers must never return a path
     that (a) is/falls inside the user's home or a global data/config root
-    (unless it is the verified engineering workspace root), or (b) equals or
-    contains / is contained by another tenant's shared root. Both checks use
-    ``os.path.realpath`` so symlinks cannot smuggle a path out. Throws
-    ``StateDirError`` on violation. Same-tenant historical nesting is allowed —
-    only *other* tenants' roots are compared.
+    (unless it is the verified engineering/workspace root or the configured
+    tenant base), or (b) equals or contains / is contained by another tenant's
+    shared root. Both checks use ``os.path.realpath`` so symlinks cannot smuggle
+    a path out. Throws ``StateDirError`` on violation. Same-tenant historical
+    nesting is allowed -- only *other* tenants' roots are compared.
     """
     from common.runtime_identity import current_identity
     if not ident.tenant_id:
@@ -142,17 +191,7 @@ def _assert_tenant_roots_do_not_contain(ident, root) -> None:
     from auth.service import get_identity_service
     try:
         svc = get_identity_service()
-        for other in svc.tenant_shared_roots():
-            # Skip the tenant being resolved: its own nested paths are legal.
-            if other["id"] == ident.tenant_id:
-                continue
-            other_root = _real(other["shared_root"])
-            # Equal, or one contains the other -> cross-tenant containment.
-            if _contains(target, other_root) or _contains(other_root, target):
-                raise StateDirError(
-                    f"tenant {ident.tenant_id!r} shared root {target!r} "
-                    f"overlaps tenant {other['id']!r} root {other_root!r}"
-                )
+        validate_tenant_shared_root(root, tenant_id=ident.tenant_id, svc=svc)
     except StateDirError:
         raise
     except Exception as e:

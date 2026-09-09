@@ -627,6 +627,26 @@ class IdentityAuditHandler:
         return _json({"status": "success", **result})
 
 
+class IdentityAdministeredTenantsHandler:
+    """GET /api/identity/administered-tenants — tenants the actor administers.
+
+    Personal-scoped read (no X-Tenant-ID): returns exactly the tenants where the
+    authenticated account holds an active ``tenant_admin`` role. Optional
+    ``user_id`` query param also reports that target user's membership status
+    within each *administered* tenant (for the member-edit tenant checkboxes).
+    A platform admin is NOT broadened to all tenants here — the candidate set is
+    the actor's own tenant_admin tenants, consistent with ``account-administration``.
+    """
+
+    def GET(self):
+        _guard_database()
+        ctx = _require_context()
+        svc = _get_service()
+        user_id = web.input(user_id="").user_id or None
+        items = svc.administered_tenants(ctx.user_id, target_user_id=user_id)
+        return _json({"status": "success", "items": items})
+
+
 # --- Platform target-tenant authorization adapter ------------------------
 
 class PlatformTenantRolesHandler:

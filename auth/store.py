@@ -300,6 +300,113 @@ def _migration_3(con: sqlite3.Connection) -> None:
 _migrations.append(_migration_3)
 
 
+def _migration_4(con: sqlite3.Connection) -> None:
+    """Enterprise control-plane tables (open-database-runtime 7.x-9.x).
+
+    Four new stores back the credential-management, action-approval and
+    resource-quota slices:
+
+    * ``credentials`` + ``credential_versions`` — external credentials stored
+      encrypted (ciphertext here is opaque; key material is deployment
+      controlled). Rotation appends a new version row and bumps ``version``;
+      the old ciphertext stays for audit but only the current version is ever
+      decryptable. ``active`` marks a revoked credential.
+    * ``approvals`` — single high-risk external side-effect actions: pending /
+      approved / denied / expired / revoked with requester, agent, resource and
+      decision trace. Versioning guards concurrent decisions.
+    * ``quota_limits`` + ``quota_usage`` — tenant (and optional user) hard
+      limits per metric with windowed usage so a limit change applies from the
+      next consumption, never retroactively.
+    """
+    con.executescript(
+        """
+        CREATE TABLE credentials (
+            id            TEXT PRIMARY KEY,
+            tenant_id     TEXT NOT NULL REFERENCES tenants(id),
+            name          TEXT NOT NULL,
+            resource_kind TEXT NOT NULL DEFAULT '',
+            resource_id   TEXT NOT NULL DEFAULT '',
+            ciphertext    TEXT NOT NULL,
+            active        INTEGER NOT NULL DEFAULT 1,
+            version       INTEGER NOT NULL DEFAULT 1,
+            created_by    TEXT NOT NULL,
+            created_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+            updated_at    INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+        CREATE UNIQUE INDEX idx_credentials_tenant_name
+            ON credentials(tenant_id, name);
+        CREATE INDEX idx_credentials_resource
+            ON credentials(tenant_id, resource_kind, resource_id);
+
+        CREATE TABLE credential_versions (
+            credential_id TEXT NOT NULL REFERENCES credentials(id),
+            version       INTEGER NOT NULL,
+            ciphertext    TEXT NOT NULL,
+            action        TEXT NOT NULL,
+            changed_by    TEXT NOT NULL,
+            changed_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+            PRIMARY KEY (credential_id, version)
+        );
+
+        CREATE TABLE approvals (
+            id               TEXT PRIMARY KEY,
+            tenant_id        TEXT NOT NULL REFERENCES tenants(id),
+            requester_user_id TEXT NOT NULL,
+            agent_id         TEXT NOT NULL DEFAULT '',
+            action           TEXT NOT NULL,
+            payload_json     TEXT NOT NULL DEFAULT '{}',
+            status           TEXT NOT NULL DEFAULT 'pending',
+            decision_by      TEXT,
+            decision_note    TEXT NOT NULL DEFAULT '',
+            expires_at       INTEGER,
+            created_at       INTEGER NOT NULL DEFAULT (unixepoch()),
+            decided_at       INTEGER,
+            version          INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE INDEX idx_approvals_tenant_status
+            ON approvals(tenant_id, status);
+
+        CREATE TABLE quota_limits (
+            tenant_id  TEXT NOT NULL,
+            user_id    TEXT NOT NULL DEFAULT '',
+            metric     TEXT NOT NULL,
+            hard_limit INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (tenant_id, user_id, metric)
+        );
+        CREATE TABLE quota_usage (
+            tenant_id    TEXT NOT NULL,
+            user_id      TEXT NOT NULL DEFAULT '',
+            metric       TEXT NOT NULL,
+            window_start INTEGER NOT NULL,
+            used         INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (tenant_id, user_id, metric, window_start)
+        );
+        """
+    )
+
+
+_migrations.append(_migration_4)
+
+
+def _migration_5(con: sqlite3.Connection) -> None:
+    """Per-account avatar token (web console personal-profile edit).
+
+    Adds a single ``avatar`` column to ``users`` holding ``AVATAR_IMAGE_TOKEN``
+    (``"image"``) when the account uploaded an avatar, or NULL when none. The
+    bytes live on disk under ``shared_root()/avatars`` keyed by ``user-<id>``;
+    the column is only a metadata flag so a profile-edit upload never races the
+    agent avatar store. Default NULL keeps existing accounts avatar-less.
+    """
+    con.executescript(
+        """
+        ALTER TABLE users ADD COLUMN avatar TEXT;
+        """
+    )
+
+
+_migrations.append(_migration_5)
+
+
 class IdentityStoreError(RuntimeError):
     """Raised when the identity store cannot be opened or migrated."""
 

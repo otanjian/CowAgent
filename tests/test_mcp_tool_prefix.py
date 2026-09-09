@@ -94,3 +94,28 @@ def test_omitted_or_empty_prefix_preserves_existing_names(manager, options):
     tool.client.call_tool = Mock(return_value="unchanged")
     assert tool.execute({}).result == "unchanged"
     tool.client.call_tool.assert_called_once_with("web_search", {})
+
+
+def test_mcp_sync_respects_agent_allow_deny(manager):
+    """Re-injected MCP tools must not bypass a digital-employee allow/deny.
+
+    The agent carries an allowlist that only admits ``web_search`` and a
+    denylist covering ``web_fetch``. After a late MCP load, sync may not
+    re-inject ``web_fetch`` (denied) even though it is now registered, and must
+    still inject ``web_search`` (allowlisted).
+    """
+    from agent.registry import AgentProfile
+
+    load_server(manager, tool_name_prefix="remote_")
+    agent = SimpleNamespace(
+        tools={},
+        agent_profile=AgentProfile(
+            "gated",
+            "Gated",
+            "/tmp/cow",
+            tools_allowlist=["web_search", "remote_web_search"],
+            tools_denylist=["web_fetch", "remote_web_fetch"],
+        ),
+    )
+    manager.sync_mcp_into_agent(agent)
+    assert set(agent.tools) == {"remote_web_search"}

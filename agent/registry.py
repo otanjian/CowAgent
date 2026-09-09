@@ -44,6 +44,19 @@ class AgentProfile:
     skills: Optional[Tuple[str, ...]] = None
     knowledge: Optional[Tuple[str, ...]] = None
 
+    # Digital-employee fields. ``None`` / empty means "not configured", which
+    # for tools_allowlist deliberately means "no allowlist (default behaviour)".
+    position: Optional[str] = None
+    category: Optional[str] = None
+    tags: Tuple[str, ...] = ()
+    greeting: Optional[str] = None
+    persona_summary: Optional[str] = None
+    scene_id: Optional[str] = None
+    knowledge_ids: Optional[Tuple[str, ...]] = None
+    sops: Tuple[str, ...] = ()
+    tools_allowlist: Optional[Tuple[str, ...]] = None
+    tools_denylist: Tuple[str, ...] = ()
+
     @property
     def workspace_path(self) -> Path:
         return Path(self.workspace)
@@ -67,6 +80,26 @@ class AgentProfile:
             data["skills"] = list(self.skills)
         if self.knowledge is not None:
             data["knowledge"] = list(self.knowledge)
+        if self.position:
+            data["position"] = self.position
+        if self.category:
+            data["category"] = self.category
+        if self.tags:
+            data["tags"] = list(self.tags)
+        if self.greeting:
+            data["greeting"] = self.greeting
+        if self.persona_summary:
+            data["persona_summary"] = self.persona_summary
+        if self.scene_id:
+            data["scene_id"] = self.scene_id
+        if self.knowledge_ids is not None:
+            data["knowledge_ids"] = list(self.knowledge_ids)
+        if self.sops:
+            data["sops"] = list(self.sops)
+        if self.tools_allowlist is not None:
+            data["tools_allowlist"] = list(self.tools_allowlist)
+        if self.tools_denylist:
+            data["tools_denylist"] = list(self.tools_denylist)
         return data
 
 
@@ -97,6 +130,37 @@ def _asset_selection(
         name = name.strip()
         if name and name not in seen:
             seen.append(name)
+    return tuple(seen)
+
+
+def _string_field(raw: Mapping[str, Any], agent_id: str, key: str) -> Optional[str]:
+    """Parse an optional single-string field.
+
+    ``None`` or absent stays ``None``; a non-empty string is returned stripped.
+    An empty string is treated as unset (``None``) rather than a distinct value,
+    so a console clearing a field actually clears it. A non-string is an error.
+    """
+    value = raw.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise AgentRegistryError(f"agent '{agent_id}' {key} must be a string when set")
+    stripped = value.strip()
+    return stripped or None
+
+
+def _string_list(raw: Mapping[str, Any], agent_id: str, key: str) -> Tuple[str, ...]:
+    """Parse an optional list-of-strings field, defaulting to empty tuple."""
+    value = raw.get(key, [])
+    if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
+        raise AgentRegistryError(
+            f"agent '{agent_id}' {key} must be a list of strings when set"
+        )
+    seen = []
+    for item in value:
+        item = item.strip()
+        if item and item not in seen:
+            seen.append(item)
     return tuple(seen)
 
 
@@ -160,6 +224,16 @@ def _profile_from_mapping(
         avatar=avatar.strip() if isinstance(avatar, str) and avatar.strip() else None,
         skills=_asset_selection(raw, agent_id, "skills"),
         knowledge=_asset_selection(raw, agent_id, "knowledge"),
+        position=_string_field(raw, agent_id, "position"),
+        category=_string_field(raw, agent_id, "category"),
+        tags=_string_list(raw, agent_id, "tags"),
+        greeting=_string_field(raw, agent_id, "greeting"),
+        persona_summary=_string_field(raw, agent_id, "persona_summary"),
+        scene_id=_string_field(raw, agent_id, "scene_id"),
+        knowledge_ids=_asset_selection(raw, agent_id, "knowledge_ids"),
+        sops=_string_list(raw, agent_id, "sops"),
+        tools_allowlist=_asset_selection(raw, agent_id, "tools_allowlist"),
+        tools_denylist=_string_list(raw, agent_id, "tools_denylist"),
     )
 
 

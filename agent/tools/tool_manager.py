@@ -642,8 +642,14 @@ class ToolManager:
             return ([], [])
 
         from agent.tools.mcp.mcp_tool import McpTool
+        # A restriction may apply to this agent (digital-employee allow/deny).
+        # Re-injecting MCP tools that finished loading after the agent was built
+        # must respect it, otherwise the policy is bypassed.
+        allowed_names = self._agent_allowed_mcp_names(agent)
         current = self._mcp_tool_instances
         registry_names = set(current.keys())
+        if allowed_names is not None:
+            registry_names = {n for n in registry_names if n in allowed_names}
 
         agent_tools = agent.tools
 
@@ -681,6 +687,30 @@ class ToolManager:
             return ([], [])
 
         return (sorted(added), sorted(removed))
+
+    def _agent_allowed_mcp_names(self, agent) -> Optional[set]:
+        """Return the set of MCP tool names this agent may use, or ``None``.
+
+        ``None`` means "no allowlist" (all MCP tools allowed); an empty set
+        means the agent allows none. A denylist is honoured too.
+        """
+        profile = getattr(agent, "agent_profile", None)
+        if profile is None:
+            return None
+        from agent.effective_capabilities import resolve_effective_capabilities, is_tool_allowed
+        scene = None
+        if profile.scene_id:
+            try:
+                from scenes.service import find_scene
+                scene, _ = find_scene(profile.scene_id)
+            except Exception:  # pragma: no cover - defensive
+                scene = None
+        effective = resolve_effective_capabilities(profile, scene=scene)
+        if effective.tools_allowlist is None and not effective.tools_denylist:
+            return None
+        return set(
+            name for name in self._mcp_tool_instances if is_tool_allowed(name, effective)
+        )
 
     # ------------------------------------------------------------------
     # On-demand MCP tool retrieval support

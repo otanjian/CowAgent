@@ -57,6 +57,7 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
                 "/api/tenant/departments", "TenantDepartmentsHandler",
                 "/api/tenant/departments/([^/]+)", "TenantDepartmentHandler",
                 "/api/identity/audit", "IdentityAuditHandler",
+                "/api/identity/administered-tenants", "IdentityAdministeredTenantsHandler",
             ),
             vars(web_channel),
             autoreload=False,
@@ -549,6 +550,9 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
     # --- tenant create derives controlled shared_root (task 4.4) ----------
     def test_tenant_create_derives_shared_root_when_omitted(self):
         token = self.svc.login("root", "Str0ngAdminPass").token
+        # Patch a controlled deployment base (tmp, realpath'd like the real
+        # resolver) so derivation does not depend on the ambient registry.
+        deploy_base = os.path.realpath(tempfile.mkdtemp())
         payload = json.dumps({
             "code": "derived", "name": "Derived",
             "admin_username": "droot", "admin_display": "DRoot",
@@ -558,8 +562,9 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
             # handler (design §4: the web form never accepts a shared_root).
             "shared_root": "/etc",
         })
-        resp = self._request("/api/platform/tenants", method="POST",
-                             data=payload, token=token)
+        with patch("auth.service._deployment_shared_base", lambda svc=None: deploy_base):
+            resp = self._request("/api/platform/tenants", method="POST",
+                                 data=payload, token=token)
         data = self._json(resp)
         self.assertEqual(data["status"], "success")
         # The created tenant must not carry the client-supplied path; it should be
@@ -580,7 +585,7 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
         })
         # Unit-level: with no resolvable deployment base, create_tenant must raise
         # a config_error (503) rather than persisting an unusable root.
-        with patch("auth.service._deployment_shared_base", lambda: None), \
+        with patch("auth.service._deployment_shared_base", lambda svc=None: None), \
              patch.object(self.svc, "_require_recent_password", lambda *a, **k: None):
             with self.assertRaises(Exception) as cm:
                 self.svc.create_tenant(
@@ -615,6 +620,114 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
         resp = self._request("/api/tenant/members?status=bogus", method="GET",
                              token=token, tenant=self.tid)
         self.assertEqual(self._json(resp)["code"], "bad_request")
+
+    # --- administered-tenants (multi-tenant member assignment) ------------
+
+    def _make_admin_in_beta(self):
+        """Create beta + gamma tenants; make root a tenant_admin of beta too."""
+        self.svc.create_tenant(
+            actor_user_id=self.root["id"], code="beta", name="Beta",
+            shared_root="/s/beta", admin_username="root2", admin_display="Root2",
+            admin_password="Str0ngAdminPass2", recent_password="Str0ngAdminPass")
+        self.svc.create_tenant(
+            actor_user_id=self.root["id"], code="gamma", name="Gamma",
+            shared_root="/s/gamma", admin_username="root3", admin_display="Root3",
+            admin_password="Str0ngAdminPass3", recent_password="Str0ngAdminPass")
+        beta_tid = next(t for t in self.svc.list_tenants() if t["code"] == "beta")["id"]
+        gamma_tid = next(t for t in self.svc.list_tenants() if t["code"] == "gamma")["id"]
+        self.svc.set_tenant_admin(
+            actor_user_id=self.root["id"], tenant_id=beta_tid, user_id=self.root["id"],
+            display_name="Root", recent_password="Str0ngAdminPass")
+        return beta_tid, gamma_tid
+
+    def test_administered_tenants_requires_login(self):
+        resp = self._request("/api/identity/administered-tenants", method="GET")
+        self.assertTrue(str(getattr(resp, "status", "")).startswith("4"))
+
+    def test_administered_tenants_lists_only_admin_tenants(self):
+        self._make_admin_in_beta()
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        resp = self._request("/api/identity/administered-tenants", method="GET", token=token)
+        data = self._json(resp)
+        self.assertEqual(data["status"], "success")
+        codes = {t["code"] for t in data["items"]}
+        self.assertIn("acme", codes)
+        self.assertIn("beta", codes)
+        self.assertNotIn("gamma", codes)
+
+    def test_administered_tenants_reports_target_membership(self):
+        beta_tid, _gamma_tid = self._make_admin_in_beta()
+        member = self.svc.create_member(
+            actor_user_id=self.root["id"], tenant_id=self.tid, operation="create-new",
+            username="alice", display_name="Alice", temporary_password="Str0ngPassTmp",
+            roles=["member"])
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        resp = self._request(
+            "/api/identity/administered-tenants?user_id=" + member["user_id"],
+            method="GET", token=token)
+        data = self._json(resp)
+        items = {t["code"]: t for t in data["items"]}
+        self.assertEqual(items["acme"]["member"], True)
+        self.assertEqual(items["acme"]["member_id"], member["membership_id"])
+        self.assertEqual(items["beta"]["member"], False)
+        self.assertIn("member_version", items["acme"])
+
+    # --- tools/skills console read gating (platform admin vs member) ------
+
+    @staticmethod
+    def _platform_admin_ctx():
+        from auth.runtime import RequestContext
+        return RequestContext(
+            user_id="usr_admin", username="root", display_name="Root",
+            is_platform_admin=True, must_change_password=False,
+            tenant_id="tnt_acme", membership={"id": "m_admin"},
+            permissions={"agent.read"}, is_tenant_admin=True)
+
+    @staticmethod
+    def _member_ctx():
+        from auth.runtime import RequestContext
+        return RequestContext(
+            user_id="usr_member", username="alice", display_name="Alice",
+            is_platform_admin=False, must_change_password=False,
+            tenant_id="tnt_acme", membership={"id": "m_member"},
+            permissions={"agent.read"}, is_tenant_admin=False)
+
+    def _request_tools_skills(self, path, ctx):
+        """Drive ToolsHandler/SkillsHandler with a patched _db_scope context."""
+        import contextlib
+
+        @contextlib.contextmanager
+        def _fake_db_scope():
+            yield ctx
+
+        with patch.object(web_channel, "_is_database_identity", lambda: True), \
+                patch.object(web_channel, "_db_scope", _fake_db_scope), \
+                patch.object(web_channel, "_require_auth", lambda: None):
+            app = web_channel.build_web_app()
+            return app.request(path, method="GET")
+
+    def test_platform_admin_can_list_tools(self):
+        resp = self._request_tools_skills("/api/tools", self._platform_admin_ctx())
+        # A platform admin must not be 403-gated by a functional tool.read they
+        # do not hold; the catalog is returned (even if empty of tools).
+        self.assertEqual(resp.status, "200 OK", resp.data[:200])
+        data = json.loads(resp.data.decode("utf-8"))
+        self.assertEqual(data["status"], "success")
+
+    def test_platform_admin_can_list_skills(self):
+        resp = self._request_tools_skills("/api/skills", self._platform_admin_ctx())
+        self.assertEqual(resp.status, "200 OK", resp.data[:200])
+        data = json.loads(resp.data.decode("utf-8"))
+        self.assertEqual(data["status"], "success")
+        self.assertIn("skills", data)
+
+    def test_member_without_tool_grant_is_rejected(self):
+        resp = self._request_tools_skills("/api/tools", self._member_ctx())
+        self.assertEqual(resp.status, "403 Forbidden", resp.data[:200])
+
+    def test_member_without_skill_grant_is_rejected(self):
+        resp = self._request_tools_skills("/api/skills", self._member_ctx())
+        self.assertEqual(resp.status, "403 Forbidden", resp.data[:200])
 
 
 if __name__ == "__main__":

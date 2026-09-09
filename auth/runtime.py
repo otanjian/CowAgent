@@ -158,6 +158,48 @@ def revalidate_context(svc: IdentityService, ctx: RequestContext) -> RequestCont
     )
 
 
+def member_context(
+    svc: IdentityService,
+    user_id: str,
+    tenant_id: str,
+) -> RequestContext:
+    """Resolve a known user into a tenant-scoped ``RequestContext`` without a session token.
+
+    Used by IM inbound execution (task 4.x): the external identity binding has
+    already authenticated *who* the author is, so no web session exists. The
+    caller must independently verify that ``user_id`` resolves (``find_user_for_external_identity``
+    returns active users only) before calling this — the tenant/active checks are
+    still re-done here because they are the actual authorization boundary.
+
+    Raises ``IdentityContextError`` (403 ``forbidden``) when the user is not an
+    active member of ``tenant_id`` or the tenant is missing/inactive.
+    """
+    if not user_id or not tenant_id:
+        raise _forbidden()
+    tenant_row = svc.get_tenant(tenant_id)
+    if not tenant_row or not tenant_row["active"]:
+        raise _forbidden()
+    user = svc._find_user_by_id(user_id)
+    if not user or not user["active"]:
+        raise _forbidden()
+    membership = svc._membership(user_id, tenant_id)
+    if not membership or not membership["active"]:
+        raise _forbidden()
+    permissions = svc.permissions_for(user_id, tenant_id)
+    role_codes = svc.role_codes_for(user_id, tenant_id)
+    return RequestContext(
+        user_id=user["id"],
+        username=user["username"],
+        display_name=user["display_name"],
+        is_platform_admin=bool(user["is_platform_admin"]),
+        must_change_password=bool(user["must_change_password"]),
+        tenant_id=tenant_id,
+        membership=membership,
+        permissions=permissions,
+        is_tenant_admin=TENANT_ADMIN_CODE in role_codes,
+    )
+
+
 def to_runtime_identity(ctx: RequestContext, agent_id: Optional[str] = None,
                         session_id: Optional[str] = None) -> "RuntimeIdentity":
     """Bridge a resolved ``RequestContext`` into a ``RuntimeIdentity``.

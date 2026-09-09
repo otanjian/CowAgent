@@ -701,6 +701,17 @@ export interface AgentProfile {
   knowledge?: string[]
   // "shared" (reads the default Agent's knowledge base) or "own" (private dir).
   knowledge_mode?: 'shared' | 'own'
+  // Digital-employee fields (additive; older clients ignore unknown keys).
+  position?: string
+  category?: string
+  tags?: string[]
+  greeting?: string
+  persona_summary?: string
+  scene_id?: string
+  knowledge_ids?: string[]
+  sops?: string[]
+  tools_allowlist?: string[]
+  tools_denylist?: string[]
 }
 
 // A stored channel_instances record from the roster (team.json).

@@ -74,6 +74,22 @@ def _is_strictly_within(inner: Path, outer: Path) -> bool:
     return True
 
 
+def _scene_exists(scene_id: str) -> bool:
+    """Return True if a scene with ``scene_id`` is registered.
+
+    Used to reject an invalid ``scene_id`` in the admin API. A missing scenes
+    module or a broken config both resolve to False; only an absent/rejected
+    scene id should raise, so a scene that just cannot be looked up is treated
+    as invalid rather than silently accepted.
+    """
+    try:
+        from scenes.service import find_scene
+        scene, _ = find_scene(scene_id)
+        return scene is not None
+    except Exception:
+        return False
+
+
 class AgentAdminService:
     """Manage profiles without ever deleting an agent workspace implicitly."""
 
@@ -335,9 +351,21 @@ class AgentAdminService:
         knowledge: Optional[Iterable[str]] = None,
         knowledge_mode: str = None,
         revision: str = None,
+        position: str = None,
+        category: str = None,
+        tags: Optional[Iterable[str]] = None,
+        greeting: str = None,
+        persona_summary: str = None,
+        scene_id: str = None,
+        knowledge_ids: Optional[Iterable[str]] = None,
+        sops: Optional[Iterable[str]] = None,
+        tools_allowlist: Optional[Iterable[str]] = None,
+        tools_denylist: Optional[Iterable[str]] = None,
     ) -> Dict:
         if knowledge_mode not in (None, "shared", "own"):
             raise AgentAdminError("knowledge mode must be 'shared' or 'own'")
+        if scene_id and not _scene_exists(scene_id):
+            raise AgentAdminError(f"scene '{scene_id}' does not exist")
         with self._lock:
             settings = self._load()
             registry = self._registry(settings)
@@ -400,6 +428,28 @@ class AgentAdminService:
                         if knowledge is None
                         else tuple(self._asset_list(list(knowledge), "knowledge"))
                     ),
+                    position=(position or "").strip() or None,
+                    category=(category or "").strip() or None,
+                    tags=tuple(self._asset_list(list(tags), "tags")) if tags is not None else (),
+                    greeting=(greeting or "").strip() or None,
+                    persona_summary=(persona_summary or "").strip() or None,
+                    scene_id=(scene_id or "").strip() or None,
+                    knowledge_ids=(
+                        None
+                        if knowledge_ids is None
+                        else tuple(self._asset_list(list(knowledge_ids), "knowledge_ids"))
+                    ),
+                    sops=tuple(self._asset_list(list(sops), "sops")) if sops is not None else (),
+                    tools_allowlist=(
+                        None
+                        if tools_allowlist is None
+                        else tuple(self._asset_list(list(tools_allowlist), "tools_allowlist"))
+                    ),
+                    tools_denylist=(
+                        tuple(self._asset_list(list(tools_denylist), "tools_denylist"))
+                        if tools_denylist is not None
+                        else ()
+                    ),
                 )
                 registry.upsert(profile)
                 profiles = self._explicit_profiles(settings, self._registry(settings))
@@ -435,6 +485,16 @@ class AgentAdminService:
         skills=_UNSET,
         knowledge=_UNSET,
         revision: str = None,
+        position: str = None,
+        category: str = None,
+        tags=_UNSET,
+        greeting: str = None,
+        persona_summary: str = None,
+        scene_id: str = None,
+        knowledge_ids=_UNSET,
+        sops=_UNSET,
+        tools_allowlist=_UNSET,
+        tools_denylist=_UNSET,
     ) -> Dict:
         with self._lock:
             settings = self._load()
@@ -491,6 +551,56 @@ class AgentAdminService:
                     else tuple(self._asset_list(list(knowledge), "knowledge"))
                 )
             )
+            # Digital-employee fields. ``_UNSET`` = leave alone; ``None`` clears
+            # an optional string; an empty iterable clears a list field.
+            new_position = current.position if position is None else (position.strip() or None)
+            new_category = current.category if category is None else (category.strip() or None)
+            new_greeting = current.greeting if greeting is None else (greeting.strip() or None)
+            new_persona = (
+                current.persona_summary
+                if persona_summary is None
+                else (persona_summary.strip() or None)
+            )
+            new_scene_id = current.scene_id if scene_id is None else (scene_id.strip() or None)
+            if new_scene_id and not _scene_exists(new_scene_id):
+                raise AgentAdminError(f"scene '{new_scene_id}' does not exist")
+            new_tags = (
+                current.tags
+                if tags is _UNSET
+                else tuple(self._asset_list(list(tags), "tags")) if tags is not None else ()
+            )
+            new_sops = (
+                current.sops
+                if sops is _UNSET
+                else tuple(self._asset_list(list(sops), "sops")) if sops is not None else ()
+            )
+            new_knowledge_ids = (
+                current.knowledge_ids
+                if knowledge_ids is _UNSET
+                else (
+                    None
+                    if knowledge_ids is None
+                    else tuple(self._asset_list(list(knowledge_ids), "knowledge_ids"))
+                )
+            )
+            new_tools_allowlist = (
+                current.tools_allowlist
+                if tools_allowlist is _UNSET
+                else (
+                    None
+                    if tools_allowlist is None
+                    else tuple(self._asset_list(list(tools_allowlist), "tools_allowlist"))
+                )
+            )
+            new_tools_denylist = (
+                current.tools_denylist
+                if tools_denylist is _UNSET
+                else (
+                    tuple(self._asset_list(list(tools_denylist), "tools_denylist"))
+                    if tools_denylist is not None
+                    else ()
+                )
+            )
             updated = AgentProfile(
                 id=current.id,
                 name=new_name,
@@ -502,6 +612,16 @@ class AgentAdminService:
                 avatar=new_avatar,
                 skills=new_skills,
                 knowledge=new_knowledge,
+                position=new_position,
+                category=new_category,
+                tags=new_tags,
+                greeting=new_greeting,
+                persona_summary=new_persona,
+                scene_id=new_scene_id,
+                knowledge_ids=new_knowledge_ids,
+                sops=new_sops,
+                tools_allowlist=new_tools_allowlist,
+                tools_denylist=new_tools_denylist,
             )
             registry.upsert(updated)
             if not new_enabled:

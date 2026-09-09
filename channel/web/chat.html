@@ -211,12 +211,6 @@
                         </a>
                     </div>
                 </div>
-
-                <a id="nav-open-admin" href="/admin" target="cow-admin" rel="noopener"
-                   class="sidebar-item hidden flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px] mt-2">
-                    <i class="fas fa-gauge-high item-icon text-xs w-5 text-center"></i>
-                    <span data-i18n="nav_admin_console">管理控制台</span>
-                </a>
                 </div>
 
                 <!-- Admin Console Area (visible on /admin) -->
@@ -335,6 +329,15 @@
                 </div>
                 </div>
             </nav>
+
+            <!-- Pinned above account: open admin console (workbench only). -->
+            <div data-nav-shell="workbench" class="sidebar-admin-entry-wrap">
+                <a id="nav-open-admin" href="/admin" target="cow-admin" rel="noopener"
+                   class="sidebar-item sidebar-admin-entry hidden">
+                    <i class="fas fa-gauge-high item-icon" aria-hidden="true"></i>
+                    <span data-i18n="nav_admin_console">管理控制台</span>
+                </a>
+            </div>
 
             <!-- Account card stays outside the independently scrolling navigation. -->
             <div id="sidebar-account-footer" class="sidebar-account-footer">

@@ -210,6 +210,17 @@ class SchedulerTool(BaseTool):
             "schedule": schedule,
             "action": action
         }
+
+        # Database identity mode: stamp the creating tenant member onto the task
+        # so a later fire revalidates membership + grants (open-database-runtime
+        # 5.x). Legacy runs (no user/tenant) store nothing and keep firing.
+        try:
+            from agent.tools.scheduler.identity import owner_snapshot
+            owner = owner_snapshot(context)
+            if owner:
+                task_data["owner"] = owner
+        except Exception as e:
+            logger.warning(f"[SchedulerTool] owner snapshot skipped: {e}")
         
         # Calculate initial next_run_at
         next_run = self._calculate_next_run(task_data)

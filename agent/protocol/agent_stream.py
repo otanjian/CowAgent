@@ -1894,6 +1894,15 @@ class AgentStreamExecutor:
             if not tool:
                 raise ValueError(self._build_tool_not_found_message(tool_name))
 
+            # Second line of defence: even if a disallowed tool slipped into the
+            # agent's tool table (e.g. an MCP tool injected after assembly), the
+            # dispatch path must reject it rather than run it. This is the guard
+            # the digital-employee allow/deny policy relies on.
+            if not self._agent_tool_allowed(tool_name):
+                raise ValueError(
+                    self._build_tool_not_allowed_message(tool_name)
+                )
+
             # Set tool context
             tool.model = self.model
             tool.context = self.agent
@@ -1985,6 +1994,18 @@ class AgentStreamExecutor:
         if agent is None:
             return None
         try:
+            from agent.permission.isolation import isolation_decision
+
+            # Tenant execution isolation (open-database-runtime 6.x): in a
+            # tenant-member run arbitrary-code and file tools are confined to
+            # the tenant roots regardless of the legacy permission mode. This
+            # runs before the mode check so full-access cannot cross tenants.
+            isolation = isolation_decision(
+                tool_name, arguments, cwd=agent.effective_cwd()
+            )
+            if not isolation.allowed:
+                return isolation.reason
+
             from agent.permission import FULL_ACCESS, check_tool_call
 
             mode = agent.effective_permission_mode()
@@ -2004,9 +2025,44 @@ class AgentStreamExecutor:
             # Recomputed per call (never cached) so a grant made mid-session
             # applies to the very next invocation.
             denial = self._resource_tool_denial(tool_name)
-            return denial
+            if denial:
+                return denial
+
+            # Tool-call quota (open-database-runtime 9.x): tenant/user hard
+            # limits are metered per call for the current member identity, after
+            # every other gate passed, so denied calls are never charged. The
+            # meter is fail-open (a broken meter must not be the reason an
+            # otherwise-authorized call silently stops running); over-limit is
+            # a hard denial with a bilingual reason.
+            quota_denial = self._quota_tool_denial(tool_name)
+            return quota_denial
         except Exception as e:
             logger.warning(f"[Permission] Check skipped for {tool_name}: {e}")
+            return None
+
+    def _quota_tool_denial(self, tool_name: str) -> Optional[str]:
+        """Charge one tool call against the current identity's ``tool_calls``
+        quota when database-mode quota limits exist; None otherwise."""
+        from common.runtime_identity import current_identity
+
+        ident = current_identity()
+        if not ident.user_id or not ident.tenant_id:
+            return None
+        try:
+            from auth.service import get_identity_service
+
+            svc = get_identity_service()
+            allowed = svc.consume_quota(
+                user_id=ident.user_id, tenant_id=ident.tenant_id,
+                metric="tool_calls", amount=1,
+            )
+            return None if allowed else (
+                "工具调用配额已用尽，请管理员调整配额后重试。\n\n"
+                "Tool-call quota exhausted. Ask an administrator to raise the "
+                "limit, then retry."
+            )
+        except Exception as error:
+            logger.warning(f"[Permission] Quota meter skipped for {tool_name}: {error}")
             return None
 
     def _resource_tool_denial(self, tool_name: str) -> Optional[str]:
@@ -2083,6 +2139,37 @@ class AgentStreamExecutor:
             f"--- SKILL: {skill.name} (path: {skill_md_path}) ---\n"
             f"{skill_content}\n"
             f"--- END SKILL ---\n\n"
+            f"Available tools: {available_tools}"
+        )
+
+    def _agent_tool_allowed(self, tool_name: str) -> bool:
+        """Return whether ``tool_name`` is permitted for the binding Agent.
+
+        No profile or no allow/deny policy means "allow" (backward compatible).
+        """
+        agent = getattr(self, "agent", None)
+        profile = getattr(agent, "agent_profile", None)
+        if profile is None:
+            return True
+        from agent.effective_capabilities import resolve_effective_capabilities, is_tool_allowed
+
+        scene = None
+        if profile.scene_id:
+            try:
+                from scenes.service import find_scene
+                scene, _ = find_scene(profile.scene_id)
+            except Exception:  # pragma: no cover - defensive
+                scene = None
+        effective = resolve_effective_capabilities(profile, scene=scene)
+        if effective.tools_allowlist is None and not effective.tools_denylist:
+            return True
+        return is_tool_allowed(tool_name, effective)
+
+    def _build_tool_not_allowed_message(self, tool_name: str) -> str:
+        """Build an error for a tool blocked by the agent's allow/deny policy."""
+        available_tools = list(self.tools.keys())
+        return (
+            f"Tool '{tool_name}' is not allowed for this agent. "
             f"Available tools: {available_tools}"
         )
 

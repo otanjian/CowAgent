@@ -151,6 +151,41 @@ class HttpPolicyTests(unittest.TestCase):
         self.assertTrue(matched)
         self.assertEqual(entry["policy"], "tenant")
 
+    def test_require_read_permission_allows_platform_admin_in_database(self):
+        # A platform admin (authorization_mode "all") must pass a functional
+        # read-permission gate even when their role set lacks the specific
+        # permission (e.g. skill.read / tool.read, which the built-in roles do
+        # not carry by default). All other auth helpers treat platform-all as
+        # unrestricted, so the read-permission gate must too — otherwise
+        # /api/skills and /api/tools return 403 to a platform admin and the
+        # console's 工具与技能 page stays empty.
+        from auth.runtime import RequestContext
+        web.ctx.headers = []
+        ctx = RequestContext(
+            user_id="u1", username="admin", display_name="A",
+            is_platform_admin=True, must_change_password=False,
+            tenant_id="tnt_1", membership={"id": "m1"}, permissions={"agent.read"},
+            is_tenant_admin=True)
+        # Must NOT raise HTTPError for a platform admin.
+        web_channel._require_read_permission(ctx, "skill.read")
+        web_channel._require_read_permission(ctx, "tool.read")
+
+    def test_require_read_permission_rejects_member_without_permission(self):
+        # A normal member who lacks the functional permission must be rejected
+        # (403), even if they hold agent.read. This preserves the tighter
+        # skill.read/tool.read gating required by the resource-authorization
+        # milestone for non-platform members.
+        from auth.runtime import RequestContext
+        web.ctx.headers = []
+        ctx = RequestContext(
+            user_id="u2", username="member", display_name="M",
+            is_platform_admin=False, must_change_password=False,
+            tenant_id="tnt_1", membership={"id": "m2"}, permissions={"agent.read"},
+            is_tenant_admin=False)
+        with self.assertRaises(web.HTTPError) as cm:
+            web_channel._require_read_permission(ctx, "skill.read")
+        self.assertEqual(cm.exception.args[0], "403 Forbidden")
+
     def test_require_platform_console_rejects_non_admin_in_database(self):
         # The config/models console guard must reject a resolved context that is
         # not a platform admin (403), and allow a platform admin through. This is

@@ -818,6 +818,17 @@ class FeiShuChanel(ChatChannel):
             no_need_at=True
         )
         if context:
+            # Database identity mode: bind this message to the author's external
+            # identity (provider=feishu, issuer=the app/corp the bot runs as,
+            # subject=the author's open_id). chat_channel._handle maps it to a
+            # tenant member before anything runs (task 4.x).
+            from channel.external_identity import stamp_external_identity
+            stamp_external_identity(
+                context,
+                provider="feishu",
+                issuer=self.feishu_app_id or "",
+                subject=feishu_msg.actual_user_id or feishu_msg.from_user_id,
+            )
             # Team bot: a leading "@teammate" hands this turn to that member,
             # exactly like the Web console. Resolved from the instance roster
             # directly so it works on the very first message.

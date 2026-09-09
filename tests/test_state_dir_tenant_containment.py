@@ -58,6 +58,36 @@ def _bind_svc_to_db(svc, db, monkeypatch):
     monkeypatch.setattr(asvc, "identity_db_path", lambda: db)
 
 
+def test_configured_tenant_base_under_home_is_allowed(registry, tmp_path, monkeypatch):
+    """A tenant root under an operator-configured tenant base resolves even when
+    that base sits under the home dir (the base is trusted like engineering)."""
+    base = os.path.join(os.path.expanduser("~"), ".cow-test-tenant-base")
+    root = os.path.join(base, "tenants", "acme-data")
+    monkeypatch.setenv("COW_TENANT_BASE", base)
+    db = _db()
+    svc = _svc(db)
+    tid = svc.list_tenants()[0]["id"]
+    _set_root(svc, tid, root)
+    _bind_svc_to_db(svc, db, monkeypatch)
+    with use_identity(RuntimeIdentity(tenant_id=tid, agent_id="alpha")):
+        assert state_dir.shared_root() == Path(root)
+
+
+def test_home_root_without_configured_base_rejected(registry, tmp_path, monkeypatch):
+    """The same under-home root is refused when no tenant base is configured."""
+    monkeypatch.delenv("COW_TENANT_BASE", raising=False)
+    root = os.path.join(
+        os.path.expanduser("~"), ".cow-test-tenant-base", "tenants", "acme-data")
+    db = _db()
+    svc = _svc(db)
+    tid = svc.list_tenants()[0]["id"]
+    _set_root(svc, tid, root)
+    _bind_svc_to_db(svc, db, monkeypatch)
+    with use_identity(RuntimeIdentity(tenant_id=tid, agent_id="alpha")):
+        with pytest.raises(state_dir.StateDirError, match="home/global workspace root"):
+            state_dir.shared_root()
+
+
 def test_engineering_root_is_allowed(registry, tmp_path, monkeypatch):
     """A tenant whose root IS the verified engineering/workspace root passes."""
     db = _db()
@@ -82,20 +112,28 @@ def test_home_fallback_escape_rejected(registry, monkeypatch):
 
 
 def test_cross_tenant_containment_rejected(registry, tmp_path, monkeypatch):
-    """Tenant A's root contains tenant B's root -> rejected (cross-tenant)."""
+    """Tenant A's root contains tenant B's root -> rejected (cross-tenant).
+
+    Tenant creation now refuses a nested root up front, so this test reaches the
+    read-time guard the way a pre-fix install actually would: a tenant that was
+    created at a legal root and later moved under another tenant's root (direct
+    DB write / legacy migration) must still fail resolution.
+    """
     db = _db()
     svc = _svc(db)
     acme = [t for t in svc.list_tenants() if t["code"] == "acme"][0]
     tid = acme["id"]
     a_root = str(tmp_path / "tenantA")
     _set_root(svc, tid, a_root)
-    # Create a second tenant whose root is nested inside tenantA.
-    root = svc.list_platform_users()[0]
-    svc.create_tenant(
-        actor_user_id=root["id"], code="beta", name="Beta",
-        shared_root=os.path.join(a_root, "sub"), admin_username="betaadmin",
+    platform_admin = svc.list_platform_users()[0]
+    beta = svc.create_tenant(
+        actor_user_id=platform_admin["id"], code="beta", name="Beta",
+        shared_root=str(tmp_path / "beta-legal"), admin_username="betaadmin",
         admin_display="Beta", admin_password="Str0ngPass2",
         recent_password="Str0ngAdminPass")
+    # Move beta under tenantA's root, as a legacy bootstrap/direct DB write
+    # would have before the create-time guard existed.
+    _set_root(svc, beta["id"], os.path.join(a_root, "sub"))
     _bind_svc_to_db(svc, db, monkeypatch)
     with use_identity(RuntimeIdentity(tenant_id=tid, agent_id="alpha")):
         with pytest.raises(state_dir.StateDirError, match="overlaps tenant"):
@@ -109,12 +147,14 @@ def test_cross_tenant_equal_root_rejected(registry, tmp_path, monkeypatch):
     tid = svc.list_tenants()[0]["id"]
     shared = str(tmp_path / "shared")
     _set_root(svc, tid, shared)
-    root = svc.list_platform_users()[0]
-    svc.create_tenant(
-        actor_user_id=root["id"], code="beta", name="Beta",
-        shared_root=shared, admin_username="betaadmin",
+    platform_admin = svc.list_platform_users()[0]
+    beta = svc.create_tenant(
+        actor_user_id=platform_admin["id"], code="beta", name="Beta",
+        shared_root=str(tmp_path / "beta-legal"), admin_username="betaadmin",
         admin_display="Beta", admin_password="Str0ngPass2",
         recent_password="Str0ngAdminPass")
+    # Direct DB write forcing both tenants onto one root; read must refuse.
+    _set_root(svc, beta["id"], shared)
     _bind_svc_to_db(svc, db, monkeypatch)
     with use_identity(RuntimeIdentity(tenant_id=tid, agent_id="alpha")):
         with pytest.raises(state_dir.StateDirError, match="overlaps tenant"):

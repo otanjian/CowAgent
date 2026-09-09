@@ -1021,3 +1021,68 @@ test('navigation availability gate reads the authoritative /auth/context project
     h.run('_authContext = null');
     assert.equal(h.run('_viewNavDenied("roles")'), null);
 });
+
+test('sidebar label prefers the current tenant member display name over the account name', async () => {
+    // Account-level display name is "ADMIN"; the selected tenant's member
+    // display name is "平台管理员". On entry the cached /auth/me projection
+    // should drive the sidebar to the member name for the selected tenant.
+    const h = setup(async (url, options) => {
+        if (url === '/auth/check') return response(database('admin'));
+        if (url === '/auth/me') return response({
+            status: 'success',
+            user: { username: 'admin', display_name: 'ADMIN' },
+            tenants: [{ id: 't1', code: 'default', name: '默认租户',
+                membership: { display_name: '平台管理员', roles: [], department: null,
+                    position_text: '' } }],
+        });
+        return response({ status: 'success' });
+    }, { tenantResolution: true });
+    h.storage.set('cow_tenant_id', 't1');
+    await settle();
+    // After init the account self is fetched and the label should be the
+    // member display name for the selected tenant.
+    assert.equal(h.storage.get('cow_tenant_id'), 't1');
+    assert.equal(h.run('_currentMemberDisplayName()'), '平台管理员');
+    // The rendered sidebar name uses the member display name once the self
+    // projection has resolved.
+    await h.ctx.refreshAccountIdentity();
+    await settle();
+    assert.equal(h.node('sidebar-account-name').textContent, '平台管理员');
+});
+
+test('sidebar falls back to the account name when the selected tenant has no member display name', async () => {
+    const h = setup(async (url, options) => {
+        if (url === '/auth/check') return response(database('admin'));
+        if (url === '/auth/me') return response({
+            status: 'success',
+            user: { username: 'admin', display_name: 'ADMIN' },
+            tenants: [{ id: 't1', membership: { display_name: '  ', roles: [] } }],
+        });
+        return response({ status: 'success' });
+    }, { tenantResolution: true });
+    h.storage.set('cow_tenant_id', 't1');
+    await settle();
+    assert.equal(h.run('_currentMemberDisplayName()'), '', 'whitespace member name must not override');
+    await h.ctx.refreshAccountIdentity();
+    await settle();
+    assert.equal(h.node('sidebar-account-name').textContent, 'ADMIN');
+});
+
+test('sidebar ignores the member name when no tenant is selected or the account is not a member', async () => {
+    const h = setup(async (url, options) => {
+        if (url === '/auth/check') return response(database('admin'));
+        if (url === '/auth/me') return response({
+            status: 'success',
+            user: { username: 'admin', display_name: 'ADMIN' },
+            tenants: [],
+        });
+        return response({ status: 'success' });
+    }, { tenantResolution: true });
+    h.storage.set('cow_tenant_id', 't1');
+    await settle();
+    // No membership for t1 -> no member name; account name retained.
+    assert.equal(h.run('_currentMemberDisplayName()'), '');
+    await h.ctx.refreshAccountIdentity();
+    await settle();
+    assert.equal(h.node('sidebar-account-name').textContent, 'ADMIN');
+});

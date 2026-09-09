@@ -84,42 +84,9 @@ def init_scheduler(agent_bridge, workspace_root: str = None, agent_id: str = Non
             # Create execute callback. Returns True on success, False to ask
             # the scheduler to retry on the next tick (e.g. channel not yet
             # ready right after process start).
-            def execute_task_callback(task: dict):
-                # Scheduler threads carry no identity of their own. Binding it
-                # here is the counterpart to chat_channel._handle: leaf code
-                # reached from a task (ToolManager, tmp_dir, memory) then lands
-                # in this Agent's workspace rather than the default one's.
-                from common.runtime_identity import identity_scope
-
-                try:
-                    with identity_scope(agent_id=agent_id):
-                        action = task.get("action", {})
-                        action_type = action.get("type")
-                        channel_type = _primary_channel_type(action.get("channel_type"))
-                        receiver = action.get("receiver", "")
-
-                        if not _is_channel_ready(channel_type, receiver, agent_id):
-                            logger.warning(
-                                f"[Scheduler] Task {task.get('id')}: channel "
-                                f"'{channel_type}' not ready for receiver={receiver} "
-                                f"(no inbound msg cached since restart?); deferring"
-                            )
-                            return False
-
-                        if action_type == "agent_task":
-                            return _execute_agent_task(task, agent_bridge, agent_id)
-                        elif action_type == "send_message":
-                            return _execute_send_message(task, agent_bridge, agent_id)
-                        elif action_type == "tool_call":
-                            return _execute_tool_call(task, agent_bridge, agent_id)
-                        elif action_type == "skill_call":
-                            return _execute_skill_call(task, agent_bridge, agent_id)
-                        else:
-                            logger.warning(f"[Scheduler] Unknown action type: {action_type}")
-                            return True
-                except Exception as e:
-                    logger.error(f"[Scheduler] Error executing task {task.get('id')}: {e}")
-                    return False
+            execute_task_callback = _make_execute_callback(
+                agent_bridge, agent_id, task_store
+            )
 
             # Create scheduler service
             service = SchedulerService(task_store, execute_task_callback)
@@ -138,6 +105,108 @@ def init_scheduler(agent_bridge, workspace_root: str = None, agent_id: str = Non
         except Exception as e:
             logger.error(f"[Scheduler] Failed to initialize scheduler: {e}")
             return False
+
+
+def _execution_identity(task: dict, agent_id: str = None):
+    """Resolve the identity a task fires under.
+
+    Tasks created by a database tenant member carry an owner snapshot; the
+    fire then re-runs as that member (member workspace / conversation state /
+    memory), not as the bare Agent. Legacy tasks (no owner) keep the historical
+    Agent-only scope.
+    """
+    from common.runtime_identity import RuntimeIdentity
+
+    owner = (task or {}).get("owner") or {}
+    if owner.get("user_id") and owner.get("tenant_id"):
+        return RuntimeIdentity(
+            agent_id=agent_id,
+            user_id=owner["user_id"],
+            tenant_id=owner["tenant_id"],
+            session_id=((task or {}).get("action") or {}).get("notify_session_id")
+            or owner.get("session_id") or "",
+        )
+    return RuntimeIdentity(agent_id=agent_id)
+
+
+def _make_execute_callback(agent_bridge, agent_id: str, task_store):
+    """Build the scheduler execute callback for one Agent.
+
+    Open-database-runtime 5.x: before any fire the task's owner (creator
+    member snapshot) is revalidated — still an active member of the Agent's
+    tenant holding ``chat.use`` and the Agent's ``agent.use`` grant. A revoked
+    task is skipped and the reason recorded; the schedule is left alone so a
+    recurring task resumes when access returns. Unmanaged (legacy) tasks are
+    untouched.
+    """
+
+    def execute_task_callback(task: dict):
+        # Scheduler threads carry no identity of their own. Binding it
+        # here is the counterpart to chat_channel._handle: leaf code
+        # reached from a task (ToolManager, tmp_dir, memory) then lands
+        # in this Agent's workspace rather than the default one's.
+        from common.runtime_identity import use_identity
+        from agent.tools.scheduler import identity as sched_identity
+
+        try:
+            task_id = task.get("id")
+            skip_reason = sched_identity.revalidate_owner(task)
+            if skip_reason is not None:
+                record = sched_identity.skip_record(skip_reason)
+                logger.warning(
+                    f"[Scheduler] Task {task_id} skipped by policy "
+                    f"reason={skip_reason} (owner revalidation)"
+                )
+                try:
+                    # Repeated denied fires disable the task so the scan loop
+                    # stops touching it every tick until an admin fixes the
+                    # membership/grant and re-enables it.
+                    previous = (task_store.get_task(task_id) or task) or {}
+                    consecutive = int(previous.get("consecutive_skips") or 0) + 1 \
+                        if previous.get("last_skip_reason") == skip_reason else 1
+                    record["consecutive_skips"] = consecutive
+                    if consecutive >= sched_identity.MAX_CONSECUTIVE_SKIPS:
+                        record["enabled"] = False
+                        record["last_error"] += (
+                            "\n连续跳过次数过多，任务已自动停用，请管理员处理后重新启用。"
+                        )
+                    task_store.update_task(task_id, record)
+                except Exception as store_error:
+                    logger.warning(
+                        f"[Scheduler] Failed to persist skip for {task_id}: {store_error}"
+                    )
+                return True  # do not deliver, do not retry this tick
+
+            with use_identity(_execution_identity(task, agent_id)):
+                action = task.get("action", {})
+                action_type = action.get("type")
+                channel_type = _primary_channel_type(action.get("channel_type"))
+                receiver = action.get("receiver", "")
+
+                if not _is_channel_ready(channel_type, receiver, agent_id):
+                    logger.warning(
+                        f"[Scheduler] Task {task_id}: channel "
+                        f"'{channel_type}' not ready for receiver={receiver} "
+                        f"(no inbound msg cached since restart?); deferring"
+                    )
+                    return False
+
+                if action_type == "agent_task":
+                    return _execute_agent_task(task, agent_bridge, agent_id)
+                elif action_type == "send_message":
+                    return _execute_send_message(task, agent_bridge, agent_id)
+                elif action_type == "tool_call":
+                    return _execute_tool_call(task, agent_bridge, agent_id)
+                elif action_type == "skill_call":
+                    return _execute_skill_call(task, agent_bridge, agent_id)
+                else:
+                    logger.warning(f"[Scheduler] Unknown action type: {action_type}")
+                    return True
+        except Exception as e:
+            logger.error(f"[Scheduler] Error executing task {task.get('id')}: {e}")
+            return False
+
+    return execute_task_callback
 
 
 def _primary_channel_type(raw) -> str:

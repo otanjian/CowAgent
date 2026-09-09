@@ -102,6 +102,7 @@ class AgentInitializer:
         memory_manager, memory_tools = self._setup_memory_system(workspace_root, session_id)
         
         # Load tools
+        self._current_profile = profile
         tools = self._load_tools(
             workspace_root, memory_manager, memory_tools, session_id, host_profile.id
         )
@@ -505,7 +506,6 @@ class AgentInitializer:
 
         tool_manager = ToolManager()
         tool_manager.load_tools()
-        
         tools = []
         file_config = {
             "cwd": workspace_root,
@@ -621,11 +621,42 @@ class AgentInitializer:
             tools.extend(memory_tools)
             if session_id is None:
                 logger.info(f"[AgentInitializer] Added {len(memory_tools)} memory tools")
-        
+
+        # Apply the Agent's digital-employee tool allow/deny policy at assembly
+        # time, so the model never sees a tool it is not permitted to use. Using
+        # the shared filter here keeps assembly and dispatch consistent.
+        tools = self._apply_agent_tool_policy(tools)
+
         if session_id is None:
             logger.info(f"[AgentInitializer] Loaded {len(tools)} tools: {[t.name for t in tools]}")
-        
+
         return tools
+
+    def _apply_agent_tool_policy(self, tools: List) -> List:
+        """Filter ``tools`` by the effective allow/deny list of the owning Agent.
+
+        Resolves the Agent's effective capabilities (honouring any scene merge)
+        and drops disallowed tools. Attachment (e.g. scheduler context in
+        ``AgentBridge``) happens after this, so it only ever sees allowed tools.
+        """
+        profile = getattr(self, "_current_profile", None)
+        if profile is None:
+            return tools
+        from agent.effective_capabilities import resolve_effective_capabilities, filter_tools
+
+        scene = None
+        if profile.scene_id:
+            try:
+                from scenes.service import find_scene
+                scene, _ = find_scene(profile.scene_id)
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning(f"[AgentInitializer] Failed to resolve scene '{profile.scene_id}': {e}")
+                scene = None
+        effective = resolve_effective_capabilities(profile, scene=scene)
+        if effective.tools_allowlist is None and not effective.tools_denylist:
+            return tools  # no policy: fast path, no filtering
+        allowed_names = set(filter_tools([t.name for t in tools], effective))
+        return [t for t in tools if t.name in allowed_names]
     
     def _initialize_scheduler(
         self,

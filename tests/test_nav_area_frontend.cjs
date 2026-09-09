@@ -56,6 +56,17 @@ test('chat.html has area markers and admin home', () => {
     assert.match(htmlSource, /data-nav-shell="admin"/);
 });
 
+test('chat.html pins admin entry above account footer', () => {
+    const htmlSource = fs.readFileSync(path.join(__dirname, '../channel/web/chat.html'), 'utf8');
+    const adminIdx = htmlSource.indexOf('id="nav-open-admin"');
+    const footerIdx = htmlSource.indexOf('id="sidebar-account-footer"');
+    const navOpen = htmlSource.indexOf('id="sidebar-nav"');
+    const navClose = htmlSource.indexOf('</nav>', navOpen);
+    assert.ok(adminIdx > 0 && footerIdx > adminIdx, 'nav-open-admin must sit above sidebar-account-footer');
+    assert.match(htmlSource, /sidebar-admin-entry-wrap/);
+    assert.ok(adminIdx > navClose, 'admin entry must be outside scrolling sidebar-nav');
+});
+
 test('console wires path area, admin-home, and open handlers', () => {
     assert.match(source, /data-nav-area/);
     assert.match(source, /'admin-home'/);

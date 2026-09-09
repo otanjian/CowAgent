@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import time
 from typing import Any, Dict, List, Optional
@@ -483,3 +484,217 @@ class DbAuthPasswordHandler:
         # client must re-login, and signal re-login explicitly.
         web.setcookie("cow_session", "", expires=-1, path="/")
         return _json({"status": "success", "must_relogin": True})
+
+
+# --- self profile edit (PATCH /auth/profile) + avatar ---------------------
+# The account avatar reuses the on-disk ``avatars`` store but is keyed with a
+# ``user-`` prefix so it can never collide with the agent avatar store. The
+# ``users.avatar`` column is only a metadata flag; the bytes live at
+# ``shared_root()/avatars/user-<user_id><ext>``.
+
+_USER_AVATAR_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+_MAX_USER_AVATAR_BYTES = 2 * 1024 * 1024
+
+
+def _user_avatar_path(user_id: str) -> Optional[str]:
+    from common.state_dir import shared_root
+
+    base = shared_root() / "avatars"
+    for suffix in _USER_AVATAR_TYPES:
+        candidate = base / f"user-{user_id}{suffix}"
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def _write_user_avatar(user_id: str, raw: bytes, suffix: str) -> str:
+    from common.state_dir import shared_root
+
+    base = shared_root() / "avatars"
+    base.mkdir(parents=True, exist_ok=True)
+    # Drop any other extension first, so one user never ends up with two avatar
+    # files and a resolution order deciding which one wins.
+    for other in _USER_AVATAR_TYPES:
+        stale = base / f"user-{user_id}{other}"
+        if other != suffix and stale.is_file():
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+    target = base / f"user-{user_id}{suffix}"
+    tmp = base / f".user-{user_id}{suffix}.tmp"
+    with open(tmp, "wb") as handle:
+        handle.write(raw)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, target)
+    return str(target)
+
+
+def _read_uploaded_file_bytes(file_obj) -> bytes:
+    """Return uploaded content as bytes across web.py upload object variants."""
+    if isinstance(file_obj, bytes):
+        return file_obj
+    if isinstance(file_obj, str):
+        return file_obj.encode("utf-8")
+
+    content = None
+    if hasattr(file_obj, "file") and hasattr(file_obj.file, "read"):
+        content = file_obj.file.read()
+    elif hasattr(file_obj, "read"):
+        content = file_obj.read()
+    elif hasattr(file_obj, "value"):
+        content = file_obj.value
+    if content is None:
+        raise ValueError("Unable to read uploaded file content")
+    if isinstance(content, bytes):
+        return content
+    if isinstance(content, str):
+        return content.encode("utf-8")
+    raise TypeError(f"Unsupported uploaded content type: {type(content).__name__}")
+
+
+def _raw_web_input():
+    """Return unprocessed multipart form data when web.py exposes rawinput."""
+    rawinput = getattr(getattr(web, "webapi", None), "rawinput", None)
+    if not callable(rawinput):
+        raise RuntimeError("web.py rawinput is not available")
+    try:
+        return rawinput(method="post")
+    except TypeError:
+        return rawinput()
+
+
+class DbSelfProfileHandler:
+    """PATCH /auth/profile — self-service profile edit (database mode).
+
+    Only the caller's own global display_name and (optionally) the selected
+    tenant's member display_name / position are writable. Roles, department,
+    tenant membership, username and platform-admin flag are never writable here,
+    so a member cannot self-raise privileges. Restricted (must_change_password)
+    accounts are rejected.
+    """
+
+    def PATCH(self):
+        if not _is_database():
+            return _error("database identity mode is not enabled", 400, "not_database")
+        if not _csrf_ok():
+            return _error("cross-origin request rejected", 403, "cross_origin")
+        try:
+            data = json.loads(web.data())
+        except Exception:
+            return _error("Invalid request", 400, "invalid_request")
+        token = _session_token()
+        if not token:
+            return _error("unauthorized", 401, "unauthorized")
+        tenant_id = _tenant_header() or None
+        try:
+            svc = _get_service()
+            ctx = svc.update_self_profile(
+                token,
+                display_name=data.get("display_name"),
+                member_display_name=data.get("member_display_name"),
+                position_text=data.get("position_text"),
+                tenant_id=tenant_id,
+            )
+        except IdentityServiceError as e:
+            return _service_error(e)
+        except (IdentityStoreError, Exception):
+            return _identity_unavailable()
+        return _json(ctx)
+
+
+class DbSelfAvatarHandler:
+    """GET /auth/profile/avatar & POST /auth/profile/avatar — self avatar.
+
+    GET returns the caller's own avatar bytes (or JSON 404 when none). POST
+    accepts a multipart ``avatar`` file, validates size/type, writes it to disk
+    under the ``user-``-prefixed avatar store and flags ``users.avatar``.
+    """
+
+    def GET(self):
+        if not _is_database():
+            return _error("database identity mode is not enabled", 400, "not_database")
+        token = _session_token()
+        if not token:
+            return _error("unauthorized", 401, "unauthorized")
+        try:
+            svc = _get_service()
+            ctx = svc.self_context(token)
+        except IdentityServiceError as e:
+            return _service_error(e)
+        except (IdentityStoreError, Exception):
+            return _identity_unavailable()
+        user = (ctx or {}).get("user") or {}
+        user_id = user.get("id")
+        if not user_id or not user.get("avatar"):
+            web.ctx.status = "404 Not Found"
+            web.header("Content-Type", "application/json; charset=utf-8")
+            return json.dumps({"status": "error", "message": "no avatar"})
+        path = _user_avatar_path(user_id)
+        if not path:
+            web.ctx.status = "404 Not Found"
+            web.header("Content-Type", "application/json; charset=utf-8")
+            return json.dumps({"status": "error", "message": "no avatar"})
+        with open(path, "rb") as handle:
+            data = handle.read()
+        web.header("Content-Type", _USER_AVATAR_TYPES[os.path.splitext(path)[1].lower()])
+        web.header("Cache-Control", "private, max-age=86400")
+        return data
+
+    def POST(self):
+        if not _is_database():
+            return _error("database identity mode is not enabled", 400, "not_database")
+        # Avatar upload is a cookie state change -> same-origin / bearer-safe
+        if not _csrf_ok():
+            return _error("cross-origin request rejected", 403, "cross_origin")
+        token = _session_token()
+        if not token:
+            return _error("unauthorized", 401, "unauthorized")
+        try:
+            svc = _get_service()
+            ctx = svc.self_context(token)
+        except IdentityServiceError as e:
+            return _service_error(e)
+        except (IdentityStoreError, Exception):
+            return _identity_unavailable()
+        user = (ctx or {}).get("user") or {}
+        user_id = user.get("id")
+        if not user_id:
+            return _error("unauthorized", 401, "unauthorized")
+        try:
+            params = _raw_web_input()
+        except Exception:
+            return _error("invalid multipart body", 400, "invalid_request")
+        upload = params.get("avatar")
+        if upload is None:
+            return _error("avatar file required", 400, "avatar_required")
+        filename = getattr(upload, "filename", "") or ""
+        raw = _read_uploaded_file_bytes(upload)
+        if not raw:
+            return _error("avatar file required", 400, "avatar_required")
+        if len(raw) > _MAX_USER_AVATAR_BYTES:
+            return _error("avatar exceeds 2 MiB", 400, "avatar_too_large")
+        suffix = os.path.splitext(filename)[1].lower()
+        if suffix not in _USER_AVATAR_TYPES:
+            return _error(
+                f"unsupported image type: {suffix or 'unknown'}",
+                400, "unsupported_image_type",
+            )
+        try:
+            _write_user_avatar(user_id, raw, suffix)
+        except OSError:
+            return _error("avatar write failed", 500, "avatar_write_failed")
+        try:
+            ctx = svc.set_self_avatar(token)
+        except IdentityServiceError as e:
+            return _service_error(e)
+        except (IdentityStoreError, Exception):
+            return _identity_unavailable()
+        return _json(ctx)

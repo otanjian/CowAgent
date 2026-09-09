@@ -191,6 +191,12 @@ class ChatChannel(Channel):
     def _handle(self, context: Context):
         if context is None or not context.content:
             return
+        # Database mode, non-Web inbound: resolve the author to a tenant member
+        # before anything runs. Unbound / unauthorized authors get a fixed
+        # notice and never reach the model (task 4.x, decision 4).
+        if self._needs_external_db_mapping(context):
+            if self._preflight_external_inbound(context):
+                return  # a deny notice was already queued
         # The single point where an inbound message is bound to an identity.
         # Everything below reads it from the ambient context instead of being
         # handed a workspace path.
@@ -207,6 +213,91 @@ class ChatChannel(Channel):
 
                 # reply的发送步骤
                 self._send_reply(context, reply)
+
+    def _needs_external_db_mapping(self, context: Context) -> bool:
+        """True when this inbound message must be mapped to a tenant member.
+
+        Web messages are authorized and scoped synchronously in the request
+        handler (MessageHandler ``_db_scope``) before the worker thread is
+        spawned, so they carry a verified ``runtime_identity``. Other channels
+        in database mode have no web session and must go through the external
+        identity binding — legacy mode and web never do.
+        """
+        from channel.external_identity import is_database_mode
+
+        if not is_database_mode():
+            return False
+        if str(context.get("channel_type") or "") == "web":
+            return False
+        if (context.get("runtime_identity") or {}).get("user_id"):
+            return False  # already scoped by an upstream handler
+        return True
+
+    def _preflight_external_inbound(self, context: Context) -> bool:
+        """Resolve the external author; send the fixed notice on deny.
+
+        Returns True when the message has been consumed by a deny notice (the
+        caller must not run the agent), False when the context is now scoped to
+        the resolved tenant member and normal handling continues.
+        """
+        from bridge.bridge import Bridge
+        from channel import external_identity as ex
+        from common import memory  # noqa: F401  (module import side effects)
+
+        try:
+            agent_id = Bridge().get_agent_bridge().route_context(context)
+        except AgentUnavailableError as e:
+            # The conversation is bound to an agent that is off — mirror the
+            # disabled notice produce() sends web callers (it never reaches the
+            # model regardless of identity).
+            logger.warning(f"[chat_channel] {e}")
+            self._send_reply(
+                context,
+                Reply(
+                    ReplyType.TEXT,
+                    _t("该助手当前已停用，请联系管理员。",
+                       "This assistant is currently disabled. Please contact an administrator."),
+                ),
+            )
+            return True
+        except Exception:
+            agent_id = None  # route failure handled below as an unbounded agent
+
+        if not context.get("external_identity"):
+            logger.warning(
+                f"[chat_channel] db external inbound missing identity stamp, "
+                f"channel={context.get('channel_type')}, agent={agent_id}"
+            )
+            self._send_reply(
+                context, Reply(ReplyType.TEXT, ex.deny_notice(ex.UNSUPPORTED_CHANNEL))
+            )
+            return True
+
+        ctx, reason = ex.resolve_actor_for_context(context, agent_id)
+        if reason is not None:
+            logger.info(
+                f"[chat_channel] db external inbound denied reason={reason} "
+                f"channel={context.get('channel_type')}, agent={agent_id}"
+            )
+            self._send_reply(
+                context, Reply(ReplyType.TEXT, ex.deny_notice(reason))
+            )
+            return True
+
+        # Scope this run to the resolved member. _identity_for rebuilds the
+        # full RuntimeIdentity from this snapshot, so conversation stores and
+        # state_dir resolve to the member's tenant — never to the bot.
+        context["runtime_identity"] = {
+            "user_id": ctx.user_id,
+            "tenant_id": ctx.tenant_id,
+            "agent_id": agent_id,
+            "session_id": context.get("session_id") or "",
+        }
+        logger.info(
+            f"[chat_channel] db external inbound mapped user={ctx.user_id} "
+            f"tenant={ctx.tenant_id} agent={agent_id}"
+        )
+        return False
 
     def _identity_for(self, context: Context) -> RuntimeIdentity:
         """Resolve who this message is for.

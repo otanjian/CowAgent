@@ -695,6 +695,17 @@ class DingTalkChanel(ChatChannel, dingtalk_stream.ChatbotHandler):
         if context:
             from agent.team_addressing import stamp_speaker_from_channel
             stamp_speaker_from_channel(self, context, cmsg.content)
+            # Database identity mode: bind to the author's external identity
+            # (provider=dingtalk, issuer=the robot/app the bot runs as,
+            # subject=the author's dingtalk user id). chat_channel._handle maps
+            # it to a tenant member before anything runs (task 4.x).
+            from channel.external_identity import stamp_external_identity
+            stamp_external_identity(
+                context,
+                provider="dingtalk",
+                issuer=self.dingtalk_client_id or "",
+                subject=cmsg.actual_user_id or cmsg.sender_staff_id or "",
+            )
             self.produce(context)
 
 
@@ -759,6 +770,15 @@ class DingTalkChanel(ChatChannel, dingtalk_stream.ChatbotHandler):
         if context:
             from agent.team_addressing import stamp_speaker_from_channel
             stamp_speaker_from_channel(self, context, cmsg.content)
+            # Database identity mode: bind to the author's external identity
+            # (task 4.x), same triple semantics as the single-chat path.
+            from channel.external_identity import stamp_external_identity
+            stamp_external_identity(
+                context,
+                provider="dingtalk",
+                issuer=self.dingtalk_client_id or "",
+                subject=cmsg.actual_user_id or cmsg.sender_staff_id or "",
+            )
             self.produce(context)
 
 

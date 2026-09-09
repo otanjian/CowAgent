@@ -139,41 +139,76 @@ def _now() -> int:
 #: a client-supplied ``shared_root``; the service derives it here and fails
 #: clearly if no controlled root is available. The CLI ``bootstrap``/``register``
 #: still pass an explicit root for legitimate in-place registration.
-def _deployment_shared_base() -> Optional[str]:
+def _deployment_shared_base(svc=None) -> Optional[str]:
     """Return the controlled base for new tenant shared roots, or None.
 
-    Uses the verified engineering/workspace root (the default Agent's workspace)
-    when resolvable; otherwise the writable data root. Never the user's home or a
-    global config tree, matching the containment rules in ``common/state_dir``.
+    Resolution order:
+      1. The explicitly configured base (config ``tenant_shared_base`` or env
+         ``COW_TENANT_BASE``) -- authoritative when set.
+      2. The verified engineering/workspace root (the default Agent's workspace),
+         but ONLY when that root is not itself an existing tenant's shared root.
+
+    In database identity mode the default tenant registers the engineering
+    workspace as its shared root, so candidate 2 is normally refused and an
+    operator-configured base is required. A candidate that equals/contains/is
+    contained by an existing tenant root can never produce a resolvable tenant
+    (``common/state_dir`` containment) and raises ``config_error``. Never falls
+    back to the user's home or the data/config tree -- tenant data is forbidden
+    there.
     """
+    base = None
     try:
-        from agent.registry import get_agent_registry
-        root = get_agent_registry().get(require_enabled=False).workspace
-        if root:
-            return os.path.realpath(str(root))
+        from config import get_tenant_shared_base
+        base = get_tenant_shared_base()
     except Exception:
         pass
-    try:
-        from config import get_data_root
-        root = get_data_root()
-        if root:
-            return os.path.realpath(str(root))
-    except Exception:
-        pass
-    return None
+    if not base:
+        try:
+            from agent.registry import get_agent_registry
+            root = get_agent_registry().get(require_enabled=False).workspace
+            if root:
+                base = os.path.realpath(str(root))
+        except Exception:
+            base = None
+    if not base:
+        return None
+    if svc is not None:
+        for other in svc.tenant_shared_roots():
+            other_root = os.path.realpath(other["shared_root"])
+            try:
+                common = os.path.commonpath([base, other_root])
+            except ValueError:  # different drives (Windows): never ancestors
+                continue
+            # Equal, or one contains the other -> deriving under it would
+            # produce a tenant root that can never resolve.
+            if common == base or common == other_root:
+                raise IdentityServiceError(
+                    "tenant shared root base %r overlaps tenant %r root %r; "
+                    "configure 'tenant_shared_base' (or env COW_TENANT_BASE) "
+                    "to a directory outside every existing tenant root"
+                    % (base, other["id"], other_root),
+                    code="config_error",
+                    status=503,
+                )
+    return base
 
 
-def _derive_tenant_shared_root(code: str) -> str:
+def _derive_tenant_shared_root(code: str, svc=None) -> str:
     """Generate a tenant shared root under the deployment-controlled base.
 
-    Raises a 503 ``config_error`` when no controlled root is available so a
-    tenant is never created with an unusable/empty root (design §4).
+    Deriving a NEW tenant's root under an EXISTING tenant's root would trip the
+    read-time cross-tenant containment guard for both tenants, so the controlled
+    base must be outside every tenant root. Raises a 503 ``config_error`` when
+    no usable base is available so a tenant is never created with an unusable/
+    overlapping root (design §4).
     """
-    base = _deployment_shared_base()
+    base = _deployment_shared_base(svc)
     if not base:
         raise IdentityServiceError(
-            "no configured deployment root for tenant data; set the agent workspace "
-            "or data root before creating a tenant",
+            "no configured tenant data base; the engineering/workspace root is "
+            "already the default tenant's shared root, so configure "
+            "'tenant_shared_base' (or env COW_TENANT_BASE) to a directory "
+            "outside the workspace",
             code="config_error",
             status=503,
         )
@@ -188,6 +223,22 @@ def _derive_tenant_shared_root(code: str) -> str:
             status=503,
         )
     return root
+
+
+def _assert_new_tenant_root_clear(shared_root: str, svc) -> None:
+    """Refuse a new tenant shared root that overlaps an existing tenant's root.
+
+    Mirrors the read-time containment guard in ``common/state_dir`` so a root
+    that can never resolve is rejected before any row is written -- otherwise a
+    console-created tenant silently poisons every later ``shared_root()`` for
+    both itself and the tenant it nests under (3.9 / design §4).
+    """
+    from common.state_dir import StateDirError, validate_tenant_shared_root
+    try:
+        validate_tenant_shared_root(shared_root, svc=svc)
+    except StateDirError as e:
+        raise IdentityServiceError(
+            str(e), code="shared_root_conflict", status=409) from e
 
 
 @dataclass
@@ -1253,6 +1304,151 @@ class IdentityService:
             )
             con.commit()
 
+    # --- self-account profile edit (PATCH /auth/profile) ------------------
+
+    def update_self_profile(
+        self,
+        token: str,
+        *,
+        display_name: Optional[str] = None,
+        member_display_name: Optional[str] = None,
+        position_text: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Self-service edit of the caller's own profile fields.
+
+        White-listed, self-scoped only: the caller may change their *global*
+        display name and (for the tenant explicitly selected via ``tenant_id``)
+        their member display name / position. The caller can NEVER change roles,
+        department, tenant membership, username, platform-admin flag or another
+        account. ``None`` leaves a field untouched; an empty string (for the text
+        fields) clears it. Restricted (must_change_password) accounts may not
+        edit, and a member edit is rejected unless the caller is an active member
+        of ``tenant_id``.
+
+        Returns the refreshed :meth:`self_context` so the client can re-render
+        in place without a second round trip.
+        """
+        session = self.verify_session(token)
+        if not session:
+            raise IdentityServiceError("unauthorized", code="unauthorized", status=401)
+        user = session["user"]
+        if user["must_change_password"]:
+            raise IdentityServiceError(
+                "password change required", code="password_change_required", status=403)
+
+        with self._tx() as con:
+            row = con.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+            if not row or not row["active"]:
+                raise IdentityServiceError("unauthorized", code="unauthorized", status=401)
+            current = dict(row)
+
+            changes: Dict[str, Any] = {}
+
+            if display_name is not None:
+                name = (display_name or "").strip()
+                if not name:
+                    raise IdentityServiceError(
+                        "display name required", code="invalid_display_name", status=400)
+                if len(name) > 80:
+                    raise IdentityServiceError(
+                        "display name too long", code="invalid_display_name", status=400)
+                if name != current["display_name"]:
+                    con.execute(
+                        "UPDATE users SET display_name=?, version=version+1 WHERE id=?",
+                        (name, current["id"]),
+                    )
+                    changes["display_name"] = name
+
+            # Tenant-scoped member fields (name/position) are applied only when
+            # an explicit tenant is selected AND the caller is an active member
+            # of it. Editing another tenant's membership is impossible by design.
+            want_member = (member_display_name is not None or position_text is not None)
+            if want_member and tenant_id:
+                mem = con.execute(
+                    "SELECT * FROM memberships WHERE user_id=? AND tenant_id=? AND active=1",
+                    (user["id"], tenant_id),
+                ).fetchone()
+                if not mem:
+                    raise IdentityServiceError(
+                        "not a member of tenant", code="not_a_member", status=403)
+                mem_current = dict(mem)
+                new_member_name = mem_current.get("display_name") or ""
+                if member_display_name is not None:
+                    mn = (member_display_name or "").strip()
+                    if not mn:
+                        raise IdentityServiceError(
+                            "member name required", code="invalid_member_name", status=400)
+                    if len(mn) > 80:
+                        raise IdentityServiceError(
+                            "member name too long", code="invalid_member_name", status=400)
+                    new_member_name = mn
+                new_position = mem_current.get("position_text") or ""
+                if position_text is not None:
+                    pos = (position_text or "").strip()
+                    if len(pos) > 120:
+                        raise IdentityServiceError(
+                            "position too long", code="invalid_position", status=400)
+                    new_position = pos
+                if (new_member_name != (mem_current.get("display_name") or "")
+                        or new_position != (mem_current.get("position_text") or "")):
+                    con.execute(
+                        "UPDATE memberships SET display_name=?, position_text=?,"
+                        " version=version+1 WHERE id=?",
+                        (new_member_name, new_position, mem_current["id"]),
+                    )
+                    changes["member"] = {
+                        "display_name": new_member_name,
+                        "position_text": new_position,
+                    }
+
+            if not changes:
+                con.commit()
+                return self.self_context(token)
+
+            self._audit_in_tx(
+                con,
+                actor_user_id=user["id"],
+                actor_username=user["username"],
+                action="user.profile.change",
+                target=f"user:{user['id']}",
+                redacted_changes=changes,
+                result="success",
+            )
+            con.commit()
+        return self.self_context(token)
+
+    def set_self_avatar(self, token: str) -> Dict[str, Any]:
+        """Mark the caller's account as having an uploaded avatar.
+
+        Called after the avatar bytes are written to disk by the HTTP handler.
+        Only the owning account may set its own avatar flag; the flag is a
+        metadata token, never the image itself.
+        """
+        session = self.verify_session(token)
+        if not session:
+            raise IdentityServiceError("unauthorized", code="unauthorized", status=401)
+        user = session["user"]
+        if user["must_change_password"]:
+            raise IdentityServiceError(
+                "password change required", code="password_change_required", status=403)
+        with self._tx() as con:
+            con.execute(
+                "UPDATE users SET avatar=?, version=version+1 WHERE id=?",
+                ("image", user["id"]),
+            )
+            self._audit_in_tx(
+                con,
+                actor_user_id=user["id"],
+                actor_username=user["username"],
+                action="user.profile.avatar",
+                target=f"user:{user['id']}",
+                redacted_changes={"avatar": "image"},
+                result="success",
+            )
+            con.commit()
+        return self.self_context(token)
+
     # --- self-account context (GET /auth/me) ------------------------------
 
     def self_context(self, token: str) -> Dict[str, Any]:
@@ -1274,6 +1470,7 @@ class IdentityService:
             "username": user["username"],
             "display_name": user["display_name"],
             "is_platform_admin": bool(user["is_platform_admin"]),
+            "avatar": user.get("avatar") or None,
         }
         tenants: List[Dict[str, Any]] = []
         if not restricted:
@@ -1545,6 +1742,46 @@ class IdentityService:
             "position_text": membership["position_text"] or "",
         }
 
+    def administered_tenants(
+        self,
+        actor_user_id: str,
+        target_user_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """List the tenants the actor administers (holds active ``tenant_admin``).
+
+        Used by the member assignment UI to build the tenant multi-select:
+        candidates are exactly the tenants where the actor is a ``tenant_admin``
+        (a platform admin is NOT treated specially — the explicit platform
+        management surface is separate). When ``target_user_id`` is given, each
+        entry also reports that user's membership status within the *administered*
+        tenant only (never other tenants), so a tenant admin can render the
+        member's current tenant checkboxes without leaking other-tenant relations.
+        """
+        rows = self._store.execute(
+            "SELECT DISTINCT t.id, t.code, t.name FROM tenants t"
+            " JOIN memberships m ON m.tenant_id=t.id AND m.active=1"
+            " JOIN users u ON u.id=m.user_id AND u.active=1"
+            " JOIN membership_roles mr ON mr.membership_id=m.id"
+            " JOIN roles r ON r.id=mr.role_id AND r.code=?"
+            " WHERE m.user_id=? AND t.active=1 ORDER BY t.name",
+            (TENANT_ADMIN_CODE, actor_user_id),
+        )
+        items: List[Dict[str, Any]] = []
+        for row in rows:
+            item: Dict[str, Any] = {
+                "id": row["id"],
+                "code": row["code"],
+                "name": row["name"],
+            }
+            if target_user_id:
+                mem = self._membership(target_user_id, row["id"])
+                active = bool(mem and mem["active"] and mem["user_active"])
+                item["member"] = active
+                item["member_id"] = mem["id"] if active else None
+                item["member_version"] = mem["version"] if active else None
+            items.append(item)
+        return items
+
 
     # --- tenant management (tasks 3.1/3.2) --------------------------------
 
@@ -1593,9 +1830,14 @@ class IdentityService:
         if admin_password.lower() in _COMMON_PASSWORDS or len(admin_password) < MIN_PASSWORD_LENGTH:
             raise IdentityServiceError("weak admin password", code="weak_password")
         # Web form never supplies a shared root; derive a controlled one before
-        # touching the DB so a missing deployment root fails cleanly (design §4).
+        # touching the DB so a missing/overlapping deployment root fails cleanly
+        # (design §4).
         if not shared_root:
-            shared_root = _derive_tenant_shared_root(code)
+            shared_root = _derive_tenant_shared_root(code, svc=self)
+        # Fail fast: a shared root that equals/contains/is contained by another
+        # tenant's root can never resolve (state_dir containment) and would
+        # poison the other tenant too (3.9 / design §4).
+        _assert_new_tenant_root_clear(shared_root, self)
 
         tenant_id = self._new_id("tnt")
         user_id = self._new_id("usr")
@@ -2887,6 +3129,612 @@ class IdentityService:
             "SELECT COUNT(*) AS c FROM audit_events" + where_sql, count_params
         )[0]["c"]
         return {"items": [dict(r) for r in rows], "total": total, "page": page}
+
+    # --- credentials (open-database-runtime 7.x) --------------------------
+
+    def _is_control(self, actor_user_id: str, tenant_id: str) -> bool:
+        """True when ``actor_user_id`` may manage this tenant's control plane
+        (platform admin, or an active tenant_admin member of the tenant)."""
+        user = self._store.execute(
+            "SELECT is_platform_admin, active FROM users WHERE id=?",
+            (actor_user_id,),
+        )
+        if not user or not user[0]["active"]:
+            return False
+        if user[0]["is_platform_admin"]:
+            return True
+        rows = self._store.execute(
+            "SELECT COUNT(*) c FROM memberships m"
+            " JOIN membership_roles mr ON mr.membership_id=m.id"
+            " JOIN roles r ON r.id=mr.role_id"
+            " WHERE m.user_id=? AND m.tenant_id=? AND m.active=1 AND r.code=?",
+            (actor_user_id, tenant_id, TENANT_ADMIN_CODE),
+        )
+        return rows[0]["c"] > 0
+
+    def _member_active(self, user_id: str, tenant_id: str) -> bool:
+        rows = self._store.execute(
+            "SELECT COUNT(*) c FROM memberships m JOIN users u ON u.id=m.user_id"
+            " WHERE m.user_id=? AND m.tenant_id=? AND m.active=1 AND u.active=1",
+            (user_id, tenant_id),
+        )
+        return rows[0]["c"] > 0
+
+    def _credential_eligible(self, actor_user_id: str, tenant_id: str) -> bool:
+        """Use-time eligibility: a controller, or an active member holding the
+        functional ``credential.use`` permission."""
+        if self._is_control(actor_user_id, tenant_id):
+            return True
+        if not self._member_active(actor_user_id, tenant_id):
+            return False
+        try:
+            perms = self.permissions_for(actor_user_id, tenant_id)
+        except Exception:
+            return False
+        return "credential.use" in (perms or ())
+
+    def create_credential(
+        self,
+        *,
+        actor_user_id: str,
+        tenant_id: str,
+        name: str,
+        secret: str,
+        resource_kind: str = "",
+        resource_id: str = "",
+    ) -> Dict[str, Any]:
+        """Store an encrypted external credential for a tenant/resource."""
+        from auth.crypto import encrypt_secret
+
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError("credential manage denied", code="forbidden", status=403)
+        name = (name or "").strip()
+        if not name:
+            raise IdentityServiceError("credential name required", code="invalid", status=400)
+        try:
+            ciphertext = encrypt_secret(secret)
+        except Exception as error:
+            from common.log import logger
+            logger.error(f"[Identity] credential encrypt unavailable: {error}")
+            raise IdentityServiceError(
+                "credential encryption unavailable", code="credential_crypto", status=500) from error
+        credential_id = self._new_id("cred")
+        with self._tx() as con:
+            dup = con.execute(
+                "SELECT 1 FROM credentials WHERE tenant_id=? AND name=? AND active=1",
+                (tenant_id, name),
+            ).fetchone()
+            if dup:
+                raise IdentityServiceError("credential name exists", code="conflict", status=409)
+            con.execute(
+                "INSERT INTO credentials(id, tenant_id, name, resource_kind, resource_id,"
+                " ciphertext, active, version, created_by)"
+                " VALUES (?,?,?,?,?,?,1,1,?)",
+                (credential_id, tenant_id, name, resource_kind, resource_id, ciphertext,
+                 actor_user_id),
+            )
+            con.execute(
+                "INSERT INTO credential_versions(credential_id, version, ciphertext, action,"
+                " changed_by) VALUES (?,1,?,?,?)",
+                (credential_id, ciphertext, "create", actor_user_id),
+            )
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                target_tenant_id=tenant_id, action="credential.create",
+                target=f"credential:{credential_id}",
+                redacted_changes={"name": name, "resource_kind": resource_kind,
+                                  "resource_id": resource_id},
+                result="success")
+            con.commit()
+        return {"id": credential_id, "name": name, "resource_kind": resource_kind,
+                "resource_id": resource_id, "active": True, "version": 1}
+
+    def list_credentials(
+        self, *, actor_user_id: str, tenant_id: str, page: int = 1, page_size: int = 100
+    ) -> Dict[str, Any]:
+        """Masked projection of a tenant's credentials (never plaintext)."""
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError("credential list denied", code="forbidden", status=403)
+        if page_size > 100:
+            page_size = 100
+        rows = self._store.execute(
+            "SELECT id, name, resource_kind, resource_id, active, version,"
+            " created_at, updated_at FROM credentials WHERE tenant_id=?"
+            " ORDER BY name LIMIT ? OFFSET ?",
+            (tenant_id, page_size, (page - 1) * page_size),
+        )
+        total = self._store.execute(
+            "SELECT COUNT(*) c FROM credentials WHERE tenant_id=?", (tenant_id,)
+        )[0]["c"]
+        items = []
+        for row in rows:
+            item = dict(row)
+            # Display-only mask derived from the label; plaintext is never
+            # produced here, so nothing to redact.
+            item["masked"] = f"{row['name']}••••"
+            item["active"] = bool(row["active"])
+            items.append(item)
+        return {"items": items, "total": total, "page": page}
+
+    def resolve_credential(
+        self,
+        *,
+        actor_user_id: str,
+        tenant_id: str,
+        name: str,
+        resource_kind: str = "",
+        resource_id: str = "",
+    ) -> str:
+        """Decrypt a credential at a use point after identity revalidation.
+
+        The caller must independently hold the resource grant; this method
+        verifies tenant ownership, active state, and the functional
+        ``credential.use`` permission/controller bypass, then returns the
+        plaintext exactly once (never logged, never cached here).
+        """
+        from auth.crypto import decrypt_secret
+
+        if not self._credential_eligible(actor_user_id, tenant_id):
+            raise IdentityServiceError("credential use denied", code="forbidden", status=403)
+        rows = self._store.execute(
+            "SELECT id, tenant_id, ciphertext, active, version, resource_kind, resource_id"
+            " FROM credentials WHERE tenant_id=? AND name=?",
+            (tenant_id, name),
+        )
+        if not rows or not rows[0]["active"]:
+            raise IdentityServiceError("credential not found", code="not_found", status=404)
+        row = rows[0]
+        if resource_kind and row["resource_kind"] and row["resource_kind"] != resource_kind:
+            raise IdentityServiceError("credential resource mismatch", code="forbidden", status=403)
+        if resource_id and row["resource_id"] and row["resource_id"] != resource_id:
+            raise IdentityServiceError("credential resource mismatch", code="forbidden", status=403)
+        try:
+            return decrypt_secret(row["ciphertext"])
+        except Exception as error:
+            from common.log import logger
+            logger.error(f"[Identity] credential '{row['id']}' decrypt failed")
+            raise IdentityServiceError("credential decrypt failed", code="credential_crypto",
+                                       status=500) from error
+
+    def rotate_credential(
+        self, *, actor_user_id: str, tenant_id: str, name: str, new_secret: str
+    ) -> Dict[str, Any]:
+        """Rotate a credential: previous ciphertext versions are preserved for
+        audit but the new value is the only decryptable one."""
+        from auth.crypto import encrypt_secret
+
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError("credential rotate denied", code="forbidden", status=403)
+        ciphertext = encrypt_secret(new_secret)
+        with self._tx() as con:
+            row = con.execute(
+                "SELECT id, ciphertext, version FROM credentials"
+                " WHERE tenant_id=? AND name=? AND active=1",
+                (tenant_id, name),
+            ).fetchone()
+            if not row:
+                raise IdentityServiceError("credential not found", code="not_found", status=404)
+            old_version = row["version"]
+            next_version = con.execute(
+                "SELECT COALESCE(MAX(version), 0) + 1 v FROM credential_versions"
+                " WHERE credential_id=?", (row["id"],),
+            ).fetchone()["v"]
+            # History row: the retired value is no longer the decryptable one,
+            # but stays for audit; only the credentials.ciphertext slot (now
+            # holding the new value) is ever resolved.
+            con.execute(
+                "INSERT INTO credential_versions(credential_id, version, ciphertext,"
+                " action, changed_by) VALUES (?,?,?,?,?)",
+                (row["id"], next_version, ciphertext, "rotated", actor_user_id),
+            )
+            con.execute(
+                "UPDATE credentials SET ciphertext=?, version=?,"
+                " updated_at=unixepoch() WHERE id=?",
+                (ciphertext, next_version, row["id"]),
+            )
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                target_tenant_id=tenant_id, action="credential.rotate",
+                target=f"credential:{row['id']}", redacted_changes={}, result="success")
+            con.commit()
+            version = next_version
+        return {"id": row["id"], "version": version, "active": True}
+
+    def revoke_credential(self, *, actor_user_id: str, tenant_id: str, name: str) -> bool:
+        """Revoke a credential: next use fails immediately (active=0)."""
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError("credential revoke denied", code="forbidden", status=403)
+        with self._tx() as con:
+            row = con.execute(
+                "SELECT id, ciphertext, version FROM credentials"
+                " WHERE tenant_id=? AND name=? AND active=1",
+                (tenant_id, name),
+            ).fetchone()
+            if not row:
+                raise IdentityServiceError("credential not found", code="not_found", status=404)
+            next_version = con.execute(
+                "SELECT COALESCE(MAX(version), 0) + 1 v FROM credential_versions"
+                " WHERE credential_id=?", (row["id"],),
+            ).fetchone()["v"]
+            con.execute(
+                "INSERT INTO credential_versions(credential_id, version, ciphertext,"
+                " action, changed_by) VALUES (?,?,?,?,?)",
+                (row["id"], next_version, row["ciphertext"], "revoked", actor_user_id),
+            )
+            con.execute(
+                "UPDATE credentials SET active=0, version=?, updated_at=unixepoch()"
+                " WHERE id=?",
+                (next_version, row["id"]),
+            )
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                target_tenant_id=tenant_id, action="credential.revoke",
+                target=f"credential:{row['id']}", redacted_changes={}, result="success")
+            con.commit()
+        return True
+
+    # --- approvals (open-database-runtime 8.x) -----------------------------
+
+    def request_approval(
+        self,
+        *,
+        actor_user_id: str,
+        tenant_id: str,
+        agent_id: str,
+        action: str,
+        payload: Optional[Dict[str, Any]] = None,
+        expires_in_s: int = 1800,
+    ) -> Dict[str, Any]:
+        """Register a high-risk external side-effect action as pending.
+
+        No side effect runs from here: a decision by another qualified user is
+        required first (see :meth:`decide_approval`).
+        """
+        if not self._member_active(actor_user_id, tenant_id):
+            raise IdentityServiceError("not a tenant member", code="forbidden", status=403)
+        approval_id = self._new_id("apr")
+        action = (action or "").strip()[:64]
+        if not action:
+            raise IdentityServiceError("approval action required", code="invalid", status=400)
+        import json
+        import time as _time
+        safe = {k: v for k, v in (payload or {}).items()
+                if str(k).lower() not in {"token", "secret", "password", "authorization"}}
+        payload_json = json.dumps(safe, ensure_ascii=False)
+        now = int(_time.time())
+        expires_at = now + max(60, min(86400, int(expires_in_s)))
+        with self._tx() as con:
+            con.execute(
+                "INSERT INTO approvals(id, tenant_id, requester_user_id, agent_id, action,"
+                " payload_json, status, expires_at, version)"
+                " VALUES (?,?,?,?,?,?,'pending',?,1)",
+                (approval_id, tenant_id, actor_user_id, agent_id or "", action,
+                 payload_json, expires_at),
+            )
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                target_tenant_id=tenant_id, action="approval.create",
+                target=f"approval:{approval_id}",
+                redacted_changes={"action": action, "agent_id": agent_id},
+                result="success")
+            con.commit()
+        return {"id": approval_id, "status": "pending", "action": action,
+                "expires_at": expires_at}
+
+    def decide_approval(
+        self, *, actor_user_id: str, tenant_id: str, approval_id: str,
+        approve: bool, note: str = "",
+    ) -> Dict[str, Any]:
+        """Approve or deny a pending approval (qualified, non-requester only)."""
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError("approval decide denied", code="forbidden", status=403)
+        import time as _time
+        now = int(_time.time())
+        with self._tx() as con:
+            row = con.execute(
+                "SELECT * FROM approvals WHERE id=? AND tenant_id=?",
+                (approval_id, tenant_id),
+            ).fetchone()
+            if not row:
+                raise IdentityServiceError("approval not found", code="not_found", status=404)
+            if str(row["requester_user_id"]) == actor_user_id:
+                raise IdentityServiceError("self approval denied", code="forbidden", status=403)
+            if row["status"] == "expired" or (row["expires_at"] and now > row["expires_at"]):
+                con.execute(
+                    "UPDATE approvals SET status='expired', decided_at=? WHERE id=?",
+                    (now, approval_id),
+                )
+                con.commit()
+                raise IdentityServiceError("approval expired", code="expired", status=409)
+            if row["status"] != "pending":
+                raise IdentityServiceError(
+                    f"approval already {row['status']}", code="conflict", status=409)
+            status = "approved" if approve else "denied"
+            con.execute(
+                "UPDATE approvals SET status=?, decision_by=?, decision_note=?,"
+                " decided_at=?, version=version+1 WHERE id=?",
+                (status, actor_user_id, (note or "")[:256], now, approval_id),
+            )
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                target_tenant_id=tenant_id,
+                action=f"approval.{'approve' if approve else 'deny'}",
+                target=f"approval:{approval_id}",
+                redacted_changes={"note": (note or "")[:256]}, result="success")
+            con.commit()
+        return {"id": approval_id, "status": status}
+
+    def cancel_approval(
+        self, *, actor_user_id: str, tenant_id: str, approval_id: str,
+    ) -> Dict[str, Any]:
+        """A requester withdraws their own *pending* request (撤销).
+
+        Only the requester may cancel, and only while the request is still
+        pending — a decided/expired approval is immutable.
+        """
+        import time as _time
+        now = int(_time.time())
+        with self._tx() as con:
+            row = con.execute(
+                "SELECT requester_user_id, status FROM approvals"
+                " WHERE id=? AND tenant_id=?",
+                (approval_id, tenant_id),
+            ).fetchone()
+            if not row:
+                raise IdentityServiceError("approval not found", code="not_found", status=404)
+            if str(row["requester_user_id"]) != actor_user_id:
+                raise IdentityServiceError("approval cancel denied", code="forbidden", status=403)
+            if row["status"] != "pending":
+                raise IdentityServiceError(
+                    f"approval already {row['status']}", code="conflict", status=409)
+            con.execute(
+                "UPDATE approvals SET status='revoked', decision_by=?,"
+                " decision_note='cancelled by requester', decided_at=?, version=version+1"
+                " WHERE id=?",
+                (actor_user_id, now, approval_id),
+            )
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                target_tenant_id=tenant_id, action="approval.cancel",
+                target=f"approval:{approval_id}", redacted_changes={}, result="success")
+            con.commit()
+        return {"id": approval_id, "status": "revoked"}
+
+    def revoke_approval(
+        self, *, actor_user_id: str, tenant_id: str, approval_id: str,
+        note: str = "",
+    ) -> Dict[str, Any]:
+        """A controller supersedes an *approved* approval before the side
+        effect runs (撤销). The executor must re-check status right before the
+        external action, so a revoked approval never fires.
+        """
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError("approval revoke denied", code="forbidden", status=403)
+        import time as _time
+        now = int(_time.time())
+        with self._tx() as con:
+            row = con.execute(
+                "SELECT requester_user_id, status FROM approvals"
+                " WHERE id=? AND tenant_id=?",
+                (approval_id, tenant_id),
+            ).fetchone()
+            if not row:
+                raise IdentityServiceError("approval not found", code="not_found", status=404)
+            if row["status"] != "approved":
+                raise IdentityServiceError(
+                    f"only approved approvals can be revoked (status={row['status']})",
+                    code="conflict", status=409)
+            con.execute(
+                "UPDATE approvals SET status='revoked', decision_by=?,"
+                " decision_note=?, decided_at=?, version=version+1 WHERE id=?",
+                (actor_user_id, (note or "")[:256], now, approval_id),
+            )
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                target_tenant_id=tenant_id, action="approval.revoke",
+                target=f"approval:{approval_id}",
+                redacted_changes={"note": (note or "")[:256]}, result="success")
+            con.commit()
+        return {"id": approval_id, "status": "revoked"}
+
+    def list_approvals(
+        self, *, actor_user_id: str, tenant_id: str, status: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Qualified users see the tenant's approvals; members see only their
+        own requests."""
+        if self._is_control(actor_user_id, tenant_id):
+            if status:
+                rows = self._store.execute(
+                    "SELECT * FROM approvals WHERE tenant_id=? AND status=? ORDER BY created_at DESC",
+                    (tenant_id, status),
+                )
+            else:
+                rows = self._store.execute(
+                    "SELECT * FROM approvals WHERE tenant_id=? ORDER BY created_at DESC",
+                    (tenant_id,),
+                )
+        else:
+            rows = self._store.execute(
+                "SELECT * FROM approvals WHERE tenant_id=? AND requester_user_id=?"
+                " ORDER BY created_at DESC",
+                (tenant_id, actor_user_id),
+            )
+        return [dict(r) for r in rows]
+
+    def expire_approvals(self, tenant_id: str) -> int:
+        """Mark overdue pending approvals expired. Returns how many flipped."""
+        import time as _time
+        now = int(_time.time())
+        with self._tx() as con:
+            rows = con.execute(
+                "SELECT id FROM approvals WHERE tenant_id=? AND status='pending'"
+                " AND expires_at IS NOT NULL AND expires_at<?",
+                (tenant_id, now),
+            ).fetchall()
+            for row in rows:
+                con.execute(
+                    "UPDATE approvals SET status='expired', decided_at=?, version=version+1"
+                    " WHERE id=?",
+                    (now, row["id"]),
+                )
+            con.commit()
+        return len(rows)
+
+    # --- quotas (open-database-runtime 9.x) --------------------------------
+
+    _QUOTA_METRICS = ("tokens", "tool_calls", "messages", "storage_bytes")
+
+    def set_quota(
+        self, *, actor_user_id: str, tenant_id: str, metric: str,
+        hard_limit: int, user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Set a tenant (or tenant-user) hard limit; applies to the next
+        consumption immediately."""
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError("quota set denied", code="forbidden", status=403)
+        metric = (metric or "").strip()
+        if metric not in self._QUOTA_METRICS:
+            raise IdentityServiceError(f"unknown quota metric: {metric}", code="invalid", status=400)
+        if int(hard_limit or 0) < 0:
+            raise IdentityServiceError("invalid quota limit", code="invalid", status=400)
+        uid = user_id or ""
+        with self._tx() as con:
+            con.execute(
+                "INSERT INTO quota_limits(tenant_id, user_id, metric, hard_limit)"
+                " VALUES (?,?,?,?)"
+                " ON CONFLICT(tenant_id, user_id, metric)"
+                " DO UPDATE SET hard_limit=excluded.hard_limit",
+                (tenant_id, uid, metric, int(hard_limit)),
+            )
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                target_tenant_id=tenant_id, action="quota.set",
+                target=f"quota:{tenant_id}:{uid}:{metric}",
+                redacted_changes={"hard_limit": int(hard_limit)}, result="success")
+            con.commit()
+        return {"tenant_id": tenant_id, "user_id": uid, "metric": metric,
+                "hard_limit": int(hard_limit)}
+
+    def quota_status(
+        self, *, actor_user_id: str, tenant_id: str,
+    ) -> Dict[str, Any]:
+        """Per-tenant limit/usage (qualified users only)."""
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError("quota read denied", code="forbidden", status=403)
+        import calendar
+        import time as _time
+        day_start = calendar.timegm(_time.gmtime())
+        limits = self._store.execute(
+            "SELECT * FROM quota_limits WHERE tenant_id=?", (tenant_id,)
+        )
+        usage = self._store.execute(
+            "SELECT user_id, metric, SUM(used) used FROM quota_usage"
+            " WHERE tenant_id=? AND window_start<=? GROUP BY user_id, metric",
+            (tenant_id, day_start),
+        )
+        return {"tenant_id": tenant_id, "limits": [dict(r) for r in limits],
+                "usage": [dict(r) for r in usage]}
+
+    def consume_quota(
+        self, *, user_id: str, tenant_id: str, metric: str, amount: int = 1,
+        user_limit_only: bool = False,
+    ) -> bool:
+        """Record consumption against the tenant (and user) quota windows.
+
+        Returns True when recorded, False when the limit is already exhausted
+        (a denied consumption is audited, never partially counted). Fail-closed
+        on storage errors so a broken meter cannot silently over-consume.
+        """
+        from common.log import logger
+        import calendar
+        import time as _time
+        if metric not in self._QUOTA_METRICS:
+            raise IdentityServiceError(f"unknown quota metric: {metric}", code="invalid", status=400)
+        if not self._member_active(user_id, tenant_id):
+            logger.warning(f"[quota] consume by non-member user={user_id} tenant={tenant_id}")
+            return False
+        window = calendar.timegm(_time.gmtime())
+        amount = max(1, int(amount or 1))
+        try:
+            with self._tx() as con:
+                # Fast path: no tenant or user limit is configured for this
+                # metric — consume nothing and let the call through.
+                configured = con.execute(
+                    "SELECT 1 FROM quota_limits WHERE tenant_id=? AND"
+                    " (user_id=? OR user_id='') AND metric=? AND hard_limit>0 LIMIT 1",
+                    (tenant_id, user_id, metric),
+                ).fetchone()
+                if not configured:
+                    con.commit()
+                    return True
+                # Tenant bucket first ('' user) unless user_limit_only.
+                if not user_limit_only:
+                    limit_row = con.execute(
+                        "SELECT hard_limit FROM quota_limits WHERE tenant_id=? AND user_id=''"
+                        " AND metric=?",
+                        (tenant_id, metric),
+                    ).fetchone()
+                    if limit_row and limit_row["hard_limit"] > 0:
+                        usage_row = con.execute(
+                            "SELECT used FROM quota_usage WHERE tenant_id=? AND user_id=''"
+                            " AND metric=? AND window_start=?",
+                            (tenant_id, metric, window),
+                        ).fetchone()
+                        used = usage_row["used"] if usage_row else 0
+                        if used + amount > limit_row["hard_limit"]:
+                            self._audit_in_tx(
+                                con, actor_user_id=user_id, tenant_id=tenant_id,
+                                target_tenant_id=tenant_id, action="quota.deny",
+                                target=f"quota:{tenant_id}:::{metric}",
+                                redacted_changes={"limit": limit_row["hard_limit"],
+                                                  "used": used, "amount": amount},
+                                result="denied")
+                            con.commit()
+                            return False
+                        con.execute(
+                            "INSERT INTO quota_usage(tenant_id,user_id,metric,window_start,used)"
+                            " VALUES (?,?,?,?,?)"
+                            " ON CONFLICT(tenant_id,user_id,metric,window_start)"
+                            " DO UPDATE SET used=quota_usage.used+excluded.used",
+                            (tenant_id, "", metric, window, amount),
+                        )
+                # User bucket.
+                user_limit = con.execute(
+                    "SELECT hard_limit FROM quota_limits WHERE tenant_id=? AND user_id=?"
+                    " AND metric=?",
+                    (tenant_id, user_id, metric),
+                ).fetchone()
+                if user_limit and user_limit["hard_limit"] > 0:
+                    usage_row = con.execute(
+                        "SELECT used FROM quota_usage WHERE tenant_id=? AND user_id=?"
+                        " AND metric=? AND window_start=?",
+                        (tenant_id, user_id, metric, window),
+                    ).fetchone()
+                    used = usage_row["used"] if usage_row else 0
+                    if used + amount > user_limit["hard_limit"]:
+                        self._audit_in_tx(
+                            con, actor_user_id=user_id, tenant_id=tenant_id,
+                            target_tenant_id=tenant_id, action="quota.deny",
+                            target=f"quota:{tenant_id}:{user_id}:{metric}",
+                            redacted_changes={"limit": user_limit["hard_limit"],
+                                              "used": used, "amount": amount},
+                            result="denied")
+                        con.commit()
+                        return False
+                    con.execute(
+                        "INSERT INTO quota_usage(tenant_id,user_id,metric,window_start,used)"
+                        " VALUES (?,?,?,?,?)"
+                        " ON CONFLICT(tenant_id,user_id,metric,window_start)"
+                        " DO UPDATE SET used=quota_usage.used+excluded.used",
+                        (tenant_id, user_id, metric, window, amount),
+                    )
+                con.commit()
+            return True
+        except IdentityServiceError:
+            raise
+        except Exception as error:
+            logger.error(f"[quota] consume failed for {tenant_id}/{user_id}/{metric}: {error}")
+            raise IdentityServiceError("quota meter failed", code="quota_error", status=500) from error
 
 
 def identity_db_path() -> str:

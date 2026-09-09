@@ -33,7 +33,10 @@
     async function apiFetch(path, options) {
         const gen = _generation;
         const headers = Object.assign({}, (options && options.headers) || {});
-        const tenant = sessionStorage.getItem('cow_tenant_id');
+        // A per-call tenant override lets multi-tenant member writes target each
+        // tenant explicitly; the server still re-validates the actor's
+        // tenant_admin qualification for that tenant on every request.
+        const tenant = (options && options.tenantId) || sessionStorage.getItem('cow_tenant_id');
         if (tenant) headers['X-Tenant-ID'] = tenant;
         if (options && options.body) headers['Content-Type'] = 'application/json';
         const resp = await fetch(path, {
@@ -188,24 +191,30 @@
         el.id = 'admin-modal';
         el.className = 'fixed inset-0 bg-black/50 z-[200] hidden flex items-center justify-center';
         el.innerHTML =
-            '<div class="bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10 shadow-xl w-full h-full m-2 overflow-hidden flex flex-col">' +
-            '<div class="px-6 pt-6 pb-3 flex-shrink-0">' +
-            '<div class="flex items-center gap-3 mb-4">' +
-            '<div class="w-10 h-10 rounded-xl bg-primary-50 dark:bg-primary-900/20 flex items-center justify-center flex-shrink-0">' +
-            '<i id="admin-modal-icon" class="fas fa-plus text-primary-500"></i>' +
+            '<div class="bg-white dark:bg-[#1A1A1A] rounded-2xl border border-slate-200 dark:border-white/10 shadow-2xl w-full max-w-4xl max-h-[calc(100dvh-4rem)] m-2 overflow-hidden flex flex-col">' +
+            // Header: icon + title + subtitle + close (bordered bottom)
+            '<div class="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-white/10 flex-shrink-0">' +
+            '<div class="flex items-center gap-3 min-w-0">' +
+            '<div class="w-9 h-9 rounded-lg bg-primary-500/10 dark:bg-primary-400/15 text-primary-600 dark:text-primary-400 flex items-center justify-center flex-shrink-0">' +
+            '<i id="admin-modal-icon" class="fas fa-plus text-sm"></i>' +
             '</div>' +
-            '<div class="min-w-0 flex-1">' +
-            '<h3 id="admin-modal-title" class="font-semibold text-slate-800 dark:text-slate-100 text-base"></h3>' +
-            '<p id="admin-modal-subtitle" class="text-xs text-slate-500 dark:text-slate-400 mt-0.5"></p>' +
+            '<div class="min-w-0">' +
+            '<h3 id="admin-modal-title" class="text-base font-semibold text-slate-800 dark:text-slate-100 truncate"></h3>' +
+            '<p id="admin-modal-subtitle" class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate"></p>' +
             '</div>' +
-            '<button class="admin-modal-close p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-white/5 text-slate-400 cursor-pointer"><i class="fas fa-xmark"></i></button>' +
             '</div>' +
-            '<div id="admin-modal-body" class="flex-1 overflow-y-auto px-6 py-3 flex flex-wrap gap-4 content-start"></div>' +
-            '<p id="admin-modal-error" class="hidden mt-2 text-xs text-red-500"></p>' +
+            '<button class="admin-modal-close p-2 -mr-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:text-slate-300 dark:hover:bg-white/10 transition-colors cursor-pointer"><i class="fas fa-times text-sm"></i></button>' +
             '</div>' +
-            '<div class="flex justify-end gap-3 px-6 py-4 border-t border-slate-100 dark:border-white/5 flex-shrink-0">' +
-            '<button id="admin-modal-cancel" class="admin-modal-close px-4 py-2 rounded-lg border border-slate-200 dark:border-white/10 text-slate-600 dark:text-slate-300 text-sm hover:bg-slate-50 dark:hover:bg-white/5 cursor-pointer"></button>' +
-            '<button id="admin-modal-submit" class="px-4 py-2 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium disabled:opacity-50"></button>' +
+            // Body (scrollable) + inline error
+            '<div id="admin-modal-body" class="flex-1 overflow-y-auto px-6 py-6 space-y-6"></div>' +
+            '<p id="admin-modal-error" class="hidden px-6 -mt-2 text-xs text-red-500"></p>' +
+            // Footer: bottom bar
+            '<div class="flex items-center justify-between px-6 py-4 border-t border-slate-200 dark:border-white/10 bg-slate-50/60 dark:bg-white/[0.02] flex-shrink-0">' +
+            '<div></div>' +
+            '<div class="flex items-center gap-3">' +
+            '<button id="admin-modal-cancel" class="admin-modal-close px-4 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/10 active:scale-[0.98] cursor-pointer transition-all"></button>' +
+            '<button id="admin-modal-submit" class="px-5 py-2 rounded-lg bg-primary-500 hover:bg-primary-600 active:scale-[0.98] text-white text-sm font-medium shadow-sm shadow-primary-500/20 disabled:opacity-50 cursor-pointer transition-all inline-flex items-center gap-1.5"><i class="fas fa-check text-xs"></i><span class="admin-modal-submit-label"></span></button>' +
+            '</div>' +
             '</div>' +
             '</div>';
         document.body.appendChild(el);
@@ -234,9 +243,10 @@
             control = '<textarea id="' + id + '" class="agent-input agent-textarea" placeholder="' + escapeHtml(f.placeholder || '') + '">' + escapeHtml(val) + '</textarea>';
         } else if (f.type === 'select') {
             label = '<label class="agent-field-label" for="' + id + '">' + escapeHtml(f.label) + req + '</label>';
-            control = '<select id="' + id + '" class="agent-input">' + (f.options || []).map(function (o) {
-                return '<option value="' + escapeHtml(o.value) + '"' + (String(o.value) === String(val) ? ' selected' : '') + '>' + escapeHtml(o.label) + '</option>';
-            }).join('') + '</select>';
+            control = '<div class="agent-input-wrap relative"><span class="agent-icon-abs">' + (f.icon ? '<i class="fas fa-' + escapeHtml(f.icon) + '"></i>' : '') + '</span>' +
+                '<select id="' + id + '" class="agent-input"' + (f.icon ? ' data-with-icon="1"' : '') + '>' + (f.options || []).map(function (o) {
+                    return '<option value="' + escapeHtml(o.value) + '"' + (String(o.value) === String(val) ? ' selected' : '') + '>' + escapeHtml(o.label) + '</option>';
+                }).join('') + '</select></div>';
         } else if (f.type === 'multi') {
             label = '<label class="agent-field-label">' + escapeHtml(f.label) + req + '</label>';
             control = '<div id="' + id + '" class="flex flex-wrap gap-2">' + (f.options || []).map(function (o) {
@@ -257,12 +267,48 @@
         } else {
             const type = f.type || 'text';
             label = '<label class="agent-field-label" for="' + id + '">' + escapeHtml(f.label) + req + '</label>';
-            control = '<input type="' + type + '" id="' + id + '" class="agent-input" value="' + escapeHtml(val) + '" placeholder="' + escapeHtml(f.placeholder || '') + '">';
+            control = '<div class="agent-input-wrap relative"><span class="agent-icon-abs">' + (f.icon ? '<i class="fas fa-' + escapeHtml(f.icon) + '"></i>' : '') + '</span>' +
+                '<input type="' + type + '" id="' + id + '" class="agent-input"' + (f.icon ? ' data-with-icon="1"' : '') + ' value="' + escapeHtml(val) + '" placeholder="' + escapeHtml(f.placeholder || '') + '"></div>';
         }
-        const wrapClass = f.inline ? 'agent-field agent-field-inline flex-1 min-w-[220px]' : 'agent-field w-full';
+        const isFullWidth = f.type === 'resourcegroup' || f.type === 'modeldefaults' || f.type === 'modelgrant' || f.type === 'textarea' || f.type === 'select' && f.full;
+        const wrapClass = isFullWidth ? 'agent-field w-full md:col-span-2' : (f.inline ? 'agent-field agent-field-inline flex-1 min-w-[220px]' : 'agent-field w-full');
         return '<div class="' + wrapClass + '">' + label + control +
             (f.hint ? '<div class="agent-field-hint">' + escapeHtml(f.hint) + '</div>' : '') +
             '</div>';
+    }
+
+    // Group fields into optional "section" blocks, each with an icon + heading +
+    // divider line. Within a section, fields lay out in a two-column grid.
+    // A new section begins only at a field that carries an explicit
+    // `sectionTitle`; fields without one continue in the current section, so
+    // callers may mark just the first field of a group. Fields that precede any
+    // titled section are rendered as a single implicit (untitled) section.
+    function renderModalBody(fields) {
+        const sections = [];
+        let current = null;
+        fields.forEach(function (f) {
+            if (f.sectionTitle) {
+                current = { key: f.sectionTitle, title: f.sectionTitle, icon: f.sectionIcon, fields: [] };
+                sections.push(current);
+            } else if (!current) {
+                current = { key: '', title: '', icon: '', fields: [] };
+                sections.push(current);
+            }
+            current.fields.push(f);
+        });
+        return sections.map(function (s) {
+            const head = s.title
+                ? '<div class="flex items-center gap-2 mb-3">' +
+                  '<i class="fas fa-' + escapeHtml(s.icon || 'circle') + ' text-xs text-slate-400 dark:text-slate-500 w-4 text-center"></i>' +
+                  '<h4 class="text-xs font-semibold text-slate-500 dark:text-slate-400">' + escapeHtml(s.title) + '</h4>' +
+                  '<div class="flex-1 h-px bg-slate-100 dark:bg-white/5"></div>' +
+                  '</div>'
+                : '';
+            const grid = '<div class="grid grid-cols-1 md:grid-cols-2 gap-4">' +
+                s.fields.map(fieldHtml).join('') +
+                '</div>';
+            return '<section>' + head + grid + '</section>';
+        }).join('');
     }
 
     // ---- resource-authorization pickers (task 3.1) -------------------------
@@ -648,9 +694,10 @@
         const el = ensureAdminModal();
         document.getElementById('admin-modal-title').textContent = cfg.title || '';
         document.getElementById('admin-modal-subtitle').textContent = cfg.subtitle || '';
-        document.getElementById('admin-modal-icon').className = 'fas ' + (cfg.icon || 'fa-plus') + ' text-primary-500';
+        document.getElementById('admin-modal-icon').className = 'fas ' + (cfg.icon || 'fa-plus') + ' text-sm';
         const submitBtn = document.getElementById('admin-modal-submit');
-        submitBtn.textContent = cfg.submitLabel || t('save');
+        const submitLabel = submitBtn.querySelector('.admin-modal-submit-label');
+        if (submitLabel) submitLabel.textContent = cfg.submitLabel || t('save');
         submitBtn.disabled = false;
         document.getElementById('admin-modal-cancel').textContent = t('cancel');
         _adminModal = {
@@ -662,7 +709,7 @@
             successMsg: cfg.successMsg || t('admin_saved'),
         };
         const body = document.getElementById('admin-modal-body');
-        body.innerHTML = (cfg.fields || []).map(fieldHtml).join('');
+        body.innerHTML = renderModalBody(cfg.fields || []);
         closeAdminErr();
         (cfg.fields || []).forEach(function (f) {
             // The modal-control container id is stamped by the field renderer.
@@ -821,6 +868,28 @@
             _depts.forEach(function (x) { _deptById[x.id] = x; });
             return _depts;
         } catch (e) { _depts = []; _deptById = {}; return []; }
+    }
+
+    // Tenants the actor administers (active tenant_admin). This is the candidate
+    // set for the member tenant multi-select; a platform admin is NOT broadened
+    // to all tenants (see `administered_tenants` in auth/service.py). Pass a
+    // target `user_id` to also learn that user's membership status within these
+    // administered tenants (never other tenants).
+    let _adminTenants = null;
+    async function administeredTenants(targetUserId) {
+        if (!targetUserId && _adminTenants) return _adminTenants;
+        const path = '/api/identity/administered-tenants' +
+            (targetUserId ? '?' + qs({ user_id: targetUserId }) : '');
+        const data = await apiFetch(path);
+        const items = data.items || [];
+        if (!targetUserId) _adminTenants = items;
+        return items;
+    }
+
+    function tenantOptions(tenants) {
+        return (tenants || []).map(function (t) {
+            return { value: t.id, label: t.name + ' (' + t.code + ')' };
+        });
     }
 
     async function ensurePermCatalog() {
@@ -1111,6 +1180,7 @@
                     + '<div class="text-xs text-slate-400">' + escapeHtml(m.username) + ' · ' + fmtActive(m.active) + (roleNames ? ' · ' + escapeHtml(roleNames) : '') + '</div></div></div>'
                     + '<div class="flex items-center gap-2"><div class="text-xs text-slate-400">' + escapeHtml(m.position_text || '') + '</div>'
                     + '<button class="admin-row-btn" onclick="adminRowAction(\'member\',\'edit\',\'' + escapeHtml(m.id) + '\')"><i class="fas fa-pen mr-1"></i>' + escapeHtml(t('admin_edit')) + '</button>'
+                    + '<button class="admin-row-btn" onclick="adminRowAction(\'member\',\'tenants\',\'' + escapeHtml(m.id) + '\')"><i class="fas fa-building mr-1"></i>' + escapeHtml(t('member_tenants')) + '</button>'
                     + (platformAdmin && m.user_id
                         ? '<button class="admin-row-btn" onclick="adminRowAction(\'member\',\'reset\',\'' + escapeHtml(m.id) + '\')"><i class="fas fa-key mr-1"></i>' + escapeHtml(t('admin_reset')) + '</button>'
                         : '')
@@ -1149,23 +1219,44 @@
     async function openMemberCreate() {
         const roles = await fetchRoles();
         const depts = await fetchDepts();
+        const tenants = await administeredTenants();
+        const currentTenant = sessionStorage.getItem('cow_tenant_id');
         openAdminModal({
             title: t('member_create'),
             icon: 'fa-plus',
             fields: [
-                { name: 'username', label: t('admin_field_username'), type: 'text', required: true, hint: t('admin_field_username_hint'), inline: true },
-                { name: 'display_name', label: t('admin_field_display_name'), type: 'text', required: true, inline: true },
-                { name: 'temporary_password', label: t('admin_field_temp_password'), type: 'password', required: true, hint: t('admin_field_password_hint') },
-                { name: 'roles', label: t('admin_field_roles'), type: 'multi', options: roleOptions(roles), value: ['member'], hint: t('admin_field_roles_hint') },
-                { name: 'department_id', label: t('admin_field_department'), type: 'select', options: memberDeptOptions(depts), hint: t('admin_field_department_hint') },
-                { name: 'position_text', label: t('admin_field_position'), type: 'text' },
+                // Section 0: 所属租户
+                { name: 'tenants', label: t('admin_field_tenants'), type: 'multi', options: tenantOptions(tenants), value: [currentTenant], required: true, hint: t('admin_field_tenants_hint'), sectionTitle: t('member_section_tenants'), sectionIcon: 'building' },
+                // Section 1: 账号信息
+                { name: 'username', label: t('admin_field_username'), type: 'text', required: true, hint: t('admin_field_username_hint'), inline: true, icon: 'user', sectionTitle: t('member_section_account'), sectionIcon: 'address-card' },
+                { name: 'display_name', label: t('admin_field_display_name'), type: 'text', required: true, inline: true, icon: 'id-card' },
+                { name: 'temporary_password', label: t('admin_field_temp_password'), type: 'password', required: true, hint: t('admin_field_password_hint'), icon: 'lock' },
+                { name: 'department_id', label: t('admin_field_department'), type: 'select', options: memberDeptOptions(depts), hint: t('admin_field_department_hint'), icon: 'building' },
+                { name: 'position_text', label: t('admin_field_position'), type: 'text', icon: 'briefcase' },
+                // Section 2: 角色与状态
+                { name: 'roles', label: t('admin_field_roles'), type: 'multi', options: roleOptions(roles), value: ['member'], hint: t('admin_field_roles_hint'), sectionTitle: t('member_section_role'), sectionIcon: 'user-shield' },
             ],
             submitLabel: t('admin_create'),
             statusEl: document.getElementById('member-status'),
             submit: async function (body) {
-                body.operation = 'create-new';
-                body.department_id = body.department_id || null;
-                await apiFetch('/api/tenant/members', { method: 'POST', body: body });
+                const tenantIds = body.tenants || [];
+                for (let i = 0; i < tenantIds.length; i++) {
+                    const tid = tenantIds[i];
+                    const op = (i === 0) ? 'create-new' : 'bind-existing';
+                    await apiFetch('/api/tenant/members', {
+                        method: 'POST',
+                        tenantId: tid,
+                        body: {
+                            operation: op,
+                            username: body.username,
+                            display_name: body.display_name,
+                            temporary_password: op === 'create-new' ? (body.temporary_password || '') : '',
+                            roles: body.roles,
+                            department_id: body.department_id || null,
+                            position_text: body.position_text,
+                        },
+                    });
+                }
                 await loadMembersView();
             },
             onConflictReload: function () { loadMembersView(); },
@@ -1182,12 +1273,14 @@
             subtitle: m.username || '',
             icon: 'fa-pen',
             fields: [
-                { name: 'username', label: t('admin_field_username'), type: 'locked', value: m.username },
-                { name: 'display_name', label: t('admin_field_display_name'), type: 'text', value: m.display_name, required: true },
-                { name: 'active', label: t('admin_field_active'), type: 'checkbox', value: !!m.active },
+                // Section 1: 账号信息
+                { name: 'username', label: t('admin_field_username'), type: 'locked', value: m.username, sectionTitle: t('member_section_account'), sectionIcon: 'address-card' },
+                { name: 'display_name', label: t('admin_field_display_name'), type: 'text', value: m.display_name, required: true, icon: 'id-card' },
+                { name: 'department_id', label: t('admin_field_department'), type: 'select', options: memberDeptOptions(depts), value: m.department_id || '', icon: 'building' },
+                { name: 'position_text', label: t('admin_field_position'), type: 'text', value: m.position_text || '', icon: 'briefcase' },
+                // Section 2: 角色与状态
+                { name: 'active', label: t('admin_field_active'), type: 'checkbox', value: !!m.active, sectionTitle: t('member_section_role'), sectionIcon: 'user-shield' },
                 { name: 'roles', label: t('admin_field_roles'), type: 'multi', options: roleOptions(roles), value: m.role_codes || [], hint: t('admin_field_roles_edit_hint') },
-                { name: 'department_id', label: t('admin_field_department'), type: 'select', options: memberDeptOptions(depts), value: m.department_id || '' },
-                { name: 'position_text', label: t('admin_field_position'), type: 'text', value: m.position_text || '' },
             ],
             submitLabel: t('admin_save'),
             statusEl: document.getElementById('member-status'),
@@ -1200,6 +1293,66 @@
                 const next = (body.roles || []).slice().sort().join(',');
                 if (current === next) delete body.roles;
                 await apiFetch('/api/tenant/members/' + encodeURIComponent(id), { method: 'POST', body: body });
+                await loadMembersView();
+            },
+            onConflictReload: function () { loadMembersView(); },
+        });
+    }
+
+    // Adjust which (administered) tenants a member belongs to — the tenant side
+    // of member editing, decoupled from the per-tenant profile edit. Adding a
+    // tenant binds the existing account there (default member role); removing
+    // one deactivates that membership (continuity is enforced server-side).
+    async function openMemberTenants(id) {
+        const m = _memberById[id];
+        if (!m) return;
+        const tenants = await administeredTenants(m.user_id);
+        const current = tenants.filter(function (t) { return t.member; }).map(function (t) { return t.id; });
+        openAdminModal({
+            title: t('member_tenants_title'),
+            subtitle: m.username || '',
+            icon: 'fa-building',
+            fields: [
+                { name: 'tenants', label: t('admin_field_tenants'), type: 'multi', options: tenantOptions(tenants), value: current, required: true, hint: t('admin_field_tenants_edit_hint') },
+            ],
+            submitLabel: t('admin_save'),
+            statusEl: document.getElementById('member-status'),
+            submit: async function (body) {
+                const selected = new Set(body.tenants || []);
+                for (let i = 0; i < tenants.length; i++) {
+                    const t = tenants[i];
+                    if (!t.member && selected.has(t.id)) {
+                        await apiFetch('/api/tenant/members', {
+                            method: 'POST',
+                            tenantId: t.id,
+                            body: {
+                                operation: 'bind-existing',
+                                username: m.username,
+                                display_name: m.display_name,
+                                temporary_password: '',
+                                roles: ['member'],
+                                department_id: null,
+                                position_text: '',
+                            },
+                        });
+                    }
+                }
+                for (let i = 0; i < tenants.length; i++) {
+                    const t = tenants[i];
+                    if (t.member && !selected.has(t.id)) {
+                        await apiFetch('/api/tenant/members/' + encodeURIComponent(t.member_id), {
+                            method: 'POST',
+                            tenantId: t.id,
+                            body: {
+                                display_name: m.display_name,
+                                active: false,
+                                department_id: null,
+                                position_text: '',
+                                expected_version: t.member_version,
+                            },
+                        });
+                    }
+                }
                 await loadMembersView();
             },
             onConflictReload: function () { loadMembersView(); },
@@ -1396,27 +1549,531 @@
         return null;
     }
 
+    // ---- Role page editor (create / edit / copy; replaces admin-modal for roles) --
+    let _roleEditor = {
+        open: false, dirty: false, mode: 'create', role: null,
+        submit: null, onConflictReload: null, statusEl: null,
+        successMsg: '', activeTab: 'basic', perms: null,
+    };
+
+    function markRoleEditorDirty() {
+        _roleEditor.dirty = true;
+        const pill = document.getElementById('role-dirty-pill');
+        if (pill) pill.classList.add('show');
+    }
+
+    function _roleEditorTabLabel(tab) {
+        if (tab === 'basic') return t('role_tab_basic') || '基本信息';
+        if (tab === 'model') return t('admin_resource_kind_model') || '模型';
+        return _resourceKindLabel(tab);
+    }
+
+    function ensureRoleEditor() {
+        let el = document.getElementById('role-editor');
+        if (el) return el;
+        el = document.createElement('div');
+        el.id = 'role-editor';
+        el.className = 'role-editor hidden';
+        const tabs = ['basic', 'menu', 'skill', 'tool', 'agent', 'model'];
+        const tabHtml = tabs.map(function (tab) {
+            const badgeId = tab === 'basic' ? 'role-badge-perms' : ('role-badge-' + tab);
+            return '<button type="button" class="role-editor-tab" data-tab="' + tab + '">' +
+                '<span class="role-editor-tab-label" data-tab-label="' + tab + '"></span>' +
+                '<span class="role-editor-badge" id="' + badgeId + '">0</span></button>';
+        }).join('');
+        const kindPanels = ['menu', 'skill', 'tool', 'agent'].map(function (kind) {
+            return '<div class="role-editor-panel" id="role-panel-' + kind + '">' +
+                '<p class="text-sm text-slate-500 dark:text-slate-400 mb-4 role-panel-hint" data-kind-hint="' + kind + '"></p>' +
+                '<div class="role-res-picker" id="role-res-manage-' + kind + '">' +
+                '<div class="flex flex-wrap gap-2 items-center mb-3">' +
+                '<input type="text" class="agent-input flex-1 min-w-[180px] role-res-search" data-kind="' + kind + '" placeholder="">' +
+                '<button type="button" class="admin-row-btn role-res-selectall" data-kind="' + kind + '"></button>' +
+                '<button type="button" class="admin-row-btn role-res-clear" data-kind="' + kind + '"></button>' +
+                '</div>' +
+                '<div class="role-res-list" id="role-res-list-' + kind + '"></div>' +
+                '<div class="flex items-center justify-between pt-2 text-xs text-slate-400">' +
+                '<span class="role-res-total" data-kind="' + kind + '"></span>' +
+                '<div class="role-res-pagination" data-kind="' + kind + '"></div>' +
+                '</div></div></div>';
+        }).join('');
+        el.innerHTML =
+            '<div class="role-editor-head">' +
+            '<button type="button" class="role-editor-back" id="role-editor-back"></button>' +
+            '<div class="role-editor-title-row">' +
+            '<div class="min-w-0">' +
+            '<h2 id="role-editor-title" class="text-xl font-bold text-slate-800 dark:text-slate-100 m-0"></h2>' +
+            '<p id="role-editor-sub" class="text-xs text-slate-400 mt-1 truncate"></p>' +
+            '</div>' +
+            '<span class="role-dirty-pill" id="role-dirty-pill"></span>' +
+            '</div>' +
+            '<nav class="role-editor-tabs" role="tablist">' + tabHtml + '</nav>' +
+            '</div>' +
+            '<div class="role-editor-body">' +
+            '<div class="role-editor-panel active" id="role-panel-basic">' +
+            '<div class="role-editor-block-title" id="role-block-basic-title"></div>' +
+            '<p class="text-sm text-slate-500 dark:text-slate-400 mb-4" id="role-basic-hint"></p>' +
+            '<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2">' +
+            '<div class="agent-field"><label class="agent-field-label" id="role-label-code"></label>' +
+            '<div id="role-code-wrap"></div></div>' +
+            '<div class="agent-field"><label class="agent-field-label" id="role-label-name"></label>' +
+            '<input type="text" id="adm-fld-name" class="agent-input" value=""></div>' +
+            '</div>' +
+            '<div class="role-editor-block-title" id="role-block-perms-title"></div>' +
+            '<p class="text-sm text-slate-500 dark:text-slate-400 mb-3" id="role-perms-hint"></p>' +
+            '<div class="flex flex-wrap gap-2 items-center mb-3">' +
+            '<input type="text" id="role-perm-search" class="agent-input flex-1 min-w-[180px]" placeholder="">' +
+            '<button type="button" class="admin-row-btn" id="role-perm-clear-all"></button>' +
+            '</div>' +
+            '<div id="adm-fld-permissions"></div>' +
+            '</div>' +
+            kindPanels +
+            '<div class="role-editor-panel" id="role-panel-model">' +
+            '<div class="role-editor-block-title" id="role-block-model-assign-title"></div>' +
+            '<p class="text-sm text-slate-500 dark:text-slate-400 mb-4" id="role-model-assign-hint"></p>' +
+            '<div class="role-res-picker mb-4" id="role-res-manage-model">' +
+            '<div class="flex flex-wrap gap-2 items-center mb-3">' +
+            '<input type="text" class="agent-input flex-1 min-w-[180px] role-res-search" data-kind="model" placeholder="">' +
+            '<button type="button" class="admin-row-btn role-res-selectall" data-kind="model"></button>' +
+            '<button type="button" class="admin-row-btn role-res-clear" data-kind="model"></button>' +
+            '</div>' +
+            '<div class="role-res-list" id="role-res-list-model"></div>' +
+            '<div class="flex items-center justify-between pt-2 text-xs text-slate-400">' +
+            '<span class="role-res-total" data-kind="model"></span>' +
+            '<div class="role-res-pagination" data-kind="model"></div>' +
+            '</div></div>' +
+            '<div class="role-editor-block-title" id="role-block-model-defaults-title"></div>' +
+            '<p class="text-sm text-slate-500 dark:text-slate-400 mb-3" id="role-model-defaults-hint"></p>' +
+            '<div id="adm-fld-modeldefaults" class="role-res-picker space-y-2"></div>' +
+            '</div>' +
+            '</div>' +
+            '<p id="role-editor-error" class="hidden px-7 text-xs text-red-500"></p>' +
+            '<div class="role-editor-foot">' +
+            '<div class="text-xs text-slate-400" id="role-editor-foot-hint"></div>' +
+            '<div class="flex items-center gap-2">' +
+            '<button type="button" class="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/10" id="role-editor-cancel"></button>' +
+            '<button type="button" class="px-5 py-2 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium" id="role-editor-submit"></button>' +
+            '</div></div>';
+
+        const view = document.getElementById('view-roles');
+        if (view) {
+            if (!view.style.position) view.style.position = 'relative';
+            el.style.position = 'absolute';
+            el.style.inset = '0';
+            el.style.zIndex = '20';
+            view.appendChild(el);
+        } else {
+            document.body.appendChild(el);
+        }
+
+        el.querySelectorAll('.role-editor-tab').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                switchRoleEditorTab(btn.getAttribute('data-tab'));
+            });
+        });
+        document.getElementById('role-editor-back').addEventListener('click', function () { closeRoleEditor(); });
+        document.getElementById('role-editor-cancel').addEventListener('click', function () { closeRoleEditor(); });
+        document.getElementById('role-editor-submit').addEventListener('click', submitRoleEditor);
+        document.getElementById('adm-fld-name').addEventListener('input', markRoleEditorDirty);
+        document.getElementById('role-perm-search').addEventListener('input', function () {
+            renderRolePermissions(_roleEditor.perms || [], _collectRolePermissionIds());
+        });
+        document.getElementById('role-perm-clear-all').addEventListener('click', function () {
+            renderRolePermissions(_roleEditor.perms || [], []);
+            markRoleEditorDirty();
+            updateRoleEditorBadges();
+        });
+        el.querySelectorAll('.role-res-search').forEach(function (inp) {
+            inp.addEventListener('input', function () {
+                const kind = inp.getAttribute('data-kind');
+                const st = _resourceState[kind];
+                if (!st) return;
+                st.q = inp.value || '';
+                st.page = 1;
+                _renderRoleKindList(kind);
+            });
+        });
+        el.querySelectorAll('.role-res-selectall').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                const kind = btn.getAttribute('data-kind');
+                const list = document.getElementById('role-res-list-' + kind);
+                if (!list) return;
+                const st = _resourceState[kind];
+                list.querySelectorAll('input[type=checkbox]').forEach(function (cb) {
+                    st.selected.add(cb.value);
+                    cb.checked = true;
+                    if (cb.parentElement) cb.parentElement.classList.add('checked');
+                });
+                markRoleEditorDirty();
+                updateRoleEditorBadges();
+                if (kind === 'model') _refreshRoleModelDefaults();
+            });
+        });
+        el.querySelectorAll('.role-res-clear').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                const kind = btn.getAttribute('data-kind');
+                const st = _resourceState[kind];
+                if (st) st.selected.clear();
+                _renderRoleKindList(kind);
+                markRoleEditorDirty();
+                updateRoleEditorBadges();
+                if (kind === 'model') _refreshRoleModelDefaults();
+            });
+        });
+        return el;
+    }
+
+    function _localizeRoleEditorChrome() {
+        const tabs = ['basic', 'menu', 'skill', 'tool', 'agent', 'model'];
+        tabs.forEach(function (tab) {
+            const label = document.querySelector('.role-editor-tab-label[data-tab-label="' + tab + '"]');
+            if (label) label.textContent = _roleEditorTabLabel(tab);
+        });
+        const setText = function (id, value) {
+            const el = document.getElementById(id);
+            if (el) el.textContent = value;
+        };
+        setText('role-editor-back', '← ' + (t('role_editor_back') || t('roles_title') || '返回角色列表'));
+        setText('role-dirty-pill', t('role_dirty_pill') || '有未保存更改');
+        setText('role-block-basic-title', t('role_section_basic') || '基本信息');
+        setText('role-basic-hint', t('role_basic_hint') || '填写角色标识；下方配置功能权限。');
+        setText('role-label-code', t('admin_field_code'));
+        setText('role-label-name', t('admin_field_name') + ' *');
+        setText('role-block-perms-title', t('admin_field_permissions'));
+        setText('role-perms-hint', t('admin_field_permissions_hint'));
+        setText('role-perm-clear-all', t('admin_resource_clear'));
+        const permSearch = document.getElementById('role-perm-search');
+        if (permSearch) permSearch.placeholder = t('role_perm_search_placeholder') || '搜索权限…';
+        setText('role-block-model-assign-title', t('role_section_model_assign') || '可分配模型');
+        setText('role-model-assign-hint', t('role_model_assign_hint') || '勾选该角色可使用的模型；默认模型只能从已选项中选择。');
+        setText('role-block-model-defaults-title', t('admin_field_model_defaults') || '默认模型');
+        setText('role-model-defaults-hint', t('admin_field_model_defaults_hint') || '');
+        setText('role-editor-foot-hint', t('role_editor_foot_hint') || '切换 Tab 不丢草稿 · 离开前若有改动会确认');
+        setText('role-editor-cancel', t('cancel'));
+        ['menu', 'skill', 'tool', 'agent', 'model'].forEach(function (kind) {
+            const search = document.querySelector('.role-res-search[data-kind="' + kind + '"]');
+            if (search) search.placeholder = t('admin_resource_search_placeholder');
+            const allBtn = document.querySelector('.role-res-selectall[data-kind="' + kind + '"]');
+            if (allBtn) allBtn.textContent = t('admin_resource_selectall');
+            const clearBtn = document.querySelector('.role-res-clear[data-kind="' + kind + '"]');
+            if (clearBtn) clearBtn.textContent = t('admin_resource_clear');
+            const hint = document.querySelector('.role-panel-hint[data-kind-hint="' + kind + '"]');
+            if (hint) hint.textContent = (t('admin_field_resource_grants_hint') || '');
+        });
+    }
+
+    function switchRoleEditorTab(tab) {
+        _roleEditor.activeTab = tab || 'basic';
+        document.querySelectorAll('.role-editor-tab').forEach(function (btn) {
+            btn.classList.toggle('active', btn.getAttribute('data-tab') === _roleEditor.activeTab);
+        });
+        document.querySelectorAll('.role-editor-panel').forEach(function (panel) {
+            panel.classList.toggle('active', panel.id === 'role-panel-' + _roleEditor.activeTab);
+        });
+        if (_roleEditor.activeTab !== 'basic') {
+            _renderRoleKindList(_roleEditor.activeTab === 'model' ? 'model' : _roleEditor.activeTab);
+        }
+        if (_roleEditor.activeTab === 'model') _refreshRoleModelDefaults();
+    }
+
+    function updateRoleEditorBadges() {
+        const permEl = document.getElementById('role-badge-perms');
+        if (permEl) permEl.textContent = String(_collectRolePermissionIds().length);
+        ['menu', 'skill', 'tool', 'agent', 'model'].forEach(function (kind) {
+            const el = document.getElementById('role-badge-' + kind);
+            if (el) el.textContent = String(_resCount(kind));
+        });
+    }
+
+    function _collectRolePermissionIds() {
+        const root = document.getElementById('adm-fld-permissions');
+        if (!root) return [];
+        return Array.prototype.slice.call(root.querySelectorAll('input:checked')).map(function (i) { return i.value; });
+    }
+
+    function renderRolePermissions(catalog, selected) {
+        const root = document.getElementById('adm-fld-permissions');
+        if (!root) return;
+        const selectedSet = {};
+        (selected || []).forEach(function (id) { selectedSet[id] = true; });
+        const q = ((document.getElementById('role-perm-search') || {}).value || '').trim().toLowerCase();
+        const groups = permGroups(catalog);
+        const keys = Object.keys(groups);
+        // Stable-ish order: nonempty groups first alphabetically, then blank.
+        keys.sort(function (a, b) {
+            if (!a) return 1;
+            if (!b) return -1;
+            return a.localeCompare(b);
+        });
+        let html = '';
+        keys.forEach(function (g) {
+            const items = (groups[g] || []).filter(function (p) {
+                if (!q) return true;
+                const hay = ((p.group || '') + ' ' + (p.label || '') + ' ' + (p.id || '')).toLowerCase();
+                return hay.indexOf(q) !== -1;
+            });
+            if (!items.length) return;
+            const selectedCount = items.filter(function (p) { return selectedSet[p.id]; }).length;
+            const allOn = selectedCount === items.length;
+            const title = g || (t('admin_field_permissions') || '权限');
+            html += '<div class="role-perm-group" data-group="' + escapeHtml(g) + '">' +
+                '<div class="role-perm-group-head">' +
+                '<div class="text-sm font-semibold text-slate-700 dark:text-slate-200">' + escapeHtml(title) +
+                ' <span class="text-xs font-normal text-slate-400">' + selectedCount + ' / ' + items.length + '</span></div>' +
+                '<button type="button" class="admin-row-btn role-perm-group-toggle" data-group="' + escapeHtml(g) + '" data-all="' + (allOn ? '1' : '0') + '">' +
+                (allOn ? (t('role_perm_clear_group') || '清空本组') : (t('role_perm_select_group') || '全选本组')) +
+                '</button></div><div class="role-perm-group-body">';
+            items.forEach(function (p) {
+                const checked = !!selectedSet[p.id];
+                html += '<label class="role-perm-item' + (checked ? ' checked' : '') + '">' +
+                    '<input type="checkbox" value="' + escapeHtml(p.id) + '"' + (checked ? ' checked' : '') + '>' +
+                    escapeHtml(p.label || p.id) + '</label>';
+            });
+            html += '</div></div>';
+        });
+        if (!html) {
+            html = '<div class="text-sm text-slate-400 py-6 text-center">' + escapeHtml(t('admin_resources_none') || '无匹配') + '</div>';
+        }
+        root.innerHTML = html;
+        root.querySelectorAll('input[type=checkbox]').forEach(function (cb) {
+            cb.addEventListener('change', function () {
+                if (cb.parentElement) cb.parentElement.classList.toggle('checked', !!cb.checked);
+                markRoleEditorDirty();
+                updateRoleEditorBadges();
+            });
+        });
+        root.querySelectorAll('.role-perm-group-toggle').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                const group = btn.getAttribute('data-group') || '';
+                const turnOn = btn.getAttribute('data-all') !== '1';
+                const current = _collectRolePermissionIds();
+                const set = {};
+                current.forEach(function (id) { set[id] = true; });
+                (groups[group] || []).forEach(function (p) {
+                    if (turnOn) set[p.id] = true;
+                    else delete set[p.id];
+                });
+                renderRolePermissions(catalog, Object.keys(set));
+                markRoleEditorDirty();
+                updateRoleEditorBadges();
+            });
+        });
+    }
+
+    async function _renderRoleKindList(kind) {
+        const manage = document.getElementById('role-res-manage-' + kind);
+        const list = document.getElementById('role-res-list-' + kind);
+        if (!manage || !list) return;
+        const st = _resourceState[kind];
+        if (!st) return;
+        list.innerHTML = '<div class="text-xs text-slate-400 py-2">' + escapeHtml(t('admin_loading') || '…') + '</div>';
+        try {
+            const data = await _loadResourceCatalog(kind, st.q, st.page, st.pageSize);
+            const items = data.items || [];
+            const total = data.total || 0;
+            const actions = data.resource_actions || _resourceActions[kind] || [];
+            st.actions = actions;
+            st.loaded = true;
+            if (!items.length) {
+                list.innerHTML = '<div class="text-xs text-slate-400 py-2">' + escapeHtml(t('admin_resources_none')) + '</div>';
+            } else {
+                list.innerHTML = items.map(function (r) {
+                    const rid = r.resource_id;
+                    const checked = st.selected.has(rid);
+                    const idSuffix = rid && rid.indexOf('nav:') === 0 ? rid.slice(4) : rid;
+                    return '<label class="role-res-item' + (checked ? ' checked' : '') + '">' +
+                        '<input type="checkbox" value="' + escapeHtml(rid) + '"' + (checked ? ' checked' : '') + '>' +
+                        '<span class="flex flex-col leading-tight min-w-0"><span class="truncate">' + escapeHtml(r.name) + '</span>' +
+                        (idSuffix && idSuffix !== r.name ? '<span class="text-[10px] text-slate-400 truncate">' + escapeHtml(idSuffix) + '</span>' : '') +
+                        '</span></label>';
+                }).join('');
+            }
+            list.querySelectorAll('input[type=checkbox]').forEach(function (cb) {
+                cb.addEventListener('change', function () {
+                    if (cb.checked) st.selected.add(cb.value);
+                    else st.selected.delete(cb.value);
+                    if (cb.parentElement) cb.parentElement.classList.toggle('checked', !!cb.checked);
+                    markRoleEditorDirty();
+                    updateRoleEditorBadges();
+                    if (kind === 'model') _refreshRoleModelDefaults();
+                });
+            });
+            const totalEl = manage.querySelector('.role-res-total[data-kind="' + kind + '"]');
+            if (totalEl) totalEl.textContent = (t('admin_total_label') || '共') + ' ' + total;
+            const pag = manage.querySelector('.role-res-pagination[data-kind="' + kind + '"]');
+            if (pag && typeof renderPagination === 'function') {
+                renderPagination(pag, st.page, st.pageSize, total, function (p) {
+                    st.page = p;
+                    _renderRoleKindList(kind);
+                });
+            } else if (pag) {
+                pag.innerHTML = '';
+            }
+        } catch (err) {
+            list.innerHTML = '<div class="text-xs text-red-500 py-2">' + escapeHtml(err.message || t('load_error')) + '</div>';
+        }
+    }
+
+    function _refreshRoleModelDefaults() {
+        const node = document.getElementById('adm-fld-modeldefaults');
+        if (!node) return;
+        const modelSel = (_resourceState.model && _resourceState.model.selected) ? _resourceState.model.selected : new Set();
+        const options = Array.from(modelSel);
+        node.innerHTML = _modelCapabilities.map(function (cap) {
+            const val = _modelDefaultSel[cap] || '';
+            const opts = '<option value="">' + escapeHtml(t('admin_resources_none')) + '</option>' +
+                options.map(function (rid) {
+                    return '<option value="' + escapeHtml(rid) + '"' + (rid === val ? ' selected' : '') + '>' +
+                        escapeHtml(rid) + '</option>';
+                }).join('');
+            return '<div class="flex items-center gap-2 py-1">' +
+                '<span class="w-32 text-xs text-slate-500 dark:text-slate-400">' + escapeHtml(cap) + '</span>' +
+                '<select class="agent-input model-default-select" data-cap="' + escapeHtml(cap) + '">' + opts + '</select>' +
+                '</div>';
+        }).join('');
+        // Drop defaults that are no longer granted.
+        Object.keys(_modelDefaultSel).forEach(function (cap) {
+            if (_modelDefaultSel[cap] && !modelSel.has(_modelDefaultSel[cap])) delete _modelDefaultSel[cap];
+        });
+        node.querySelectorAll('.model-default-select').forEach(function (sel) {
+            sel.addEventListener('change', function () {
+                const cap = sel.getAttribute('data-cap');
+                const v = sel.value;
+                if (v) _modelDefaultSel[cap] = v;
+                else delete _modelDefaultSel[cap];
+                markRoleEditorDirty();
+            });
+        });
+    }
+
+    function closeRoleEditorErr() {
+        const el = document.getElementById('role-editor-error');
+        if (el) { el.classList.add('hidden'); el.textContent = ''; }
+    }
+
+    function showRoleEditorErr(msg) {
+        const el = document.getElementById('role-editor-error');
+        if (el) { el.textContent = msg || ''; el.classList.remove('hidden'); }
+    }
+
+    function closeRoleEditor() {
+        if (_roleEditor.dirty && !confirmDiscard(true)) return;
+        closeRoleEditorNoPrompt();
+    }
+
+    function closeRoleEditorNoPrompt() {
+        const el = document.getElementById('role-editor');
+        if (el) el.classList.add('hidden');
+        _roleEditor = {
+            open: false, dirty: false, mode: 'create', role: null,
+            submit: null, onConflictReload: null, statusEl: null,
+            successMsg: '', activeTab: 'basic', perms: null,
+        };
+    }
+
+    async function openRoleEditorPage(cfg) {
+        const el = ensureRoleEditor();
+        _localizeRoleEditorChrome();
+        _roleEditor = {
+            open: true,
+            dirty: false,
+            mode: cfg.mode || 'create',
+            role: cfg.role || null,
+            submit: cfg.submit || null,
+            onConflictReload: cfg.onConflictReload || null,
+            statusEl: cfg.statusEl || null,
+            successMsg: cfg.successMsg || t('admin_saved'),
+            activeTab: 'basic',
+            perms: cfg.perms || [],
+        };
+        document.getElementById('role-editor-title').textContent = cfg.title || '';
+        document.getElementById('role-editor-sub').innerHTML = cfg.subtitleHtml || '';
+        document.getElementById('role-editor-submit').textContent = cfg.submitLabel || t('admin_save');
+        document.getElementById('role-dirty-pill').classList.remove('show');
+        closeRoleEditorErr();
+
+        const codeWrap = document.getElementById('role-code-wrap');
+        if (cfg.codeLocked) {
+            codeWrap.innerHTML = '<div class="agent-input-locked" id="adm-fld-code">' + escapeHtml(cfg.code || '') + '</div>';
+        } else {
+            codeWrap.innerHTML = '<input type="text" id="adm-fld-code" class="agent-input" value="' + escapeHtml(cfg.code || '') + '" placeholder="' + escapeHtml(t('admin_field_code_hint') || '') + '">';
+            const codeInput = document.getElementById('adm-fld-code');
+            if (codeInput) codeInput.addEventListener('input', markRoleEditorDirty);
+        }
+        const nameInput = document.getElementById('adm-fld-name');
+        nameInput.value = cfg.name || '';
+
+        renderRolePermissions(cfg.perms || [], cfg.selectedPermissions || []);
+        updateRoleEditorBadges();
+        switchRoleEditorTab('basic');
+        // Prefetch model list so defaults can resolve immediately on the model tab.
+        _renderRoleKindList('model');
+        el.classList.remove('hidden');
+        try { nameInput.focus(); } catch (e) {}
+    }
+
+    async function submitRoleEditor() {
+        if (!_roleEditor.submit) return;
+        closeRoleEditorErr();
+        const nameEl = document.getElementById('adm-fld-name');
+        const codeEl = document.getElementById('adm-fld-code');
+        const name = (nameEl && nameEl.value || '').trim();
+        if (!name) {
+            showRoleEditorErr(t('admin_field_name') + ' *');
+            switchRoleEditorTab('basic');
+            return;
+        }
+        const body = {
+            name: name,
+            permissions: _collectRolePermissionIds(),
+            resource_grants: _collectResourceGrants(),
+            model_defaults: _collectModelDefaults(),
+        };
+        if (_roleEditor.mode !== 'edit') {
+            const code = (codeEl && codeEl.value || '').trim();
+            if (!code) {
+                showRoleEditorErr(t('admin_field_code') + ' *');
+                switchRoleEditorTab('basic');
+                return;
+            }
+            body.code = code;
+        }
+        const btn = document.getElementById('role-editor-submit');
+        if (btn) btn.disabled = true;
+        try {
+            await _roleEditor.submit(body);
+            const statusEl = _roleEditor.statusEl;
+            const msg = _roleEditor.successMsg;
+            closeRoleEditorNoPrompt();
+            if (statusEl) status(statusEl, msg, true);
+            await loadRolesView();
+        } catch (err) {
+            if (btn) btn.disabled = false;
+            if (err && (err.status === 409 || err.code === 'conflict')) {
+                showRoleEditorErr(err.message || t('admin_conflict'));
+                if (_roleEditor.onConflictReload) _roleEditor.onConflictReload();
+                return;
+            }
+            showRoleEditorErr((err && err.message) || t('admin_save_failed'));
+        }
+    }
+
     async function openRoleCreate() {
         const perms = await ensurePermCatalog();
         if (!perms) return;
         _resetResourceState([], {});
-        openAdminModal({
+        await openRoleEditorPage({
+            mode: 'create',
             title: t('role_create'),
-            icon: 'fa-plus',
-            fields: [
-                { name: 'code', label: t('admin_field_code'), type: 'text', required: true, hint: t('admin_field_code_hint'), inline: true },
-                { name: 'name', label: t('admin_field_name'), type: 'text', required: true, inline: true },
-                { name: 'permissions', label: t('admin_field_permissions'), type: 'multi', options: permOptions(perms), hint: t('admin_field_permissions_hint') },
-                { name: 'resource_grants', label: t('admin_field_resource_grants'), type: 'resourcegroup', hint: t('admin_field_resource_grants_hint') },
-                { name: 'model_defaults', label: t('admin_field_model_defaults'), type: 'modeldefaults', hint: t('admin_field_model_defaults_hint') },
-            ],
+            subtitleHtml: escapeHtml(t('role_create_sub') || '创建后编码不可修改'),
+            codeLocked: false,
+            code: '',
+            name: '',
+            perms: perms,
+            selectedPermissions: [],
             submitLabel: t('admin_create'),
             statusEl: document.getElementById('role-status'),
             submit: async function (body) {
-                body.resource_grants = _collectResourceGrants();
-                body.model_defaults = _collectModelDefaults();
                 await apiFetch(_roleApiBase(), { method: 'POST', body: body });
-                await loadRolesView();
             },
             onConflictReload: function () { loadRolesView(); },
         });
@@ -1428,25 +2085,21 @@
         const perms = await ensurePermCatalog();
         if (!perms) return;
         _resetResourceState(r.resource_grants || [], r.model_defaults || {});
-        openAdminModal({
+        await openRoleEditorPage({
+            mode: 'edit',
+            role: r,
             title: t('role_edit_title'),
-            subtitle: r.code || '',
-            icon: 'fa-pen',
-            fields: [
-                { name: 'code', label: t('admin_field_code'), type: 'locked', value: r.code, inline: true },
-                { name: 'name', label: t('admin_field_name'), type: 'text', value: r.name, required: true, inline: true },
-                { name: 'permissions', label: t('admin_field_permissions'), type: 'multi', options: permOptions(perms), value: r.permissions || [] },
-                { name: 'resource_grants', label: t('admin_field_resource_grants'), type: 'resourcegroup', hint: t('admin_field_resource_grants_hint') },
-                { name: 'model_defaults', label: t('admin_field_model_defaults'), type: 'modeldefaults', hint: t('admin_field_model_defaults_hint') },
-            ],
+            subtitleHtml: (t('admin_field_code') || '编码') + ' <code>' + escapeHtml(r.code || '') + '</code>',
+            codeLocked: true,
+            code: r.code || '',
+            name: r.name || '',
+            perms: perms,
+            selectedPermissions: r.permissions || [],
             submitLabel: t('admin_save'),
             statusEl: document.getElementById('role-status'),
             submit: async function (body) {
                 body.expected_version = r.version;
-                body.resource_grants = _collectResourceGrants();
-                body.model_defaults = _collectModelDefaults();
                 await apiFetch(_roleApiBase() + '/' + encodeURIComponent(id), { method: 'POST', body: body });
-                await loadRolesView();
             },
             onConflictReload: function () { loadRolesView(); },
         });
@@ -1464,24 +2117,20 @@
             return assignableSet[pid] && assignableSet[pid].assignable !== false;
         });
         _resetResourceState(r.resource_grants || [], r.model_defaults || {});
-        openAdminModal({
+        await openRoleEditorPage({
+            mode: 'copy',
+            role: r,
             title: t('role_copy_title'),
-            subtitle: r.name || '',
-            icon: 'fa-copy',
-            fields: [
-                { name: 'code', label: t('admin_field_code'), type: 'text', required: true, hint: t('admin_field_code_hint') },
-                { name: 'name', label: t('admin_field_name'), type: 'text', required: true },
-                { name: 'permissions', label: t('admin_field_permissions'), type: 'multi', options: permOptions(perms), value: copyablePermissions },
-                { name: 'resource_grants', label: t('admin_field_resource_grants'), type: 'resourcegroup', hint: t('admin_field_resource_grants_hint') },
-                { name: 'model_defaults', label: t('admin_field_model_defaults'), type: 'modeldefaults', hint: t('admin_field_model_defaults_hint') },
-            ],
+            subtitleHtml: escapeHtml((t('role_copy_from') || '从 {name} 复制').replace('{name}', r.name || r.code || '')),
+            codeLocked: false,
+            code: '',
+            name: (r.name || '') + (t('role_copy_suffix') || '（副本）'),
+            perms: perms,
+            selectedPermissions: copyablePermissions,
             submitLabel: t('admin_create'),
             statusEl: document.getElementById('role-status'),
             submit: async function (body) {
-                body.resource_grants = _collectResourceGrants();
-                body.model_defaults = _collectModelDefaults();
                 await apiFetch(_roleApiBase(), { method: 'POST', body: body });
-                await loadRolesView();
             },
             onConflictReload: function () { loadRolesView(); },
         });
@@ -1753,12 +2402,19 @@
         } else if (action === 'reset') {
             if (kind === 'member') resetMemberPassword(id);
             else if (kind === 'platform_user') resetPlatformUser(id);
+        } else if (action === 'tenants') {
+            if (kind === 'member') openMemberTenants(id);
         }
     }
 
     // Let console.js navigation ask whether it's safe to leave an admin view.
     // Returns true when there is no unsaved form (or the user confirms discard).
     function identityAdminDirtyGuard() {
+        if (_roleEditor && _roleEditor.open && _roleEditor.dirty) {
+            const ok = confirmDiscard(true);
+            if (ok) closeRoleEditorNoPrompt();
+            return ok;
+        }
         const state = _adminModal;
         if (state && state.open && state.dirty) {
             const ok = confirmDiscard(true);

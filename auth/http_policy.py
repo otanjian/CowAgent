@@ -58,6 +58,11 @@ ROUTE_POLICY: Dict[str, Dict[str, dict]] = {
     "/auth/logout": {"POST": {"policy": "public", "comment": "logout"}},
     "/auth/password": {"POST": {"policy": "personal", "comment": "self password change"}},
     "/auth/me": {"GET": {"policy": "personal", "comment": "self projection"}},
+    "/auth/profile": {"PATCH": {"policy": "personal", "comment": "self profile edit"}},
+    "/auth/profile/avatar": {
+        "GET": {"policy": "personal", "comment": "fetch self avatar"},
+        "POST": {"policy": "personal", "comment": "upload self avatar"},
+    },
     "/auth/context": {"GET": {"policy": "tenant", "comment": "current-tenant capability"}},
     # --- platform admin control plane ---
     "/api/platform/users": {"GET": {"policy": "platform", "comment": "list accounts"}},

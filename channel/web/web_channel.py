@@ -8053,6 +8053,16 @@ class AgentsHandler:
                         knowledge=body.get("knowledge"),
                         knowledge_mode=body.get("knowledge_mode") or None,
                         revision=revision,
+                        position=body.get("position"),
+                        category=body.get("category"),
+                        tags=body.get("tags"),
+                        greeting=body.get("greeting"),
+                        persona_summary=body.get("persona_summary"),
+                        scene_id=body.get("scene_id"),
+                        knowledge_ids=body.get("knowledge_ids"),
+                        sops=body.get("sops"),
+                        tools_allowlist=body.get("tools_allowlist"),
+                        tools_denylist=body.get("tools_denylist"),
                     )
                 elif action == "update":
                     _require_agent_action(ctx, agent_id, "edit", "agent.edit")
@@ -8070,6 +8080,11 @@ class AgentsHandler:
                         updates["skills"] = body.get("skills")
                     if "knowledge" in body:
                         updates["knowledge"] = body.get("knowledge")
+                    for _field in ("position", "category", "tags", "greeting",
+                                   "persona_summary", "scene_id", "knowledge_ids",
+                                   "sops", "tools_allowlist", "tools_denylist"):
+                        if _field in body:
+                            updates[_field] = body.get(_field)
                     result = service.update_agent(agent_id, **updates)
                 elif action == "archive":
                     _require_agent_action(ctx, agent_id, "edit", "agent.edit")
