@@ -696,6 +696,27 @@ const I18N = {
         nav_admin_overview: '控制台概览',
         admin_home_title: '管理控制台',
         admin_home_hint: '选择左侧菜单管理智能体、组织与平台配置。',
+        admin_home_kpi_agents: '智能体总数',
+        admin_home_kpi_messages_today: '今日消息数',
+        admin_home_kpi_members: '成员数',
+        admin_home_kpi_system: '系统状态',
+        admin_home_kpi_system_ok: '正常运行',
+        admin_home_kpi_system_bad: '异常',
+        admin_home_kpi_loading: '加载中…',
+        admin_home_kpi_dash: '—',
+        admin_home_desc_agents: '创建、配置和管理所有智能体，设置对话能力与权限',
+        admin_home_desc_skills: '配置插件工具与自定义技能，扩展智能体能力边界',
+        admin_home_desc_memory: '管理智能体的知识库与长期记忆，优化对话准确性',
+        admin_home_desc_config: '管理接入的大语言模型，配置调用配额与参数',
+        admin_home_desc_channels: '接入网页、微信、企业微信等多渠道消息入口',
+        admin_home_desc_system_user: '添加与管理平台成员，分配对应角色与权限',
+        admin_home_desc_org: '维护部门与人员架构，同步组织层级关系',
+        admin_home_desc_roles: '配置角色与权限策略，控制平台功能访问范围',
+        admin_home_desc_tenant: '多租户体系管理，实现数据与资源的隔离配置',
+        admin_home_desc_platform: '配置平台基础参数、安全策略与集成选项',
+        admin_home_desc_branding: '自定义平台Logo、名称与主题风格，打造专属品牌',
+        admin_home_desc_logs: '实时查看系统运行日志，排查问题与性能监控',
+        admin_home_desc_audit: '查看操作日志与安全审计记录，追溯所有行为',
         nav_admin_denied: '当前账号无权进入管理控制台。',
         sidebar_history_records: '会话历史',
         sidebar_history_view_all: '查看全部',
@@ -1431,6 +1452,27 @@ const I18N = {
         nav_admin_overview: '控制台概覽',
         admin_home_title: '管理控制台',
         admin_home_hint: '選擇左側選單管理智慧體、組織與平台設定。',
+        admin_home_kpi_agents: '智慧體總數',
+        admin_home_kpi_messages_today: '今日訊息數',
+        admin_home_kpi_members: '成員數',
+        admin_home_kpi_system: '系統狀態',
+        admin_home_kpi_system_ok: '正常運行',
+        admin_home_kpi_system_bad: '異常',
+        admin_home_kpi_loading: '載入中…',
+        admin_home_kpi_dash: '—',
+        admin_home_desc_agents: '建立、設定和管理所有智慧體，設定對話能力與權限',
+        admin_home_desc_skills: '設定外掛工具與自訂技能，擴展智慧體能力邊界',
+        admin_home_desc_memory: '管理智慧體的知識庫與長期記憶，優化對話準確性',
+        admin_home_desc_config: '管理接入的大型語言模型，設定呼叫配額與參數',
+        admin_home_desc_channels: '接入網頁、微信、企業微信等多渠道訊息入口',
+        admin_home_desc_system_user: '新增與管理平台成員，分配對應角色與權限',
+        admin_home_desc_org: '維護部門與人員架構，同步組織層級關係',
+        admin_home_desc_roles: '設定角色與權限策略，控制平台功能存取範圍',
+        admin_home_desc_tenant: '多租戶體系管理，實現資料與資源的隔離設定',
+        admin_home_desc_platform: '設定平台基礎參數、安全策略與整合選項',
+        admin_home_desc_branding: '自訂平台 Logo、名稱與主題風格，打造專屬品牌',
+        admin_home_desc_logs: '即時查看系統運行日誌，排查問題與效能監控',
+        admin_home_desc_audit: '查看操作日誌與安全稽核記錄，追溯所有行為',
         nav_admin_denied: '目前帳號無權進入管理控制台。',
         sidebar_history_records: '會話歷史',
         sidebar_history_view_all: '查看全部',
@@ -2157,6 +2199,27 @@ const I18N = {
         nav_admin_overview: 'Console Overview',
         admin_home_title: 'Admin Console',
         admin_home_hint: 'Use the sidebar to manage agents, organization, and platform settings.',
+        admin_home_kpi_agents: 'Agents',
+        admin_home_kpi_messages_today: 'Messages today',
+        admin_home_kpi_members: 'Members',
+        admin_home_kpi_system: 'System status',
+        admin_home_kpi_system_ok: 'Running normally',
+        admin_home_kpi_system_bad: 'Degraded',
+        admin_home_kpi_loading: 'Loading…',
+        admin_home_kpi_dash: '—',
+        admin_home_desc_agents: 'Create, configure, and manage agents, dialogue ability, and permissions',
+        admin_home_desc_skills: 'Configure plugin tools and custom skills to extend agent capabilities',
+        admin_home_desc_memory: 'Manage knowledge bases and long-term memory to improve accuracy',
+        admin_home_desc_config: 'Manage connected LLMs, quotas, and calling parameters',
+        admin_home_desc_channels: 'Connect web, WeChat, Work WeChat, and other message channels',
+        admin_home_desc_system_user: 'Add and manage platform members and assign roles',
+        admin_home_desc_org: 'Maintain departments and people, and sync org hierarchy',
+        admin_home_desc_roles: 'Configure roles and permission policies for platform access',
+        admin_home_desc_tenant: 'Manage multi-tenant isolation for data and resources',
+        admin_home_desc_platform: 'Configure platform basics, security, and integrations',
+        admin_home_desc_branding: 'Customize logo, name, and theme for your brand',
+        admin_home_desc_logs: 'Watch live system logs for troubleshooting and monitoring',
+        admin_home_desc_audit: 'Review operation logs and security audit trails',
         nav_admin_denied: 'Your account cannot open the admin console.',
         sidebar_history_records: 'Session History',
         sidebar_history_view_all: 'View all',
@@ -3678,28 +3741,123 @@ function _bootAreaDefaultView() {
     if (pendingWb && VIEW_META[pendingWb]) navigateTo(pendingWb);
 }
 
-function initAdminHomeView() {
+const ADMIN_HOME_DESC_KEYS = {
+    agents: 'admin_home_desc_agents',
+    skills: 'admin_home_desc_skills',
+    memory: 'admin_home_desc_memory',
+    config: 'admin_home_desc_config',
+    channels: 'admin_home_desc_channels',
+    system_user: 'admin_home_desc_system_user',
+    org: 'admin_home_desc_org',
+    roles: 'admin_home_desc_roles',
+    tenant: 'admin_home_desc_tenant',
+    platform: 'admin_home_desc_platform',
+    branding: 'admin_home_desc_branding',
+    logs: 'admin_home_desc_logs',
+    audit: 'admin_home_desc_audit',
+};
+
+const ADMIN_HOME_SHORTCUT_COLORS = {
+    agents: '#3b82f6', skills: '#eab308', memory: '#8b5cf6',
+    config: '#14b8a6', channels: '#ef4444', system_user: '#22c55e',
+    org: '#f43f5e', roles: '#f97316', tenant: '#64748b',
+    platform: '#3b82f6', branding: '#a855f7', logs: '#10b981',
+    audit: '#64748b',
+};
+
+function _adminHomeFormatInt(n) {
+    const x = Number(n);
+    if (!Number.isFinite(x)) return t('admin_home_kpi_dash');
+    return x.toLocaleString();
+}
+
+function _renderAdminHomeKpis(kpis, meta) {
+    const box = document.getElementById('admin-home-kpis');
+    if (!box) return;
+    const status = (kpis && kpis.system_status) || 'degraded';
+    const member = kpis && kpis.member_count;
+    const memberText = (member == null || (meta && meta.member_count_scope === 'unavailable'))
+        ? t('admin_home_kpi_dash')
+        : _adminHomeFormatInt(member);
+    const statusOk = status === 'ok';
+    box.innerHTML = `
+      <div class="admin-home-kpi">
+        <div>
+          <div class="admin-home-kpi-label">${escapeHtml(t('admin_home_kpi_agents'))}</div>
+          <div class="admin-home-kpi-value">${escapeHtml(_adminHomeFormatInt(kpis && kpis.agent_count))}</div>
+        </div>
+        <div class="admin-home-kpi-icon" style="background:#dbeafe;color:#2563eb"><i class="fas fa-cube"></i></div>
+      </div>
+      <div class="admin-home-kpi">
+        <div>
+          <div class="admin-home-kpi-label">${escapeHtml(t('admin_home_kpi_messages_today'))}</div>
+          <div class="admin-home-kpi-value">${escapeHtml(_adminHomeFormatInt(kpis && kpis.messages_today))}</div>
+        </div>
+        <div class="admin-home-kpi-icon" style="background:#ccfbf1;color:#0d9488"><i class="fas fa-comment"></i></div>
+      </div>
+      <div class="admin-home-kpi">
+        <div>
+          <div class="admin-home-kpi-label">${escapeHtml(t('admin_home_kpi_members'))}</div>
+          <div class="admin-home-kpi-value">${escapeHtml(memberText)}</div>
+        </div>
+        <div class="admin-home-kpi-icon" style="background:#ede9fe;color:#7c3aed"><i class="fas fa-user"></i></div>
+      </div>
+      <div class="admin-home-kpi">
+        <div>
+          <div class="admin-home-kpi-label">${escapeHtml(t('admin_home_kpi_system'))}</div>
+          <div class="admin-home-kpi-value ${statusOk ? 'is-ok' : 'is-bad'}">${escapeHtml(statusOk ? t('admin_home_kpi_system_ok') : t('admin_home_kpi_system_bad'))}</div>
+        </div>
+        <div class="admin-home-kpi-icon" style="background:#dcfce7;color:#16a34a"><i class="fas fa-check"></i></div>
+      </div>`;
+}
+
+function _renderAdminHomeShortcuts() {
     const box = document.getElementById('admin-home-shortcuts');
     if (!box) return;
     box.innerHTML = '';
     document.querySelectorAll('[data-nav-shell="admin"] .sidebar-item[data-view]').forEach(item => {
         if (item.classList.contains('hidden')) return;
+        if (item.id === 'nav-admin-home') return;
         const viewId = item.dataset.view;
-        if (!viewId || !VIEW_META[viewId]) return;
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'admin-home-shortcut';
+        if (!viewId || viewId === 'admin-home' || !VIEW_META[viewId]) return;
         const label = item.querySelector('[data-i18n]');
         const text = label ? label.textContent : t(VIEW_META[viewId].page);
         const icon = item.querySelector('i');
-        const iconHtml = icon ? ('<i class="' + icon.className + '" aria-hidden="true"></i>') : '';
-        const span = document.createElement('span');
-        span.textContent = text;
-        btn.innerHTML = iconHtml;
-        btn.appendChild(span);
+        const iconClass = icon ? icon.className : 'fas fa-circle';
+        const descKey = ADMIN_HOME_DESC_KEYS[viewId];
+        const desc = descKey ? t(descKey) : '';
+        const color = ADMIN_HOME_SHORTCUT_COLORS[viewId] || '#64748b';
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'admin-home-shortcut';
+        btn.innerHTML =
+            `<span class="admin-home-shortcut-icon" style="background:${color}" aria-hidden="true"><i class="${iconClass}"></i></span>` +
+            `<span class="admin-home-shortcut-copy">` +
+            `<span class="admin-home-shortcut-title"></span>` +
+            `<span class="admin-home-shortcut-desc"></span></span>`;
+        btn.querySelector('.admin-home-shortcut-title').textContent = text;
+        btn.querySelector('.admin-home-shortcut-desc').textContent = desc;
         btn.addEventListener('click', () => navigateTo(viewId));
         box.appendChild(btn);
     });
+}
+
+function initAdminHomeView() {
+    const kpiBox = document.getElementById('admin-home-kpis');
+    if (kpiBox) {
+        kpiBox.innerHTML = `<div class="admin-home-kpi"><div class="admin-home-kpi-label">${escapeHtml(t('admin_home_kpi_loading'))}</div></div>`;
+    }
+    _renderAdminHomeShortcuts();
+    fetch('/api/admin/overview', { credentials: 'same-origin' })
+        .then(r => r.json().then(body => ({ ok: r.ok, body })))
+        .then(({ ok, body }) => {
+            if (!ok || !body || body.status !== 'ok') {
+                _renderAdminHomeKpis({ system_status: 'degraded' }, {});
+                return;
+            }
+            _renderAdminHomeKpis(body.kpis || {}, body.meta || {});
+        })
+        .catch(() => _renderAdminHomeKpis({ system_status: 'degraded' }, {}));
 }
 
 // Known previously-visible targets whose feature is not yet enabled. These are
