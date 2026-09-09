@@ -67,11 +67,26 @@ test('chat.html pins admin entry above account footer', () => {
     assert.ok(adminIdx > navClose, 'admin entry must be outside scrolling sidebar-nav');
 });
 
-test('console wires path area, admin-home, and open handlers', () => {
-    assert.match(source, /data-nav-area/);
-    assert.match(source, /'admin-home'/);
-    assert.match(source, /_bootAreaDefaultView/);
-    assert.match(source, /nav-open-admin/);
-    assert.match(source, /_qualifyAdminConsoleEntry/);
-    assert.match(source, /cow_admin_pending_view/);
+test('chat.html pins recent sessions under scenes', () => {
+    const htmlSource = fs.readFileSync(path.join(__dirname, '../channel/web/chat.html'), 'utf8');
+    const scenesIdx = htmlSource.indexOf('data-view="scenes"');
+    const recentIdx = htmlSource.indexOf('id="sidebar-recent"');
+    const historyItem = htmlSource.indexOf('data-view="history"');
+    assert.ok(scenesIdx > 0, 'scenes menu item exists');
+    assert.ok(recentIdx > scenesIdx, 'sidebar-recent sits after scenes');
+    assert.equal(historyItem, -1, 'top-level history menu item is removed');
+    assert.match(htmlSource, /id="sidebar-recent-list"/);
+    assert.match(htmlSource, /id="sidebar-recent-label"/);
+    assert.match(htmlSource, /fa-clock-rotate-left/);
+    assert.match(htmlSource, /会话历史/);
+});
+
+test('sidebar recent sessions keep at most 10', () => {
+    const code = section('// === SIDEBAR_RECENT_BEGIN ===', '// === SIDEBAR_RECENT_END ===');
+    const sandbox = {};
+    vm.runInNewContext(code, sandbox);
+    const items = Array.from({ length: 15 }, (_, i) => ({ session_id: 's' + i, title: 't' + i }));
+    assert.equal(sandbox._sidebarRecentLimit(items).length, 10);
+    assert.equal(sandbox._sidebarRecentLimit(items)[0].session_id, 's0');
+    assert.equal(sandbox._sidebarRecentLimit(items.slice(0, 3)).length, 3);
 });

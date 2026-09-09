@@ -176,6 +176,7 @@ html[data-web-palette] #sidebar .sidebar-account-chevron {
 }
 html[data-web-palette] #sidebar .sidebar-item { color: var(--web-sidebar-text); }
 html[data-web-palette] #sidebar .sidebar-item:hover,
+html[data-web-palette] #sidebar .sidebar-recent-label:hover,
 html[data-web-palette] #sidebar .menu-group > button:hover,
 html[data-web-palette] #sidebar .sidebar-account-toggle:hover,
 html[data-web-palette] #sidebar .sidebar-account-toggle[aria-expanded="true"] {
@@ -587,7 +588,23 @@ html[data-web-palette] #sidebar-nav .menu-group > button {
     font-weight: 500;
     letter-spacing: .04em;
 }
+html[data-web-palette] #sidebar-nav .admin-menu-group-toggle {
+    min-height: 36px;
+    padding: 8px 12px;
+    color: var(--web-sidebar-muted);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: .02em;
+    text-transform: none;
+}
+html[data-web-palette] #sidebar-nav .admin-menu-group-toggle:hover {
+    color: var(--web-sidebar-text);
+    background: var(--web-sidebar-hover);
+}
 html[data-web-palette] #sidebar-nav .menu-group-items { padding-left: 0; }
+html[data-web-palette] #sidebar-nav .admin-menu-group .menu-group-items {
+    padding-left: 2px;
+}
 html[data-web-palette] #sidebar-nav .sidebar-section-label {
     margin: 24px 12px 10px;
     color: var(--web-sidebar-muted);
@@ -607,6 +624,27 @@ html[data-web-palette] #sidebar-nav .sidebar-item {
     line-height: 1.5;
 }
 html[data-web-palette] #sidebar-nav .sidebar-item .item-icon { font-size: 14px; }
+html[data-web-palette] #sidebar-nav .sidebar-recent-header .sidebar-item {
+    margin-right: 0;
+}
+html[data-web-palette] #sidebar-nav .sidebar-recent-chevron-btn {
+    color: var(--web-sidebar-muted);
+}
+html[data-web-palette] #sidebar-nav .sidebar-recent-chevron-btn:hover {
+    color: var(--web-sidebar-text);
+    background: var(--web-sidebar-hover);
+}
+html[data-web-palette] #sidebar-nav .sidebar-recent-item {
+    color: var(--web-sidebar-muted);
+}
+html[data-web-palette] #sidebar-nav .sidebar-recent-item:hover {
+    color: var(--web-sidebar-text);
+    background: var(--web-sidebar-hover);
+}
+html[data-web-palette] #sidebar-nav .sidebar-recent-item.active {
+    color: var(--web-sidebar-title);
+    background: var(--web-sidebar-active, rgba(74, 190, 110, .12));
+}
 html[data-web-palette] #sidebar .sidebar-item.active { font-weight: 600; }
 html[data-web-palette] #sidebar .sidebar-item.active::before {
     content: '';

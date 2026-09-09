@@ -156,7 +156,7 @@
                 <img src="assets/rongda-ai-mark.svg" alt="" class="brand-mark sidebar-brand-mark" width="34" height="34">
                 <div class="sidebar-brand-copy">
                     <span class="brand-wordmark" id="sidebar-brand-name">容大<span class="brand-ai">AI</span></span>
-                    <span class="sidebar-brand-caption" id="sidebar-brand-caption" title="">控制台</span>
+                    <span class="sidebar-brand-caption" id="sidebar-brand-caption" title="">工作台</span>
                 </div>
             </div>
 
@@ -168,20 +168,11 @@
                 <!-- Workbench Area (visible on /chat) -->
                 <div data-nav-shell="workbench">
                 <div class="menu-group open" data-group="chat">
-                    <button class="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 hover:text-neutral-300 cursor-pointer transition-colors duration-150">
-                        <i class="fas fa-chevron-right text-[10px] chevron"></i>
-                        <span data-i18n="nav_workbench">工作台</span>
-                    </button>
-                    <div class="menu-group-items pl-2">
+                    <div class="menu-group-items">
                         <a class="sidebar-item active flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]"
                            data-view="chat">
                             <i class="fas fa-message item-icon text-xs w-5 text-center"></i>
                             <span data-i18n="menu_chat">对话</span>
-                        </a>
-                        <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]"
-                           data-view="history">
-                            <i class="fas fa-clock-rotate-left item-icon text-xs w-5 text-center"></i>
-                            <span data-i18n="session_history">历史对话</span>
                         </a>
                         <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]"
                            data-view="agent-workbench">
@@ -211,25 +202,42 @@
                         </a>
                     </div>
                 </div>
+
+                <div id="sidebar-recent" class="sidebar-recent open">
+                    <div class="sidebar-recent-header">
+                        <button type="button" id="sidebar-recent-label"
+                                class="sidebar-item sidebar-recent-label flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]"
+                                data-i18n-title="sidebar_history_records">
+                            <i class="fas fa-clock-rotate-left item-icon text-xs w-5 text-center" aria-hidden="true"></i>
+                            <span data-i18n="sidebar_history_records">会话历史</span>
+                        </button>
+                        <button type="button" id="sidebar-recent-toggle" class="sidebar-recent-chevron-btn"
+                                aria-expanded="true" aria-controls="sidebar-recent-list"
+                                data-i18n-aria-label="sidebar_history_records">
+                            <i class="fas fa-chevron-down sidebar-recent-chevron" aria-hidden="true"></i>
+                        </button>
+                    </div>
+                    <div id="sidebar-recent-list" class="sidebar-recent-list" role="list"></div>
+                    <button type="button" id="sidebar-recent-more" class="sidebar-recent-more hidden"
+                            data-i18n="sidebar_history_view_all">查看全部</button>
+                </div>
                 </div>
 
                 <!-- Admin Console Area (visible on /admin) -->
-                <div data-nav-shell="admin">
+                <div data-nav-shell="admin" class="admin-nav-shell">
                 <a id="nav-return-workbench" href="/chat" target="cow-workbench" rel="noopener"
                    class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px] mb-2">
                     <i class="fas fa-arrow-left item-icon text-xs w-5 text-center"></i>
                     <span data-i18n="nav_return_workbench">返回工作台</span>
                 </a>
 
-                <p class="sidebar-section-label sidebar-hidden-admin-area" data-i18n="nav_admin_console">管理控制台</p>
-
                 <!-- 智能体开发 -->
-                <div class="menu-group open sidebar-hidden-admin-area" data-group="agent-dev">
-                    <button class="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 hover:text-neutral-300 cursor-pointer transition-colors duration-150">
-                        <i class="fas fa-chevron-right text-[10px] chevron"></i>
+                <div class="menu-group open admin-menu-group sidebar-hidden-admin-area" data-group="agent-dev">
+                    <button type="button" class="admin-menu-group-toggle" aria-expanded="true">
                         <span data-i18n="nav_group_agent_dev">智能体开发</span>
+                        <i class="fas fa-chevron-down chevron" aria-hidden="true"></i>
                     </button>
-                    <div class="menu-group-items pl-2">
+                    <div class="menu-group-items">
                         <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]"
                            data-view="agents">
                             <i class="fas fa-people-group item-icon text-xs w-5 text-center"></i>
@@ -249,12 +257,12 @@
                 </div>
 
                 <!-- 模型与接入 -->
-                <div class="menu-group sidebar-hidden-admin-area" data-group="model-access">
-                    <button class="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 hover:text-neutral-300 cursor-pointer transition-colors duration-150">
-                        <i class="fas fa-chevron-right text-[10px] chevron"></i>
+                <div class="menu-group open admin-menu-group sidebar-hidden-admin-area" data-group="model-access">
+                    <button type="button" class="admin-menu-group-toggle" aria-expanded="true">
                         <span data-i18n="nav_group_model_access">模型与接入</span>
+                        <i class="fas fa-chevron-down chevron" aria-hidden="true"></i>
                     </button>
-                    <div class="menu-group-items pl-2">
+                    <div class="menu-group-items">
                         <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]"
                            data-view="config">
                             <i class="fas fa-sliders item-icon text-xs w-5 text-center"></i>
@@ -269,37 +277,37 @@
                 </div>
 
                 <!-- 组织与权限〔当前租户〕 -->
-                <div class="menu-group sidebar-hidden-admin-area" data-group="org-perm">
-                    <button class="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 hover:text-neutral-300 cursor-pointer transition-colors duration-150">
-                        <i class="fas fa-chevron-right text-[10px] chevron"></i>
+                <div class="menu-group open admin-menu-group sidebar-hidden-admin-area" data-group="org-perm">
+                    <button type="button" class="admin-menu-group-toggle" aria-expanded="true">
                         <span data-i18n="nav_group_org_perm">组织与权限</span>
+                        <i class="fas fa-chevron-down chevron" aria-hidden="true"></i>
                     </button>
-                    <div class="menu-group-items pl-2">
+                    <div class="menu-group-items">
                         <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]"
                            data-view="system_user">
-                            <i class="fas fa-user item-icon text-xs w-5 text-center"></i>
+                            <i class="fas fa-users item-icon text-xs w-5 text-center"></i>
                             <span data-i18n="menu_system_user">成员管理</span>
-                        </a>
-                        <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]"
-                           data-view="roles">
-                            <i class="fas fa-shield-halved item-icon text-xs w-5 text-center"></i>
-                            <span data-i18n="menu_roles">角色权限</span>
                         </a>
                         <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]"
                            data-view="org">
                             <i class="fas fa-sitemap item-icon text-xs w-5 text-center"></i>
                             <span data-i18n="menu_org">组织架构</span>
                         </a>
+                        <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]"
+                           data-view="roles">
+                            <i class="fas fa-shield-halved item-icon text-xs w-5 text-center"></i>
+                            <span data-i18n="menu_roles">角色权限</span>
+                        </a>
                     </div>
                 </div>
 
                 <!-- 平台运维〔平台范围〕 -->
-                <div class="menu-group sidebar-hidden-admin-area sidebar-hidden-platform-scope" data-group="platform-ops">
-                    <button class="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-neutral-500 hover:text-neutral-300 cursor-pointer transition-colors duration-150">
-                        <i class="fas fa-chevron-right text-[10px] chevron"></i>
+                <div class="menu-group open admin-menu-group sidebar-hidden-admin-area sidebar-hidden-platform-scope" data-group="platform-ops">
+                    <button type="button" class="admin-menu-group-toggle" aria-expanded="true">
                         <span data-i18n="nav_group_platform_ops">平台运维</span>
+                        <i class="fas fa-chevron-down chevron" aria-hidden="true"></i>
                     </button>
-                    <div class="menu-group-items pl-2">
+                    <div class="menu-group-items">
                         <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]"
                            data-view="tenant">
                             <i class="fas fa-building item-icon text-xs w-5 text-center"></i>
@@ -947,10 +955,12 @@
                         <div class="agent-detail-tabs">
                             <button type="button" class="agent-detail-tab active" data-tab="profile" onclick="selectAgentDetailTab('profile')" data-i18n="agents_tab_profile">概况</button>
                             <button type="button" class="agent-detail-tab" data-tab="skills" onclick="selectAgentDetailTab('skills')" data-i18n="agents_tab_skills">能力</button>
+                            <button type="button" class="agent-detail-tab" data-tab="tasks" onclick="selectAgentDetailTab('tasks')" data-i18n="agents_tab_tasks">任务</button>
                             <button type="button" class="agent-detail-tab" data-tab="files" onclick="selectAgentDetailTab('files')" data-i18n="agents_tab_files">核心文件</button>
                         </div>
                         <div id="agent-detail-profile" class="agent-detail-pane"></div>
                         <div id="agent-detail-skills" class="agent-detail-pane hidden"></div>
+                        <div id="agent-detail-tasks" class="agent-detail-pane hidden"></div>
                         <div id="agent-detail-files" class="agent-detail-pane hidden">
                             <div class="flex items-center gap-2 mb-3">
                                 <div id="agent-core-file" class="cfg-dropdown cfg-dropdown-xs" tabindex="0" style="width: 180px;">
@@ -2027,7 +2037,7 @@
                                             <img data-brand-slot="logo" class="brand-mark w-8 h-8 object-contain" alt="" src="assets/rongda-ai-mark.svg">
                                             <div class="min-w-0">
                                                 <div data-brand-slot="name" class="brand-wordmark !text-base !text-[#f3f8fc] truncate">容大<span class="brand-ai">AI</span></div>
-                                                <div data-brand-slot="caption" class="text-[10px] text-slate-400 truncate text-left">控制台</div>
+                                                <div data-brand-slot="caption" class="text-[10px] text-slate-400 truncate text-left">工作台</div>
                                             </div>
                                         </div>
                                         <!-- Login preview -->

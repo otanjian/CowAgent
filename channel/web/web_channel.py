@@ -4025,7 +4025,7 @@ class BrandingPublicHandler:
                 "enabled": False,
                 "revision": 0,
                 "brand_name": "容大AI",
-                "logo_description": "控制台",
+                "logo_description": "工作台",
                 "logo_url": "/assets/rongda-ai-mark.svg",
                 "favicon_url": "/assets/favicon.ico",
             }
@@ -7748,6 +7748,10 @@ def _workbench_agents_projection() -> Dict:
             "is_default": bool(profile.id == default_id),
             "can_chat": can_chat,
             "unavailable_reason": unavailable_reason,
+            # Digital-employee projection fields for the card gallery.
+            "position": profile.position or "",
+            "category": profile.category or "",
+            "tags": list(profile.tags or []),
         })
     return {"agents": agents}
 

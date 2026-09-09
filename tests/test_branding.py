@@ -523,7 +523,7 @@ class BrandingFrontendTests(unittest.TestCase):
 
     def test_js_registers_branding_view_and_state(self):
         js = self._read("channel/web/static/js/console.js")
-        self.assertIn("branding:    { group: 'nav_group_platform_ops', page: 'menu_branding' },", js)
+        self.assertIn("branding:    { group: 'nav_group_platform_ops', page: 'menu_branding', console: 'admin.branding' },", js)
         self.assertIn("function initBrandingView", js)
         self.assertIn("function applyBrandToDocument", js)
         self.assertIn("function fetchPublicBrand", js)

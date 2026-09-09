@@ -9,6 +9,7 @@ paths so an allow/deny policy cannot be bypassed at assembly or dispatch time.
 import os
 
 import pytest
+from unittest.mock import patch
 
 from agent.registry import AgentProfile, AgentRegistry, set_agent_registry
 from agent.effective_capabilities import (
@@ -170,3 +171,42 @@ def test_get_agent_injects_persona_suffix(gated_registry, tmp_path):
     suffix = getattr(agent, "extra_system_suffix", None) or ""
     assert "员工人设" in suffix
     assert "我只做读取" in suffix
+
+
+# ---------------------------------------------------------------------------
+# Trigger-time pruning: a scheduled task fires under the owning Agent
+# ---------------------------------------------------------------------------
+def test_scheduled_agent_task_fires_under_owning_agent():
+    """Task 5.3: a scheduler agent_task must hand the turn to the *owning*
+    Agent so its effective capability pruning (allow/deny) applies at trigger
+    time, not just when the task was created."""
+    from types import SimpleNamespace
+    from agent.tools.scheduler.integration import _execute_agent_task
+
+    captured = {}
+
+    class Bridge:
+        def agent_reply(self, query, **kwargs):
+            captured["query"] = query
+            captured["context"] = kwargs.get("context")
+            return SimpleNamespace(content="ok")
+
+    task = {
+        "id": "task-x",
+        "action": {
+            "type": "agent_task",
+            "task_description": "send the daily report",
+            "receiver": "user-1",
+            "is_group": False,
+            "channel_type": "web",
+        },
+    }
+    with patch("channel.channel_factory.create_channel") as create_channel:
+        result = _execute_agent_task(task, Bridge(), agent_id="gated")
+
+    assert result is True
+    # The scheduler must route the task to the owning Agent ("gated"), so its
+    # tools_allowlist/denylist are enforced during assembly.
+    assert captured["context"].get("agent_id") == "gated"
+    # Session is isolated per task (scheduler_<receiver>_<task_id>).
+    assert "scheduler_user-1_task-x" in captured["context"].get("session_id", "")

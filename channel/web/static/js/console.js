@@ -353,6 +353,7 @@ function _enterAccountApp() {
                     _applySidebarPermissions(_baseAccountSelf());
                     if (ctx) _applySidebarPermissions(_baseAccountSelf());
                     if (typeof _bootAreaDefaultView === 'function') _bootAreaDefaultView();
+                    if (typeof loadSidebarRecentSessions === 'function') loadSidebarRecentSessions();
                 });
                 if (_identityMode() === 'database') _setupHeaderTenantSelector();
                 chatInput.focus();
@@ -498,7 +499,7 @@ const DEFAULT_BRAND = {
     enabled: false,
     revision: 0,
     brand_name: '容大AI',
-    logo_description: '控制台',
+    logo_description: '工作台',
     logo_url: '/assets/rongda-ai-mark.svg',
     favicon_url: '/assets/favicon.ico',
 };
@@ -535,13 +536,33 @@ function effectiveLogoDescription() {
     return brandState.logo_description || '';
 }
 
-/* Description allowed on the welcome hero. The built-in default ("控制台") is
+function _isDefaultLogoDescription(desc) {
+    const value = String(desc || '').trim();
+    if (!value) return true;
+    // Treat the current default and the legacy caption as built-in defaults so
+    // path-based sidebar captions (工作台 / 管理控制台) can replace them.
+    return value === DEFAULT_BRAND.logo_description
+        || value === '工作台'
+        || value === '控制台'
+        || value === 'Workbench'
+        || value === 'Console';
+}
+
+function sidebarBrandCaption(desc) {
+    if (!_isDefaultLogoDescription(desc)) return String(desc || '').trim();
+    const area = (typeof _navAreaFromPath === 'function')
+        ? _navAreaFromPath(location.pathname)
+        : 'workbench';
+    return area === 'admin' ? t('nav_admin_console') : t('nav_workbench');
+}
+
+/* Description allowed on the welcome hero. The built-in default ("工作台") is
    still styled into the sidebar caption and (historically) the login brand
    area, but on the welcome hero it's redundant with the eyebrow
    ("容大AI · 你的工作助手"), so we only surface a customized description. */
 function welcomeHeroDescription() {
     const desc = effectiveLogoDescription();
-    const isDefault = (desc || '').trim() === DEFAULT_BRAND.logo_description;
+    const isDefault = _isDefaultLogoDescription(desc);
     return (desc && desc.trim() && !isDefault) ? desc : '';
 }
 
@@ -587,10 +608,17 @@ function applyBrandToDocument() {
     if (sidebarWordmark) { sidebarWordmark.innerHTML = brandWordmarkHTML(name); sidebarWordmark.title = name; }
     const sidebarCaption = document.getElementById('sidebar-brand-caption');
     if (sidebarCaption) {
-        const hasDesc = !!(desc && desc.trim());
-        sidebarCaption.textContent = hasDesc ? desc : '';
+        const captionHelper = (typeof window !== 'undefined' && window
+            && typeof window.sidebarBrandCaption === 'function')
+            ? window.sidebarBrandCaption
+            : null;
+        const caption = captionHelper
+            ? captionHelper(desc)
+            : ((desc && desc.trim()) || '');
+        const hasDesc = !!(caption && String(caption).trim());
+        sidebarCaption.textContent = hasDesc ? caption : '';
         sidebarCaption.classList.toggle('hidden', !hasDesc);
-        sidebarCaption.title = hasDesc ? desc : '';
+        sidebarCaption.title = hasDesc ? caption : '';
     }
 
     // Login brand area
@@ -668,6 +696,9 @@ const I18N = {
         admin_home_title: '管理控制台',
         admin_home_hint: '选择左侧菜单管理智能体、组织与平台配置。',
         nav_admin_denied: '当前账号无权进入管理控制台。',
+        sidebar_history_records: '会话历史',
+        sidebar_history_view_all: '查看全部',
+        sidebar_history_empty: '暂无历史会话',
         nav_group_agent_dev: '智能体开发', nav_group_model_access: '模型与接入',
         nav_group_org_perm: '组织与权限', nav_group_platform_ops: '平台运维',
         menu_chat: '对话', menu_agents: '智能体', menu_config: '模型服务', menu_agent_config: '智能体管理', menu_skills: '工具与技能',
@@ -868,7 +899,10 @@ const I18N = {
         agents_avatar: '头像',
         agents_tab_profile: '概况',
         agents_tab_skills: '能力',
+        agents_tab_tasks: '任务',
         agents_tab_files: '核心文件',
+        agents_tasks_label: '本智能体的定时任务',
+        tasks_empty_agent: '该智能体暂无定时任务。将在对话中通过 scheduler 工具创建的任务归属到此员工。',
         agents_core_edit: '编辑',
         agents_core_preview: '预览',
         agents_core_file_agent: '智能体设定',
@@ -912,8 +946,29 @@ const I18N = {
         agents_model: '默认模型',
         agents_model_follows_global: '跟随全局配置',
         agents_model_default_hint: '默认使用主模型，在「模型配置」中修改。',
+        agents_position: '职位',
+        agents_position_placeholder: '如：采购专员',
+        agents_category: '分类',
+        agents_category_none: '未分类',
+        agents_tags: '标签',
+        agents_tags_placeholder: '标签以逗号分隔，如：供应商, 招标',
+        agents_greeting: '问候语',
+        agents_persona: '人设摘要',
+        agents_persona_hint: '注入系统提示的员工人设说明',
+        agents_scene: '关联场景',
+        agents_scene_none: '无关联场景',
         agents_skills_all: '使用全部已安装技能',
         agents_skills_pick: '只启用勾选的技能',
+        agents_skills_label: '技能',
+        agents_sops_label: 'SOP 流程',
+        agents_sops_hint: '为员工绑定可观测的 SOP 执行流程 ID（仅作能力清单展示，不驱动状态机）。',
+        agents_sops_placeholder: 'SOP ID',
+        agents_sops_add: '添加',
+        agents_tools_label: '工具目录',
+        agents_tools_hint: '勾选「允许」仅启用白名单；勾选「拒绝」从可用工具中剔除。两者互斥。',
+        agents_tools_none_hint: '未启用白名单/黑名单时，该员工可使用全部已安装工具。',
+        agents_allow: '允许',
+        agents_deny: '拒绝',
         agents_knowledge: '知识库',
         agents_knowledge_shared: '共享',
         agents_knowledge_own: '独立',
@@ -1200,6 +1255,7 @@ const I18N = {
         task_delete_confirm_title: '删除定时任务',
         task_delete_confirm_msg: '确定删除该定时任务吗？此操作无法撤销。',
         task_run_now: '立即执行',
+        task_next_run: '下次执行',
         task_run_confirm_title: '立即执行任务',
         task_run_confirm_msg: '该任务会立即向已配置的通道和接收者发送内容。是否继续？',
         task_run_started: '已开始执行',
@@ -1374,6 +1430,9 @@ const I18N = {
         admin_home_title: '管理控制台',
         admin_home_hint: '選擇左側選單管理智慧體、組織與平台設定。',
         nav_admin_denied: '目前帳號無權進入管理控制台。',
+        sidebar_history_records: '會話歷史',
+        sidebar_history_view_all: '查看全部',
+        sidebar_history_empty: '暫無歷史會話',
         nav_group_agent_dev: '智能體開發', nav_group_model_access: '模型與接入',
         nav_group_org_perm: '組織與權限', nav_group_platform_ops: '平台維運',
         menu_chat: '對話', menu_agents: '智慧體', menu_config: '模型服務', menu_agent_config: '智慧體管理', menu_skills: '工具與技能',
@@ -1617,8 +1676,29 @@ const I18N = {
         agents_model: '預設模型',
         agents_model_follows_global: '跟隨全域設定',
         agents_model_default_hint: '預設使用主模型，於「模型設定」中修改。',
+        agents_position: '職位',
+        agents_position_placeholder: '如：採購專員',
+        agents_category: '分類',
+        agents_category_none: '未分類',
+        agents_tags: '標籤',
+        agents_tags_placeholder: '標籤以逗號分隔，如：供應商, 招標',
+        agents_greeting: '問候語',
+        agents_persona: '人設摘要',
+        agents_persona_hint: '注入系統提示的員工人設說明',
+        agents_scene: '關聯場景',
+        agents_scene_none: '無關聯場景',
         agents_skills_all: '使用全部已安裝技能',
         agents_skills_pick: '只啟用勾選的技能',
+        agents_skills_label: '技能',
+        agents_sops_label: 'SOP 流程',
+        agents_sops_hint: '為員工綁定可觀測的 SOP 執行流程 ID（僅作能力清單展示，不驅動狀態機）。',
+        agents_sops_placeholder: 'SOP ID',
+        agents_sops_add: '新增',
+        agents_tools_label: '工具目錄',
+        agents_tools_hint: '勾選「允許」僅啟用白名單；勾選「拒絕」從可用工具中剔除。兩者互斥。',
+        agents_tools_none_hint: '未啟用白名單/黑名單時，該員工可使用全部已安裝工具。',
+        agents_allow: '允許',
+        agents_deny: '拒絕',
         agents_knowledge: '知識庫',
         agents_knowledge_shared: '共享',
         agents_knowledge_own: '獨立',
@@ -1905,6 +1985,7 @@ const I18N = {
         task_delete_confirm_title: '刪除定時任務',
         task_delete_confirm_msg: '確定刪除該定時任務嗎？此操作無法撤銷。',
         task_run_now: '立即執行',
+        task_next_run: '下次執行',
         task_run_confirm_title: '立即執行任務',
         task_run_confirm_msg: '該任務會立即向已設定的通道和接收者傳送內容。是否繼續？',
         task_run_started: '已開始執行',
@@ -2074,6 +2155,9 @@ const I18N = {
         admin_home_title: 'Admin Console',
         admin_home_hint: 'Use the sidebar to manage agents, organization, and platform settings.',
         nav_admin_denied: 'Your account cannot open the admin console.',
+        sidebar_history_records: 'Session History',
+        sidebar_history_view_all: 'View all',
+        sidebar_history_empty: 'No history sessions yet',
         nav_group_agent_dev: 'Agent Development', nav_group_model_access: 'Model & Access',
         nav_group_org_perm: 'Org & Permissions', nav_group_platform_ops: 'Platform Ops',
         menu_chat: 'Chat', menu_agents: 'Agents', menu_config: 'Model Services', menu_agent_config: 'Agent Management', menu_skills: 'Tools & Skills',
@@ -2273,7 +2357,10 @@ const I18N = {
         agents_avatar: 'Avatar',
         agents_tab_profile: 'Profile',
         agents_tab_skills: 'Skills',
+        agents_tab_tasks: 'Tasks',
         agents_tab_files: 'Core files',
+        agents_tasks_label: "This employee's scheduled tasks",
+        tasks_empty_agent: 'No scheduled tasks for this employee. Tasks created via the scheduler tool in chat are owned by this employee.',
         agents_core_edit: 'Edit',
         agents_core_preview: 'Preview',
         agents_core_file_agent: 'Persona',
@@ -2317,7 +2404,28 @@ const I18N = {
         agents_model: 'Default model',
         agents_model_follows_global: 'Follow the configured model',
         agents_model_default_hint: 'Uses the primary model. Change it under Model config.',
+        agents_position: 'Position',
+        agents_position_placeholder: 'e.g. Procurement specialist',
+        agents_category: 'Category',
+        agents_category_none: 'Uncategorized',
+        agents_tags: 'Tags',
+        agents_tags_placeholder: 'Tags separated by commas, e.g. supplier, bid',
+        agents_greeting: 'Greeting',
+        agents_persona: 'Persona summary',
+        agents_persona_hint: 'Employee persona injected into the system prompt',
+        agents_scene: 'Linked scene',
+        agents_scene_none: 'No linked scene',
         agents_skills_all: 'Use every installed skill',
+        agents_skills_label: 'Skills',
+        agents_sops_label: 'SOPs',
+        agents_sops_hint: 'Bind observable SOP execution-flow IDs to this employee (listed as capability metadata only; does not drive a state machine).',
+        agents_sops_placeholder: 'SOP ID',
+        agents_sops_add: 'Add',
+        agents_tools_label: 'Tool catalog',
+        agents_tools_hint: 'Checking "allow" enables only the allowlist; checking "deny" removes it from available tools. The two are mutually exclusive.',
+        agents_tools_none_hint: 'With no allowlist/denylist, the employee may use every installed tool.',
+        agents_allow: 'Allow',
+        agents_deny: 'Deny',
         agents_knowledge: 'Knowledge base',
         agents_knowledge_shared: 'Shared',
         agents_knowledge_own: 'Own',
@@ -2605,6 +2713,7 @@ const I18N = {
         task_delete_confirm_title: 'Delete Task',
         task_delete_confirm_msg: 'Delete this scheduled task? This action cannot be undone.',
         task_run_now: 'Run now',
+        task_next_run: 'Next run',
         task_run_confirm_title: 'Run task now',
         task_run_confirm_msg: 'This task will immediately send to its configured channel and receiver. Continue?',
         task_run_started: 'Run started',
@@ -3927,7 +4036,7 @@ let defaultAgentId = readScopedPreference('cow_default_agent') || 'default';
 let selectedAdminAgentId = '';
 let selectedCoreRevision = '';
 let installedSkills = [];
-
+let installedTools = [];
 function findAgent(agentId) {
     return agentCatalog.find(a => a.id === agentId) || null;
 }
@@ -4151,6 +4260,8 @@ async function fetchAgentWorkbench() {
         description: a.description || '', avatar: a.avatar || null,
         is_default: a.is_default, can_chat: a.can_chat,
         unavailable_reason: a.unavailable_reason || null,
+        // Digital-employee projection fields (positioned to render on cards).
+        position: a.position || '', category: a.category || '', tags: a.tags || [],
     })).sort((a, b) => Number(b.is_default) - Number(a.is_default));
 }
 
@@ -4179,6 +4290,17 @@ function agentWorkbenchCardHTML(agent, canChat, unavailableReason) {
     // keyboard-accessible button-ish element. Use a single <button> to avoid a
     // nested-button accessibility violation and to make one Tab stop per card.
     const actionIcon = starting ? 'fa-spinner fa-spin' : canChat ? 'fa-comment' : 'fa-circle-exclamation';
+    // Digital-employee projection: position / category on one meta line, tags as
+    // small chips under the description. Rendered only when present.
+    const metaBits = [];
+    if (agent.position) metaBits.push(escapeHtml(agent.position));
+    else if (agent.category) metaBits.push(escapeHtml(agent.category));
+    const metaLine = metaBits.length
+        ? `<div class="agent-wb-card-meta truncate">${metaBits.join(' · ')}</div>`
+        : '';
+    const tagChips = (agent.tags || []).length
+        ? `<div class="agent-wb-card-tags">${(agent.tags || []).map(tag => `<span class="agent-wb-tag">${escapeHtml(tag)}</span>`).join('')}</div>`
+        : '';
     return `<button type="button" class="agent-wb-card${canChat ? '' : ' agent-wb-card-disabled'}"
             ${disabled ? 'disabled aria-disabled="true"' : `onclick="startChatWithAgent('${escapeHtml(agent.id)}')"`}
             aria-busy="${starting || agentWorkbenchLoading}"
@@ -4192,6 +4314,8 @@ function agentWorkbenchCardHTML(agent, canChat, unavailableReason) {
             ${badge}
         </div>
         <div class="agent-wb-card-desc">${desc ? escapeHtml(desc) : `<span class="agent-card-desc-empty">${escapeHtml(t('agents_no_desc'))}</span>`}</div>
+        ${metaLine}
+        ${tagChips}
         <div class="agent-wb-card-foot">
             <span class="agent-wb-action${canChat ? '' : ' agent-wb-action-disabled'}">
                 <i class="fas ${actionIcon} mr-1.5"></i>${escapeHtml(actionLabel)}
@@ -4317,10 +4441,11 @@ function selectAgentDetailTab(tab) {
     document.querySelectorAll('.agent-detail-tab').forEach(el => {
         el.classList.toggle('active', el.dataset.tab === tab);
     });
-    ['profile', 'skills', 'files'].forEach(name => {
+    ['profile', 'skills', 'tasks', 'files'].forEach(name => {
         document.getElementById(`agent-detail-${name}`)?.classList.toggle('hidden', name !== tab);
     });
-    if (tab === 'skills') renderAgentSkillsPane();
+    if (tab === 'skills') renderAgentCapabilitiesPane();
+    if (tab === 'tasks') renderAgentTasksPane();
     if (tab === 'files') loadAgentCoreFile();
 }
 
@@ -4431,6 +4556,45 @@ function renderAgentDetail() {
                    class="agent-input agent-textarea">${escapeHtml(agent.description || '')}</textarea>
         </div>
         <div class="agent-field">
+            <label class="agent-field-label">${escapeHtml(t('agents_position'))}</label>
+            <input id="agent-edit-position" value="${escapeHtml(agent.position || '')}" class="agent-input"
+                   placeholder="${escapeHtml(t('agents_position_placeholder'))}">
+        </div>
+        <div class="agent-field">
+            <label class="agent-field-label">${escapeHtml(t('agents_category'))}</label>
+            <div id="agent-edit-category" class="cfg-dropdown" tabindex="0">
+                <div class="cfg-dropdown-selected">
+                    <span class="cfg-dropdown-text">${escapeHtml(agent.category || t('agents_category_none'))}</span>
+                    <i class="fas fa-chevron-down cfg-dropdown-arrow"></i>
+                </div>
+                <div class="cfg-dropdown-menu"></div>
+            </div>
+        </div>
+        <div class="agent-field">
+            <label class="agent-field-label">${escapeHtml(t('agents_tags'))}</label>
+            <input id="agent-edit-tags" value="${escapeHtml((agent.tags || []).join(', '))}" class="agent-input"
+                   placeholder="${escapeHtml(t('agents_tags_placeholder'))}">
+        </div>
+        <div class="agent-field">
+            <label class="agent-field-label">${escapeHtml(t('agents_greeting'))}</label>
+            <input id="agent-edit-greeting" value="${escapeHtml(agent.greeting || '')}" class="agent-input">
+        </div>
+        <div class="agent-field">
+            ${fieldLabelWithTip(t('agents_persona'), t('agents_persona_hint'))}
+            <textarea id="agent-edit-persona" rows="3"
+                   class="agent-input agent-textarea">${escapeHtml(agent.persona_summary || '')}</textarea>
+        </div>
+        <div class="agent-field">
+            <label class="agent-field-label">${escapeHtml(t('agents_scene'))}</label>
+            <div id="agent-edit-scene" class="cfg-dropdown" tabindex="0">
+                <div class="cfg-dropdown-selected">
+                    <span class="cfg-dropdown-text">${escapeHtml(agent.scene_id || t('agents_scene_none'))}</span>
+                    <i class="fas fa-chevron-down cfg-dropdown-arrow"></i>
+                </div>
+                <div class="cfg-dropdown-menu"></div>
+            </div>
+        </div>
+        <div class="agent-field">
             <label class="agent-field-label">${escapeHtml(t('agents_model'))}</label>
             ${isDefault
                 ? `<div class="agent-input-locked">${escapeHtml(t('agents_model_follows_global'))}</div>
@@ -4476,6 +4640,10 @@ function renderAgentDetail() {
     // A save may re-render this pane several times; re-apply an in-flight
     // "saved" confirmation so it survives instead of being wiped.
     paintAgentSavedFlash();
+    // Populate the scene + category dropdowns from the scene catalog, then
+    // re-init so the current selection is preserved against the wide option set.
+    refreshAgentCategoryDropdown();
+    if (!isDefault) refreshAgentSceneDropdown();
 }
 
 /* A live preview beside an upload button, in the page's own styling rather than
@@ -4515,6 +4683,51 @@ function agentModelDropdownOptions() {
     return opts;
 }
 
+// Scene catalog options for the Agent detail pane. Fetched lazily and cached;
+// a missing scene module yields no options, so the selector simply offers "none".
+let _sceneCatalogCache = null;
+function sceneCatalog() {
+    if (_sceneCatalogCache !== null) return Promise.resolve(_sceneCatalogCache);
+    return fetch('/api/scenes').then(r => r.json()).then(d => {
+        _sceneCatalogCache = d && d.scenes ? d.scenes : [];
+        return _sceneCatalogCache;
+    }).catch(() => { _sceneCatalogCache = []; return []; });
+}
+function sceneCatalogOptions() {
+    return [{ value: '', label: t('agents_scene_none') }];
+}
+function refreshAgentSceneDropdown() {
+    const dd = document.getElementById('agent-edit-scene');
+    if (!dd) return;
+    const agent = findAgent(selectedAdminAgentId);
+    sceneCatalog().then(scenes => {
+        const opts = [{ value: '', label: t('agents_scene_none') }].concat(
+            scenes.map(s => ({ value: s.id, label: (s.name || s.id) }))
+        );
+        const current = (agent && agent.scene_id) || '';
+        initDropdown(dd, opts, current, () => {}, { placeholder: t('agents_scene_none') });
+    });
+}
+function sceneCategoryOptions() {
+    // Category may be typed freely; the dropdown offers the scene categories
+    // (empty allowed). The first row clears back to no category.
+    return [{ value: '', label: t('agents_category_none') }];
+}
+function refreshAgentCategoryDropdown() {
+    const dd = document.getElementById('agent-edit-category');
+    if (!dd) return;
+    const agent = findAgent(selectedAdminAgentId);
+    sceneCatalog().then(scenes => {
+        const seen = [];
+        scenes.forEach(s => { const c = s.category; if (c && seen.indexOf(c) === -1) seen.push(c); });
+        const opts = [{ value: '', label: t('agents_category_none') }].concat(
+            seen.map(c => ({ value: c, label: c }))
+        );
+        const current = (agent && agent.category) || '';
+        initDropdown(dd, opts, current, () => {}, { placeholder: t('agents_category_none') });
+    });
+}
+
 // Persist an Agent's skill selection. Writes are serialized per Agent and
 // coalesce to the latest desired state, so ticking several boxes quickly sends
 // them in order (each with the revision the previous one returned) instead of
@@ -4548,6 +4761,30 @@ function saveAgentSkills(agent, skills) {
             saveAgentSkills(agent, next);  // flush the latest queued state
         }
     });
+}
+
+// Persist capabilities (skills / sops / tools allow+deny) in one update, so
+// toggling related controls does not send several racing writes. The roster
+// revision is carried on each call; on success we adopt the returned revision.
+function saveAgentCapabilities(agent, fields) {
+    // Apply optimistically so the pane reflects the new state immediately.
+    if ('skills' in fields) agent.skills = fields.skills;
+    if ('sops' in fields) agent.sops = fields.sops;
+    if ('tools_allowlist' in fields) agent.tools_allowlist = fields.tools_allowlist;
+    if ('tools_denylist' in fields) agent.tools_denylist = fields.tools_denylist;
+    const body = Object.assign({ action: 'update', id: agent.id, revision: rosterRevision }, fields);
+    fetch('/api/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    }).then(r => r.json()).then(data => {
+        if (data.status === 'success') {
+            if (data.revision) rosterRevision = data.revision;
+        } else {
+            const status = document.getElementById('agent-editor-status');
+            if (status) status.textContent = data.message || 'Update failed';
+        }
+    }).catch(() => {});
 }
 
 // Switch an Agent between the shared knowledge base and its own. This is a
@@ -4586,55 +4823,207 @@ async function setAgentKnowledgeMode(agentId, mode) {
     }
 }
 
-function renderAgentSkillsPane() {
+function renderAgentCapabilitiesPane() {
     const pane = document.getElementById('agent-detail-skills');
     const agent = findAgent(selectedAdminAgentId);
     if (!pane || !agent) return;
+    const toolsLoaded = agent.tools_allowlist != null || agent.tools_denylist.length > 0;
     const render = () => {
         const all = agent.skills == null;
         const picked = new Set(all ? [] : agent.skills);
+        const sops = agent.sops || [];
+        const allowlist = new Set(agent.tools_allowlist || []);
+        const denylist = new Set(agent.tools_denylist || []);
         pane.innerHTML = `
-            <label class="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300 mb-3">
-                <input type="checkbox" id="agent-skills-all" ${all ? 'checked' : ''}>
-                <span>${escapeHtml(t('agents_skills_all'))}</span>
-            </label>
-            <p class="text-xs text-slate-400 mb-3">${escapeHtml(t('agents_skills_pick'))}</p>
-            ${(installedSkills || []).map(skill => {
-                const name = skill.name || skill.id;
-                const checked = all || picked.has(name);
-                return `<label class="agent-skill-row">
-                    <input type="checkbox" class="agent-skill-item" value="${escapeHtml(name)}" ${checked ? 'checked' : ''} ${all ? 'disabled' : ''}>
-                    <div>
-                        <div class="text-sm text-slate-700 dark:text-slate-200">${escapeHtml(skill.display_name || name)}</div>
-                        <div class="text-xs text-slate-400">${escapeHtml(skill.description || '')}</div>
-                    </div>
-                </label>`;
-            }).join('')}`;
+            <div class="agent-cap-section">
+                <div class="agent-cap-title">${escapeHtml(t('agents_skills_label'))}</div>
+                <label class="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300 mb-3">
+                    <input type="checkbox" id="agent-skills-all" ${all ? 'checked' : ''}>
+                    <span>${escapeHtml(t('agents_skills_all'))}</span>
+                </label>
+                <p class="text-xs text-slate-400 mb-3">${escapeHtml(t('agents_skills_pick'))}</p>
+                ${(installedSkills || []).map(skill => {
+                    const name = skill.name || skill.id;
+                    const checked = all || picked.has(name);
+                    return `<label class="agent-skill-row">
+                        <input type="checkbox" class="agent-skill-item" value="${escapeHtml(name)}" ${checked ? 'checked' : ''} ${all ? 'disabled' : ''}>
+                        <div>
+                            <div class="text-sm text-slate-700 dark:text-slate-200">${escapeHtml(skill.display_name || name)}</div>
+                            <div class="text-xs text-slate-400">${escapeHtml(skill.description || '')}</div>
+                        </div>
+                    </label>`;
+                }).join('')}
+            </div>
+            <div class="agent-cap-section">
+                <div class="agent-cap-title">${escapeHtml(t('agents_sops_label'))}</div>
+                <p class="text-xs text-slate-400 mb-2">${escapeHtml(t('agents_sops_hint'))}</p>
+                <div class="flex flex-wrap gap-2 mb-2" id="agent-sops-list">
+                    ${sops.map(id => `<span class="agent-tag">${escapeHtml(id)}<button type="button" class="agent-tag-x" data-sop="${escapeHtml(id)}">&times;</button></span>`).join('')}
+                </div>
+                <div class="flex gap-2">
+                    <input id="agent-sop-input" placeholder="${escapeHtml(t('agents_sops_placeholder'))}" class="agent-input" style="max-width: 240px;">
+                    <button type="button" id="agent-sop-add" class="agent-btn agent-btn-ghost">${escapeHtml(t('agents_sops_add'))}</button>
+                </div>
+            </div>
+            <div class="agent-cap-section">
+                <div class="agent-cap-title">${escapeHtml(t('agents_tools_label'))}</div>
+                <p class="text-xs text-slate-400 mb-2">${escapeHtml(t('agents_tools_hint'))}</p>
+                <div class="agent-tool-grid" id="agent-tools-allow">
+                    ${(installedTools || []).map(tool => {
+                        const a = allowlist.has(tool.name);
+                        const d = denylist.has(tool.name);
+                        return `<div class="agent-tool-row">
+                            <span class="agent-tool-chip"><input type="checkbox" class="agent-tool-allow" value="${escapeHtml(tool.name)}" ${a ? 'checked' : ''} ${d ? 'disabled' : ''}>${escapeHtml(t('agents_allow'))}</span>
+                            <span class="agent-tool-chip"><input type="checkbox" class="agent-tool-deny" value="${escapeHtml(tool.name)}" ${d ? 'checked' : ''} ${a ? 'disabled' : ''}>${escapeHtml(t('agents_deny'))}</span>
+                            <div class="min-w-0 flex-1">
+                                <div class="text-sm text-slate-700 dark:text-slate-200 font-mono">${escapeHtml(tool.name)}</div>
+                                <div class="text-xs text-slate-400 truncate">${escapeHtml((tool.description || '').split('\n')[0])}</div>
+                            </div>
+                        </div>`;
+                    }).join('')}
+                </div>
+                <p class="text-xs text-slate-400 mt-2">${escapeHtml(t('agents_tools_none_hint'))}</p>
+            </div>`;
         document.getElementById('agent-skills-all')?.addEventListener('change', (e) => {
-            // Toggle only flips ALL <-> empty subset. Turning it off starts from
-            // an empty list so the user picks up exactly what they want, and the
-            // stored value is [] rather than a full enumeration.
             const next = e.target.checked ? null : [];
-            saveAgentSkills(agent, next);
-            render();  // repaint in place — no page-wide reload, no flicker
+            saveAgentCapabilities(agent, { skills: next });
+            render();
         });
         pane.querySelectorAll('.agent-skill-item').forEach(box => {
             box.addEventListener('change', () => {
                 const names = Array.from(pane.querySelectorAll('.agent-skill-item:checked')).map(el => el.value);
-                saveAgentSkills(agent, names);
+                saveAgentCapabilities(agent, { skills: names });
+            });
+        });
+        // SOP add/remove
+        document.getElementById('agent-sop-add')?.addEventListener('click', () => {
+            const input = document.getElementById('agent-sop-input');
+            const val = (input && input.value || '').trim();
+            if (!val) return;
+            const next = Array.from(new Set([...sops, val]));
+            saveAgentCapabilities(agent, { sops: next });
+            if (input) input.value = '';
+            render();
+        });
+        pane.querySelectorAll('.agent-tag-x[data-sop]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const id = btn.getAttribute('data-sop');
+                const next = sops.filter(x => x !== id);
+                saveAgentCapabilities(agent, { sops: next });
+                render();
+            });
+        });
+        // Tool allow/deny toggles
+        pane.querySelectorAll('.agent-tool-allow').forEach(box => {
+            box.addEventListener('change', () => {
+                const name = box.value;
+                const nextAllow = new Set(agent.tools_allowlist || []);
+                if (box.checked) nextAllow.add(name);
+                else if (agent.tools_allowlist != null) nextAllow.delete(name);
+                saveAgentCapabilities(agent, { tools_allowlist: agent.tools_allowlist == null ? [name] : Array.from(nextAllow) });
+                render();
+            });
+        });
+        pane.querySelectorAll('.agent-tool-deny').forEach(box => {
+            box.addEventListener('change', () => {
+                const name = box.value;
+                const nextDeny = new Set(agent.tools_denylist || []);
+                if (box.checked) nextDeny.add(name); else nextDeny.delete(name);
+                saveAgentCapabilities(agent, { tools_denylist: Array.from(nextDeny) });
+                render();
             });
         });
     };
-    if (installedSkills.length) {
-        render();
-        return;
-    }
-    fetch('/api/skills').then(r => r.json()).then(data => {
-        installedSkills = data.skills || [];
-        render();
-    }).catch(() => {
-        pane.innerHTML = `<p class="text-sm text-slate-400">${escapeHtml(t('agents_skills_all'))}</p>`;
-    });
+    const ready = () => {
+        if (installedSkills.length && installedTools.length) { render(); return; }
+        Promise.all([
+            installedSkills.length ? Promise.resolve() : fetch('/api/skills').then(r => r.json()).then(d => { installedSkills = d.skills || []; }),
+            installedTools.length ? Promise.resolve() : fetch('/api/tools').then(r => r.json()).then(d => { installedTools = d.tools || []; }),
+        ]).then(() => render()).catch(() => {
+            pane.innerHTML = `<p class="text-sm text-slate-400">${escapeHtml(t('agents_skills_all'))}</p>`;
+        });
+    };
+    ready();
+}
+
+function renderAgentTasksPane() {
+    const pane = document.getElementById('agent-detail-tasks');
+    const agent = findAgent(selectedAdminAgentId);
+    if (!pane || !agent) return;
+    const render = (tasks) => {
+        if (!tasks.length) {
+            pane.innerHTML = `<p class="text-sm text-slate-400">${escapeHtml(t('tasks_empty_agent'))}</p>`;
+            return;
+        }
+        pane.innerHTML = `<div class="agent-cap-title">${escapeHtml(t('agents_tasks_label'))}</div>`;
+        const wrap = document.createElement('div');
+        wrap.className = 'agent-task-list';
+        tasks.forEach(task => {
+            const isEnabled = task.enabled !== false;
+            const schedule = task.schedule || {};
+            let typeLabel = '';
+            if (schedule.type === 'cron') {
+                typeLabel = `<span class="text-xs font-mono text-slate-400">${escapeHtml(schedule.expression || '')}</span>`;
+            } else if (schedule.type === 'interval') {
+                const seconds = schedule.seconds || 0;
+                const hours = Math.floor(seconds / 3600);
+                const mins = Math.floor((seconds % 3600) / 60);
+                typeLabel = hours ? `${hours}h${mins ? ` ${mins}m` : ''}` : `${mins}m`;
+                typeLabel = `<span class="text-xs text-slate-400">${escapeHtml(typeLabel)}</span>`;
+            } else {
+                typeLabel = `<span class="text-xs text-slate-400">${escapeHtml(schedule.type || 'once')}</span>`;
+            }
+            let nextRun = '--';
+            if (task.next_run_at) {
+                const d = new Date(task.next_run_at);
+                if (!isNaN(d.getTime())) nextRun = d.toLocaleString();
+            }
+            const action = task.action || {};
+            const taskContent = action.content || action.task_description || '';
+            const toggleId = 'agent-task-toggle-' + task.id;
+            const card = document.createElement('div');
+            card.className = 'agent-task-card' + (isEnabled ? '' : ' agent-task-card-disabled');
+            card.dataset.taskId = task.id;
+            card.innerHTML = `
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="w-2 h-2 rounded-full ${isEnabled ? 'bg-primary-400' : 'bg-slate-300 dark:bg-slate-600'}"></span>
+                    <span class="font-medium text-sm text-slate-700 dark:text-slate-200">${escapeHtml(task.name || task.id || '--')}</span>
+                    <div class="flex-1"></div>
+                    ${typeLabel}
+                </div>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mb-2 line-clamp-2">${escapeHtml(taskContent)}</p>
+                <div class="flex items-center gap-4 text-xs text-slate-400 dark:text-slate-500">
+                    <span><i class="fas fa-clock mr-1"></i>${escapeHtml(t('task_next_run'))}: ${nextRun}</span>
+                    <div class="flex-1"></div>
+                    <button type="button" class="task-run-now px-2 py-1 rounded-md text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors">
+                        <i class="fas fa-play mr-1"></i>${escapeHtml(t('task_run_now'))}
+                    </button>
+                    <label class="relative inline-flex items-center cursor-pointer" for="${toggleId}">
+                        <input type="checkbox" id="${toggleId}" class="sr-only peer" ${isEnabled ? 'checked' : ''}>
+                        <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-500 dark:bg-slate-600 dark:peer-checked:bg-primary-500"></div>
+                    </label>
+                </div>`;
+            card.querySelector('.task-run-now').addEventListener('click', (e) => {
+                e.stopPropagation();
+                runTaskNow(task, e.currentTarget);
+            });
+            const checkbox = card.querySelector('#' + toggleId);
+            checkbox.addEventListener('change', function() {
+                const newEnabled = this.checked;
+                fetch('/api/scheduler/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ task_id: task.id, enabled: newEnabled, agent_id: task.agent_id || agent.id })
+                }).then(r => r.json()).then(res => { if (res.status === 'success') renderAgentTasksPane(); });
+            });
+            wrap.appendChild(card);
+        });
+        pane.appendChild(wrap);
+    };
+    return fetch('/api/scheduler?agent_id=' + encodeURIComponent(agent.id))
+        .then(r => r.json())
+        .then(data => { render(data.tasks || []); })
+        .catch(() => { pane.innerHTML = `<p class="text-sm text-slate-400">${escapeHtml(t('tasks_unavailable'))}</p>`; });
 }
 
 // Held between opening the create modal and a successful create: the chosen
@@ -4812,9 +5201,17 @@ function createAgentWorkspace() {
 function saveAgentProfile() {
     const agent = findAgent(selectedAdminAgentId);
     if (!agent) return;
+    const catEl = document.getElementById('agent-edit-category');
+    const sceneEl = document.getElementById('agent-edit-scene');
     const payload = {
         name: document.getElementById('agent-edit-name')?.value.trim(),
         description: document.getElementById('agent-edit-description')?.value.trim() || '',
+        position: document.getElementById('agent-edit-position')?.value.trim() || '',
+        category: catEl ? (getDropdownValue(catEl) || '') : agent.category || '',
+        tags: (document.getElementById('agent-edit-tags')?.value || '').split(',').map(s => s.trim()).filter(Boolean),
+        greeting: document.getElementById('agent-edit-greeting')?.value.trim() || '',
+        persona_summary: document.getElementById('agent-edit-persona')?.value.trim() || '',
+        scene_id: sceneEl ? (getDropdownValue(sceneEl) || '') : agent.scene_id || '',
     };
     // Absent for the default Agent, which follows the configured model.
     const picker = document.getElementById('agent-edit-model');
@@ -10167,6 +10564,122 @@ function loadSessionList(onDone) {
 function _refreshHistoryList() {
     if (_historyVisible) loadSessionList();
     else _historyDirty = true;
+    if (typeof loadSidebarRecentSessions === 'function') loadSidebarRecentSessions();
+}
+
+// === SIDEBAR_RECENT_BEGIN ===
+const SIDEBAR_RECENT_LIMIT = 10;
+function _sidebarRecentLimit(items) {
+    return Array.isArray(items) ? items.slice(0, SIDEBAR_RECENT_LIMIT) : [];
+}
+// === SIDEBAR_RECENT_END ===
+
+let _sidebarRecentItems = [];
+let _sidebarRecentSeq = 0;
+
+function renderSidebarRecentSessions() {
+    const list = document.getElementById('sidebar-recent-list');
+    const more = document.getElementById('sidebar-recent-more');
+    if (!list) return;
+    list.innerHTML = '';
+    const items = _sidebarRecentLimit(_sidebarRecentItems);
+    if (!items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'sidebar-recent-empty';
+        empty.textContent = t('sidebar_history_empty');
+        list.appendChild(empty);
+        if (more) more.classList.add('hidden');
+        return;
+    }
+    items.forEach(s => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'sidebar-recent-item';
+        btn.setAttribute('role', 'listitem');
+        const ownerId = (s.agent && s.agent.id) || '';
+        const title = s.title || t('untitled_session');
+        btn.textContent = title;
+        btn.title = title;
+        btn.dataset.sessionId = s.session_id || '';
+        if (ownerId) btn.dataset.agentId = ownerId;
+        const isActive = s.session_id === sessionId && (!ownerId || ownerId === activeAgentId);
+        btn.classList.toggle('active', isActive);
+        btn.addEventListener('click', () => {
+            switchSession(s.session_id, ownerId || undefined);
+        });
+        list.appendChild(btn);
+    });
+    if (more) more.classList.toggle('hidden', items.length < 1);
+}
+
+function loadSidebarRecentSessions() {
+    const wrap = document.getElementById('sidebar-recent');
+    if (!wrap) return;
+    if (typeof _navAreaFromPath === 'function' && _navAreaFromPath(location.pathname) !== 'workbench') return;
+    const seq = ++_sidebarRecentSeq;
+    fetch(`/api/sessions?page=1&page_size=${SIDEBAR_RECENT_LIMIT}&scope=all`)
+        .then(async r => {
+            const data = await r.json().catch(() => ({}));
+            return { ok: r.ok, data };
+        })
+        .then(({ ok, data }) => {
+            if (seq !== _sidebarRecentSeq) return;
+            if (!ok || !data || data.status !== 'success') {
+                _sidebarRecentItems = [];
+                const list = document.getElementById('sidebar-recent-list');
+                if (list) {
+                    list.innerHTML = '';
+                    const err = document.createElement('div');
+                    err.className = 'sidebar-recent-error';
+                    err.textContent = t('session_history_failed');
+                    list.appendChild(err);
+                }
+                return;
+            }
+            _sidebarRecentItems = _sidebarRecentLimit(data.sessions || []);
+            renderSidebarRecentSessions();
+        })
+        .catch(() => {
+            if (seq !== _sidebarRecentSeq) return;
+            _sidebarRecentItems = [];
+            const list = document.getElementById('sidebar-recent-list');
+            if (!list) return;
+            list.innerHTML = '';
+            const err = document.createElement('div');
+            err.className = 'sidebar-recent-error';
+            err.textContent = t('session_history_failed');
+            list.appendChild(err);
+        });
+}
+
+function _initSidebarRecent() {
+    const wrap = document.getElementById('sidebar-recent');
+    const toggle = document.getElementById('sidebar-recent-toggle');
+    const label = document.getElementById('sidebar-recent-label');
+    const more = document.getElementById('sidebar-recent-more');
+    if (!wrap || !toggle) return;
+    const setOpen = (open) => {
+        wrap.classList.toggle('open', open);
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+    toggle.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(!wrap.classList.contains('open'));
+    });
+    // Double-click the label to open the full history page (search/filter),
+    // same as the previous top-level「历史对话」entry.
+    label?.addEventListener('dblclick', (event) => {
+        event.preventDefault();
+        navigateTo('history');
+    });
+    more?.addEventListener('click', () => navigateTo('history'));
+    loadSidebarRecentSessions();
+}
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _initSidebarRecent);
+} else {
+    _initSidebarRecent();
 }
 
 function _fetchSessionPage(page, clear, onDone, seq) {
@@ -10802,6 +11315,10 @@ function switchSession(newSessionId, agentId) {
     }
 
     document.querySelectorAll('.session-item').forEach(el => {
+        el.classList.toggle('active', el.dataset.sessionId === sessionId
+            && (!el.dataset.agentId || el.dataset.agentId === activeAgentId));
+    });
+    document.querySelectorAll('.sidebar-recent-item').forEach(el => {
         el.classList.toggle('active', el.dataset.sessionId === sessionId
             && (!el.dataset.agentId || el.dataset.agentId === activeAgentId));
     });
@@ -11961,19 +12478,27 @@ function _brandingRenderPreview() {
         el.src = logoUrl;
         el.alt = '';
     });
-    // Sidebar caption: always shows the description (default "控制台" included).
+    // Sidebar caption: default maps to 工作台 / 管理控制台 by path; custom
+    // brand descriptions still paint as configured.
     canvas.querySelectorAll('[data-brand-slot="caption"]').forEach(el => {
-        const hasDesc = !!desc.trim();
-        el.textContent = hasDesc ? desc : '';
+        const captionHelper = (typeof window !== 'undefined' && window
+            && typeof window.sidebarBrandCaption === 'function')
+            ? window.sidebarBrandCaption
+            : null;
+        const caption = captionHelper
+            ? captionHelper(desc)
+            : ((desc && desc.trim()) || '');
+        const hasDesc = !!String(caption || '').trim();
+        el.textContent = hasDesc ? caption : '';
         el.classList.toggle('hidden', !hasDesc);
-        el.title = hasDesc ? desc : '';
+        el.title = hasDesc ? caption : '';
     });
     // Desc slot is used by both the login and welcome previews. The welcome
-    // preview mirrors the real welcome hero and hides the default "控制台"
+    // preview mirrors the real welcome hero and hides the built-in default
     // (redundant with the eyebrow); login preview keeps showing it.
     canvas.querySelectorAll('[data-brand-slot="desc"]').forEach(el => {
         const isWelcomePreview = !!el.closest('[data-preview="welcome"]');
-        const isDefault = (desc || '').trim() === DEFAULT_BRAND.logo_description;
+        const isDefault = _isDefaultLogoDescription(desc);
         const visible = isWelcomePreview
             ? !!(desc && desc.trim() && !isDefault)
             : !!(desc && desc.trim());
@@ -17297,6 +17822,16 @@ function _applyNavAreaAttribute() {
     const appEl = document.getElementById('app');
     const area = _navAreaFromPath(typeof location !== 'undefined' ? location.pathname : '');
     if (appEl) appEl.setAttribute('data-nav-area', area);
+    const sidebarCaption = document.getElementById('sidebar-brand-caption');
+    if (sidebarCaption && typeof sidebarBrandCaption === 'function') {
+        const caption = sidebarBrandCaption(
+            typeof effectiveLogoDescription === 'function' ? effectiveLogoDescription() : ''
+        );
+        const hasDesc = !!(caption && String(caption).trim());
+        sidebarCaption.textContent = hasDesc ? caption : '';
+        sidebarCaption.classList.toggle('hidden', !hasDesc);
+        sidebarCaption.title = hasDesc ? caption : '';
+    }
     return area;
 }
 // === NAV_AREA_END ===

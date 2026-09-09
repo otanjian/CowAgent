@@ -143,6 +143,118 @@
     color: #e5e5e5;
 }
 .sidebar-admin-entry.hidden { display: none !important; }
+
+/* Recent sessions under 场景应用 (ChatGPT-style nested history). */
+.sidebar-recent {
+    margin: 2px 0 0;
+    padding: 0;
+}
+.sidebar-recent-header {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    min-width: 0;
+}
+.sidebar-recent-label {
+    flex: 1;
+    min-width: 0;
+    /* Inherit .sidebar-item palette/size; only keep flex layout for the chevron row. */
+    width: auto;
+    margin: 3px 0;
+    border: 0;
+    background: transparent;
+    font: inherit;
+    text-align: left;
+}
+.sidebar-recent-label.sidebar-item.active {
+    /* Header is not a selectable page row; never keep the active chat highlight. */
+    background: transparent;
+    color: inherit;
+}
+.sidebar-recent-chevron-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    margin-right: 4px;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #737373;
+    cursor: pointer;
+    transition: background .15s ease, color .15s ease;
+}
+.sidebar-recent-chevron-btn:hover {
+    background: rgba(255, 255, 255, .06);
+    color: #d4d4d4;
+}
+.sidebar-recent-chevron {
+    font-size: 10px;
+    transition: transform .2s ease;
+}
+.sidebar-recent.open .sidebar-recent-chevron {
+    transform: rotate(0deg);
+}
+.sidebar-recent:not(.open) .sidebar-recent-chevron {
+    transform: rotate(-90deg);
+}
+.sidebar-recent-list {
+    display: none;
+    margin: 2px 0 0 26px;
+    padding: 2px 0 2px 10px;
+    border-left: 1px solid rgba(255, 255, 255, .12);
+}
+.sidebar-recent.open .sidebar-recent-list { display: block; }
+.sidebar-recent-item {
+    display: block;
+    width: 100%;
+    padding: 7px 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #a3a3a3;
+    font-size: 12px;
+    line-height: 1.35;
+    text-align: left;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition: background .15s ease, color .15s ease;
+}
+.sidebar-recent-item:hover {
+    background: rgba(255, 255, 255, .06);
+    color: #e5e5e5;
+}
+.sidebar-recent-item.active {
+    background: rgba(74, 190, 110, .12);
+    color: #d4f5e0;
+}
+.sidebar-recent-empty,
+.sidebar-recent-error {
+    padding: 8px 10px;
+    color: #737373;
+    font-size: 12px;
+}
+.sidebar-recent-more {
+    display: none;
+    width: calc(100% - 26px);
+    margin: 2px 0 4px 26px;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #737373;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+}
+.sidebar-recent.open .sidebar-recent-more:not(.hidden) { display: block; }
+.sidebar-recent-more:hover { color: #a3a3a3; background: rgba(255, 255, 255, .04); }
+.sidebar-recent-more.hidden { display: none !important; }
 .sidebar-account-toggle {
     display: flex;
     align-items: center;
@@ -1537,6 +1649,48 @@
 .menu-group.open .menu-group-items { max-height: 2000px; transition: max-height 0.35s ease-in; visibility: visible; }
 .menu-group .chevron { transition: transform 0.25s ease; }
 .menu-group.open .chevron { transform: rotate(90deg); }
+
+/* Admin sidebar: category headers with right-side chevron (reference layout). */
+.admin-nav-shell .admin-menu-group {
+    margin-top: 10px;
+}
+.admin-nav-shell .admin-menu-group-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    min-height: 36px;
+    padding: 8px 12px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #8b959f;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    text-align: left;
+    text-transform: none;
+    cursor: pointer;
+    transition: background .15s ease, color .15s ease;
+}
+.admin-nav-shell .admin-menu-group-toggle:hover {
+    background: rgba(255, 255, 255, .05);
+    color: #d4d4d4;
+}
+.admin-nav-shell .admin-menu-group-toggle .chevron {
+    flex-shrink: 0;
+    font-size: 10px;
+    color: inherit;
+    opacity: .75;
+    transform: rotate(-90deg);
+}
+.admin-nav-shell .admin-menu-group.open .admin-menu-group-toggle .chevron {
+    transform: rotate(0deg);
+}
+.admin-nav-shell .admin-menu-group .menu-group-items {
+    padding-left: 4px;
+}
 
 /* View Switching */
 .view { display: none; height: 100%; }
@@ -4652,6 +4806,35 @@ textarea.doc-editor {
 .agent-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 /* Delete is destructive, so it sits apart from the everyday save/chat buttons. */
 .agent-detail-delete { margin-left: auto; }
+/* Capabilities pane sections (skills / SOPs / tools) inside the "能力" tab. */
+.agent-cap-section { margin-bottom: 22px; padding-bottom: 18px; border-bottom: 1px solid #f1f5f9; }
+.dark .agent-cap-section { border-color: rgba(255,255,255,.05); }
+.agent-cap-section:last-child { border-bottom: 0; margin-bottom: 0; padding-bottom: 0; }
+.agent-cap-title { font-weight: 600; font-size: 13px; color: #334155; margin-bottom: 10px; }
+.dark .agent-cap-title { color: #e2e8f0; }
+.agent-tag {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 9px; border-radius: 999px;
+    background: #ecfdf5; border: 1px solid #bbf7d0; color: #166534; font-size: 12px;
+}
+.dark .agent-tag { background: rgba(74,190,110,.12); border-color: rgba(74,190,110,.3); color: #86efac; }
+.agent-tag-x {
+    border: 0; background: transparent; cursor: pointer; font-size: 14px;
+    color: #4B5563; line-height: 1; padding: 0;
+}
+.dark .agent-tag-x { color: #9ca3af; }
+.agent-tag-x:hover { color: #dc2626; }
+.agent-tool-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 0; border-bottom: 1px solid #f1f5f9;
+}
+.dark .agent-tool-row { border-color: rgba(255,255,255,.05); }
+.agent-tool-row .agent-tool-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; color: #64748b; white-space: nowrap; flex-shrink: 0;
+}
+.dark .agent-tool-row .agent-tool-chip { color: #94a3b8; }
+.agent-tool-row input[type="checkbox"] { margin-right: 2px; }
 .agent-btn {
     height: 34px; padding: 0 14px; border-radius: 9px;
     font-size: 13px; font-weight: 500; cursor: pointer;
@@ -4908,6 +5091,25 @@ button.composer-menu-item.joined:hover .joined-remove { display: inline; color: 
 .agent-wb-card-desc .agent-card-desc-empty { color: #64748b; }
 .dark .agent-wb-card-desc .agent-card-desc-empty { color: #94a3b8; }
 .dark .agent-wb-card-desc { color: #94a3b8; }
+.agent-wb-card-meta {
+    font-size: 11px; color: #17803d; font-weight: 500;
+    margin-top: 6px;
+}
+.dark .agent-wb-card-meta { color: #4ABE6E; }
+.agent-wb-card-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.agent-wb-tag {
+    font-size: 10px; padding: 2px 7px; border-radius: 999px;
+    background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0;
+}
+.dark .agent-wb-tag { background: rgba(255,255,255,.06); color: #94a3b8; border-color: rgba(255,255,255,.1); }
+/* Agent-detail "任务" tab: scheduled-task cards owned by this employee. */
+.agent-task-card {
+    background: #fff; border: 1px solid #f1f5f9; border-radius: 12px;
+    padding: 12px 14px; margin-bottom: 10px;
+}
+.dark .agent-task-card { background: #1A1A1A; border-color: rgba(255,255,255,.08); }
+.agent-task-card-disabled { opacity: .5; }
+.agent-task-list .bg-primary-400 { background-color: #4ABE6E; }
 .agent-wb-retry {
     display: inline-block;
     margin-top: 10px;

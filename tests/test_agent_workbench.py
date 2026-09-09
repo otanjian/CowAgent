@@ -37,13 +37,17 @@ if "web" not in sys.modules:
 
 
 class _Profile:
-    def __init__(self, id, name, enabled=True, description=None, avatar=None):
+    def __init__(self, id, name, enabled=True, description=None, avatar=None,
+                 position=None, category=None, tags=None):
         self.id = id
         self.name = name
         self.workspace = f"/tmp/{id}"
         self.enabled = enabled
         self.description = description
         self.avatar = avatar
+        self.position = position
+        self.category = category
+        self.tags = tags or ()
 
 
 class _Registry:
@@ -79,10 +83,16 @@ class TestWorkbenchProjection(unittest.TestCase):
 
         self.assertEqual(data["status"], "success")
         self.assertEqual(len(data["agents"]), 2)  # archived excluded
-        fields = {"id", "name", "description", "avatar", "is_default", "can_chat", "unavailable_reason"}
+        fields = {"id", "name", "description", "avatar", "is_default", "can_chat",
+                  "unavailable_reason", "position", "category", "tags"}
         for agent in data["agents"]:
             self.assertEqual(set(agent.keys()), fields,
                              "workbench projection must be a strict whitelist")
+        # Digital-employee fields project onto the cards.
+        for agent in data["agents"]:
+            self.assertEqual(agent["position"], "")
+            self.assertEqual(agent["category"], "")
+            self.assertEqual(agent["tags"], [])
         # No management data leaks into the projection.
         self.assertNotIn("workspace", data)
         self.assertNotIn("channel_instances", data)
