@@ -59,6 +59,15 @@ Unchanged:
 - If `current_identity().user_id` is set → user-private roots (database path).
 - Else → legacy shared roots.
 
+This **requires modifying `_store_file()` and `projects_root()`** to resolve `user_root()` when `user_id` is present — today both use `shared_root()`, which under `_db_scope` resolves to the **tenant** shared root (not per-user):
+
+```python
+def _store_file() -> str:
+    from common.state_dir import user_root
+    ident = current_identity()
+    return str((user_root(ident) if ident.user_id else shared_root()) / "projects.json")
+```
+
 Callers in database mode **must** run under `_db_scope()` (or equivalent `use_identity`) so `user_id` / `tenant_id` are present. Session-list annotations that already wrap `_db_scope` keep working and then read the **current user’s** store only (correct privacy).
 
 ## 3. HTTP policy and handlers
@@ -82,11 +91,11 @@ For list / create / select / order / manage:
 2. `with _db_scope() as ctx:`
 3. When `ctx is not None` (database):
    - Resolve `agent_id` via `_require_tenant_agent_binding` where an agent is involved
-   - For select/create that touch a session: `_require_session_owner(ctx, session_id, agent_id)` (and private-owner rules consistent with other session APIs)
+   - For select/create that touch a session: **verify true session ownership**. `_require_session_owner` only checks the agent is tenant-bound — it does **not** read `sessions.owner`. Replicate the inline check from `_workbench_chat_readiness` (line ~708): if the session row exists and `owner != ctx.user_id` (or `channel_type != "web"`), reject as 404 `session not found`. Do not rely on `_require_session_owner` for user ownership.
    - No new permission codes; membership + session ownership is enough
 4. When `ctx is None` (legacy): keep existing `_require_auth()`-only behavior
 5. Remove browse’s `_guard_not_database` only if browse is opened later; **do not** open browse in this slice
-6. Update `_project_state` / default workspace resolution so database responses use identity-aware `state_root` / `user_root`, not a bare `RuntimeIdentity(agent_id=…)` without tenant/user
+6. Update `_project_state` / default workspace resolution so database responses are identity-aware. Today `_project_state` uses `state_root_str(RuntimeIdentity(agent_id=…))` and `project_store.projects_root()`, which in DB mode is the **agent workspace / tenant-shared root** — not the user root. In database mode `default_workspace` should resolve against `user_root()` (per-user) plus the selected tenant shared root, so the frontend fallback "current project" points at the correct root, not another user's (or the host's) workspace.
 
 ### Path gate helper
 
@@ -128,7 +137,7 @@ File: `channel/web/static/js/console.js` (and any mirrored desktop API usage if 
 UI "确定" → POST /api/projects/create {session, name, agent?}
   → route policy tenant (not closed)
   → _db_scope → RuntimeIdentity(tenant, user, …)
-  → session owner check (if session present)
+  → session owner check (replicate `sessions.owner == ctx.user_id`; do NOT use _require_session_owner)
   → project_store.create_project(name)
        → mkdir user_root()/projects/<name>
   → project_store.set_project_dir(session, path, agent)
@@ -147,7 +156,7 @@ Execution isolation already includes `user_root` in read/write roots (`agent/per
 | Empty / illegal name | 400-style error from handler / `ValueError` |
 | Name already exists | error from `FileExistsError` |
 | Select path outside user’s `projects/` | reject (do not bind) |
-| Session not owned | same 403/401 pattern as other session APIs |
+| Session not owned | replicate inline owner check → 404 `session not found` (same 403/401/404 pattern as other session APIs) |
 | Legacy | unchanged success paths |
 
 ## 7. Risks and residual issues
@@ -163,7 +172,7 @@ Execution isolation already includes `user_root` in read/write roots (`agent/per
 1. **Policy:** database mode → create/select/list/order/manage (PUT/DELETE) are not 503; browse still 503; wrong manage method still 405 if unregistered.
 2. **Containment:** under `_db_scope` for user A, create lands in A’s `user_root()/projects/`; user B’s scope cannot list/select/rename A’s path; select of `/etc` or B’s path fails.
 3. **Legacy regression:** without database identity, shared_root behavior and browse still work as today.
-4. **Session ownership:** cannot bind another user’s session to a project.
+4. **Session ownership:** cannot bind another user’s session to a project. Session rows are owned per-user in the `sessions` table; `_require_session_owner` alone is insufficient because it does not read `sessions.owner` — assert the inline replication returns 404 for a non-owner.
 5. **Frontend fixture (optional):** database mode menu omits open-folder entry; create error toast still shows server message.
 6. Reuse patterns from `tests/test_http_policy.py`, `tests/test_web_consumer_closure.py`, `tests/test_state_dir_tenant_containment.py`.
 
