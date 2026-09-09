@@ -140,6 +140,7 @@ ROUTE_POLICY: Dict[str, Dict[str, dict]] = {
         "DELETE": {"policy": "tenant", "comment": "delete department (tenant_admin)"},
     },
     "/api/identity/audit": {"GET": {"policy": "tenant", "comment": "identity audit (platform/tenant_admin)"}},
+    "/api/admin/overview": {"GET": {"policy": "tenant", "comment": "admin console KPI overview (platform/tenant_admin)"}},
     # --- chat transport (database: tenant, legacy: public-ish) ---
     "/message": {"POST": {"policy": "tenant", "comment": "send message"}},
     "/stream": {"GET": {"policy": "tenant", "comment": "SSE stream"}},
