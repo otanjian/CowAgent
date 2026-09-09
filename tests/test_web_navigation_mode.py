@@ -69,6 +69,16 @@ class TestWebNavigationMode(unittest.TestCase):
         self.assertIn("classic", out)
         self.assertNotIn("{{COW_NAVIGATION_MODE}}", out)
 
+    def test_admin_url_maps_to_chat_handler(self):
+        web_channel = _import_wc()
+        urls = list(web_channel._WEB_URLS)
+        self.assertIn("/admin", urls)
+        idx = urls.index("/admin")
+        self.assertEqual(urls[idx + 1], "ChatHandler")
+        # Same shell as /chat — both must resolve to ChatHandler.
+        chat_idx = urls.index("/chat")
+        self.assertEqual(urls[chat_idx + 1], "ChatHandler")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -33,6 +33,8 @@ from channel.web.auth_handlers import (
     DbAuthLogoutHandler,
     DbAuthMeHandler,
     DbAuthPasswordHandler,
+    DbSelfProfileHandler,
+    DbSelfAvatarHandler,
 )
 from channel.web.admin_handlers import (
     PlatformUsersHandler,
@@ -51,6 +53,7 @@ from channel.web.admin_handlers import (
     TenantDepartmentsHandler,
     TenantDepartmentHandler,
     IdentityAuditHandler,
+    IdentityAdministeredTenantsHandler,
     PlatformTenantRolesHandler,
     PlatformTenantRoleHandler,
     TenantAuthorizationCatalogHandler,
@@ -442,6 +445,16 @@ def _require_read_permission(ctx: "Optional[RequestContext]", permission: str) -
         raise web.HTTPError("400 Bad Request", {"Content-Type": "application/json"},
                             json.dumps({"status": "error", "message": "tenant selection required",
                                         "code": "missing_tenant"}))
+    # A platform admin (authorization_mode "all") is unrestricted for a
+    # *functional read* gate, exactly as the resource helpers (check_resource_action,
+    # resource_ids_for, _filter_tool_catalog/_filter_skill_catalog) already treat
+    # them. Without this, /api/tools and /api/skills would 403 for a platform
+    # admin whose role set happens not to carry skill.read/tool.read (the built-in
+    # tenant_admin/member roles do not), leaving the 工具与技能 console empty.
+    # is_platform_admin is re-resolved fresh on every request, so it is as
+    # authoritative as a service round-trip and needs no extra store lookup.
+    if ctx.is_platform_admin:
+        return
     if permission not in ctx.permissions:
         raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
                             json.dumps({"status": "error", "message": "forbidden",
@@ -1297,6 +1310,8 @@ _WEB_URLS = (
     '/auth/password', 'DbAuthPasswordHandler',
     '/auth/me', 'DbAuthMeHandler',
     '/auth/context', 'DbAuthContextHandler',
+    '/auth/profile', 'DbSelfProfileHandler',
+    '/auth/profile/avatar', 'DbSelfAvatarHandler',
     # database identity-mode handlers (active only when identity_mode=database)
     '/api/platform/users', 'PlatformUsersHandler',
     '/api/platform/users/([^/]+)/password', 'PlatformUserPasswordHandler',
@@ -1320,6 +1335,7 @@ _WEB_URLS = (
     '/api/tenant/departments', 'TenantDepartmentsHandler',
     '/api/tenant/departments/([^/]+)', 'TenantDepartmentHandler',
     '/api/identity/audit', 'IdentityAuditHandler',
+    '/api/identity/administered-tenants', 'IdentityAdministeredTenantsHandler',
     '/message', 'MessageHandler',
     '/upload', 'UploadHandler',
     '/uploads/(.*)', 'UploadsHandler',
@@ -1343,6 +1359,7 @@ _WEB_URLS = (
     '/stream', 'StreamHandler',
     '/cancel', 'CancelHandler',
     '/chat', 'ChatHandler',
+    '/admin', 'ChatHandler',
     '/v1/chat/completions', 'OpenAIChatCompletionsHandler',
     '/config', 'ConfigHandler',
     '/api/models', 'ModelsHandler',
