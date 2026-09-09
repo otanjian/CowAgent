@@ -99,3 +99,6 @@ desktop/resources/bin/
 
 # README files are not synced to the remote repository.
 README*.md
+
+# Local brainstorm / visual companion sessions
+.superpowers/
