@@ -331,6 +331,7 @@ function _enterAccountApp() {
                 // hook only; it never changes authorization or consumer state.
                 const appEl = document.getElementById('app');
                 if (appEl) appEl.setAttribute('data-nav-mode', _navigationMode());
+                _applyNavAreaAttribute();
                 _accountAppVisible = true;
                 _renderSidebarAccount();
                 // Gate permission-sensitive sidebar entries (platform/audit)
@@ -351,6 +352,7 @@ function _enterAccountApp() {
                     // Re-apply with the authoritative projection when it arrives.
                     _applySidebarPermissions(_baseAccountSelf());
                     if (ctx) _applySidebarPermissions(_baseAccountSelf());
+                    if (typeof _bootAreaDefaultView === 'function') _bootAreaDefaultView();
                 });
                 if (_identityMode() === 'database') _setupHeaderTenantSelector();
                 chatInput.focus();
@@ -662,6 +664,10 @@ const I18N = {
         console: '控制台',
         nav_chat: '工作台', nav_manage: '管理', nav_monitor: '监控', nav_system: '系统设置',
         nav_workbench: '工作台', nav_admin_console: '管理控制台',
+        nav_return_workbench: '返回工作台',
+        admin_home_title: '管理控制台',
+        admin_home_hint: '选择左侧菜单管理智能体、组织与平台配置。',
+        nav_admin_denied: '当前账号无权进入管理控制台。',
         nav_group_agent_dev: '智能体开发', nav_group_model_access: '模型与接入',
         nav_group_org_perm: '组织与权限', nav_group_platform_ops: '平台运维',
         menu_chat: '对话', menu_agents: '智能体', menu_config: '模型服务', menu_agent_config: '智能体管理', menu_skills: '工具与技能',
@@ -1364,6 +1370,10 @@ const I18N = {
         console: '控制台',
         nav_chat: '工作台', nav_manage: '管理', nav_monitor: '監控', nav_system: '系統設定',
         nav_workbench: '工作台', nav_admin_console: '管理控制台',
+        nav_return_workbench: '返回工作台',
+        admin_home_title: '管理控制台',
+        admin_home_hint: '選擇左側選單管理智慧體、組織與平台設定。',
+        nav_admin_denied: '目前帳號無權進入管理控制台。',
         nav_group_agent_dev: '智能體開發', nav_group_model_access: '模型與接入',
         nav_group_org_perm: '組織與權限', nav_group_platform_ops: '平台維運',
         menu_chat: '對話', menu_agents: '智慧體', menu_config: '模型服務', menu_agent_config: '智慧體管理', menu_skills: '工具與技能',
@@ -2060,6 +2070,10 @@ const I18N = {
         console: 'Console',
         nav_chat: 'Workbench', nav_manage: 'Management', nav_monitor: 'Monitor', nav_system: 'System Settings',
         nav_workbench: 'Workbench', nav_admin_console: 'Admin Console',
+        nav_return_workbench: 'Back to Workbench',
+        admin_home_title: 'Admin Console',
+        admin_home_hint: 'Use the sidebar to manage agents, organization, and platform settings.',
+        nav_admin_denied: 'Your account cannot open the admin console.',
         nav_group_agent_dev: 'Agent Development', nav_group_model_access: 'Model & Access',
         nav_group_org_perm: 'Org & Permissions', nav_group_platform_ops: 'Platform Ops',
         menu_chat: 'Chat', menu_agents: 'Agents', menu_config: 'Model Services', menu_agent_config: 'Agent Management', menu_skills: 'Tools & Skills',
@@ -3513,7 +3527,68 @@ const VIEW_META = {
     branding:    { group: 'nav_group_platform_ops', page: 'menu_branding', console: 'admin.branding' },
     logs:        { group: 'nav_group_platform_ops', page: 'menu_logs', console: 'admin.logs' },
     audit:       { group: 'nav_group_platform_ops', page: 'menu_audit', console: 'admin.settings' },
+    'admin-home': { group: 'nav_admin_console', page: 'admin_home_title', console: null },
 };
+
+function _viewTargetArea(viewId) {
+    if (viewId === 'admin-home') return 'admin';
+    const meta = VIEW_META[viewId];
+    const key = meta && meta.console;
+    if (key && String(key).indexOf('admin.') === 0) return 'admin';
+    return 'workbench';
+}
+
+function _bootAreaDefaultView() {
+    const area = _navAreaFromPath(location.pathname);
+    if (area === 'admin') {
+        let pending = null;
+        try {
+            pending = sessionStorage.getItem('cow_admin_pending_view');
+            sessionStorage.removeItem('cow_admin_pending_view');
+        } catch (_) {}
+        if (pending && VIEW_META[pending]) navigateTo(pending);
+        else navigateTo('admin-home');
+        return;
+    }
+    let pendingWb = null;
+    try {
+        pendingWb = sessionStorage.getItem('cow_workbench_pending_view');
+        sessionStorage.removeItem('cow_workbench_pending_view');
+        if (sessionStorage.getItem('cow_nav_admin_denied') === '1') {
+            sessionStorage.removeItem('cow_nav_admin_denied');
+            const status = document.getElementById('account-menu-status');
+            if (status) {
+                status.textContent = t('nav_admin_denied');
+                status.classList.remove('hidden');
+            }
+        }
+    } catch (_) {}
+    if (pendingWb && VIEW_META[pendingWb]) navigateTo(pendingWb);
+}
+
+function initAdminHomeView() {
+    const box = document.getElementById('admin-home-shortcuts');
+    if (!box) return;
+    box.innerHTML = '';
+    document.querySelectorAll('[data-nav-shell="admin"] .sidebar-item[data-view]').forEach(item => {
+        if (item.classList.contains('hidden')) return;
+        const viewId = item.dataset.view;
+        if (!viewId || !VIEW_META[viewId]) return;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'admin-home-shortcut';
+        const label = item.querySelector('[data-i18n]');
+        const text = label ? label.textContent : t(VIEW_META[viewId].page);
+        const icon = item.querySelector('i');
+        const iconHtml = icon ? ('<i class="' + icon.className + '" aria-hidden="true"></i>') : '';
+        const span = document.createElement('span');
+        span.textContent = text;
+        btn.innerHTML = iconHtml;
+        btn.appendChild(span);
+        btn.addEventListener('click', () => navigateTo(viewId));
+        box.appendChild(btn);
+    });
+}
 
 // Known previously-visible targets whose feature is not yet enabled. These are
 // removed from the normal sidebar, but old internal IDs and direct links must
@@ -3570,6 +3645,17 @@ function navigateTo(viewId) {
         return;
     }
     if (!VIEW_META[viewId]) return;
+    // Cross-area: open the other named window instead of rendering the wrong shell.
+    const here = _navAreaFromPath(location.pathname);
+    const want = _viewTargetArea(viewId);
+    if (want !== here) {
+        try {
+            if (want === 'admin') sessionStorage.setItem('cow_admin_pending_view', viewId);
+            else sessionStorage.setItem('cow_workbench_pending_view', viewId);
+        } catch (_) {}
+        _openNavArea(want);
+        return;
+    }
     // Authoritative availability gate (database mode only). A target the
     // identity may not read and that is not open is rendered as a denial, NOT
     // silently switched to another scope. Works only once the /auth/context
@@ -3644,6 +3730,7 @@ function navigateTo(viewId) {
     if (viewId === 'roles') loadRolesView();
     if (viewId === 'org') loadOrgView();
     if (viewId === 'audit') loadAuditView();
+    if (viewId === 'admin-home') initAdminHomeView();
     // The Agent detail is a fixed drawer, so it would otherwise hang over
     // whatever view you navigate to. It only belongs to the Agent Config page.
     if (viewId !== 'agents') closeAgentDetail();
@@ -3773,9 +3860,28 @@ document.querySelectorAll('.sidebar-item').forEach(item => {
     const label = item.querySelector('[data-i18n]');
     if (label) { item.dataset.i18nTitle = label.dataset.i18n; item.title = t(label.dataset.i18n); }
     if (item.classList.contains('active')) item.setAttribute('aria-current', 'page');
-    item.addEventListener('click', () => navigateTo(item.dataset.view));
+    item.addEventListener('click', (event) => {
+        if (item.id === 'nav-open-admin') {
+            event.preventDefault();
+            _openNavArea('admin');
+            return;
+        }
+        if (item.id === 'nav-return-workbench') {
+            event.preventDefault();
+            _openNavArea('workbench');
+            return;
+        }
+        if (!item.dataset.view) return;
+        navigateTo(item.dataset.view);
+    });
     item.addEventListener('keydown', event => {
-        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigateTo(item.dataset.view); }
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            if (item.id === 'nav-open-admin') { _openNavArea('admin'); return; }
+            if (item.id === 'nav-return-workbench') { _openNavArea('workbench'); return; }
+            if (!item.dataset.view) return;
+            navigateTo(item.dataset.view);
+        }
     });
 });
 
@@ -17187,6 +17293,12 @@ function _qualifyAdminConsoleEntry(opts) {
     if (!opts || opts.identityMode !== 'database') return true;
     return !!(opts.isPlatformAdmin || opts.isTenantAdmin);
 }
+function _applyNavAreaAttribute() {
+    const appEl = document.getElementById('app');
+    const area = _navAreaFromPath(typeof location !== 'undefined' ? location.pathname : '');
+    if (appEl) appEl.setAttribute('data-nav-area', area);
+    return area;
+}
 // === NAV_AREA_END ===
 
 function _setupHeaderTenantSelector() {
@@ -17703,21 +17815,31 @@ function _applySidebarPermissions(self) {
     const pages = (ctx && ctx.console_pages && typeof ctx.console_pages === 'object')
         ? ctx.console_pages : null;
 
-    // Admin console is shown only when the identity actually has a readable
-    // admin page (or platform "all"). Decide from the authoritative projection
-    // when available (spec: "没有可读管理页面时隐藏管理区"), falling back to
-    // admin-qualification only while the projection is still unknown. This is a
-    // display projection only — every page re-authorizes server-side.
     const isDb = _identityMode() === 'database';
-    let canAdmin = isPlatformAdmin || isTenantAdmin;
-    if (isDb && ctx && pages) {
-        const anyAdminPageReadable = Object.keys(pages).some(function (key) {
-            if (key.indexOf('admin.') !== 0) return false;
-            const p = pages[key];
-            const allOk = (mode === 'all');
-            return !!p && (allOk || !!(p.available) || !!(p.read_allowed));
-        });
-        canAdmin = isPlatformAdmin || anyAdminPageReadable;
+    // Entry to /admin: platform admin OR current-tenant tenant_admin only.
+    // Do not use "any readable admin page" for this entry (stricter than area menus).
+    const showAdminEntry = _qualifyAdminConsoleEntry({
+        identityMode: _identityMode(),
+        isPlatformAdmin,
+        isTenantAdmin,
+    });
+    const openAdminEl = document.getElementById('nav-open-admin');
+    if (openAdminEl) openAdminEl.classList.toggle('hidden', !showAdminEntry);
+
+    // Inside /admin, show admin groups when the entry is qualified; per-item
+    // console_pages filtering below still applies.
+    const canAdmin = showAdminEntry;
+
+    if (isDb && _navAreaFromPath(location.pathname) === 'admin') {
+        // Redirect only once qualification is known (platform from /auth/me,
+        // otherwise wait for /auth/context).
+        if (isPlatformAdmin || ctx) {
+            if (!showAdminEntry) {
+                try { sessionStorage.setItem('cow_nav_admin_denied', '1'); } catch (_) {}
+                location.replace('/chat');
+                return;
+            }
+        }
     }
 
     if (isDb) {

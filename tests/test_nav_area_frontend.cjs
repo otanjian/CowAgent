@@ -55,3 +55,12 @@ test('chat.html has area markers and admin home', () => {
     assert.match(htmlSource, /data-nav-shell="workbench"/);
     assert.match(htmlSource, /data-nav-shell="admin"/);
 });
+
+test('console wires path area, admin-home, and open handlers', () => {
+    assert.match(source, /data-nav-area/);
+    assert.match(source, /'admin-home'/);
+    assert.match(source, /_bootAreaDefaultView/);
+    assert.match(source, /nav-open-admin/);
+    assert.match(source, /_qualifyAdminConsoleEntry/);
+    assert.match(source, /cow_admin_pending_view/);
+});

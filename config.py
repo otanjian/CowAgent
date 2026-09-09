@@ -277,14 +277,22 @@ available_setting = {
     # "database" uses per-account login, per-tenant membership and RBAC from
     # identity.db. Switching requires a maintenance-window restart.
     "identity_mode": "legacy",
-    # Console navigation presentation switch. "classic" keeps a single sidebar
-    # that stacks the workbench and the four admin groups (default); "split"
-    # shows only the selected area (workbench OR admin) with an area switch.
-    # This is a layout-only switch: it NEVER changes authorization, the identity
-    # mode or the consumer open/closed state. Valid values: "classic" | "split".
+    # Console navigation presentation switch. Path (/chat vs /admin) is the
+    # source of truth for which sidebar area is shown. "classic" and "split"
+    # are retained for config compatibility but both use path-based shells;
+    # stacking admin under workbench on /chat is retired. Layout-only: never
+    # changes authorization, identity mode, or consumer open/closed state.
     "web_navigation_mode": "classic",
     # Path to identity.db when identity_mode=database. Empty uses the data root.
     "identity_db_path": "",
+    # Deployment-controlled base under which NEW tenants created from the web
+    # console get their shared root ("<base>/tenants/<code>", database mode).
+    # Must sit OUTSIDE the default tenant's workspace (its shared root) and
+    # outside the home/data tree; when unset, env COW_TENANT_BASE is honored,
+    # and console tenant creation is otherwise refused with a clear config
+    # error instead of deriving a root nested under an existing tenant
+    # (see auth.service._deployment_shared_base).
+    "tenant_shared_base": "",
     "agent": True,  # whether to enable Agent mode
     "agent_workspace": "~/cow",  # agent workspace path, used to store skills, memory, etc.
     # Optional native multi-agent registry. When empty or omitted, RongAI
@@ -897,6 +905,21 @@ def get_data_root():
         os.makedirs(data_dir, exist_ok=True)
         return data_dir
     return get_root()
+
+
+def get_tenant_shared_base():
+    """Explicit deployment base for NEW tenant shared roots (realpath), or None.
+
+    Read from config ``tenant_shared_base`` or env ``COW_TENANT_BASE``. New
+    tenants derive ``<base>/tenants/<code>``; the base must sit outside every
+    existing tenant's shared root, otherwise creation is refused with a clear
+    error instead of silently nesting under another tenant
+    (see ``auth.service._deployment_shared_base``).
+    """
+    raw = os.getenv("COW_TENANT_BASE") or conf().get("tenant_shared_base") or ""
+    if not raw:
+        return None
+    return os.path.realpath(os.path.expanduser(raw))
 
 
 def read_file(path):
