@@ -224,7 +224,7 @@ class HttpPolicyTests(unittest.TestCase):
             # and web.py never tries to encode a bytes payload.
             resp = self._request(path, method=method, data=b"")
             # Anonymous database request => auth required (401), NOT a blanket 503.
-            self.assertFalse(str(resp.status).startswith("503"), f"{path} {method} got 503")
+            self.assertTrue(str(resp.status).startswith("401"), f"{path} {method} got {resp.status}")
 
     def test_projects_browse_still_closed_in_database(self):
         self._patch_db()

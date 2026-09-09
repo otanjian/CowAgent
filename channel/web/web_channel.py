@@ -826,6 +826,38 @@ def _require_session_owner(ctx: "Optional[RequestContext]", session_id: str,
                                 json.dumps({"status": "error", "message": "default agent ambiguous"}))
 
 
+def _require_owned_session(ctx: "Optional[RequestContext]", session_id: str,
+                           agent_id: Optional[str]) -> None:
+    """Reject binding a session the caller does not own (database mode).
+
+    ``_require_session_owner`` only checks the agent is tenant-bound; the durable
+    owner lives in the ``sessions`` table. This replicates the inline owner check
+    from ``_workbench_chat_readiness`` so a member cannot bind another user's
+    session (or a non-web session) to a project. Legacy mode is a no-op.
+    """
+    if ctx is None:
+        return
+    resolved = _require_tenant_agent_binding(ctx, agent_id)
+    from agent.registry import get_agent_registry
+    from agent.memory import get_conversation_store
+    try:
+        profile = get_agent_registry().get(resolved)
+    except (KeyError, ValueError):
+        return
+    store = get_conversation_store(profile.workspace)
+    with store._lock:
+        con = store._connect()
+        try:
+            row = con.execute(
+                "SELECT owner, channel_type FROM sessions WHERE session_id=?", (session_id,),
+            ).fetchone()
+            if row is not None and (row[0] != ctx.user_id or row[1] != "web"):
+                raise web.HTTPError("404 Not Found", {"Content-Type": "application/json"},
+                                    json.dumps({"status": "error", "message": "session not found"}))
+        finally:
+            con.close()
+
+
 def _require_tenant_agent_binding(ctx: "Optional[RequestContext]", agent_id: Optional[str]) -> str:
     """Validate that ``agent_id`` is bound to the caller's tenant (task 3.10).
 
@@ -9635,13 +9667,16 @@ class ProjectsHandler:
     def GET(self):
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
-        try:
-            params = web.input(session='', agent='')
-            state = _project_state(params.session or None, params.agent or None)
-            return json.dumps({"status": "success", **state}, ensure_ascii=False)
-        except Exception as e:
-            logger.error(f"[WebChannel] Projects list error: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+        with _db_scope() as ctx:
+            try:
+                params = web.input(session='', agent='')
+                state = _project_state(params.session or None, params.agent or None)
+                return json.dumps({"status": "success", **state}, ensure_ascii=False)
+            except web.HTTPError:
+                raise
+            except Exception as e:
+                logger.error(f"[WebChannel] Projects list error: {e}")
+                return json.dumps({"status": "error", "message": str(e)})
 
 
 class ProjectSelectHandler:
@@ -9650,34 +9685,38 @@ class ProjectSelectHandler:
     def POST(self):
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
-        try:
-            from agent.workspace import project_store
-            body = json.loads(web.data() or b"{}")
-            session_id = (body.get("session") or body.get("session_id") or "").strip()
-            agent_id = body.get("agent") or body.get("agent_id")
-            if not session_id:
-                return json.dumps({"status": "error", "message": "session is required"})
-            project_dir = body.get("project_dir")
-            applied = project_store.set_project_dir(
-                session_id, project_dir or None, agent_id
-            )
-            # Retarget an already-instantiated session agent immediately, so the
-            # change takes effect on the next message without a fresh get_agent.
+        with _db_scope() as ctx:
             try:
-                from bridge.bridge import Bridge
-                ab = Bridge().get_agent_bridge()
-                agent = ab.get_cached_agent(session_id, agent_id)
-                if agent is not None and getattr(agent, "apply_project_dir", None):
-                    agent.apply_project_dir(applied)
+                from agent.workspace import project_store
+                body = json.loads(web.data() or b"{}")
+                session_id = (body.get("session") or body.get("session_id") or "").strip()
+                agent_id = body.get("agent") or body.get("agent_id")
+                if not session_id:
+                    return json.dumps({"status": "error", "message": "session is required"})
+                _require_owned_session(ctx, session_id, agent_id)
+                project_dir = body.get("project_dir")
+                applied = project_store.set_project_dir(
+                    session_id, project_dir or None, agent_id
+                )
+                # Retarget an already-instantiated session agent immediately, so the
+                # change takes effect on the next message without a fresh get_agent.
+                try:
+                    from bridge.bridge import Bridge
+                    ab = Bridge().get_agent_bridge()
+                    agent = ab.get_cached_agent(session_id, agent_id)
+                    if agent is not None and getattr(agent, "apply_project_dir", None):
+                        agent.apply_project_dir(applied)
+                except Exception as e:
+                    logger.debug(f"[WebChannel] project apply-to-agent skipped: {e}")
+                state = _project_state(session_id, agent_id)
+                return json.dumps({"status": "success", **state}, ensure_ascii=False)
+            except (ValueError, FileNotFoundError) as e:
+                return json.dumps({"status": "error", "message": str(e)})
+            except web.HTTPError:
+                raise
             except Exception as e:
-                logger.debug(f"[WebChannel] project apply-to-agent skipped: {e}")
-            state = _project_state(session_id, agent_id)
-            return json.dumps({"status": "success", **state}, ensure_ascii=False)
-        except (ValueError, FileNotFoundError) as e:
-            return json.dumps({"status": "error", "message": str(e)})
-        except Exception as e:
-            logger.error(f"[WebChannel] Project select error: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+                logger.error(f"[WebChannel] Project select error: {e}")
+                return json.dumps({"status": "error", "message": str(e)})
 
 
 class ProjectCreateHandler:
@@ -9686,32 +9725,37 @@ class ProjectCreateHandler:
     def POST(self):
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
-        try:
-            from agent.workspace import project_store
-            body = json.loads(web.data() or b"{}")
-            session_id = (body.get("session") or body.get("session_id") or "").strip()
-            agent_id = body.get("agent") or body.get("agent_id")
-            name = (body.get("name") or "").strip()
-            if not name:
-                return json.dumps({"status": "error", "message": "name is required"})
-            path = project_store.create_project(name)
-            if session_id:
-                project_store.set_project_dir(session_id, path, agent_id)
-                try:
-                    from bridge.bridge import Bridge
-                    ab = Bridge().get_agent_bridge()
-                    agent = ab.get_cached_agent(session_id, agent_id)
-                    if agent is not None and getattr(agent, "apply_project_dir", None):
-                        agent.apply_project_dir(path)
-                except Exception as e:
-                    logger.debug(f"[WebChannel] project apply-to-agent skipped: {e}")
-            state = _project_state(session_id or None, agent_id)
-            return json.dumps({"status": "success", "path": path, **state}, ensure_ascii=False)
-        except (ValueError, FileExistsError) as e:
-            return json.dumps({"status": "error", "message": str(e)})
-        except Exception as e:
-            logger.error(f"[WebChannel] Project create error: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+        with _db_scope() as ctx:
+            try:
+                from agent.workspace import project_store
+                body = json.loads(web.data() or b"{}")
+                session_id = (body.get("session") or body.get("session_id") or "").strip()
+                agent_id = body.get("agent") or body.get("agent_id")
+                name = (body.get("name") or "").strip()
+                if not name:
+                    return json.dumps({"status": "error", "message": "name is required"})
+                if session_id:
+                    _require_owned_session(ctx, session_id, agent_id)
+                path = project_store.create_project(name)
+                if session_id:
+                    project_store.set_project_dir(session_id, path, agent_id)
+                    try:
+                        from bridge.bridge import Bridge
+                        ab = Bridge().get_agent_bridge()
+                        agent = ab.get_cached_agent(session_id, agent_id)
+                        if agent is not None and getattr(agent, "apply_project_dir", None):
+                            agent.apply_project_dir(path)
+                    except Exception as e:
+                        logger.debug(f"[WebChannel] project apply-to-agent skipped: {e}")
+                state = _project_state(session_id or None, agent_id)
+                return json.dumps({"status": "success", "path": path, **state}, ensure_ascii=False)
+            except (ValueError, FileExistsError) as e:
+                return json.dumps({"status": "error", "message": str(e)})
+            except web.HTTPError:
+                raise
+            except Exception as e:
+                logger.error(f"[WebChannel] Project create error: {e}")
+                return json.dumps({"status": "error", "message": str(e)})
 
 
 class ProjectOrderHandler:
@@ -9720,17 +9764,20 @@ class ProjectOrderHandler:
     def POST(self):
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
-        try:
-            from agent.workspace import project_store
-            body = json.loads(web.data() or b"{}")
-            order = body.get("order")
-            if not isinstance(order, list):
-                return json.dumps({"status": "error", "message": "order must be a list"})
-            saved = project_store.set_order(order)
-            return json.dumps({"status": "success", "order": saved}, ensure_ascii=False)
-        except Exception as e:
-            logger.error(f"[WebChannel] Project order error: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+        with _db_scope() as ctx:
+            try:
+                from agent.workspace import project_store
+                body = json.loads(web.data() or b"{}")
+                order = body.get("order")
+                if not isinstance(order, list):
+                    return json.dumps({"status": "error", "message": "order must be a list"})
+                saved = project_store.set_order(order)
+                return json.dumps({"status": "success", "order": saved}, ensure_ascii=False)
+            except web.HTTPError:
+                raise
+            except Exception as e:
+                logger.error(f"[WebChannel] Project order error: {e}")
+                return json.dumps({"status": "error", "message": str(e)})
 
 
 class ProjectManageHandler:
@@ -9744,33 +9791,39 @@ class ProjectManageHandler:
     def PUT(self):
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
-        try:
-            from agent.workspace import project_store
-            body = json.loads(web.data() or b"{}")
-            path = (body.get("path") or "").strip()
-            if not path:
-                return json.dumps({"status": "error", "message": "path is required"})
-            name = project_store.rename_project(path, body.get("name") or "")
-            return json.dumps({"status": "success", "name": name}, ensure_ascii=False)
-        except Exception as e:
-            logger.error(f"[WebChannel] Project rename error: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+        with _db_scope() as ctx:
+            try:
+                from agent.workspace import project_store
+                body = json.loads(web.data() or b"{}")
+                path = (body.get("path") or "").strip()
+                if not path:
+                    return json.dumps({"status": "error", "message": "path is required"})
+                name = project_store.rename_project(path, body.get("name") or "")
+                return json.dumps({"status": "success", "name": name}, ensure_ascii=False)
+            except web.HTTPError:
+                raise
+            except Exception as e:
+                logger.error(f"[WebChannel] Project rename error: {e}")
+                return json.dumps({"status": "error", "message": str(e)})
 
     def DELETE(self):
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
-        try:
-            from agent.workspace import project_store
-            body = json.loads(web.data() or b"{}")
-            path = (body.get("path") or "").strip()
-            agent_id = body.get("agent") or body.get("agent_id")
-            if not path:
-                return json.dumps({"status": "error", "message": "path is required"})
-            unbound = project_store.delete_project(path, agent_id)
-            return json.dumps({"status": "success", "unbound": unbound}, ensure_ascii=False)
-        except Exception as e:
-            logger.error(f"[WebChannel] Project delete error: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+        with _db_scope() as ctx:
+            try:
+                from agent.workspace import project_store
+                body = json.loads(web.data() or b"{}")
+                path = (body.get("path") or "").strip()
+                agent_id = body.get("agent") or body.get("agent_id")
+                if not path:
+                    return json.dumps({"status": "error", "message": "path is required"})
+                unbound = project_store.delete_project(path, agent_id)
+                return json.dumps({"status": "success", "unbound": unbound}, ensure_ascii=False)
+            except web.HTTPError:
+                raise
+            except Exception as e:
+                logger.error(f"[WebChannel] Project delete error: {e}")
+                return json.dumps({"status": "error", "message": str(e)})
 
 
 # Virtual path (Windows only) that expands to the list of logical drives, so
