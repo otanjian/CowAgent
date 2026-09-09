@@ -355,6 +355,7 @@ def set_order(order: List[str]) -> List[str]:
         if norm != DEFAULT_SPACE_KEY:
             allowed = user_projects_root()
             if allowed is not None and not _contains(allowed, norm):
+                logger.warning(f"[ProjectStore] dropped out-of-root order entry: {norm}")
                 continue  # drop a path outside the user's root
         if norm in seen:
             continue
