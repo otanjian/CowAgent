@@ -39,25 +39,57 @@ DEFAULT_SPACE_KEY = "__default__"
 
 
 def _store_file() -> str:
-    from common.state_dir import shared_root
-    return str(shared_root() / "projects.json")
+    from common.state_dir import shared_root, user_root
+    from common.runtime_identity import current_identity
+    ident = current_identity()
+    return str((user_root(ident) if ident.user_id else shared_root()) / "projects.json")
 
 
 def projects_root() -> str:
     """Default home for freshly created projects.
 
-    Configurable via ``project_workspace_root``; defaults to
-    ``<shared_root>/projects``. Browsing to an arbitrary directory is still
-    allowed — this only decides where "new project" lands.
+    Configurable via ``project_workspace_root`` (legacy mode only). In database
+    mode (an ambient ``user_id``) the ``project_workspace_root`` is ignored so a
+    global host path can never escape the user's private root; the home becomes
+    ``user_root()/projects``.
     """
     from config import conf
-    from common.state_dir import shared_root
+    from common.state_dir import shared_root, user_root
+    from common.runtime_identity import current_identity
     from common.utils import expand_path
+
+    ident = current_identity()
+    if ident.user_id:
+        return str(user_root(ident) / "projects")
 
     configured = conf().get("project_workspace_root")
     if configured:
         return os.path.realpath(expand_path(configured))
     return str(shared_root() / "projects")
+
+
+def user_projects_root() -> Optional[str]:
+    """The caller's user-private projects root, or None outside database mode.
+
+    Returns ``user_root()/projects`` when the ambient identity has a ``user_id``,
+    else None (legacy mode uses host/shared roots and is not confined).
+    """
+    from common.state_dir import user_root
+    from common.runtime_identity import current_identity
+    ident = current_identity()
+    if not ident.user_id:
+        return None
+    return os.path.realpath(str(user_root(ident) / "projects"))
+
+
+def _contains(a: str, b: str) -> bool:
+    """True when path ``a`` equals or is an ancestor of ``b`` (symlink-safe)."""
+    real_a = os.path.realpath(a)
+    real_b = os.path.realpath(b)
+    try:
+        return os.path.commonpath([real_a, real_b]) == real_a
+    except ValueError:
+        return False
 
 
 _lock = threading.Lock()
