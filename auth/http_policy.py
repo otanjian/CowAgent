@@ -224,7 +224,8 @@ ROUTE_POLICY: Dict[str, Dict[str, dict]] = {
     "/api/logs": {"GET": {"policy": "tenant", "comment": "logs"}},
     "/api/version": {"GET": {"policy": "public", "comment": "version"}},
     "/api/branding/public": {"GET": {"policy": "public", "comment": "public branding"}},
-    "/api/branding": {"GET": {"policy": "tenant", "comment": "branding manage"}},
+    "/api/branding": {"GET": {"policy": "tenant", "comment": "branding manage"},
+                      "POST": {"policy": "tenant", "comment": "branding save"}},
     "/api/branding/reset": {"POST": {"policy": "tenant", "comment": "branding reset"}},
     "/api/branding/assets/(.*)": {"GET": {"policy": "public", "comment": "branding asset"}},
 }

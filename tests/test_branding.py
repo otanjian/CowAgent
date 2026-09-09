@@ -390,7 +390,7 @@ class BrandingRouteTests(unittest.TestCase):
 
     def test_enterprise_or_unknown_modes_fail_closed_for_both_writes(self):
         svc = self._service()
-        for mode in ("database", "enterprise", "unknown"):
+        for mode in ("enterprise", "unknown"):
             for path in ("/api/branding", "/api/branding/reset"):
                 for password in ("secret", ""):
                     response = self._request(svc, path, method="POST", identity_mode=mode, password=password,
@@ -399,7 +399,7 @@ class BrandingRouteTests(unittest.TestCase):
                     self.assertEqual(self._json(response)["code"], "branding_enterprise_unavailable")
         self.assertEqual(svc.get_published()["revision"], 0)
 
-    def test_database_management_uses_real_database_session_and_stays_readonly(self):
+    def test_database_platform_admin_can_manage_with_audit(self):
         from auth.service import IdentityService
         from channel.web import auth_handlers
         svc = self._service()
@@ -411,14 +411,44 @@ class BrandingRouteTests(unittest.TestCase):
                                allow_weak=True)
             session = identity.login("root", "Str0ngAdminPass").token
             with patch.object(auth_handlers, "_get_service", lambda: identity):
+                # A platform admin reads the management payload with manage rights.
                 response = self._request(svc, "/api/branding", identity_mode="database", authenticated=False,
                                          headers={"Authorization": "Bearer " + session})
                 data = self._json(response)
                 self.assertEqual(response.status, "200 OK")
-                self.assertFalse(data["can_manage"])
-                self.assertFalse(data["can_reset"])
-                self.assertEqual(data["readonly_reason"], "branding_enterprise_unavailable")
+                self.assertTrue(data["can_manage"])
+                self.assertTrue(data["can_reset"])
+                self.assertEqual(data["readonly_reason"], "")
+                # No legacy password-derived csrf_token is issued in database mode.
                 self.assertNotIn("csrf_token", data)
+
+                # A platform admin can save and it records an audit event.
+                saved = self._request(
+                    svc, "/api/branding", method="POST", identity_mode="database",
+                    authenticated=False,
+                    headers={"Authorization": "Bearer " + session},
+                    data="expected_revision=0&brand_name=RongAI&logo_description=Console&logo_action=keep",
+                )
+                self.assertEqual(saved.status, "200 OK")
+                self.assertEqual(self._json(saved)["revision"], 1)
+                audit = identity.list_audit(tenant_id=None)
+                update_evt = [e for e in audit if e["action"] == "branding.update"]
+                self.assertEqual(len(update_evt), 1)
+                self.assertIsNone(update_evt[0]["tenant_id"])
+                self.assertEqual(update_evt[0]["actor_username"], "root")
+
+                # Reset also records its own event.
+                reset = self._request(
+                    svc, "/api/branding/reset", method="POST", identity_mode="database",
+                    authenticated=False,
+                    headers={"Authorization": "Bearer " + session},
+                    data='{"expected_revision":1}',
+                )
+                self.assertEqual(reset.status, "200 OK")
+                reset_evt = [e for e in identity.list_audit(tenant_id=None) if e["action"] == "branding.reset"]
+                self.assertEqual(len(reset_evt), 1)
+
+                # A non-admin (no session) is still refused.
                 rejected = self._request(svc, "/api/branding", identity_mode="database")
                 self.assertTrue(rejected.status.startswith("401"))
 

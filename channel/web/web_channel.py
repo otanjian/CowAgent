@@ -3942,22 +3942,50 @@ def _project_brand_name() -> str:
     return "容大AI"
 
 
+#: Sentinel readonly_reason returned by ``_branding_write_allowed`` when the
+#: decision depends on the per-request identity context (database mode). The
+#: caller must then run ``_branding_require_platform_admin()`` to resolve the
+#: context and produce the real 401/403/allow verdict.
+_BRANDING_DATABASE_GATE = "branding_platform_admin_required"
+
+
 def _branding_write_allowed() -> Tuple[bool, str]:
     """Return ``(allowed, readonly_reason)`` for a brand write.
 
     A write is allowed only when:
-      - a Web access password is configured, AND
-      - the caller is authenticated.
-    The no-password (read-only) mode must NEVER open a write path. Rejecting
+      - legacy mode: a Web access password is configured AND the caller is
+        authenticated, OR
+      - database mode: the resolved request context is a platform admin (the
+        per-request context gate is run by the caller --- see
+        ``_branding_require_platform_admin``).
+    The no-password (read-only) mode must NEVER open a write path, and unknown
+    identity modes fail closed until platform auth + audit land. Rejecting
     here is a server-side check, independent of any client-side greying out.
     """
-    # Only the legacy single-instance mode has an implemented write adapter.
-    # Unknown/new identity modes fail closed until platform auth + audit land.
-    if conf().get("identity_mode", "legacy") != "legacy":
+    mode = conf().get("identity_mode", "legacy") or "legacy"
+    if mode == "database":
+        # Static gate cannot decide; caller must run the context gate via
+        # _branding_require_platform_admin(). Fail closed as a defensive default.
+        return False, _BRANDING_DATABASE_GATE
+    if mode != "legacy":
         return False, "branding_enterprise_unavailable"
     if not _is_password_enabled():
         return False, "web_console_password_required"
     return True, ""
+
+
+def _branding_require_platform_admin() -> "RequestContext":
+    """Resolve and authorize the context for a database-mode brand write.
+
+    Returns the resolved ``RequestContext`` so callers can attribute the audit
+    event to the acting platform admin. Raises 401/403 via ``_require_context``
+    / ``_require_platform_admin`` for a missing session or a non-admin.
+    """
+    from channel.web.auth_handlers import _require_context
+    from channel.web.admin_handlers import _require_platform_admin
+    ctx = _require_context()
+    _require_platform_admin(ctx)
+    return ctx
 
 
 def _branding_origin_ok() -> bool:
@@ -4011,7 +4039,22 @@ def _branding_csrf_ok() -> bool:
             and hmac.compare_digest(supplied, _branding_csrf_token(token)))
 
 
-def _branding_require_write() -> None:
+def _branding_require_write() -> "Optional[RequestContext]":
+    """Authorize a brand write and return the acting context (or ``None``).
+
+    Returns the resolved platform-admin ``RequestContext`` in database mode and
+    ``None`` in legacy mode (whose console path has no identity context). The
+    caller uses the returned context to attribute the audit event.
+
+    Raises ``BrandingError`` (403) for the read-only / unknown-mode cases and
+    the 401/403 raised by ``_require_context`` / ``_require_platform_admin`` for
+    a missing session or a non-admin.
+    """
+    mode = conf().get("identity_mode", "legacy") or "legacy"
+    if mode == "database":
+        # DB-mode writes are authorized by the admin API credential rules
+        # (bearer / same-origin cookie). No legacy brand CSRF token here.
+        return _branding_require_platform_admin()
     allowed, reason = _branding_write_allowed()
     if not allowed:
         message = ("企业品牌授权与审计尚未接入，暂不可修改" if reason == "branding_enterprise_unavailable"
@@ -4020,12 +4063,53 @@ def _branding_require_write() -> None:
     _branding_auth_token()
     if not _branding_csrf_ok():
         raise BrandingError("csrf_failed", "请求校验失败，请重新读取品牌设置后重试", 403)
+    return None
 
 
-def _branding_management_payload(service, record=None):
-    allowed, reason = _branding_write_allowed()
+def _branding_record_audit(ctx, action: str, record: dict, *, reset: bool = False) -> None:
+    """Record a sanitized brand audit event against ``identity.db`` (best-effort).
+
+    Called only in database mode where ``ctx`` is the resolved platform admin;
+    a non-None ``ctx`` is required. A failure to record must never roll back the
+    committed brand, so it is logged and swallowed.
+    """
+    if ctx is None:
+        return
+    try:
+        from channel.web.auth_handlers import _get_service
+        changes = {
+            "brand_name": record.get("brand_name"),
+            "logo_description": record.get("logo_description"),
+        }
+        if reset:
+            changes["reset_to_default"] = True
+        _get_service()._audit.record(
+            actor_user_id=ctx.user_id,
+            actor_username=ctx.username,
+            tenant_id=None,
+            target_tenant_id=None,
+            action=action,
+            target="brand",
+            redacted_changes=changes,
+            result="success",
+        )
+    except Exception:
+        logger.exception("[BrandingAudit] failed to record audit event")
+
+
+def _branding_management_payload(service, record=None, ctx=None):
+    mode = conf().get("identity_mode", "legacy") or "legacy"
+    # Database mode: the caller has already resolved+authorized the context, so
+    # the brand is manageable. Legacy mode still uses the password/CSRF flow.
+    if mode == "database":
+        allowed, reason = (ctx is not None), ""
+    else:
+        allowed, reason = _branding_write_allowed()
     payload = service.management_payload(allowed, reason, record=record)
-    if payload.get("can_manage") or payload.get("can_reset"):
+    # Only legacy writes carry the password-derived brand CSRF token; in database
+    # mode writes are authorized by the admin API bearer/origin rules (so no
+    # csrf_token is issued, matching the rest of the admin API).
+    if mode != "database" and (payload.get("can_manage") or payload.get("can_reset")):
         payload["csrf_token"] = _branding_csrf_token(_branding_auth_token())
     payload["status"] = "success"
     return payload
@@ -4073,12 +4157,12 @@ class BrandingManageHandler:
         web.header('Content-Type', 'application/json; charset=utf-8')
         web.header('Cache-Control', 'no-store')
         try:
+            ctx = None
             if _is_database_identity():
-                from channel.web.auth_handlers import _require_context
-                _require_context()
+                ctx = _branding_require_platform_admin()
             elif _is_password_enabled():
                 _branding_auth_token()
-            payload = _branding_management_payload(_branding_service())
+            payload = _branding_management_payload(_branding_service(), ctx=ctx)
         except web.HTTPError:
             raise
         except BrandingError as e:
@@ -4092,7 +4176,7 @@ class BrandingManageHandler:
         web.header('Content-Type', 'application/json; charset=utf-8')
         web.header('Cache-Control', 'no-store')
         try:
-            _branding_require_write()
+            audit_ctx = _branding_require_write()
             params = _raw_web_input()
 
             def _scalar(value, default=""):
@@ -4125,15 +4209,17 @@ class BrandingManageHandler:
                 logo_file = (filename, data)
 
             service = _branding_service()
+            operator = audit_ctx.username if audit_ctx is not None else "console"
             record = service.save(
                 expected_revision=expected_revision,
                 brand_name=brand_name,
                 logo_description=logo_description,
                 logo_action=logo_action,
                 logo_file=logo_file,
-                operator="console",
+                operator=operator,
             )
-            payload = _branding_management_payload(service, record=record)
+            _branding_record_audit(audit_ctx, "branding.update", record)
+            payload = _branding_management_payload(service, record=record, ctx=audit_ctx)
             return json.dumps(payload, ensure_ascii=False)
         except BrandingError as e:
             logger.warning(f"[BrandingManageHandler] POST rejected: {e.code}: {e.message}")
@@ -4150,7 +4236,7 @@ class BrandingResetHandler:
         web.header('Content-Type', 'application/json; charset=utf-8')
         web.header('Cache-Control', 'no-store')
         try:
-            _branding_require_write()
+            audit_ctx = _branding_require_write()
             try:
                 data = json.loads(web.data() or b"{}")
                 if not isinstance(data, dict):
@@ -4163,8 +4249,10 @@ class BrandingResetHandler:
             except (TypeError, ValueError):
                 raise BrandingError("missing_expected_revision", "缺少版本号", 400)
             service = _branding_service()
-            record = service.reset(expected_revision, operator="console")
-            payload = _branding_management_payload(service, record=record)
+            operator = audit_ctx.username if audit_ctx is not None else "console"
+            record = service.reset(expected_revision, operator=operator)
+            _branding_record_audit(audit_ctx, "branding.reset", record, reset=True)
+            payload = _branding_management_payload(service, record=record, ctx=audit_ctx)
             return json.dumps(payload, ensure_ascii=False)
         except BrandingError as e:
             logger.warning(f"[BrandingResetHandler] rejected: {e.code}: {e.message}")

@@ -1,7 +1,7 @@
 # Brand Settings with Audit in Database Identity Mode
 
 **Date:** 2026-09-09
-**Status:** Approved for planning
+**Status:** Implemented
 **Problem:** In `identity_mode=database`, the brand settings page is hard read-only. `_branding_write_allowed()` returns `(False, "branding_enterprise_unavailable")` for anything that is not the legacy single-instance mode, so the UI shows the banner "企业品牌授权与审计尚未接入，暂不可修改" and every save/reset is rejected with 403. There is no way to maintain the instance brand when multi-user identity is enabled.
 
 ## 1. Goals and non-goals
@@ -71,22 +71,19 @@ The audit write must not break a successful brand commit: it is recorded after t
 - Add an internal helper `_branding_require_platform_admin()` that:
   - resolves the context via `_require_context()` and calls `_require_platform_admin(ctx)` (reusing `channel.web.admin_handlers`),
   - returns the `(user_id, username)` of the actor for audit attribution.
-- `_branding_require_write()`:
-  - `legacy` → unchanged password + CSRF path.
-  - `database` → resolve platform-admin context, then pass through (no brand CSRF token needed; the DB-mode writers use the origin/bearer check already, matching the rest of the admin API). The existing `X-Branding-CSRF` flow stays for legacy.
-  - unknown → fail closed.
+- Add a helper `_branding_record_audit(ctx, action, record, *, reset=False)` that records a sanitized `branding.update` / `branding.reset` event via the same identity service that authenticated the request (`auth_handlers._get_service()._audit.record(...)`), with `tenant_id IS NULL`. It is best-effort and never rolls back the committed brand.
 - `BrandingManageHandler.GET`:
   - `database` → resolve platform-admin context to compute `can_manage`/`can_reset`; do **not** issue the legacy `csrf_token` (DB mode uses bearer/origin CSRF like other admin writes).
   - `legacy` → unchanged.
 - `BrandingManageHandler.POST` and `BrandingResetHandler.POST`:
-  - capture the actor (`user_id`, `username`) from the resolved context in `database` mode and pass it to `service.save(..., operator=...)` / `service.reset(..., operator=...)`.
-  - In legacy mode no actor is available; `operator` stays `"console"`.
+  - capture the actor (`user_id`, `username`) from the resolved context in `database` mode and pass it to `service.save(..., operator=...)` / `service.reset(..., operator=...)`, then call `_branding_record_audit(...)`.
+  - In legacy mode no actor is available; `operator` stays `"console"` and no audit is recorded.
 
 ### 5.2 `channel/web/branding.py`
 
-- `save(...)` / `reset(...)` already accept `operator: str`. Keep that.
-- Add a lightweight audit hook: after a successful `_publish`, call an injected audit callback (`self._audit_cb`) if provided. The hook receives `(action, record, operator)` and the service layer (or the handler) maps that to `AuditStore.record(...)`. This keeps `branding.py` free of a hard `auth.audit` import (it currently avoids importing the route module and stays unit-testable).
-- `management_payload(...)` unchanged except that in `database` mode the handler passes `can_manage=True`/`can_reset=True` when the caller is a platform admin, so `readonly_reason` is empty and the UI enables the form.
+- `save(...)` / `reset(...)` already accept `operator: str`. In database mode the handler passes the acting platform admin's username; in legacy mode it stays `"console"`.
+- The `BrandingService` is kept free of any `auth.audit` import. Audit recording lives in the handler layer (see `_branding_record_audit` in §5.1), which reuses the existing `AuthStore.record(...)` on its own connection after the brand version is published. A failed audit write is logged, never surfaced, and never rolls back the brand.
+- `management_payload(...)` unchanged except that in database mode the handler passes `can_manage=True`/`can_reset=True` when the caller is a platform admin, so `readonly_reason` is empty and the UI enables the form.
 
 ### 5.3 Frontend `channel/web/static/js/console.js`
 
