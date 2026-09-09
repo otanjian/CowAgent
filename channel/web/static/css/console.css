@@ -5240,23 +5240,88 @@ button.composer-menu-item.joined:hover .joined-remove { display: inline; color: 
 #app[data-nav-area="workbench"] [data-nav-shell="admin"] { display: none !important; }
 #app[data-nav-area="admin"] [data-nav-shell="workbench"] { display: none !important; }
 #app[data-nav-area="admin"] #sidebar-new-chat { display: none !important; }
-.admin-home-shortcuts .admin-home-shortcut {
-    display: flex;
-    align-items: center;
+.admin-home { max-width: 72rem; margin: 0 auto; }
+.admin-home-title {
+    font-size: 1.5rem; font-weight: 600;
+    color: #1e293b;
+}
+.dark .admin-home-title { color: #f1f5f9; }
+.admin-home-hint { margin-top: 0.5rem; font-size: 0.875rem; color: #64748b; }
+.admin-home-kpis {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0.75rem;
-    padding: 0.875rem 1rem;
-    border-radius: 0.75rem;
-    border: 1px solid rgba(148, 163, 184, 0.25);
-    background: rgba(255, 255, 255, 0.4);
-    cursor: pointer;
-    text-align: left;
-    width: 100%;
-    color: inherit;
+    margin: 1.5rem 0 1.25rem;
+}
+@media (max-width: 900px) {
+    .admin-home-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 520px) {
+    .admin-home-kpis { grid-template-columns: 1fr; }
+}
+.admin-home-kpi {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 0.75rem;
+    padding: 1rem 1.1rem;
+    border-radius: 0.9rem;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.dark .admin-home-kpi {
+    background: rgba(255,255,255,0.04);
+    border-color: rgba(255,255,255,0.08);
+}
+.admin-home-kpi-label { font-size: 0.8rem; color: #64748b; }
+.admin-home-kpi-value {
+    margin-top: 0.35rem; font-size: 1.6rem; font-weight: 700;
+    color: #0f172a; line-height: 1.15;
+}
+.dark .admin-home-kpi-value { color: #f8fafc; }
+.admin-home-kpi-sub { margin-top: 0.25rem; font-size: 0.75rem; color: #94a3b8; }
+.admin-home-kpi-value.is-ok { color: #16a34a; font-size: 1.25rem; }
+.admin-home-kpi-value.is-bad { color: #dc2626; font-size: 1.25rem; }
+.admin-home-kpi-icon {
+    width: 2.25rem; height: 2.25rem; border-radius: 0.7rem;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; font-size: 0.95rem;
+}
+.admin-home-shortcuts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+@media (max-width: 720px) {
+    .admin-home-shortcuts { grid-template-columns: 1fr; }
+}
+.admin-home-shortcuts .admin-home-shortcut {
+    display: flex; align-items: flex-start; gap: 0.85rem;
+    padding: 1rem 1.1rem;
+    border-radius: 0.9rem;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    background: #fff;
+    cursor: pointer; text-align: left; width: 100%; color: inherit;
+    transition: border-color .15s ease, box-shadow .15s ease;
 }
 .dark .admin-home-shortcuts .admin-home-shortcut {
-    background: rgba(255, 255, 255, 0.04);
-    border-color: rgba(255, 255, 255, 0.08);
+    background: rgba(255,255,255,0.04);
+    border-color: rgba(255,255,255,0.08);
 }
 .admin-home-shortcuts .admin-home-shortcut:hover {
     border-color: rgba(74, 190, 110, 0.45);
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+.admin-home-shortcut-icon {
+    width: 2.4rem; height: 2.4rem; border-radius: 0.75rem;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; color: #fff; font-size: 0.95rem;
+}
+.admin-home-shortcut-copy { min-width: 0; }
+.admin-home-shortcut-title {
+    display: block; font-size: 0.95rem; font-weight: 600; color: #0f172a;
+}
+.dark .admin-home-shortcut-title { color: #f1f5f9; }
+.admin-home-shortcut-desc {
+    display: block; margin-top: 0.25rem; font-size: 0.8rem;
+    color: #64748b; line-height: 1.4;
 }

@@ -2202,10 +2202,11 @@
     <!-- Admin console overview (default landing on /admin). -->
     <div id="view-admin-home" class="view">
         <div class="p-6 h-full overflow-y-auto">
-            <div class="admin-home max-w-3xl">
-                <h1 class="text-2xl font-semibold text-slate-800 dark:text-slate-100" data-i18n="admin_home_title">管理控制台</h1>
-                <p class="mt-2 text-sm text-slate-500 dark:text-slate-400" data-i18n="admin_home_hint">选择左侧菜单管理智能体、组织与平台配置。</p>
-                <div id="admin-home-shortcuts" class="admin-home-shortcuts mt-6 grid gap-3 sm:grid-cols-2"></div>
+            <div class="admin-home">
+                <h1 class="admin-home-title" data-i18n="admin_home_title">管理控制台</h1>
+                <p class="admin-home-hint" data-i18n="admin_home_hint">选择左侧菜单管理智能体、组织与平台配置。</p>
+                <div id="admin-home-kpis" class="admin-home-kpis" aria-live="polite"></div>
+                <div id="admin-home-shortcuts" class="admin-home-shortcuts"></div>
             </div>
         </div>
     </div>
