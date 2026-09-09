@@ -209,6 +209,29 @@ class HttpPolicyTests(unittest.TestCase):
             with patch("channel.web.auth_handlers._require_context", return_value=_ctx(True)):
                 web_channel._require_platform_console()  # must not raise
 
+    def test_projects_routes_open_in_database(self):
+        # /api/projects* (except browse) must now be tenant domain, not 503.
+        self._patch_db()
+        for path, method in [
+            ("/api/projects", "GET"),
+            ("/api/projects/create", "POST"),
+            ("/api/projects/select", "POST"),
+            ("/api/projects/order", "POST"),
+            ("/api/projects/manage", "PUT"),
+            ("/api/projects/manage", "DELETE"),
+        ]:
+            # Pass data=b"" (the existing convention) so _request omits the body
+            # and web.py never tries to encode a bytes payload.
+            resp = self._request(path, method=method, data=b"")
+            # Anonymous database request => auth required (401), NOT a blanket 503.
+            self.assertFalse(str(resp.status).startswith("503"), f"{path} {method} got 503")
+
+    def test_projects_browse_still_closed_in_database(self):
+        self._patch_db()
+        resp = self._request("/api/projects/browse", method="GET")
+        self.assertEqual(resp.status, "503 Service Unavailable")
+        self.assertIn("database_unavailable", resp.data.decode("utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()
