@@ -76,6 +76,9 @@ CREATE INDEX IF NOT EXISTS idx_messages_session
 
 CREATE INDEX IF NOT EXISTS idx_sessions_last_active
     ON sessions (last_active);
+
+CREATE INDEX IF NOT EXISTS idx_messages_created_at
+    ON messages (created_at);
 """
 
 # Runs are an auxiliary table in the same file. Kept out of the core script so
@@ -1632,6 +1635,23 @@ class ConversationStore:
             finally:
                 conn.close()
 
+    def count_messages_between(self, start_ts: int, end_ts: int) -> int:
+        """Count messages with created_at in [start_ts, end_ts)."""
+        start_ts = int(start_ts)
+        end_ts = int(end_ts)
+        if end_ts <= start_ts:
+            return 0
+        with self._lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM messages WHERE created_at >= ? AND created_at < ?",
+                    (start_ts, end_ts),
+                ).fetchone()
+                return int(row[0] or 0)
+            finally:
+                conn.close()
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -1808,6 +1828,14 @@ class ConversationStore:
                 logger.info("[ConversationStore] Migrated: added messages.owner column")
             except Exception as e:
                 logger.warning(f"[ConversationStore] Migration (messages.owner) failed: {e}")
+
+        try:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages (created_at)"
+            )
+            conn.commit()
+        except Exception as e:
+            logger.warning(f"[ConversationStore] Migration (idx_messages_created_at) failed: {e}")
 
     def _connect(self) -> sqlite3.Connection:
         with self._lock:
