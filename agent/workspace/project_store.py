@@ -82,6 +82,15 @@ def user_projects_root() -> Optional[str]:
     return os.path.realpath(str(user_root(ident) / "projects"))
 
 
+def _require_within_user_root(real: str) -> None:
+    """In database mode a bound path must live under the caller's user projects root."""
+    allowed = user_projects_root()
+    if allowed is None:
+        return  # legacy mode: host/shared browsing allowed
+    if not _contains(allowed, real):
+        raise ValueError(f"path must be under the user's projects root: {real}")
+
+
 def _contains(a: str, b: str) -> bool:
     """True when path ``a`` equals or is an ancestor of ``b`` (symlink-safe)."""
     real_a = os.path.realpath(a)
@@ -216,6 +225,7 @@ def set_project_dir(
         real = _normalize(project_dir)
         if not os.path.isdir(real):
             raise FileNotFoundError(f"Not a directory: {project_dir}")
+        _require_within_user_root(real)
 
         data["sessions"][key] = {"path": real, "ts": time.time()}
         _touch_recent(data, real)
@@ -270,6 +280,7 @@ def rename_project(path: str, display_name: str) -> str:
     Returns the resulting display name.
     """
     real = _normalize(path)
+    _require_within_user_root(real)
     name = (display_name or "").strip()
     with _lock:
         data = _load()
@@ -297,6 +308,7 @@ def delete_project(path: str, agent_id: Optional[str] = None) -> int:
     ``agent_id`` scopes which sessions are unbound; None means the default agent.
     """
     real = _normalize(path)
+    _require_within_user_root(real)
     prefix = f"{agent_id or 'default'}::"
     with _lock:
         data = _load()
@@ -340,6 +352,10 @@ def set_order(order: List[str]) -> List[str]:
             continue
         # Real project paths are normalized; the default sentinel is kept as-is.
         norm = k if k == DEFAULT_SPACE_KEY else _normalize(k)
+        if norm != DEFAULT_SPACE_KEY:
+            allowed = user_projects_root()
+            if allowed is not None and not _contains(allowed, norm):
+                continue  # drop a path outside the user's root
         if norm in seen:
             continue
         seen.add(norm)
