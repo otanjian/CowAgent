@@ -7408,11 +7408,15 @@ function renderWorkspaceSelectorMenu() {
     }
 
     parts.push(`<div class="ws-sel-divider"></div>`);
-    parts.push(`
-        <button class="ws-sel-item" onclick="wsSelOpenProjectDialog()">
-            <i class="fas fa-folder-open"></i>
-            <span class="ws-sel-name">${escapeHtml(t('ws_sel_open'))}</span>
-        </button>`);
+    // In database identity mode the host-filesystem folder picker is unavailable
+    // (browse stays closed) — only new-project / recents / default space remain.
+    if (_identityModeState !== 'database') {
+        parts.push(`
+            <button class="ws-sel-item" onclick="wsSelOpenProjectDialog()">
+                <i class="fas fa-folder-open"></i>
+                <span class="ws-sel-name">${escapeHtml(t('ws_sel_open'))}</span>
+            </button>`);
+    }
     parts.push(`
         <button class="ws-sel-item" onclick="wsSelNewProjectDialog()">
             <i class="fas fa-folder-plus"></i>
