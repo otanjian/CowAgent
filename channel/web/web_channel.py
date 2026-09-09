@@ -6873,29 +6873,33 @@ class ToolsHandler:
         try:
             from agent.tools.tool_manager import ToolManager
             from common import i18n
-            tm = ToolManager()
-            if not tm.tool_classes:
-                tm.load_tools()
-            tools = []
-            lang = i18n.get_language()
-            for name, cls in tm.tool_classes.items():
-                try:
-                    instance = cls()
-                    desc = instance.description
-                    if lang == i18n.ZH_HANT and desc:
-                        desc = i18n.to_traditional(desc)
-                    elif lang == "en" and name == "scheduler":
-                        desc = (
-                            "Create, query and manage scheduled tasks (reminders, periodic tasks, etc.).\n\n"
-                            "⚠️ IMPORTANT: Only use this tool when delayed or periodic execution is needed."
-                        )
-                    tools.append({
-                        "name": name,
-                        "description": desc,
-                    })
-                except Exception:
-                    tools.append({"name": name, "description": ""})
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "agent.read")
+                tm = ToolManager()
+                if not tm.tool_classes:
+                    tm.load_tools()
+                tools = []
+                lang = i18n.get_language()
+                for name, cls in tm.tool_classes.items():
+                    try:
+                        instance = cls()
+                        desc = instance.description
+                        if lang == i18n.ZH_HANT and desc:
+                            desc = i18n.to_traditional(desc)
+                        elif lang == "en" and name == "scheduler":
+                            desc = (
+                                "Create, query and manage scheduled tasks (reminders, periodic tasks, etc.).\n\n"
+                                "⚠️ IMPORTANT: Only use this tool when delayed or periodic execution is needed."
+                            )
+                        tools.append({
+                            "name": name,
+                            "description": desc,
+                        })
+                    except Exception:
+                        tools.append({"name": name, "description": ""})
             return json.dumps({"status": "success", "tools": tools}, ensure_ascii=False)
+        except web.HTTPError:
+            raise
         except Exception as e:
             logger.error(f"[WebChannel] Tools API error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -6924,19 +6928,23 @@ class SkillsHandler:
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from common import i18n
-            params = web.input(agent_id='')
-            # The library page lists everything installed, unnarrowed by the
-            # Agent's selection: a skill it has not selected still has to be
-            # visible here for the selection to be editable at all.
-            service = _skill_service(_request_agent_id(params))
-            skills = service.query()
-            if i18n.get_language() == i18n.ZH_HANT:
-                for skill in skills:
-                    if isinstance(skill, dict):
-                        for k, v in list(skill.items()):
-                            if k in ("name", "description", "display_name") and isinstance(v, str):
-                                skill[k] = i18n.to_traditional(v)
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "agent.read")
+                params = web.input(agent_id='')
+                # The library page lists everything installed, unnarrowed by the
+                # Agent's selection: a skill it has not selected still has to be
+                # visible here for the selection to be editable at all.
+                service = _skill_service(_request_agent_id(params))
+                skills = service.query()
+                if i18n.get_language() == i18n.ZH_HANT:
+                    for skill in skills:
+                        if isinstance(skill, dict):
+                            for k, v in list(skill.items()):
+                                if k in ("name", "description", "display_name") and isinstance(v, str):
+                                    skill[k] = i18n.to_traditional(v)
             return json.dumps({"status": "success", "skills": skills}, ensure_ascii=False)
+        except web.HTTPError:
+            raise
         except Exception as e:
             logger.error(f"[WebChannel] Skills API error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -6945,19 +6953,23 @@ class SkillsHandler:
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
-            body = json.loads(web.data())
-            action = body.get("action")
-            name = body.get("name")
-            if not action or not name:
-                return json.dumps({"status": "error", "message": "action and name are required"})
-            service = _skill_service(_request_agent_id(body))
-            if action == "open":
-                service.open({"name": name})
-            elif action == "close":
-                service.close({"name": name})
-            else:
-                return json.dumps({"status": "error", "message": f"unknown action: {action}"})
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "agent.read")
+                body = json.loads(web.data())
+                action = body.get("action")
+                name = body.get("name")
+                if not action or not name:
+                    return json.dumps({"status": "error", "message": "action and name are required"})
+                service = _skill_service(_request_agent_id(body))
+                if action == "open":
+                    service.open({"name": name})
+                elif action == "close":
+                    service.close({"name": name})
+                else:
+                    return json.dumps({"status": "error", "message": f"unknown action: {action}"})
             return json.dumps({"status": "success"}, ensure_ascii=False)
+        except web.HTTPError:
+            raise
         except Exception as e:
             logger.error(f"[WebChannel] Skills POST error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -6982,14 +6994,18 @@ class SkillContentHandler:
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
-            params = web.input(name='', agent_id='')
-            name = (params.name or '').strip()
-            if not name:
-                return json.dumps({"status": "error", "message": "name is required"})
-            result = _skill_service(_request_agent_id(params)).read_content(name)
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "agent.read")
+                params = web.input(name='', agent_id='')
+                name = (params.name or '').strip()
+                if not name:
+                    return json.dumps({"status": "error", "message": "name is required"})
+                result = _skill_service(_request_agent_id(params)).read_content(name)
             return json.dumps({"status": "success", **result}, ensure_ascii=False)
         except (ValueError, FileNotFoundError) as e:
             return json.dumps({"status": "error", "message": str(e)})
+        except web.HTTPError:
+            raise
         except Exception as e:
             logger.error(f"[WebChannel] Skill content error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -7000,27 +7016,31 @@ class SkillContentHandler:
         try:
             from agent.workspace.service import WorkspaceConflictError
 
-            body = json.loads(web.data() or b'{}')
-            name = (body.get("name") or "").strip()
-            if not name:
-                return json.dumps({"status": "error", "message": "name is required"})
-            content = body.get("content")
-            if not isinstance(content, str):
-                return json.dumps({"status": "error", "message": "content must be a string"})
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "agent.read")
+                body = json.loads(web.data() or b'{}')
+                name = (body.get("name") or "").strip()
+                if not name:
+                    return json.dumps({"status": "error", "message": "name is required"})
+                content = body.get("content")
+                if not isinstance(content, str):
+                    return json.dumps({"status": "error", "message": "content must be a string"})
 
-            try:
-                result = _skill_service(_request_agent_id(body)).write_content(
-                    name, content, expected_mtime=body.get("expected_mtime"),
-                )
-            except WorkspaceConflictError as e:
-                return json.dumps({"status": "error", "code": "conflict", "message": str(e)})
+                try:
+                    result = _skill_service(_request_agent_id(body)).write_content(
+                        name, content, expected_mtime=body.get("expected_mtime"),
+                    )
+                except WorkspaceConflictError as e:
+                    return json.dumps({"status": "error", "code": "conflict", "message": str(e)})
 
-            logger.info(f"[WebChannel] Skill saved: {name} ({result['size']} bytes)")
-            return json.dumps({"status": "success", **result}, ensure_ascii=False)
+                logger.info(f"[WebChannel] Skill saved: {name} ({result['size']} bytes)")
+                return json.dumps({"status": "success", **result}, ensure_ascii=False)
         except (ValueError, FileNotFoundError) as e:
             return json.dumps({"status": "error", "message": str(e)})
         except PermissionError:
             return json.dumps({"status": "error", "message": "permission denied"})
+        except web.HTTPError:
+            raise
         except Exception as e:
             logger.error(f"[WebChannel] Skill write error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
