@@ -91,6 +91,9 @@ desktop/resources/bin/
 # private per-instance artifacts, not source, so keep them out of git.
 /identity.db
 /memory/
+# Instance-level Web branding state (name/logo/snapshots/rollback) written by
+# channel/web/branding.py under get_data_root(); see /identity.db above.
+/branding/
 
 # Transient verification scratch files (launcher scripts + their data dir).
 .tmp_verify_launcher.py
