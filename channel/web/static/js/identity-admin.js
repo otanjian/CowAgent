@@ -47,8 +47,17 @@
         });
         if (gen !== _generation) throw new Error('stale-response');
         if (resp.status === 401) {
-            if (typeof maybeShowLoginOverlay === 'function') maybeShowLoginOverlay();
-            throw new Error('unauthorized');
+            // A rejected current-password is an expected answer for the write
+            // flows that collect it, so those callers can opt out of the
+            // "your session expired" overlay instead of being told to re-login.
+            if (!(options && options.suppressAuthOverlay) &&
+                typeof maybeShowLoginOverlay === 'function') {
+                maybeShowLoginOverlay();
+            }
+            const authError = new Error('unauthorized');
+            authError.status = 401;
+            authError.code = 'unauthorized';
+            throw authError;
         }
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok || data.status !== 'success') {
@@ -157,12 +166,8 @@
     // models to allocate to a tenant. Kept apart from _resourceState (which is
     // the role-assign picker) because the catalog source (platform all-mode)
     // and the produced grants (tenant_resource_grants) differ.
-    let _tenantGrantSel = new Set();   // selected model resource_ids
-    let _tenantGrantCatalog = [];      // cached platform all-mode model items
-    let _tenantGrantLoaded = false;    // whether we've fetched the catalog yet
-    let _tenantGrantApiBase = '';      // platform tenant catalog base
-    let _tenantGrantResourcesBase = ''; // platform tenant resources base
-    let _tenantGrantVersion = 0;       // expected_version for the resources PUT
+    // Tenant-level resource grants are tracked per kind inside the grant picker
+    // (see `_tenantGrantState`), so there is no module-level singleton here.
 
     function _resetResourceState(initialGrants, modelDefaults) {
         _resourceState = {};
@@ -262,15 +267,20 @@
             control = resourceGroupHtml(f);
         } else if (f.type === 'modeldefaults') {
             control = modelDefaultsHtml(f);
-        } else if (f.type === 'modelgrant') {
-            control = tenantModelGrantHtml(f);
+        } else if (f.type === 'userpicker') {
+            // An account picker: the value is a stable User id chosen from the
+            // currently valid accounts, never text typed into an input. The
+            // container keeps the `adm-fld-<name>` id so the shared dirty-marking
+            // and required-field paths keep working unchanged.
+            label = '<label class="agent-field-label">' + escapeHtml(f.label) + req + '</label>';
+            control = _userPickerHtml(id, f);
         } else {
             const type = f.type || 'text';
             label = '<label class="agent-field-label" for="' + id + '">' + escapeHtml(f.label) + req + '</label>';
             control = '<div class="agent-input-wrap relative"><span class="agent-icon-abs">' + (f.icon ? '<i class="fas fa-' + escapeHtml(f.icon) + '"></i>' : '') + '</span>' +
                 '<input type="' + type + '" id="' + id + '" class="agent-input"' + (f.icon ? ' data-with-icon="1"' : '') + ' value="' + escapeHtml(val) + '" placeholder="' + escapeHtml(f.placeholder || '') + '"></div>';
         }
-        const isFullWidth = f.type === 'resourcegroup' || f.type === 'modeldefaults' || f.type === 'modelgrant' || f.type === 'textarea' || f.type === 'select' && f.full;
+        const isFullWidth = f.type === 'resourcegroup' || f.type === 'modeldefaults' || f.type === 'userpicker' || f.type === 'textarea' || f.type === 'select' && f.full;
         const wrapClass = isFullWidth ? 'agent-field w-full md:col-span-2' : (f.inline ? 'agent-field agent-field-inline flex-1 min-w-[220px]' : 'agent-field w-full');
         return '<div class="' + wrapClass + '">' + label + control +
             (f.hint ? '<div class="agent-field-hint">' + escapeHtml(f.hint) + '</div>' : '') +
@@ -514,23 +524,41 @@
         return out;
     }
 
-    // ---- tenant-level model grant picker (edit-tenant modal) --------------
-    function tenantModelGrantHtml(f) {
-        // Renders a search + paged checkbox list of the platform all-mode model
-        // catalog. Selections are tracked in _tenantGrantSel and emitted as
-        // tenant_resource_grants entries ({resource_kind:model, read+use}).
-        const id = 'adm-fld-' + f.name;
-        _tenantGrantApiBase = f.apiBase || '';
-        _tenantGrantResourcesBase = f.resourcesBase || '';
-        _tenantGrantVersion = f.version || 0;
-        // Seed selection from the field value (existing granted model ids).
-        _tenantGrantSel = new Set();
+    // ---- tenant-level resource-grant picker (model / tool tabs) -----------
+    //
+    // One parameterized picker serves both the model tab and the tool tab: the
+    // platform all-mode catalog is fetched by `resource_kind` and every checked
+    // id is emitted with that kind's full allowed action set. The whole set is
+    // replaced wholesale by the PUT, so a caller saving one kind must merge in
+    // the other kinds' current grants or they would be dropped.
+    const _tenantGrantState = {};
+
+    function _tenantGrantStateFor(kind) {
+        if (!_tenantGrantState[kind]) {
+            _tenantGrantState[kind] = {
+                sel: new Set(), catalog: [], apiBase: '', version: 0, actions: [],
+            };
+        }
+        return _tenantGrantState[kind];
+    }
+
+    function tenantGrantHtml(f) {
+        const kind = f.resourceKind;
+        const st = _tenantGrantStateFor(kind);
+        st.apiBase = f.apiBase || '';
+        st.version = f.version || 0;
+        st.actions = (f.actions || []).slice();
+        // Seed selection from the field value (this kind's current grants only).
+        st.sel = new Set();
+        st.catalog = [];
         (f.value || []).forEach(function (g) {
-            if (g && g.resource_kind === 'model' && g.resource_id) _tenantGrantSel.add(g.resource_id);
+            if (g && g.resource_kind === kind && g.resource_id) st.sel.add(g.resource_id);
         });
-        _tenantGrantLoaded = false;
-        const label = f.label ? '<div class="text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">' + escapeHtml(f.label) + '</div>' : '';
-        return '<div id="' + id + '" class="tenant-model-grant">' +
+        const id = 'tenant-res-' + kind;
+        const label = f.label
+            ? '<div class="text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">' + escapeHtml(f.label) + '</div>'
+            : '';
+        return '<div id="' + id + '" class="tenant-model-grant grant-picker" data-res-kind="' + escapeHtml(kind) + '">' +
             label +
             '<div class="flex gap-2 items-center pb-2">' +
             '<input type="text" class="agent-input resource-kind-search" placeholder="' + escapeHtml(t('admin_resource_search_placeholder')) + '">' +
@@ -547,17 +575,26 @@
             '</div>';
     }
 
-    function _collectTenantModelGrants() {
+    function tenantGrantSelection(kind) {
+        return new Set(_tenantGrantStateFor(kind).sel);
+    }
+
+    function collectTenantGrants(kind) {
+        const st = _tenantGrantStateFor(kind);
+        const actions = st.actions.length ? st.actions : ['read'];
         const grants = [];
-        _tenantGrantSel.forEach(function (rid) {
-            grants.push({ resource_kind: 'model', resource_id: rid, action: 'read' });
-            grants.push({ resource_kind: 'model', resource_id: rid, action: 'use' });
+        st.sel.forEach(function (rid) {
+            actions.forEach(function (action) {
+                grants.push({ resource_kind: kind, resource_id: rid, action: action });
+            });
         });
         return grants;
     }
 
-    async function _initTenantModelGrant(node) {
-        if (!_tenantGrantApiBase) return;
+    async function initTenantGrant(node, kind, onSelect) {
+        const st = _tenantGrantStateFor(kind);
+        if (!st.apiBase) return;
+        const dirty = typeof onSelect === 'function' ? onSelect : markModalDirty;
         const list = node.querySelector('.resource-kind-list');
         const search = node.querySelector('.resource-kind-search');
         const selCount = node.querySelector('.resource-kind-selcount');
@@ -566,19 +603,19 @@
         let page = 1;
         const pageSize = 12;
         function updateCount() {
-            if (selCount) selCount.textContent = t('admin_resources_selected').replace('{n}', _tenantGrantSel.size);
+            if (selCount) selCount.textContent = t('admin_resources_selected').replace('{n}', st.sel.size);
         }
         async function render() {
-            const query = qs({ kind: 'model', q: q, page: page, page_size: pageSize });
+            const query = qs({ kind: kind, q: q, page: page, page_size: pageSize });
             try {
-                const data = await apiFetch(_tenantGrantApiBase + '?' + query);
-                _tenantGrantCatalog = data.items || [];
+                const data = await apiFetch(st.apiBase + '?' + query);
+                st.catalog = data.items || [];
                 const total = data.total || 0;
-                if (!_tenantGrantCatalog.length) {
+                if (!st.catalog.length) {
                     list.innerHTML = '<div class="py-1 text-xs text-slate-400 col-span-2">' + escapeHtml(t('admin_resources_none')) + '</div>';
                 } else {
-                    list.innerHTML = _tenantGrantCatalog.map(function (r) {
-                        const checked = _tenantGrantSel.has(r.resource_id);
+                    list.innerHTML = st.catalog.map(function (r) {
+                        const checked = st.sel.has(r.resource_id);
                         const idSuffix = r.resource_id.indexOf('provider:') === 0 ? r.resource_id : '';
                         return '<label class="inline-flex items-start gap-2 text-xs text-slate-600 dark:text-slate-300 py-1 px-1.5 rounded hover:bg-slate-50 dark:hover:bg-white/5 cursor-pointer">' +
                             '<input type="checkbox" value="' + escapeHtml(r.resource_id) + '"' + (checked ? ' checked' : '') + '>' +
@@ -589,9 +626,9 @@
                 }
                 list.querySelectorAll('input[type=checkbox]').forEach(function (cb) {
                     cb.addEventListener('change', function () {
-                        if (cb.checked) _tenantGrantSel.add(cb.value);
-                        else _tenantGrantSel.delete(cb.value);
-                        markModalDirty();
+                        if (cb.checked) st.sel.add(cb.value);
+                        else st.sel.delete(cb.value);
+                        dirty();
                         updateCount();
                     });
                 });
@@ -611,14 +648,14 @@
         });
         search.addEventListener('keyup', function (e) { if (e.key === 'Enter') { setSearch(search.value); render(); } });
         node.querySelector('.resource-kind-clear').addEventListener('click', function () {
-            _tenantGrantSel.clear();
-            markModalDirty();
+            st.sel.clear();
+            dirty();
             updateCount();
             render();
         });
         node.querySelector('.resource-kind-selectall').addEventListener('click', function () {
-            (_tenantGrantCatalog || []).forEach(function (r) { _tenantGrantSel.add(r.resource_id); });
-            markModalDirty();
+            (st.catalog || []).forEach(function (r) { st.sel.add(r.resource_id); });
+            dirty();
             updateCount();
             render();
         });
@@ -626,6 +663,129 @@
         await render();
     }
 
+
+    // ---- account picker field (userpicker) --------------------------------
+    //
+    // `_tenantSaveAdmin` (the tenant editor's management tab) needs the operator
+    // to choose an existing valid account by its stable `usr_…` id. A free-text
+    // field made that impossible: the server
+    // resolves the target with `SELECT * FROM users WHERE id=?` and answers one
+    // opaque `user not found or disabled` for both a bad id and a disabled
+    // account, so a mistyped tenant code or login name looked like a missing
+    // account. The picker reads the same candidate set the platform user list
+    // already exposes to the same role (platform admin), so no new visibility.
+    const _userPickerState = {};
+    // The picker's node+state are kept so an already-rendered picker can be
+    // re-queried without losing what the operator selected.
+    const _userPickerRegistry = {};
+    let _userPickerSeq = 0;
+
+    // Shared markup so the tenant editor's admin tab and the create-admin modal
+    // render an identical picker (same classes, same collection contract).
+    function _userPickerHtml(id, f) {
+        return '<div id="' + id + '" class="user-picker" data-name="' + escapeHtml(f.name) + '">' +
+            '<div class="relative">' +
+            '<input type="text" class="agent-input user-picker-search" placeholder="' +
+            escapeHtml(t('admin_user_picker_search_placeholder')) + '">' +
+            '</div>' +
+            '<div class="user-picker-selected"></div>' +
+            '<div class="user-picker-list mt-2 max-h-56 overflow-y-auto rounded-lg border border-slate-200 dark:border-white/10"></div>' +
+            '<div class="user-picker-status agent-field-hint"></div>' +
+            '</div>';
+    }
+
+    async function _loadUserPickerCandidates(node, state) {
+        // Only the newest query may render. `apiFetch`'s own stale-response guard
+        // is keyed on the tenant generation, so it does not cover two searches
+        // racing inside the same tenant.
+        const seq = ++_userPickerSeq;
+        const list = node.querySelector('.user-picker-list');
+        const statusEl = node.querySelector('.user-picker-status');
+        list.innerHTML = '<div class="px-3 py-2 text-xs text-slate-400">' + escapeHtml(t('admin_user_picker_loading')) + '</div>';
+        try {
+            const query = qs({ status: 'active', page: 1, page_size: 100, q: state.q || '' });
+            const data = await apiFetch('/api/platform/users?' + query);
+            if (seq !== _userPickerSeq) return;
+            const items = data.items || [];
+            const total = data.total || 0;
+            if (!items.length) {
+                list.innerHTML = '';
+                statusEl.textContent = t('admin_user_picker_empty');
+                return;
+            }
+            list.innerHTML = items.map(function (u) {
+                return '<button type="button" class="user-picker-option w-full text-left px-3 py-2 rounded-md hover:bg-slate-50 dark:hover:bg-white/5" data-user-id="' +
+                    escapeHtml(u.id) + '" data-user-name="' +
+                    escapeHtml(u.display_name || u.username) + '">' +
+                    '<span class="block text-sm text-slate-700 dark:text-slate-200">' + escapeHtml(u.display_name || u.username) + '</span>' +
+                    '<span class="block text-[10px] text-slate-400 dark:text-slate-500">' + escapeHtml(u.username) +
+                    (u.is_platform_admin ? ' · ' + escapeHtml(t('platform_admin_badge')) : '') + '</span>' +
+                    '</button>';
+            }).join('');
+            // Never present a silently truncated candidate set as complete.
+            statusEl.textContent = total > items.length ? t('admin_user_picker_truncated') : '';
+            list.querySelectorAll('.user-picker-option').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    state.id = btn.getAttribute('data-user-id');
+                    state.label = (btn.textContent || '').trim();
+                    // The option's text also carries the username line, so the
+                    // clean display name comes from its own attribute.
+                    state.displayName = btn.getAttribute('data-user-name') || '';
+                    _userPickerState[state.name] = state.id;
+                    _renderUserPickerSelected(node, state);
+                    // The modal and the tenant editor's admin tab both host this
+                    // picker; only the modal marks itself dirty by default.
+                    if (typeof state.onSelect === 'function') state.onSelect(state);
+                    else markModalDirty();
+                });
+            });
+        } catch (e) {
+            if (seq !== _userPickerSeq || e.message === 'stale-response') return;
+            // A failed load must stay distinguishable from an empty candidate
+            // set, and must leave the picked id empty so submit is blocked.
+            list.innerHTML = '';
+            state.id = '';
+            _userPickerState[state.name] = '';
+            statusEl.textContent = t('admin_user_picker_load_failed');
+        }
+    }
+
+    function _renderUserPickerSelected(node, state) {
+        const el = node.querySelector('.user-picker-selected');
+        if (!el) return;
+        el.innerHTML = state.id
+            ? '<div class="mt-2 text-xs text-slate-600 dark:text-slate-300">' + escapeHtml(t('admin_user_picker_selected')) +
+              ' <span class="font-medium">' + escapeHtml(state.label || state.id) + '</span></div>'
+            : '';
+    }
+
+    function _initUserPicker(node, f) {
+        const state = { name: f.name, id: '', label: '', displayName: '',
+                        q: '', onSelect: f.onSelect || null };
+        _userPickerRegistry[f.name] = { node: node, state: state };
+        // Seed from any provided value so an edit dialog could prefill later.
+        const preset = (node.getAttribute('data-value') || '').trim();
+        if (preset) { state.id = preset; _userPickerState[f.name] = preset; }
+        _renderUserPickerSelected(node, state);
+        const search = node.querySelector('.user-picker-search');
+        if (search) {
+            let deb;
+            search.addEventListener('input', function () {
+                state.q = search.value;
+                clearTimeout(deb);
+                deb = setTimeout(function () { _loadUserPickerCandidates(node, state); }, 300);
+            });
+        }
+        return _loadUserPickerCandidates(node, state);
+    }
+
+    // Re-query an already-rendered picker's candidates while keeping whatever
+    // the operator has selected (a create makes the earlier list stale).
+    function _refreshUserPicker(name) {
+        const entry = _userPickerRegistry[name];
+        if (!entry) return Promise.resolve();
+        return _loadUserPickerCandidates(entry.node, entry.state);
+    }
 
     function _initResourceGroup(node) {
         // Bind the kind toggle (expand/collapse the management area).
@@ -678,8 +838,11 @@
         if (f.type === 'modeldefaults') {
             return _collectModelDefaults();
         }
-        if (f.type === 'modelgrant') {
-            return _collectTenantModelGrants();
+        if (f.type === 'userpicker') {
+            // Never fall back to reading an input's value: the picked id is the
+            // only acceptable source, and "nothing picked" must stay empty so the
+            // shared required-field check rejects the submit.
+            return _userPickerState[f.name] || '';
         }
         const el = document.getElementById('adm-fld-' + f.name);
         if (!el) return undefined;
@@ -705,6 +868,7 @@
             fields: cfg.fields || [],
             submit: cfg.submit || null,
             onConflictReload: cfg.onConflictReload || null,
+            afterSuccess: cfg.afterSuccess || null,
             statusEl: cfg.statusEl || null,
             successMsg: cfg.successMsg || t('admin_saved'),
         };
@@ -729,8 +893,8 @@
                 _initResourceGroup(node);
             } else if (f.type === 'modeldefaults') {
                 _initModelDefaults(node);
-            } else if (f.type === 'modelgrant') {
-                _initTenantModelGrant(node);
+            } else if (f.type === 'userpicker') {
+                _initUserPicker(node, f);
             }
         });
         el.classList.remove('hidden');
@@ -758,7 +922,7 @@
     function closeAdminModalNoPrompt() {
         const el = document.getElementById('admin-modal');
         if (el) el.classList.add('hidden');
-        _adminModal = { open: false, dirty: false, fields: [], submit: null, onConflictReload: null, statusEl: null, successMsg: '' };
+        _adminModal = { open: false, dirty: false, fields: [], submit: null, onConflictReload: null, afterSuccess: null, statusEl: null, successMsg: '' };
     }
 
     async function submitAdminModal() {
@@ -774,7 +938,9 @@
             if (!f.required) continue;
             const v = body[f.name];
             if (v == null || v === '' || (Array.isArray(v) && v.length === 0)) {
-                showAdminErr(t('admin_required_field'));
+                showAdminErr(f.type === 'userpicker'
+                    ? t('admin_user_picker_required')
+                    : t('admin_required_field'));
                 return;
             }
         }
@@ -785,6 +951,13 @@
             await cfg.submit(body);
             closeAdminModalNoPrompt();
             if (cfg.statusEl) status(cfg.statusEl, cfg.successMsg, true);
+            // `afterSuccess` runs AFTER the modal is dismissed and `_adminModal`
+            // is reset, so a follow-up dialog opened here is not immediately
+            // closed and does not inherit this modal's dirty/field state. Its
+            // failures must not turn a committed write back into an error.
+            if (cfg.afterSuccess) {
+                try { await cfg.afterSuccess(body); } catch (e) { /* follow-up only */ }
+            }
         } catch (err) {
             if (err.status === 409 || err.code === 'conflict') {
                 showAdminErr(err.message || t('admin_conflict'));
@@ -999,8 +1172,6 @@
                     + '<div class="text-xs text-slate-400">' + escapeHtml(tn.code) + ' · ' + fmtActive(tn.active) + '</div></div></div>'
                     + '<div class="flex items-center gap-2"><div class="text-xs text-slate-400">' + t('tenant_version_label') + ' ' + tn.version + '</div>'
                     + '<button class="admin-row-btn" onclick="adminRowAction(\'tenant\',\'edit\',\'' + escapeHtml(tn.id) + '\')"><i class="fas fa-pen mr-1"></i>' + escapeHtml(t('admin_edit')) + '</button>'
-                    + '<button class="admin-row-btn" onclick="adminRowAction(\'tenant\',\'roles\',\'' + escapeHtml(tn.id) + '\')"><i class="fas fa-users-cog mr-1"></i>' + escapeHtml(t('admin_tenant_roles')) + '</button>'
-                    + '<button class="admin-row-btn" onclick="adminRowAction(\'tenant\',\'admin\',\'' + escapeHtml(tn.id) + '\')"><i class="fas fa-user-shield mr-1"></i>' + escapeHtml(t('admin_tenant_admin')) + '</button>' + '</div></div>';
                     + '</div></div>';
             }).join('');
             list.innerHTML = rows;
@@ -1038,103 +1209,1261 @@
         }
     }
 
-    async function openTenantCreate() {
-        // shared_root is server-controlled (task 5.4): the form only carries the
-        // fields the handler needs; the server generates the directory.
-        openAdminModal({
-            title: t('tenant_create'),
-            icon: 'fa-plus',
-            fields: [
-                { name: 'code', label: t('admin_field_code'), type: 'text', required: true, hint: t('admin_field_code_hint'), inline: true },
-                { name: 'name', label: t('admin_field_name'), type: 'text', required: true, inline: true },
-                { name: 'admin_username', label: t('admin_field_admin_username'), type: 'text', required: true, inline: true },
-                { name: 'admin_display', label: t('admin_field_admin_display'), type: 'text', inline: true },
-                { name: 'admin_password', label: t('admin_field_admin_password'), type: 'password', required: true, hint: t('admin_field_password_hint') },
-                { name: 'recent_password', label: t('admin_field_recent_password'), type: 'password', required: true, hint: t('admin_field_recent_password_hint') },
-            ],
-            submitLabel: t('admin_create'),
-            statusEl: document.getElementById('tenant-status'),
-            submit: async function (body) {
-                await apiFetch('/api/platform/tenants', { method: 'POST', body: body });
-                await loadTenantView();
-            },
-            onConflictReload: function () { loadTenantView(); },
-        });
+    // ---- Tenant create/edit page (tabbed editor) --------------------------
+    //
+    // Replaces the old tenant modal. Five tabs: basic information, model
+    // authorization, tool authorization, agent provisioning, and tenant
+    // management (admin + space). Each tab saves independently, so a guard
+    // rejected on one tab cannot lose another tab's edits.
+    //
+    // The editor reuses the role editor's structural CSS vocabulary
+    // (`role-editor-*` classes) and also carries `tenant-editor-*` class names,
+    // so the shared tabbed-editor rules keep a single definition while the
+    // tenant editor stays addressable on its own.
+    const TENANT_TABS = ['basic', 'model', 'tool', 'agent', 'admin'];
+    // A granted resource keeps the kind's FULL allowed action set: a tenant admin
+    // must be able to read/execute/configure what the platform allocated.
+    const TENANT_GRANT_ACTIONS = {
+        model: ['read', 'use'],
+        tool: ['read', 'execute', 'configure'],
+    };
+    const TENANT_ADMIN_PICKER_NAME = 'tenant_admin_user_id';
+
+    let _tenantEditor = _tenantEditorIdle();
+
+    function _tenantEditorIdle() {
+        return {
+            open: false, mode: 'create', id: null, tab: 'basic',
+            code: '', name: '', active: true, version: 0,
+            // Which way the admin tab appoints an admin; "existing" is the
+            // pre-existing behaviour and stays the default.
+            adminMode: 'existing',
+            space: null, grants: [], dirty: {}, tabLoaded: {},
+            // Read-only projection of the tenant's current valid tenant_admin
+            // (earliest bound first), plus whether the read has landed and
+            // whether it failed. `adminLoaded`/`adminLoadFailed` are what let
+            // "no admin" stay distinguishable from "could not read".
+            admins: [], adminLoaded: false, adminLoadFailed: false,
+            // The Agent tab: the tenant's own bound agents (read-only) and the
+            // resolved source tenant's copyable candidates. `agentLoadFailed`
+            // keeps "could not read" distinct from "no agents"; `agentPending`
+            // remembers which candidates were checked so a partial copy can be
+            // retried without re-picking them.
+            agents: [], agentLoaded: false, agentLoadFailed: false,
+            copySource: null, agentSourceError: '', agentResult: null,
+            agentPending: {},
+        };
     }
 
-    async function openTenantEdit(id) {
-        const tn = _tenantById[id];
-        if (!tn) return;
-        // Name + status are separate operations (task 5.4). Status form surfaces
-        // the last-admin/version-context; name form is a plain rename. We also
-        // load the tenant's current model grants so the platform admin can
-        // re-allocate which models this tenant may assign to roles.
-        let currentGrants = [];
-        let grantVersion = tn.version || 0;
-        try {
-            const res = await apiFetch('/api/platform/tenants/' + encodeURIComponent(id) + '/resources');
-            currentGrants = (res && res.grants) || [];
-            grantVersion = tn.version || 0;
-        } catch (e) {
-            // Best-effort: if grants can't be loaded, show an empty picker so the
-            // edit still works for name/status.
-            currentGrants = [];
+    function _tenantResourcesBase(id) {
+        return '/api/platform/tenants/' + encodeURIComponent(id) + '/resources';
+    }
+
+    function _tenantCatalogBase(id) {
+        return '/api/platform/tenants/' + encodeURIComponent(id) + '/authorization/catalog';
+    }
+
+    function _tenantGrantActions(kind) {
+        return TENANT_GRANT_ACTIONS[kind] || ['read'];
+    }
+
+    function tenantEditorIsDirty() {
+        return TENANT_TABS.some(function (tab) { return !!_tenantEditor.dirty[tab]; });
+    }
+
+    function markTenantDirty(tab) {
+        _tenantEditor.dirty[tab || _tenantEditor.tab] = true;
+        const pill = document.getElementById('tenant-dirty-pill');
+        if (pill) pill.classList.add('show');
+    }
+
+    function _tenantEditorClearDirty(tab) {
+        _tenantEditor.dirty[tab] = false;
+        const pill = document.getElementById('tenant-dirty-pill');
+        if (pill) pill.classList.toggle('show', tenantEditorIsDirty());
+    }
+
+    function _tenantEditorSetError(msg) {
+        const el = document.getElementById('tenant-editor-error');
+        if (!el) return;
+        el.textContent = msg || '';
+        el.classList.toggle('hidden', !msg);
+    }
+
+    // ---- unified save: password prompt ------------------------------------
+
+    function _setTenantPasswordError(msg) {
+        const el = document.getElementById('tenant-password-error');
+        if (!el) return;
+        el.textContent = msg || '';
+        el.classList.toggle('hidden', !msg);
+    }
+
+    function _openTenantPasswordModal() {
+        let el = document.getElementById('tenant-password-modal');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'tenant-password-modal';
+            el.className = 'agent-modal tenant-password-modal hidden';
+            el.innerHTML =
+                '<div class="agent-modal-card">' +
+                '<h3 class="agent-modal-title" id="tenant-password-title"></h3>' +
+                '<div class="agent-modal-body">' +
+                '<p id="tenant-password-hint" class="text-sm text-slate-500 dark:text-slate-400 mb-3"></p>' +
+                '<input type="password" id="tenant-password-input" class="agent-input w-full" value="">' +
+                '<p id="tenant-password-error" class="hidden text-xs text-red-500 mt-2"></p>' +
+                '</div>' +
+                '<div class="agent-modal-foot justify-end">' +
+                '<button type="button" class="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/10" id="tenant-password-cancel"></button>' +
+                '<button type="button" class="px-5 py-2 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium" id="tenant-password-confirm"></button>' +
+                '</div></div>';
+            document.body.appendChild(el);
         }
-        const catalogBase = '/api/platform/tenants/' + encodeURIComponent(id) + '/authorization/catalog';
-        const resourcesBase = '/api/platform/tenants/' + encodeURIComponent(id) + '/resources';
-        openAdminModal({
-            title: t('tenant_edit_title'),
-            subtitle: tn.code || '',
-            icon: 'fa-pen',
-            fields: [
-                { name: 'name', label: t('admin_field_name'), type: 'text', value: tn.name, required: true },
-                { name: 'active', label: t('admin_field_active'), type: 'checkbox', value: !!tn.active },
-                { name: 'model_grants', label: t('admin_field_model_grants'), type: 'modelgrant',
-                  value: currentGrants, apiBase: catalogBase, resourcesBase: resourcesBase,
-                  version: grantVersion, hint: t('admin_field_model_grants_hint') },
-                { name: 'recent_password', label: t('admin_field_recent_password'), type: 'password', required: true, hint: t('admin_field_recent_password_hint') },
-            ],
-            submitLabel: t('admin_save'),
-            statusEl: document.getElementById('tenant-status'),
-            submit: async function (body) {
-                const modelGrants = body.model_grants || [];
-                delete body.model_grants;
-                body.expected_version = grantVersion;
-                const res = await apiFetch('/api/platform/tenants/' + encodeURIComponent(id), { method: 'POST', body: body });
-                // PUT the tenant's model grants (replaces wholesale). The rename
-                // /status POST increments version by exactly one, so use that
-                // (the handler response carries no version field).
-                const newVersion = grantVersion + 1;
-                await apiFetch(resourcesBase, {
-                    method: 'PUT',
-                    body: { grants: modelGrants, expected_version: newVersion },
-                });
-                await loadTenantView();
-            },
-            onConflictReload: function () { loadTenantView(); },
+        el.classList.remove('hidden');
+        const input = document.getElementById('tenant-password-input');
+        if (input) {
+            input.value = '';
+            if (typeof input.focus === 'function') input.focus();
+        }
+        _setTenantPasswordError('');
+        const title = document.getElementById('tenant-password-title');
+        if (title) title.textContent = t('tenant_password_title');
+        const hint = document.getElementById('tenant-password-hint');
+        if (hint) hint.textContent = t('tenant_password_hint');
+        const cancel = document.getElementById('tenant-password-cancel');
+        if (cancel) cancel.textContent = t('cancel');
+        const confirm = document.getElementById('tenant-password-confirm');
+        if (confirm) confirm.textContent = t('admin_save');
+        return el;
+    }
+
+    function _closeTenantPasswordModal() {
+        const input = document.getElementById('tenant-password-input');
+        // Drop the secret as soon as it is no longer needed.
+        if (input) input.value = '';
+        _setTenantPasswordError('');
+        const el = document.getElementById('tenant-password-modal');
+        if (!el) return;
+        if (el.parentNode && typeof el.parentNode.removeChild === 'function') {
+            el.parentNode.removeChild(el);
+        } else {
+            el.classList.add('hidden');
+        }
+    }
+
+    // Run `work(password)` behind a password prompt, re-running it in place when
+    // the password is rejected so a typo costs a retry instead of the whole
+    // form. `work` is expected to resume from the first unfinished step.
+    function withTenantPassword(work) {
+        return new Promise(function (resolve) {
+            _openTenantPasswordModal();
+            let busy = false;
+            let settled = false;
+            // Escape must mean the same thing as the cancel button, so the
+            // dialog cannot be dismissed "for free" by a keystroke that leaves
+            // the operator unsure whether the save ran.
+            function onKey(ev) {
+                if (ev && ev.key === 'Escape') finish({ cancelled: true });
+            }
+            function finish(result) {
+                if (settled) return;
+                settled = true;
+                if (typeof document.removeEventListener === 'function') {
+                    document.removeEventListener('keydown', onKey);
+                }
+                _closeTenantPasswordModal();
+                resolve(result);
+            }
+            async function attempt() {
+                if (busy || settled) return;
+                const input = document.getElementById('tenant-password-input');
+                const pw = (input && input.value) || '';
+                if (!pw) {
+                    _setTenantPasswordError(t('tenant_password_required'));
+                    return;
+                }
+                busy = true;
+                try {
+                    await work(pw);
+                    finish({ ok: true });
+                } catch (e) {
+                    if (e && e.message === 'stale-response') {
+                        finish({ cancelled: true });
+                        return;
+                    }
+                    if (e && e.status === 401) {
+                        // Wrong password: keep the prompt open and the drafts.
+                        _setTenantPasswordError(t('tenant_password_wrong'));
+                        if (input) input.value = '';
+                    } else {
+                        finish({ ok: false, error: e });
+                    }
+                } finally {
+                    busy = false;
+                }
+            }
+            const confirm = document.getElementById('tenant-password-confirm');
+            const cancel = document.getElementById('tenant-password-cancel');
+            const input = document.getElementById('tenant-password-input');
+            if (confirm) confirm.addEventListener('click', attempt);
+            if (cancel) cancel.addEventListener('click', function () {
+                finish({ cancelled: true });
+            });
+            if (input) input.addEventListener('keydown', function (ev) {
+                if (ev && ev.key === 'Enter') attempt();
+            });
+            if (typeof document.addEventListener === 'function') {
+                document.addEventListener('keydown', onKey);
+            }
         });
     }
 
-    function openTenantAdmin(id) {
-        const tn = _tenantById[id];
-        if (!tn) return;
-        openAdminModal({
-            title: t('admin_tenant_admin_edit'),
-            subtitle: (tn.code || '') + ' · ' + (tn.name || ''),
-            icon: 'fa-user-shield',
-            fields: [
-                { name: 'user_id', label: t('admin_field_admin_user_id'), type: 'text', required: true, hint: t('admin_field_admin_user_id_hint') },
-                { name: 'display_name', label: t('admin_field_admin_display'), type: 'text' },
-                { name: 'recent_password', label: t('admin_field_recent_password'), type: 'password', required: true, hint: t('admin_field_recent_password_hint') },
-            ],
-            submitLabel: t('admin_save'),
-            statusEl: document.getElementById('tenant-status'),
-            submit: async function (body) {
-                await apiFetch('/api/platform/tenants/' + encodeURIComponent(id) + '/admins', { method: 'POST', body: body });
-                await loadTenantView();
-            },
-            onConflictReload: function () { loadTenantView(); },
+    function ensureTenantEditor() {
+        let el = document.getElementById('tenant-editor');
+        if (el) return el;
+        el = document.createElement('div');
+        el.id = 'tenant-editor';
+        el.className = 'role-editor tenant-editor hidden';
+        const tabHtml = TENANT_TABS.map(function (tab) {
+            return '<button type="button" class="role-editor-tab tenant-editor-tab"' +
+                ' id="tenant-editor-tab-' + tab + '" data-tab="' + tab + '">' +
+                '<span data-tab-label="' + tab + '"></span></button>';
+        }).join('');
+        el.innerHTML =
+            '<div class="role-editor-head">' +
+            '<button type="button" class="role-editor-back" id="tenant-editor-back"></button>' +
+            '<div class="role-editor-title-row">' +
+            '<div class="min-w-0">' +
+            '<h2 id="tenant-editor-title" class="text-xl font-bold text-slate-800 dark:text-slate-100 m-0"></h2>' +
+            '<p id="tenant-editor-sub" class="text-xs text-slate-400 mt-1 truncate"></p>' +
+            '</div>' +
+            '<div class="flex items-center gap-2">' +
+            '<span id="tenant-editor-active-badge" class="text-xs px-2 py-1 rounded-full"></span>' +
+            '<span id="tenant-editor-version" class="text-xs text-slate-400"></span>' +
+            '<span class="role-dirty-pill" id="tenant-dirty-pill"></span>' +
+            '</div></div>' +
+            '<nav class="role-editor-tabs" role="tablist">' + tabHtml + '</nav>' +
+            '</div>' +
+            '<div class="role-editor-body">' +
+            // --- basic information ---
+            '<div class="role-editor-panel tenant-editor-panel active" id="tenant-panel-basic">' +
+            '<div class="role-editor-block-title" data-block-title="basic"></div>' +
+            '<p class="text-sm text-slate-500 dark:text-slate-400 mb-4" data-block-hint="basic"></p>' +
+            '<div class="grid grid-cols-1 md:grid-cols-2 gap-4">' +
+            '<div class="agent-field"><label class="agent-field-label" id="tenant-label-code"></label>' +
+            '<input type="text" id="tenant-fld-code" class="agent-input" value=""></div>' +
+            '<div class="agent-field"><label class="agent-field-label" id="tenant-label-name"></label>' +
+            '<input type="text" id="tenant-fld-name" class="agent-input" value=""></div>' +
+            '</div>' +
+            '<div class="agent-field"><label class="inline-flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">' +
+            '<input type="checkbox" id="tenant-fld-active">' +
+            '<span id="tenant-label-active"></span></label></div>' +
+            '</div>' +
+            // --- model authorization ---
+            '<div class="role-editor-panel tenant-editor-panel" id="tenant-panel-model">' +
+            '<div class="role-editor-block-title" data-block-title="model"></div>' +
+            '<p class="text-sm text-slate-500 dark:text-slate-400 mb-4" data-block-hint="model"></p>' +
+            '<div id="tenant-grant-model" class="role-res-picker"></div>' +
+            '</div>' +
+            // --- tool authorization ---
+            '<div class="role-editor-panel tenant-editor-panel" id="tenant-panel-tool">' +
+            '<div class="role-editor-block-title" data-block-title="tool"></div>' +
+            '<p class="text-sm text-slate-500 dark:text-slate-400 mb-4" data-block-hint="tool"></p>' +
+            '<div id="tenant-grant-tool" class="role-res-picker"></div>' +
+            '</div>' +
+            // --- agent provisioning ---
+            '<div class="role-editor-panel tenant-editor-panel" id="tenant-panel-agent">' +
+            '<div class="role-editor-block-title" data-block-title="agent"></div>' +
+            '<p class="text-sm text-slate-500 dark:text-slate-400 mb-3" data-block-hint="agent"></p>' +
+            // Read-only "which agents this tenant has now". Not a form control:
+            // it never dirties the tab and never preselects the picker.
+            '<div id="tenant-agent-current" class="tenant-agent-current mb-6"></div>' +
+            '<div class="role-editor-block-title" data-block-title="agent_copy"></div>' +
+            '<p class="text-sm text-slate-500 dark:text-slate-400 mb-2" data-block-hint="agent_copy"></p>' +
+            '<div id="tenant-agent-source-note" class="tenant-agent-source-note mb-2"></div>' +
+            '<div id="tenant-agent-candidates" class="tenant-agent-candidates"></div>' +
+            '<div id="tenant-agent-selected" class="tenant-agent-selected mt-2"></div>' +
+            '<div id="tenant-agent-result" class="tenant-agent-result mt-3"></div>' +
+            '</div>' +
+            // --- tenant management (space + admin) ---
+            '<div class="role-editor-panel tenant-editor-panel" id="tenant-panel-admin">' +
+            '<div class="role-editor-block-title" data-block-title="space"></div>' +
+            '<p class="text-sm text-slate-500 dark:text-slate-400 mb-3" data-block-hint="space"></p>' +
+            '<div id="tenant-space-card" class="role-res-picker mb-6"></div>' +
+            '<div class="role-editor-block-title" data-block-title="admin"></div>' +
+            '<p class="text-sm text-slate-500 dark:text-slate-400 mb-3" data-block-hint="admin"></p>' +
+            // Read-only "who administers this tenant now", rendered from a
+            // dedicated read. It is not a form control: it never preselects the
+            // picker nor dirties the tab.
+            '<div id="tenant-current-admin" class="tenant-current-admin mb-3"></div>' +
+            '<div class="tenant-admin-modes" role="group">' +
+            '<button type="button" class="tenant-admin-mode active" id="tenant-admin-mode-existing" data-mode="existing"></button>' +
+            '<button type="button" class="tenant-admin-mode" id="tenant-admin-mode-new" data-mode="new"></button>' +
+            '</div>' +
+            '<div id="tenant-admin-body-existing" class="tenant-admin-body">' +
+            '<div id="tenant-admin-picker"></div>' +
+            '<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">' +
+            '<div class="agent-field"><label class="agent-field-label" id="tenant-label-admin_display"></label>' +
+            '<input type="text" id="tenant-fld-admin_display" class="agent-input" value=""></div>' +
+            '</div>' +
+            '</div>' +
+            '<div id="tenant-admin-body-new" class="tenant-admin-body hidden">' +
+            '<div class="grid grid-cols-1 md:grid-cols-2 gap-4">' +
+            '<div class="agent-field"><label class="agent-field-label" id="tenant-label-admin_new_username"></label>' +
+            '<input type="text" id="tenant-fld-admin_new_username" class="agent-input" value=""></div>' +
+            '<div class="agent-field"><label class="agent-field-label" id="tenant-label-admin_new_display"></label>' +
+            '<input type="text" id="tenant-fld-admin_new_display" class="agent-input" value=""></div>' +
+            '<div class="agent-field"><label class="agent-field-label" id="tenant-label-admin_new_password"></label>' +
+            '<input type="password" id="tenant-fld-admin_new_password" class="agent-input" value="">' +
+            '<div class="agent-field-hint" id="tenant-hint-admin_new_password"></div></div>' +
+            '</div>' +
+            '</div>' +
+            '</div>' +
+            '</div>' +
+            '<p id="tenant-editor-error" class="hidden px-7 text-xs text-red-500"></p>' +
+            '<div class="role-editor-foot">' +
+            '<div class="text-xs text-slate-400" id="tenant-editor-foot-hint"></div>' +
+            '<div class="flex items-center gap-2">' +
+            '<button type="button" class="px-4 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/10" id="tenant-editor-cancel"></button>' +
+            '<button type="button" class="px-5 py-2 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium" id="tenant-editor-submit"></button>' +
+            '</div></div>';
+
+        const view = document.getElementById('view-tenant');
+        if (view) {
+            if (!view.style.position) view.style.position = 'relative';
+            el.style.position = 'absolute';
+            el.style.inset = '0';
+            el.style.zIndex = '20';
+            view.appendChild(el);
+        } else {
+            document.body.appendChild(el);
+        }
+
+        el.querySelectorAll('.tenant-editor-tab').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                if (btn.disabled) return;
+                switchTenantTab(btn.getAttribute('data-tab'));
+            });
         });
+        document.getElementById('tenant-editor-back').addEventListener('click', function () { closeTenantEditor(); });
+        document.getElementById('tenant-editor-cancel').addEventListener('click', function () { closeTenantEditor(); });
+        document.getElementById('tenant-editor-submit').addEventListener('click', submitTenantEditor);
+        document.getElementById('tenant-fld-name').addEventListener('input', function () { markTenantDirty('basic'); });
+        document.getElementById('tenant-fld-active').addEventListener('change', function () { markTenantDirty('basic'); });
+        document.getElementById('tenant-fld-code').addEventListener('input', function () { markTenantDirty('basic'); });
+        document.getElementById('tenant-fld-admin_display').addEventListener('input', function () { markTenantDirty('admin'); });
+        document.getElementById('tenant-admin-mode-existing').addEventListener('click', function () { setTenantAdminMode('existing'); });
+        document.getElementById('tenant-admin-mode-new').addEventListener('click', function () { setTenantAdminMode('new'); });
+        ['tenant-fld-admin_new_username', 'tenant-fld-admin_new_display',
+         'tenant-fld-admin_new_password'].forEach(function (fid) {
+            document.getElementById(fid).addEventListener('input', function () { markTenantDirty('admin'); });
+        });
+        _localizeTenantEditorChrome();
+        return el;
+    }
+
+    function _localizeTenantEditorChrome() {
+        const map = {
+            basic: 'tenant_tab_basic', model: 'tenant_tab_model',
+            tool: 'tenant_tab_tool', agent: 'tenant_tab_agent', admin: 'tenant_tab_admin',
+        };
+        Object.keys(map).forEach(function (tab) {
+            const el = document.getElementById('tenant-editor') &&
+                document.getElementById('tenant-editor')
+                    .querySelector('[data-tab-label="' + tab + '"]');
+            if (el) el.textContent = t(map[tab]);
+        });
+        const hints = {
+            basic: 'tenant_tab_basic_hint', model: 'tenant_tab_model_hint',
+            tool: 'tenant_tab_tool_hint', space: 'tenant_space_hint', admin: 'tenant_tab_admin_hint',
+            agent: 'tenant_tab_agent_hint', agent_copy: 'tenant_agent_copy_hint',
+        };
+        Object.keys(hints).forEach(function (key) {
+            const el = document.getElementById('tenant-editor') &&
+                document.getElementById('tenant-editor')
+                    .querySelector('[data-block-hint="' + key + '"]');
+            if (el) el.textContent = t(hints[key]);
+        });
+        const titles = { basic: 'tenant_tab_basic', model: 'tenant_tab_model', tool: 'tenant_tab_tool',
+            agent: 'tenant_tab_agent' };
+        Object.keys(titles).forEach(function (key) {
+            const el = document.getElementById('tenant-editor') &&
+                document.getElementById('tenant-editor')
+                    .querySelector('[data-block-title="' + key + '"]');
+            if (el) el.textContent = t(titles[key]);
+        });
+        const agentCopyTitle = document.getElementById('tenant-editor') &&
+            document.getElementById('tenant-editor').querySelector('[data-block-title="agent_copy"]');
+        if (agentCopyTitle) agentCopyTitle.textContent = t('tenant_agent_copy_title');
+        const spaceTitle = document.getElementById('tenant-editor') &&
+            document.getElementById('tenant-editor').querySelector('[data-block-title="space"]');
+        if (spaceTitle) spaceTitle.textContent = t('tenant_space_title');
+        const adminTitle = document.getElementById('tenant-editor') &&
+            document.getElementById('tenant-editor').querySelector('[data-block-title="admin"]');
+        if (adminTitle) adminTitle.textContent = t('tenant_tab_admin');
+        const labels = {
+            'tenant-label-code': 'admin_field_code', 'tenant-label-name': 'admin_field_name',
+            'tenant-label-active': 'admin_field_active',
+            'tenant-label-admin_display': 'admin_field_admin_display',
+            'tenant-label-admin_new_username': 'tenant_admin_new_username',
+            'tenant-label-admin_new_display': 'tenant_admin_new_display',
+            'tenant-label-admin_new_password': 'tenant_admin_new_password',
+        };
+        Object.keys(labels).forEach(function (id) {
+            const el = document.getElementById(id);
+            if (el) el.textContent = t(labels[id]);
+        });
+        const modes = {
+            'tenant-admin-mode-existing': 'tenant_admin_mode_existing',
+            'tenant-admin-mode-new': 'tenant_admin_mode_new',
+        };
+        Object.keys(modes).forEach(function (id) {
+            const el = document.getElementById(id);
+            if (el) el.textContent = t(modes[id]);
+        });
+        // Field-level hints reuse the account-creation wording so the rule is
+        // stated once, in the same words as the member form.
+        const fieldHints = { 'tenant-hint-admin_new_password': 'admin_field_password_hint' };
+        Object.keys(fieldHints).forEach(function (id) {
+            const el = document.getElementById(id);
+            if (el) el.textContent = t(fieldHints[id]);
+        });
+        const cancel = document.getElementById('tenant-editor-cancel');
+        if (cancel) cancel.textContent = t('cancel');
+        const back = document.getElementById('tenant-editor-back');
+        if (back) back.textContent = t('admin_back_to_list');
+    }
+
+    function _tenantEditorRefreshBadges() {
+        const badge = document.getElementById('tenant-editor-active-badge');
+        if (badge) {
+            badge.textContent = fmtActive(_tenantEditor.active);
+            badge.className = 'text-xs px-2 py-1 rounded-full ' + (_tenantEditor.active
+                ? 'bg-primary-50 text-primary-600 dark:bg-primary-900/30 dark:text-primary-300'
+                : 'bg-slate-100 text-slate-500 dark:bg-white/10 dark:text-slate-400');
+        }
+        const version = document.getElementById('tenant-editor-version');
+        if (version) version.textContent = t('tenant_version_label') + ' ' + _tenantEditor.version;
+    }
+
+    function _renderTenantSpace() {
+        const el = document.getElementById('tenant-space-card');
+        if (!el) return;
+        const space = _tenantEditor.space;
+        if (!space) {
+            el.innerHTML = '<div class="text-xs text-slate-400">' + escapeHtml(t('tenant_space_unavailable')) + '</div>';
+            return;
+        }
+        function cell(label, value) {
+            return '<div><div class="text-[10px] uppercase tracking-wide text-slate-400">' +
+                escapeHtml(label) + '</div>' +
+                '<div class="text-sm text-slate-700 dark:text-slate-200">' +
+                escapeHtml(value) + '</div></div>';
+        }
+        el.innerHTML = '<div class="grid grid-cols-1 md:grid-cols-3 gap-3">' +
+            cell(t('tenant_space_id'), space.id || _tenantEditor.code || '') +
+            cell(t('tenant_space_status'), space.status === 'ready'
+                ? t('tenant_space_ready') : t('tenant_space_not_ready')) +
+            cell(t('tenant_space_isolation'), space.isolation || '') +
+            '</div>';
+    }
+
+    // Read-only: who administers this tenant right now. This is deliberately
+    // NOT the picker's selection. Preselecting would make a read look like a
+    // pending write, so the operator could not tell "already administered"
+    // from "about to change"; the tab must stay clean until they act.
+    function _renderTenantCurrentAdmin() {
+        const el = document.getElementById('tenant-current-admin');
+        if (!el) return;
+        const label = escapeHtml(t('tenant_current_admin_label'));
+        if (_tenantEditor.adminLoadFailed) {
+            // "Could not read" must never masquerade as "no admin", or the
+            // operator would designate someone they did not need to.
+            el.innerHTML = '<div class="text-xs text-amber-600 dark:text-amber-400">' +
+                label + ': ' + escapeHtml(t('tenant_current_admin_unavailable')) + '</div>';
+            return;
+        }
+        if (!_tenantEditor.adminLoaded) { el.innerHTML = ''; return; }
+        const admin = (_tenantEditor.admins || [])[0];
+        if (!admin) {
+            el.innerHTML = '<div class="text-xs text-slate-400">' +
+                label + ': ' + escapeHtml(t('tenant_current_admin_none')) + '</div>';
+            return;
+        }
+        el.innerHTML = '<div class="tenant-current-admin-card">' +
+            '<div class="text-[10px] uppercase tracking-wide text-slate-400">' + label + '</div>' +
+            '<div class="text-sm text-slate-700 dark:text-slate-200">' +
+            escapeHtml(admin.display_name || admin.username) + '</div>' +
+            '<div class="text-[10px] text-slate-400">' + escapeHtml(admin.username) + '</div>' +
+            '</div>';
+    }
+
+    // Best-effort read: a failure is surfaced (and stays distinct from "no
+    // admin") but never blocks the operator from designating one.
+    async function _loadTenantCurrentAdmin() {
+        if (_tenantEditor.mode === 'create' || !_tenantEditor.id) {
+            _tenantEditor.admins = [];
+            _tenantEditor.adminLoaded = false;
+            _tenantEditor.adminLoadFailed = false;
+            _renderTenantCurrentAdmin();
+            return;
+        }
+        _tenantEditor.adminLoaded = false;
+        _tenantEditor.adminLoadFailed = false;
+        try {
+            const res = await apiFetch('/api/platform/tenants/' +
+                encodeURIComponent(_tenantEditor.id) + '/admins');
+            _tenantEditor.admins = (res && res.items) || [];
+            _tenantEditor.adminLoaded = true;
+        } catch (e) {
+            if (e && e.message === 'stale-response') return;
+            _tenantEditor.admins = [];
+            _tenantEditor.adminLoadFailed = true;
+        }
+        _renderTenantCurrentAdmin();
+    }
+
+    // The admin tab has two ways to appoint an admin. Both bodies stay in the
+    // DOM so switching modes never discards what the other mode already holds.
+    function setTenantAdminMode(mode) {
+        const want = mode === 'new' ? 'new' : 'existing';
+        _tenantEditor.adminMode = want;
+        [['existing', 'tenant-admin-mode-existing'], ['new', 'tenant-admin-mode-new']]
+            .forEach(function (pair) {
+                const btn = document.getElementById(pair[1]);
+                if (btn) btn.classList.toggle('active', pair[0] === want);
+            });
+        const bodies = { existing: 'tenant-admin-body-existing', new: 'tenant-admin-body-new' };
+        Object.keys(bodies).forEach(function (key) {
+            const el = document.getElementById(bodies[key]);
+            if (el) el.classList.toggle('hidden', key !== want);
+        });
+    }
+
+    function _tenantAdminField(id) {
+        const el = document.getElementById(id);
+        return el ? String(el.value == null ? '' : el.value) : '';
+    }
+
+    // Clear the admin tab's controls so neither a half-filled create form nor a
+    // previously picked account leaks from the tenant that was open before.
+    function _resetTenantAdminFields() {
+        ['tenant-fld-admin_display', 'tenant-fld-admin_new_username',
+         'tenant-fld-admin_new_display', 'tenant-fld-admin_new_password']
+            .forEach(function (id) {
+                const el = document.getElementById(id);
+                if (el) el.value = '';
+            });
+        _userPickerState[TENANT_ADMIN_PICKER_NAME] = '';
+        // Clear the previous tenant's current-admin read so it cannot linger
+        // while the new tenant's read is still in flight.
+        _tenantEditor.admins = [];
+        _tenantEditor.adminLoaded = false;
+        _tenantEditor.adminLoadFailed = false;
+        _renderTenantCurrentAdmin();
+        setTenantAdminMode('existing');
+    }
+
+    function _tenantAdminBody(pw) {
+        if (_tenantEditor.adminMode === 'new') {
+            return {
+                mode: 'new',
+                username: _tenantAdminField('tenant-fld-admin_new_username').trim(),
+                display_name: _tenantAdminField('tenant-fld-admin_new_display').trim(),
+                temporary_password: _tenantAdminField('tenant-fld-admin_new_password'),
+                recent_password: pw,
+            };
+        }
+        return {
+            mode: 'existing',
+            user_id: _userPickerState[TENANT_ADMIN_PICKER_NAME] || '',
+            display_name: _tenantAdminField('tenant-fld-admin_display'),
+            recent_password: pw,
+        };
+    }
+
+    // ---- Agent tab: read the tenant's agents, copy from the source ----------
+    //
+    // Two reads happen in one GET: the tenant's own bound agents (read-only) and
+    // the copyable candidates of the resolved source tenant, each flagged with
+    // whether it already has a clone here. The write copies the checked subset;
+    // it is a cross-tenant write, so it needs the same recent password as the
+    // other sensitive platform writes.
+    function _tenantAgentsBase(id) {
+        return '/api/platform/tenants/' + encodeURIComponent(id) + '/agents';
+    }
+
+    function tenantAgentSelection() {
+        const host = document.getElementById('tenant-agent-candidates');
+        if (!host) return [];
+        // querySelectorAll yields a NodeList, which has forEach but no filter or
+        // map. Reaching for them here threw inside both the checkbox handler and
+        // the save handler, so Save failed before it could even report an error.
+        return Array.from(host.querySelectorAll('input[type=checkbox]'))
+            .filter(function (box) { return box.checked && !box.disabled; })
+            .map(function (box) { return box.value; });
+    }
+
+    function _updateTenantAgentSelected() {
+        const el = document.getElementById('tenant-agent-selected');
+        if (!el) return;
+        if (_tenantEditor.mode === 'create') { el.textContent = ''; return; }
+        el.textContent = t('tenant_agent_selected_count')
+            .replace('{n}', String(tenantAgentSelection().length));
+    }
+
+    function _resetTenantAgentFields() {
+        // Clear the previous tenant's agent read (and any result) so it cannot
+        // linger while the new tenant is still loading.
+        ['tenant-agent-current', 'tenant-agent-candidates', 'tenant-agent-source-note',
+         'tenant-agent-selected', 'tenant-agent-result'].forEach(function (id) {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = '';
+        });
+    }
+
+    function _renderTenantAgentCurrent() {
+        const el = document.getElementById('tenant-agent-current');
+        if (!el) return;
+        const label = '<div class="tenant-agent-block-label">' +
+            escapeHtml(t('tenant_agent_current_title')) + '</div>';
+        if (_tenantEditor.mode === 'create') {
+            el.innerHTML = label + '<div class="text-xs text-slate-400">' +
+                escapeHtml(t('tenant_agent_create_hint')) + '</div>';
+            return;
+        }
+        if (_tenantEditor.agentLoadFailed) {
+            // "Could not read" must never masquerade as "no agents", or the
+            // operator cannot tell whether this tenant is really empty.
+            el.innerHTML = label + '<div class="text-xs text-amber-600 dark:text-amber-400">' +
+                escapeHtml(t('tenant_agent_current_unavailable')) + '</div>';
+            return;
+        }
+        if (!_tenantEditor.agentLoaded) { el.innerHTML = label; return; }
+        if (!_tenantEditor.agents.length) {
+            el.innerHTML = label + '<div class="text-xs text-slate-400">' +
+                escapeHtml(t('tenant_agent_current_empty')) + '</div>';
+            return;
+        }
+        el.innerHTML = label + _tenantEditor.agents.map(function (agent) {
+            return '<div class="tenant-agent-row">' +
+                '<div class="tenant-agent-row-main">' +
+                '<div class="text-sm text-slate-700 dark:text-slate-200">' +
+                escapeHtml(agent.name || agent.id) + '</div>' +
+                '<div class="tenant-agent-row-id">' + escapeHtml(agent.id) + '</div>' +
+                '</div>' +
+                '<div class="tenant-agent-row-badges">' +
+                '<span class="tenant-agent-badge">' +
+                escapeHtml(t(agent.enabled ? 'tenant_agent_enabled' : 'tenant_agent_disabled')) +
+                '</span>' +
+                (agent.is_default ? '<span class="tenant-agent-badge is-default">' +
+                    escapeHtml(t('tenant_agent_default_badge')) + '</span>' : '') +
+                '</div></div>';
+        }).join('');
+    }
+
+    function _renderTenantAgentCandidates() {
+        const host = document.getElementById('tenant-agent-candidates');
+        const note = document.getElementById('tenant-agent-source-note');
+        if (!host) return;
+        if (_tenantEditor.mode === 'create') {
+            host.innerHTML = '';
+            if (note) note.innerHTML = '';
+            return;
+        }
+        const source = _tenantEditor.copySource;
+        if (note) {
+            if (source) {
+                note.innerHTML = escapeHtml(t('tenant_agent_source_label')) + ': ' +
+                    escapeHtml(source.name || source.code || source.tenant_id);
+            } else {
+                note.innerHTML = escapeHtml(_tenantEditor.agentSourceError ||
+                    t('tenant_agent_source_unavailable'));
+            }
+        }
+        if (!source) {
+            host.innerHTML = '<div class="text-xs text-slate-400">' +
+                escapeHtml(t('tenant_agent_source_unavailable')) + '</div>';
+            return;
+        }
+        const candidates = source.candidates || [];
+        if (!candidates.length) {
+            host.innerHTML = '<div class="text-xs text-slate-400">' +
+                escapeHtml(t('tenant_agent_source_empty')) + '</div>';
+            return;
+        }
+        host.innerHTML = candidates.map(function (c) {
+            const badges =
+                (c.is_default ? '<span class="tenant-agent-badge is-default">' +
+                    escapeHtml(t('tenant_agent_default_badge')) + '</span>' : '') +
+                (c.already_copied ? '<span class="tenant-agent-badge synced">' +
+                    escapeHtml(t('tenant_agent_copied_badge')) + '</span>' : '') +
+                (c.enabled ? '' : '<span class="tenant-agent-badge">' +
+                    escapeHtml(t('tenant_agent_disabled')) + '</span>');
+            return '<label class="tenant-agent-candidate-row' +
+                (c.already_copied ? ' is-synced' : '') + '">' +
+                '<input type="checkbox" class="tenant-agent-candidate" value="' +
+                escapeHtml(c.source_agent_id) + '"' + (c.already_copied ? ' disabled' : '') + '>' +
+                '<span class="tenant-agent-candidate-main">' +
+                '<span class="text-sm text-slate-700 dark:text-slate-200">' +
+                escapeHtml(c.name || c.source_agent_id) + '</span>' +
+                '<span class="tenant-agent-row-id">' + escapeHtml(c.source_agent_id) + '</span>' +
+                '</span>' +
+                '<span class="tenant-agent-row-badges">' + badges + '</span>' +
+                '</label>';
+        }).join('');
+        host.querySelectorAll('input[type=checkbox]').forEach(function (box) {
+            if (box.disabled) return;
+            // A re-render (after a copy) must not throw away a draft the operator
+            // already picked, nor the selection they are retrying.
+            if (_tenantEditor.agentPending[box.value]) box.checked = true;
+            box.addEventListener('change', function () {
+                if (box.checked) _tenantEditor.agentPending[box.value] = true;
+                else delete _tenantEditor.agentPending[box.value];
+                markTenantDirty('agent');
+                _updateTenantAgentSelected();
+            });
+        });
+    }
+
+    function _renderTenantAgentResult() {
+        const el = document.getElementById('tenant-agent-result');
+        if (!el) return;
+        const res = _tenantEditor.agentResult;
+        if (!res) { el.innerHTML = ''; return; }
+        const copied = res.copied_agent_ids || [];
+        const skipped = res.skipped_agent_ids || [];
+        const failed = res.failed || [];
+        let html = '<div class="text-xs text-slate-600 dark:text-slate-300">' +
+            escapeHtml(t('tenant_agent_result_copied')) + ' ' + copied.length +
+            ' · ' + escapeHtml(t('tenant_agent_result_skipped')) + ' ' + skipped.length +
+            '</div>';
+        if (copied.length) {
+            html += '<div class="tenant-agent-row-id">' +
+                copied.map(function (item) { return escapeHtml(item.agent_id); }).join(', ') +
+                '</div>';
+        }
+        if (res.default_agent_id) {
+            html += '<div class="text-xs text-slate-500 dark:text-slate-400">' +
+                escapeHtml(t('tenant_agent_result_default')) + ': ' +
+                escapeHtml(res.default_agent_id) + '</div>';
+        }
+        if (failed.length) {
+            html += '<div class="text-xs text-red-500">' +
+                escapeHtml(t('tenant_agent_result_failed')) + ': ' +
+                failed.map(function (item) {
+                    return escapeHtml(item.source_agent_id) +
+                        (item.error ? ' (' + escapeHtml(item.error) + ')' : '');
+                }).join(', ') + '</div>';
+        }
+        el.innerHTML = html;
+    }
+
+    function _renderTenantAgents() {
+        _renderTenantAgentCurrent();
+        _renderTenantAgentCandidates();
+        _updateTenantAgentSelected();
+        _renderTenantAgentResult();
+    }
+
+    async function _loadTenantAgents() {
+        if (_tenantEditor.mode === 'create' || !_tenantEditor.id) {
+            _tenantEditor.agents = [];
+            _tenantEditor.agentLoaded = false;
+            _tenantEditor.agentLoadFailed = false;
+            _tenantEditor.copySource = null;
+            _tenantEditor.agentSourceError = '';
+            _renderTenantAgents();
+            return;
+        }
+        _tenantEditor.agentLoaded = false;
+        _tenantEditor.agentLoadFailed = false;
+        try {
+            const res = await apiFetch(_tenantAgentsBase(_tenantEditor.id));
+            _tenantEditor.agents = (res && res.agents) || [];
+            _tenantEditor.copySource = (res && res.copy_source) || null;
+            _tenantEditor.agentSourceError = (res && res.source_error) || '';
+            _tenantEditor.agentLoaded = true;
+        } catch (e) {
+            if (e && e.message === 'stale-response') return;
+            _tenantEditor.agents = [];
+            _tenantEditor.copySource = null;
+            _tenantEditor.agentLoadFailed = true;
+        }
+        _renderTenantAgents();
+    }
+
+    async function _ensureTenantAgentTab() {
+        // A failed read is retried on re-entry; a successful one is not re-read
+        // away, which would discard a draft the operator is still editing.
+        if (_tenantEditor.tabLoaded.agent && !_tenantEditor.agentLoadFailed) return;
+        _tenantEditor.tabLoaded.agent = true;
+        await _loadTenantAgents();
+    }
+
+    async function _tenantSaveAgents(pw) {
+        const selected = tenantAgentSelection();
+        const res = await apiFetch(_tenantAgentsBase(_tenantEditor.id), {
+            method: 'POST',
+            body: { action: 'copy', source_agent_ids: selected, recent_password: pw },
+            suppressAuthOverlay: true,
+        });
+        _tenantEditor.agentResult = res;
+        // Only the agents that still owe a copy stay picked, so "try again" is one
+        // click rather than a re-pick of everything.
+        const pending = {};
+        ((res && res.failed) || []).forEach(function (item) {
+            pending[item.source_agent_id] = true;
+        });
+        _tenantEditor.agentPending = pending;
+        await _loadTenantAgents();
+        if (((res && res.failed) || []).length) {
+            // The endpoint answers 200 with a per-agent failure list: some agents
+            // may well have landed, so the batch must stop here rather than claim
+            // overall success.
+            const err = new Error('partial');
+            err.code = 'partial';
+            throw err;
+        }
+        return res;
+    }
+
+    function _tenantEditorApplyCreateMode() {
+        const isCreate = _tenantEditor.mode === 'create';
+        ['model', 'tool', 'agent', 'admin'].forEach(function (tab) {
+            const btn = document.getElementById('tenant-editor-tab-' + tab);
+            if (btn) btn.disabled = isCreate;
+        });
+        const hint = document.getElementById('tenant-editor-foot-hint');
+        if (hint) {
+            hint.textContent = isCreate ? t('tenant_editor_create_hint') : '';
+        }
+        const codeEl = document.getElementById('tenant-fld-code');
+        if (codeEl) codeEl.readOnly = !isCreate;
+    }
+
+    async function _tenantEditorRender(tn, grants) {
+        _tenantEditor.code = tn.code || '';
+        _tenantEditor.name = tn.name || '';
+        _tenantEditor.active = !!tn.active;
+        _tenantEditor.version = tn.version || 0;
+        _tenantEditor.space = tn.space || null;
+        _tenantEditor.grants = grants || [];
+        const codeEl = document.getElementById('tenant-fld-code');
+        const nameEl = document.getElementById('tenant-fld-name');
+        const activeEl = document.getElementById('tenant-fld-active');
+        if (codeEl) codeEl.value = _tenantEditor.code;
+        if (nameEl) nameEl.value = _tenantEditor.name;
+        if (activeEl) activeEl.checked = _tenantEditor.active;
+        document.getElementById('tenant-editor-sub').textContent = _tenantEditor.code;
+        _tenantEditorRefreshBadges();
+        _renderTenantSpace();
+        _tenantEditorApplyCreateMode();
+    }
+
+    async function switchTenantTab(tab) {
+        if (TENANT_TABS.indexOf(tab) === -1) tab = 'basic';
+        // A tenant that does not exist yet cannot hold grants or an admin.
+        if (_tenantEditor.mode === 'create' && tab !== 'basic') {
+            _tenantEditorSetError(t('tenant_editor_create_hint'));
+            tab = 'basic';
+        }
+        _tenantEditor.tab = tab;
+        const root = document.getElementById('tenant-editor');
+        if (root) {
+            root.querySelectorAll('.tenant-editor-tab').forEach(function (btn) {
+                btn.classList.toggle('active', btn.getAttribute('data-tab') === tab);
+            });
+            root.querySelectorAll('.tenant-editor-panel').forEach(function (panel) {
+                panel.classList.toggle('active', panel.id === 'tenant-panel-' + tab);
+            });
+        }
+        const submit = document.getElementById('tenant-editor-submit');
+        if (submit) submit.textContent = t('admin_save');
+        if (tab === 'model' || tab === 'tool') await _ensureTenantGrantTab(tab);
+        else if (tab === 'agent') await _ensureTenantAgentTab();
+        else if (tab === 'admin') await _ensureTenantAdminTab();
+    }
+
+    async function _ensureTenantGrantTab(kind) {
+        const host = document.getElementById('tenant-grant-' + kind);
+        if (!host) return;
+        if (_tenantEditor.tabLoaded[kind]) return;
+        _tenantEditor.tabLoaded[kind] = true;
+        host.innerHTML = tenantGrantHtml({
+            resourceKind: kind,
+            value: _tenantEditor.grants,
+            apiBase: _tenantCatalogBase(_tenantEditor.id),
+            version: _tenantEditor.version,
+            actions: _tenantGrantActions(kind),
+        });
+        await initTenantGrant(host, kind, function () { markTenantDirty(kind); });
+    }
+
+    async function _ensureTenantAdminTab() {
+        _renderTenantSpace();
+        if (_tenantEditor.mode === 'create') return;
+        const host = document.getElementById('tenant-admin-picker');
+        if (!host || _tenantEditor.tabLoaded.admin) return;
+        _tenantEditor.tabLoaded.admin = true;
+        host.innerHTML = _userPickerHtml('tenant-admin-picker-inner', { name: TENANT_ADMIN_PICKER_NAME });
+        const node = document.getElementById('tenant-admin-picker-inner');
+        if (node) {
+            await _initUserPicker(node, {
+                name: TENANT_ADMIN_PICKER_NAME,
+                onSelect: function (picked) {
+                    // Prefill from the chosen account so the operator edits a real
+                    // value instead of retyping it; the field stays editable.
+                    const nameEl = document.getElementById('tenant-fld-admin_display');
+                    if (nameEl && picked && picked.displayName) nameEl.value = picked.displayName;
+                    markTenantDirty('admin');
+                },
+            });
+        }
+        // Show who administers the tenant today, separately from the picker.
+        await _loadTenantCurrentAdmin();
+    }
+
+    async function openTenantEditor(mode, id) {
+        const el = ensureTenantEditor();
+        _localizeTenantEditorChrome();
+        _tenantEditor = _tenantEditorIdle();
+        _tenantEditor.open = true;
+        _tenantEditor.mode = mode;
+        _tenantEditor.id = id || null;
+        // A write disables the save button while it is in flight; opening an
+        // editor always starts from a usable button so a form can never look
+        // interactive while silently swallowing every click.
+        const submitBtn = document.getElementById('tenant-editor-submit');
+        if (submitBtn) submitBtn.disabled = false;
+        _resetTenantAdminFields();
+        _resetTenantAgentFields();
+        _tenantEditorSetError('');
+        const pill = document.getElementById('tenant-dirty-pill');
+        if (pill) pill.classList.remove('show');
+        // Show the shell before any fetch so the operator sees the page open.
+        el.classList.remove('hidden');
+
+        if (mode === 'create') {
+            document.getElementById('tenant-editor-title').textContent = t('tenant_create');
+            document.getElementById('tenant-editor-sub').textContent = '';
+            await _tenantEditorRender({ code: '', name: '', active: true, version: 0 }, []);
+            await switchTenantTab('basic');
+            return;
+        }
+
+        document.getElementById('tenant-editor-title').textContent = t('tenant_edit_title');
+        // The platform single read is the only source of the space projection;
+        // the list row does not carry it.
+        let tn = _tenantById[id] || {};
+        try {
+            const res = await apiFetch('/api/platform/tenants/' + encodeURIComponent(id));
+            tn = (res && res.tenant) || tn;
+        } catch (e) {
+            if (e && e.message === 'stale-response') return;
+        }
+        if (tn && tn.id) _tenantById[id] = tn;
+        let grants = [];
+        try {
+            const res = await apiFetch(_tenantResourcesBase(id));
+            grants = (res && res.grants) || [];
+        } catch (e) {
+            // Best-effort: an unreadable grant set shows an empty picker rather
+            // than blocking the basic tab.
+            grants = [];
+        }
+        await _tenantEditorRender(tn, grants);
+        await switchTenantTab('basic');
+    }
+
+    function closeTenantEditor() {
+        if (tenantEditorIsDirty() && !confirmDiscard(true)) return;
+        closeTenantEditorNoPrompt();
+    }
+
+    function closeTenantEditorNoPrompt() {
+        const el = document.getElementById('tenant-editor');
+        if (el) el.classList.add('hidden');
+        _tenantEditor = _tenantEditorIdle();
+    }
+
+    // Reveal the unsaved-draft prompt without closing (navigation guard path).
+    function discardTenantEditorDraft() {
+        closeTenantEditorNoPrompt();
+    }
+
+    // The three write endpoints are separate transactions, so a batch cannot be
+    // atomic. Steps therefore run in a fixed order and stop at the first
+    // failure, keeping "what already committed" a prefix that is easy to reason
+    // about and to retry.
+    //
+    // Tenant admin runs before basics on purpose: the profile write refuses to
+    // enable a tenant with no valid tenant_admin, so binding the admin first is
+    // what makes "appoint an admin and enable" succeed in a single save.
+    function _tenantBatchSteps(dirty) {
+        const steps = [];
+        if (dirty.indexOf('admin') >= 0) {
+            steps.push({
+                key: 'admin', label: t('tenant_tab_admin'), tabs: ['admin'],
+                // Remembered per step so a failure can be explained in terms of
+                // the mode that produced it, even if the tab is switched after.
+                adminMode: _tenantEditor.adminMode, run: _tenantSaveAdmin,
+            });
+        }
+        const grantKinds = ['model', 'tool'].filter(function (k) { return dirty.indexOf(k) >= 0; });
+        if (grantKinds.length) {
+            steps.push({
+                key: 'grants', label: t('tenant_tab_' + grantKinds[0]),
+                tabs: grantKinds,
+                run: function () { return _tenantSaveGrants(grantKinds); },
+            });
+        }
+        if (dirty.indexOf('agent') >= 0) {
+            // Copying takes no part in the tenant version chain: the endpoint
+            // writes bindings and rosters, not the tenant row.
+            steps.push({
+                key: 'agent', label: t('tenant_tab_agent'), tabs: ['agent'],
+                run: _tenantSaveAgents,
+            });
+        }
+        if (dirty.indexOf('basic') >= 0) {
+            steps.push({ key: 'basic', label: t('tenant_tab_basic'), tabs: ['basic'], run: _tenantSaveBasic });
+        }
+        return steps;
+    }
+
+    // Validate everything a step needs before any write (and before asking for
+    // the password), so an incomplete form cannot trigger a partial save.
+    function _tenantBatchValidationError(dirty) {
+        if (dirty.indexOf('admin') >= 0) {
+            if (_tenantEditor.adminMode === 'new') {
+                if (!_tenantAdminField('tenant-fld-admin_new_username').trim()) {
+                    return t('tenant_admin_new_username_required');
+                }
+                if (!_tenantAdminField('tenant-fld-admin_new_display').trim()) {
+                    return t('tenant_admin_new_display_required');
+                }
+                if (!_tenantAdminField('tenant-fld-admin_new_password')) {
+                    return t('tenant_admin_new_password_required');
+                }
+                return '';
+            }
+            const userId = _userPickerState[TENANT_ADMIN_PICKER_NAME] || '';
+            if (!userId) return t('admin_user_picker_required');
+        }
+        if (dirty.indexOf('agent') >= 0 && !tenantAgentSelection().length) {
+            // Never let an empty selection degrade into "copy everything".
+            return t('tenant_agent_pick_required');
+        }
+        return '';
+    }
+
+    function _clearTenantStepDirty(tabs) {
+        tabs.forEach(function (tab) { _tenantEditorClearDirty(tab); });
+    }
+
+    // A partial batch must still name the step that failed, and a version
+    // conflict additionally tells the operator to reload before retrying.
+    function _reportTenantBatchError(error) {
+        const label = error && error.stepLabel;
+        if (label) {
+            // A copy that landed some agents and failed others comes back as a
+            // 200 with a failure list; it must name the reason without pretending
+            // the whole step succeeded.
+            if (error.stepKey === 'agent' && error.code === 'partial') {
+                _tenantEditorSetError(t('tenant_agent_partial_failed'));
+                return;
+            }
+            // The create-an-account path has a small, known set of rejections.
+            // Naming the reason is the difference between "try again" and
+            // "lengthen the password", so map them before falling back.
+            if (error.stepKey === 'admin' && error.stepAdminMode === 'new') {
+                const reason = _tenantAdminNewReason(error);
+                if (reason) {
+                    _tenantEditorSetError(reason);
+                    return;
+                }
+            }
+            let msg = t('tenant_editor_save_failed_step') + ': ' + label;
+            if (error.status === 409) msg += ' (' + t('tenant_editor_conflict') + ')';
+            _tenantEditorSetError(msg);
+            return;
+        }
+        _tenantEditorSetError((error && error.message) || t('load_error'));
+    }
+
+    // Server codes from create_tenant_admin_account, in the operator's terms.
+    function _tenantAdminNewReason(error) {
+        const code = error && error.code;
+        if (code === 'weak_password') return t('tenant_admin_weak_password');
+        if (code === 'invalid_username') return t('tenant_admin_invalid_username');
+        if (code === 'conflict') return t('tenant_admin_username_taken');
+        return '';
+    }
+
+    async function submitTenantEditor() {
+        const btn = document.getElementById('tenant-editor-submit');
+        // Just the set of tabs to save; the order they are written in is owned
+        // by _tenantBatchSteps, not by this list.
+        const dirty = ['admin', 'model', 'tool', 'agent', 'basic'].filter(function (tab) {
+            return !!_tenantEditor.dirty[tab];
+        });
+        if (!dirty.length) return;
+        _tenantEditorSetError('');
+
+        const invalid = _tenantBatchValidationError(dirty);
+        if (invalid) {
+            _tenantEditorSetError(invalid);
+            markTenantDirty(dirty.indexOf('admin') >= 0 ? 'admin' : dirty[0]);
+            return;
+        }
+
+        const pending = _tenantBatchSteps(dirty);
+        async function runPending(pw) {
+            for (const step of pending) {
+                if (step.done) continue;
+                try {
+                    await step.run(pw);
+                } catch (e) {
+                    // Remember where it stopped so the message can name the step
+                    // and a retry can resume from here instead of re-running
+                    // steps whose version has already moved on.
+                    if (e) {
+                        e.stepLabel = step.label;
+                        e.stepKey = step.key;
+                        e.stepAdminMode = step.adminMode;
+                    }
+                    throw e;
+                }
+                step.done = true;
+                _clearTenantStepDirty(step.tabs);
+            }
+        }
+
+        if (btn) btn.disabled = true;
+        let failure = null;
+        try {
+            if (dirty.indexOf('basic') >= 0 || dirty.indexOf('admin') >= 0 ||
+                dirty.indexOf('agent') >= 0) {
+                // Only the endpoints that actually verify the password ask for
+                // it; a grants-only save must not prompt for a secret the
+                // server would ignore.
+                const outcome = await withTenantPassword(runPending);
+                if (outcome.cancelled) return;
+                if (!outcome.ok) failure = outcome.error;
+            } else {
+                await runPending('');
+            }
+        } catch (e) {
+            if (e && e.message === 'stale-response') return;
+            failure = e;
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+        if (failure) {
+            _reportTenantBatchError(failure);
+            return;
+        }
+        status(document.getElementById('tenant-status'), t('admin_saved'), true);
+    }
+
+    async function _tenantSaveBasic(pw) {
+        const code = (document.getElementById('tenant-fld-code') || {}).value || '';
+        const name = (document.getElementById('tenant-fld-name') || {}).value || '';
+        const active = !!(document.getElementById('tenant-fld-active') || {}).checked;
+        if (_tenantEditor.mode === 'create') {
+            const res = await apiFetch('/api/platform/tenants', {
+                method: 'POST',
+                body: { code: code, name: name, recent_password: pw },
+                suppressAuthOverlay: true,
+            });
+            const tn = (res && res.tenant) || {};
+            if (tn && tn.id) _tenantById[tn.id] = tn;
+            await loadTenantView();
+            // Stay on the page, now editing the tenant just created, so the
+            // operator can continue with the authorization tabs.
+            await openTenantEditor('edit', tn.id);
+            const hint = document.getElementById('tenant-editor-foot-hint');
+            if (hint) hint.textContent = t('tenant_editor_created_hint');
+            return;
+        }
+        const res = await apiFetch('/api/platform/tenants/' + encodeURIComponent(_tenantEditor.id), {
+            method: 'POST',
+            body: {
+                operation: 'profile',
+                name: name,
+                active: active,
+                expected_version: _tenantEditor.version,
+                recent_password: pw,
+            },
+            suppressAuthOverlay: true,
+        });
+        const tn = (res && res.tenant) || {};
+        _tenantEditor.name = tn.name || name;
+        _tenantEditor.active = (tn.active != null) ? !!tn.active : active;
+        _tenantEditor.version = tn.version || (_tenantEditor.version + 1);
+        if (_tenantById[_tenantEditor.id]) {
+            Object.assign(_tenantById[_tenantEditor.id], {
+                name: _tenantEditor.name, active: _tenantEditor.active,
+                version: _tenantEditor.version,
+            });
+        }
+        _tenantEditorRefreshBadges();
+        await loadTenantView();
+    }
+
+    // The grant PUT replaces the whole set of a kind, so every kind travels in
+    // one request: the dirty kinds carry the operator's current selection and
+    // the untouched kinds are re-sent from the loaded grants so they are not
+    // silently dropped.
+    function _tenantGrantsForSave(kinds) {
+        const known = ['model', 'tool'];
+        const out = [];
+        known.forEach(function (kind) {
+            if (kinds.indexOf(kind) >= 0) {
+                out.push.apply(out, collectTenantGrants(kind));
+            } else {
+                out.push.apply(out, (_tenantEditor.grants || []).filter(function (g) {
+                    return g.resource_kind === kind;
+                }));
+            }
+        });
+        // Future resource kinds are passed through untouched.
+        out.push.apply(out, (_tenantEditor.grants || []).filter(function (g) {
+            return known.indexOf(g.resource_kind) < 0;
+        }));
+        return out;
+    }
+
+    async function _tenantSaveGrants(kinds) {
+        const res = await apiFetch(_tenantResourcesBase(_tenantEditor.id), {
+            method: 'PUT',
+            body: { grants: _tenantGrantsForSave(kinds), expected_version: _tenantEditor.version },
+        });
+        _tenantEditor.grants = (res && res.grants) || _tenantEditor.grants;
+        // The PUT bumps the tenant version by exactly one.
+        _tenantEditor.version = _tenantEditor.version + 1;
+        _tenantEditorRefreshBadges();
+        await loadTenantView();
+    }
+
+    async function _tenantSaveAdmin(pw) {
+        const body = _tenantAdminBody(pw);
+        const res = await apiFetch('/api/platform/tenants/' + encodeURIComponent(_tenantEditor.id) + '/admins', {
+            method: 'POST',
+            body: body,
+            suppressAuthOverlay: true,
+        });
+        if (body.mode === 'new') {
+            // The account only exists after this write, so the candidate list the
+            // picker loaded earlier cannot contain it. Re-query instead of
+            // making the operator reload the page to find what they just made.
+            await _refreshUserPicker(TENANT_ADMIN_PICKER_NAME);
+        }
+        // The read-only block reports committed state, so it must reflect the
+        // admin this save just installed, not the one that was there before.
+        await _loadTenantCurrentAdmin();
+        return res;
     }
 
     // ---- Members (Users) view --------------------------------------------
@@ -1180,6 +2509,7 @@
                     + '<div class="text-xs text-slate-400">' + escapeHtml(m.username) + ' · ' + fmtActive(m.active) + (roleNames ? ' · ' + escapeHtml(roleNames) : '') + '</div></div></div>'
                     + '<div class="flex items-center gap-2"><div class="text-xs text-slate-400">' + escapeHtml(m.position_text || '') + '</div>'
                     + '<button class="admin-row-btn" onclick="adminRowAction(\'member\',\'edit\',\'' + escapeHtml(m.id) + '\')"><i class="fas fa-pen mr-1"></i>' + escapeHtml(t('admin_edit')) + '</button>'
+                    + '<button class="admin-row-btn" onclick="openExternalIdentities(\'member\',\'' + escapeHtml(m.id) + '\')"><i class="fas fa-link mr-1"></i>' + escapeHtml(t('extid_title')) + '</button>'
                     + '<button class="admin-row-btn" onclick="adminRowAction(\'member\',\'tenants\',\'' + escapeHtml(m.id) + '\')"><i class="fas fa-building mr-1"></i>' + escapeHtml(t('member_tenants')) + '</button>'
                     + (platformAdmin && m.user_id
                         ? '<button class="admin-row-btn" onclick="adminRowAction(\'member\',\'reset\',\'' + escapeHtml(m.id) + '\')"><i class="fas fa-key mr-1"></i>' + escapeHtml(t('admin_reset')) + '</button>'
@@ -1420,6 +2750,7 @@
                     + '<div class="text-xs text-slate-400">' + escapeHtml(u.username) + ' · ' + fmtActive(u.active) + ' ' + badges.join(' ') + '</div></div></div>'
                     + '<div class="flex items-center gap-2">'
                     + '<button class="admin-row-btn" onclick="adminRowAction(\'platform_user\',\'reset\',\'' + escapeHtml(u.id) + '\')"><i class="fas fa-key mr-1"></i>' + escapeHtml(t('admin_reset')) + '</button>'
+                    + '<button class="admin-row-btn" onclick="openExternalIdentities(\'platform_user\',\'' + escapeHtml(u.id) + '\')"><i class="fas fa-link mr-1"></i>' + escapeHtml(t('extid_title')) + '</button>'
                     + '<button class="admin-row-btn" onclick="adminRowAction(\'platform_user\',\'edit\',\'' + escapeHtml(u.id) + '\')"><i class="fas fa-pen mr-1"></i>' + escapeHtml(t('admin_edit')) + '</button>'
                     + '</div></div>';
             }).join('');
@@ -1481,6 +2812,330 @@
             },
             onConflictReload: function () { loadPlatformUsersView(); },
         });
+    }
+
+    // ---- External identity bindings ---------------------------------------
+    //
+    // Both administrators maintain IM bindings, so this is *one* dialog opened
+    // from two places: a platform account row (platform accounts view) and a
+    // member row (members view). The dialog always answers the same two
+    // questions — "who is this" (the header names the account) and "which
+    // channel / which open_id" (one line per binding) — because an
+    // administrator who cannot see whose account it is cannot tell whether the
+    // binding is right.
+    //
+    // Which HTTP surface it uses follows the *entry point*, not the viewer:
+    //  * a member row is a tenant-scoped thing, so it uses the tenant routes
+    //    (the server confines a tenant admin to their own memberships);
+    //  * a platform account row uses the platform routes.
+    // A platform admin who is also a tenant admin therefore gets a working
+    // path from either view.
+
+    let _extId = null;
+
+    const EXTID_KNOWN_PROVIDERS = ['feishu', 'wecom_bot', 'weixin', 'dingtalk', 'wechatcom_app'];
+
+    function externalIdentityProviderLabel(code) {
+        const raw = String(code || '').trim();
+        if (!raw) return t('extid_provider_unknown');
+        const key = 'extid_provider_' + raw.replace(/[^a-z0-9_]/gi, '_');
+        const label = t(key);
+        return label === key ? raw : label;
+    }
+
+    function externalIdentitySurface(kind, platformAdmin) {
+        // Pure decision: which HTTP surface may this viewer use for this row?
+        //
+        // A platform account row is platform-domain by construction, so it
+        // needs the platform role. A *member* row is tenant-scoped, and a tenant
+        // admin must go through the tenant surface so the server can confine
+        // them to their own memberships. But a platform admin may be looking at
+        // a member row of a tenant whose admin role they do not hold — the
+        // tenant surface would refuse them — so they use the platform surface,
+        // which can reach any account. Both administrators therefore have a
+        // working path from the same dialog.
+        if (kind === 'platform_user') return 'platform';
+        return platformAdmin ? 'platform' : 'tenant';
+    }
+
+    function externalIdentityRoutes(st) {
+        // Pure so the "which administrator hits which surface" rule is testable
+        // without a DOM: this is the part that must never silently flip.
+        if (st.platform) {
+            return {
+                base: '/api/platform/users/' + encodeURIComponent(st.userId) + '/external-identities',
+                attempts: '/api/platform/external-identity-attempts',
+            };
+        }
+        return {
+            base: '/api/tenant/members/' + encodeURIComponent(st.memberId) + '/external-identities',
+            attempts: '/api/tenant/external-identity-attempts',
+        };
+    }
+
+    function renderExternalIdentityBindingRow(st, b) {
+        return '<div class="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10">'
+            + '<div class="min-w-0">'
+            + '<div class="text-sm text-slate-800 dark:text-slate-100 truncate"><i class="fas fa-comment-dots mr-1 text-indigo-400"></i>'
+            + escapeHtml(externalIdentityProviderLabel(b.provider))
+            + '<span class="text-slate-400"> · </span>' + escapeHtml(b.issuer || '—') + '</div>'
+            + '<div class="text-xs text-slate-400 break-all">open_id: ' + escapeHtml(b.subject) + '</div>'
+            + '</div>'
+            + '<button class="admin-row-btn" onclick="extidDelete(\'' + escapeHtml(b.id) + '\')">'
+            + '<i class="fas fa-unlink mr-1"></i>' + escapeHtml(t('admin_delete')) + '</button>'
+            + '</div>';
+    }
+
+    function renderExternalIdentityAttemptRow(index, a) {
+        // A pending attempt is the only place an administrator can learn an
+        // open_id without reading the server log, so the row is a button that
+        // fills the form rather than a passive hint.
+        //
+        // An open_id identifies nobody, though: the row leads with the sender's
+        // name and a preview of what they actually said, which is what lets an
+        // administrator recognise the person. Both are best-effort, so a channel
+        // that cannot resolve a name still shows the message, and vice versa.
+        const groupTag = a.is_group
+            ? '<span class="extid_group_tag ml-1 px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">'
+                + escapeHtml(t('extid_group_tag')) + '</span>'
+            : '';
+        const name = String(a.sender_name || '').trim()
+            || ('<span class="text-slate-400">' + escapeHtml(t('extid_unnamed_sender')) + '</span>');
+        const source = escapeHtml(externalIdentityProviderLabel(a.provider))
+            + (a.issuer ? '<span class="text-slate-400"> · </span>' + escapeHtml(a.issuer) : '');
+        const preview = String(a.message_preview || '').trim();
+        const previewLine = preview
+            ? '<div class="text-xs text-slate-600 dark:text-slate-300 mt-1 line-clamp-2">'
+                + escapeHtml(preview) + '</div>'
+            : '';
+        const tries = Number(a.attempts || 0) > 1
+            ? '<span class="text-[10px] text-slate-400 shrink-0">×' + Number(a.attempts) + '</span>'
+            : '';
+        return '<button type="button" class="w-full text-left px-3 py-2 rounded-lg border border-amber-200 dark:border-amber-500/30 hover:bg-amber-50 dark:hover:bg-amber-900/10"'
+            + ' onclick="extidUseAttempt(' + index + ')">'
+            + '<div class="flex items-center gap-2 text-sm text-slate-800 dark:text-slate-100">'
+            + '<i class="fas fa-clock text-amber-500 shrink-0"></i>'
+            + '<span class="truncate">' + name + '</span>'
+            + groupTag
+            + '<span class="ml-auto">' + tries + '</span></div>'
+            + '<div class="text-xs text-slate-400 truncate mt-0.5">' + source + '</div>'
+            + previewLine
+            + '<div class="text-[10px] text-slate-400 break-all">open_id: ' + escapeHtml(a.subject) + '</div>'
+            + '</button>';
+    }
+
+    function externalIdentitiesModalHtml(st) {
+        const bindings = (st.bindings || []).map(function (b) {
+            return renderExternalIdentityBindingRow(st, b);
+        }).join('') || '<div class="text-xs text-slate-400">' + escapeHtml(t('extid_no_bindings')) + '</div>';
+        const attempts = (st.attempts || []).map(function (a, i) {
+            return renderExternalIdentityAttemptRow(i, a);
+        }).join('') || '<div class="text-xs text-slate-400">' + escapeHtml(t('extid_no_attempts')) + '</div>';
+        const providerOptions = EXTID_KNOWN_PROVIDERS.map(function (code) {
+            const selected = (st.form && st.form.provider) === code ? ' selected' : '';
+            return '<option value="' + escapeHtml(code) + '"' + selected + '>'
+                + escapeHtml(externalIdentityProviderLabel(code)) + '</option>';
+        }).join('');
+        return '<div class="space-y-4">'
+            + (st.error ? '<div class="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 rounded-lg px-3 py-2 break-all">' + escapeHtml(st.error) + '</div>' : '')
+            + (st.status ? '<div class="text-sm text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg px-3 py-2">' + escapeHtml(st.status) + '</div>' : '')
+            + '<div><div class="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-2">' + escapeHtml(t('extid_bound_title')) + '</div>'
+            + '<div class="space-y-2">' + bindings + '</div></div>'
+            + '<div class="border-t border-slate-200 dark:border-white/10 pt-3">'
+            + '<div class="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-2">' + escapeHtml(t('extid_add_title')) + '</div>'
+            + '<div class="grid grid-cols-1 sm:grid-cols-3 gap-2">'
+            + '<select id="extid-provider" class="admin-input">' + providerOptions + '</select>'
+            + '<input id="extid-issuer" class="admin-input" placeholder="' + escapeHtml(t('extid_field_issuer')) + '" value="' + escapeHtml((st.form && st.form.issuer) || '') + '">'
+            + '<input id="extid-subject" class="admin-input" placeholder="' + escapeHtml(t('extid_field_subject')) + '" value="' + escapeHtml((st.form && st.form.subject) || '') + '">'
+            + '</div>'
+            + '<div class="text-xs text-slate-400 mt-1">' + escapeHtml(t('extid_field_hint')) + '</div>'
+            + '<div class="flex justify-end mt-3"><button type="button" class="admin-row-btn" onclick="extidSubmit()"'
+            + (st.busy ? ' disabled' : '') + '><i class="fas fa-link mr-1"></i>' + escapeHtml(t('extid_bind')) + '</button></div>'
+            + '</div>'
+            + '<div class="border-t border-slate-200 dark:border-white/10 pt-3">'
+            + '<div class="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">' + escapeHtml(t('extid_attempts_title')) + '</div>'
+            + '<div class="text-xs text-slate-400 mb-2">' + escapeHtml(t('extid_attempts_hint')) + '</div>'
+            + '<div class="space-y-2">' + attempts + '</div>'
+            + '</div>'
+            + '</div>';
+    }
+
+    function externalIdentityAccountLabel(st) {
+        // "Who" is the first question the dialog must answer, so the label is a
+        // pure function of the account rather than a DOM detail. The username is
+        // only appended when it actually adds something: an account with no
+        // display name would otherwise read "acmemember · acmemember".
+        const name = st.name || st.username || '';
+        if (!st.username || st.username === name) return name;
+        return name ? name + ' · ' + st.username : st.username;
+    }
+
+    function ensureExtIdModal() {
+        let el = document.getElementById('extid-modal');
+        if (el) return el;
+        el = document.createElement('div');
+        el.id = 'extid-modal';
+        el.className = 'hidden fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4';
+        el.innerHTML = '<div class="bg-white dark:bg-slate-800 rounded-xl shadow-xl w-full max-w-2xl max-h-[85vh] overflow-y-auto">'
+            + '<div class="flex items-start justify-between px-5 py-4 border-b border-slate-200 dark:border-white/10">'
+            + '<div><div id="extid-title" class="text-base font-semibold text-slate-800 dark:text-slate-100"></div>'
+            + '<div id="extid-subtitle" class="text-xs text-slate-400"></div></div>'
+            + '<button type="button" class="admin-row-btn" onclick="extidClose()"><i class="fas fa-times"></i></button>'
+            + '</div>'
+            + '<div id="extid-body" class="px-5 py-4"></div>'
+            + '</div>';
+        document.body.appendChild(el);
+        return el;
+    }
+
+    function renderExtIdModal() {
+        if (!_extId) return;
+        const el = ensureExtIdModal();
+        document.getElementById('extid-title').textContent = t('extid_title');
+        // "Who" comes first: a binding is meaningless without its account.
+        document.getElementById('extid-subtitle').textContent = externalIdentityAccountLabel(_extId);
+        document.getElementById('extid-body').innerHTML = externalIdentitiesModalHtml(_extId);
+        el.classList.remove('hidden');
+    }
+
+    async function extidLoadAttempts() {
+        try {
+            const routes = externalIdentityRoutes(_extId);
+            const data = await apiFetch(routes.attempts);
+            _extId.attempts = data.items || [];
+        } catch (err) {
+            // The picker is a convenience; the form still works without it.
+            _extId.attempts = [];
+        }
+    }
+
+    async function extidRefresh() {
+        const routes = externalIdentityRoutes(_extId);
+        const data = await apiFetch(routes.base);
+        _extId.bindings = data.items || [];
+        await extidLoadAttempts();
+        renderExtIdModal();
+    }
+
+    async function openExternalIdentities(kind, id) {
+        // Look the account up from the list the row was rendered from, then hand
+        // the *account* and the permitted surface to extidOpen. Splitting the
+        // two keeps the dialog independent of how the caller found the row.
+        const account = kind === 'platform_user' ? (_platformUsers[id] || {}) : (_memberById[id] || {});
+        const surface = externalIdentitySurface(kind, await isPlatformAdmin());
+        await extidOpen(kind, account, { platform: surface === 'platform' });
+    }
+
+    async function extidOpen(kind, account, opts) {
+        const platform = opts && 'platform' in opts
+            ? !!opts.platform
+            : kind === 'platform_user';
+        // The account's identifiers come from *which list the row came from*,
+        // not from which surface we may use: a member row carries a membership
+        // id and a separate user id, while a platform account row's id already
+        // is the user id. Conflating the two sends a membership id to the
+        // platform route, which addresses the wrong account entirely.
+        const fromPlatformList = kind === 'platform_user';
+        const userId = fromPlatformList ? account.id : account.user_id;
+        const memberId = fromPlatformList ? '' : account.id;
+        if (!userId) return;
+        _extId = {
+            kind: kind,
+            platform: platform,
+            memberId: memberId,
+            userId: userId,
+            name: account.display_name || '',
+            username: account.username || '',
+            bindings: [], attempts: [], error: '', status: '', busy: false,
+            form: { provider: EXTID_KNOWN_PROVIDERS[0], issuer: '', subject: '' },
+        };
+        renderExtIdModal();
+        try {
+            await extidRefresh();
+        } catch (err) {
+            _extId.error = err && err.message ? err.message : String(err);
+            renderExtIdModal();
+        }
+    }
+
+    function extidCollectForm() {
+        const provider = document.getElementById('extid-provider');
+        const issuer = document.getElementById('extid-issuer');
+        const subject = document.getElementById('extid-subject');
+        return {
+            provider: provider ? provider.value : EXTID_KNOWN_PROVIDERS[0],
+            issuer: issuer ? issuer.value : '',
+            subject: subject ? subject.value : '',
+        };
+    }
+
+    function extidUseAttempt(index) {
+        if (!_extId) return;
+        const attempt = (_extId.attempts || [])[index];
+        if (!attempt) return;
+        _extId.form = {
+            provider: attempt.provider || EXTID_KNOWN_PROVIDERS[0],
+            issuer: attempt.issuer || '',
+            subject: attempt.subject || '',
+        };
+        _extId.error = '';
+        renderExtIdModal();
+    }
+
+    async function extidSubmit() {
+        if (!_extId) return;
+        const form = extidCollectForm();
+        _extId.form = form;
+        if (!form.subject) {
+            _extId.error = t('extid_error_subject_required');
+            _extId.status = '';
+            renderExtIdModal();
+            return;
+        }
+        _extId.busy = true;
+        _extId.error = '';
+        _extId.status = '';
+        renderExtIdModal();
+        try {
+            const routes = externalIdentityRoutes(_extId);
+            await apiFetch(routes.base, { method: 'POST', body: form });
+            _extId.busy = false;
+            _extId.status = t('extid_bound_ok');
+            _extId.form = { provider: form.provider, issuer: form.issuer, subject: '' };
+            await extidRefresh();
+        } catch (err) {
+            _extId.busy = false;
+            _extId.error = extidErrorMessage(err);
+            renderExtIdModal();
+        }
+    }
+
+    async function extidDelete(bindingId) {
+        if (!_extId || !bindingId) return;
+        try {
+            const routes = externalIdentityRoutes(_extId);
+            await apiFetch(routes.base + '/' + encodeURIComponent(bindingId), { method: 'DELETE' });
+            _extId.status = t('extid_unbound_ok');
+            await extidRefresh();
+        } catch (err) {
+            _extId.error = extidErrorMessage(err);
+            renderExtIdModal();
+        }
+    }
+
+    function extidErrorMessage(err) {
+        const code = (err && err.code) || '';
+        if (code === 'conflict') return t('extid_error_conflict');
+        if (code === 'forbidden') return t('extid_error_forbidden');
+        if (code === 'not_found') return t('extid_error_not_found');
+        if (code === 'bad_request') return t('extid_error_bad_request');
+        return (err && err.message) ? err.message : t('extid_error_generic');
+    }
+
+    function extidClose() {
+        const el = document.getElementById('extid-modal');
+        if (el) el.classList.add('hidden');
+        _extId = null;
     }
 
     // ---- Roles view -------------------------------------------------------
@@ -1987,7 +3642,12 @@
         };
         document.getElementById('role-editor-title').textContent = cfg.title || '';
         document.getElementById('role-editor-sub').innerHTML = cfg.subtitleHtml || '';
-        document.getElementById('role-editor-submit').textContent = cfg.submitLabel || t('admin_save');
+        const submitBtn = document.getElementById('role-editor-submit');
+        submitBtn.textContent = cfg.submitLabel || t('admin_save');
+        // Start every open from an enabled button: a request that never settled
+        // (or an older build that forgot to clear the in-flight flag) must not
+        // leave this form looking interactive while it swallows every click.
+        submitBtn.disabled = false;
         document.getElementById('role-dirty-pill').classList.remove('show');
         closeRoleEditorErr();
 
@@ -2047,13 +3707,19 @@
             if (statusEl) status(statusEl, msg, true);
             await loadRolesView();
         } catch (err) {
-            if (btn) btn.disabled = false;
             if (err && (err.status === 409 || err.code === 'conflict')) {
                 showRoleEditorErr(err.message || t('admin_conflict'));
                 if (_roleEditor.onConflictReload) _roleEditor.onConflictReload();
                 return;
             }
             showRoleEditorErr((err && err.message) || t('admin_save_failed'));
+        } finally {
+            // The button is only disabled while a write is in flight. Clearing it
+            // on every outcome matters because the editor node outlives a single
+            // open: a form reopened after a successful save would otherwise render
+            // a disabled button, so the user fills it in, clicks, and nothing
+            // happens and no request is sent.
+            if (btn) btn.disabled = false;
         }
     }
 
@@ -2382,7 +4048,7 @@
     // ---- row action dispatcher (used by inline onclick) -------------------
     function adminRowAction(kind, action, id) {
         if (action === 'edit') {
-            if (kind === 'tenant') openTenantEdit(id);
+            if (kind === 'tenant') openTenantEditor('edit', id);
             else if (kind === 'member') openMemberEdit(id);
             else if (kind === 'role') openRoleEdit(id);
             else if (kind === 'dept') openDeptEdit(id);
@@ -2391,7 +4057,9 @@
             if (kind === 'role') deleteRole(id);
             else if (kind === 'dept') deleteDept(id);
         } else if (action === 'admin') {
-            if (kind === 'tenant') openTenantAdmin(id);
+            // Tenant admin configuration now lives in the editor's tenant
+            // management tab; no row-level entry point remains for it.
+            if (kind === 'tenant') openTenantEditor('edit', id);
         } else if (action === 'roles') {
             if (kind === 'tenant') openTenantRoles(id);
         } else if (action === 'copy') {
@@ -2410,6 +4078,11 @@
     // Let console.js navigation ask whether it's safe to leave an admin view.
     // Returns true when there is no unsaved form (or the user confirms discard).
     function identityAdminDirtyGuard() {
+        if (_tenantEditor && _tenantEditor.open && tenantEditorIsDirty()) {
+            const ok = confirmDiscard(true);
+            if (ok) closeTenantEditorNoPrompt();
+            return ok;
+        }
         if (_roleEditor && _roleEditor.open && _roleEditor.dirty) {
             const ok = confirmDiscard(true);
             if (ok) closeRoleEditorNoPrompt();
@@ -2427,7 +4100,7 @@
     // ---- wire up create buttons / filters ---------------------------------
     document.addEventListener('DOMContentLoaded', function () {
         const tenantBtn = document.getElementById('tenant-create-btn');
-        if (tenantBtn) tenantBtn.addEventListener('click', function () { openTenantCreate(); });
+        if (tenantBtn) tenantBtn.addEventListener('click', function () { openTenantEditor('create', null); });
         const memberBtn = document.getElementById('member-create-btn');
         if (memberBtn) memberBtn.addEventListener('click', function () { openMemberCreate(); });
         const roleBtn = document.getElementById('role-create-btn');
@@ -2485,5 +4158,19 @@
     window.loadAuditView = loadAuditView;
     window.bumpTenantGeneration = bumpTenantGeneration;
     window.adminRowAction = adminRowAction;
+    window.openExternalIdentities = openExternalIdentities;
+    window.extidSubmit = extidSubmit;
+    window.extidDelete = extidDelete;
+    window.extidUseAttempt = extidUseAttempt;
+    window.extidClose = extidClose;
+    // Exposed for the frontend contract tests: these encode the rule this
+    // feature turns on (which administrator hits which HTTP surface) and the
+    // "who / which channel / which open_id" rendering.
+    window.externalIdentityRoutes = externalIdentityRoutes;
+    window.externalIdentitySurface = externalIdentitySurface;
+    window.externalIdentitiesModalHtml = externalIdentitiesModalHtml;
+    window.externalIdentityAccountLabel = externalIdentityAccountLabel;
+    window.externalIdentityProviderLabel = externalIdentityProviderLabel;
+    window.extidOpen = extidOpen;
     window.__identityAdminDirtyGuard__ = identityAdminDirtyGuard;
 })();

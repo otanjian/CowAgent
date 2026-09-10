@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
@@ -92,6 +93,64 @@ CREDENTIAL_KEYS: Dict[str, tuple] = {
     ),
 }
 
+#: Subset of :data:`CREDENTIAL_KEYS` without which a channel instance cannot
+#: start. Kept beside the full key list rather than replacing it: the full list
+#: still decides which field names a write may carry, so an optional field
+#: (a verification token, a display name) stays storable and is simply not
+#: required.
+#:
+#: Every entry is the *startup guard the channel class itself enforces*, verified
+#: by reading that class, not guessed from the field names:
+#:   feishu      feishu_channel.py     "app_id ... or app_secret" guard
+#:   wecom_bot   wecom_bot_channel.py  "wecom_bot_id and wecom_bot_secret" guard
+#:                                     (websocket mode; the webhook transport is
+#:                                      single-instance and refuses extra
+#:                                      instances, so token/aes are not needed
+#:                                      for a tenant-owned bot)
+#:   qq          qq_channel.py         "qq_app_id and qq_app_secret" guard
+#:   telegram    telegram_channel.py   "telegram_token is required" guard
+#:   slack       slack_channel.py      "slack_bot_token and slack_app_token" guard
+#:   discord     discord_channel.py    "discord_token is required" guard
+#:
+#: ``dingtalk`` and ``weixin`` are deliberately absent: their minimum set has not
+#: been verified against the channel classes yet, and inventing one would reject
+#: writes that work today. A type without an entry here keeps the previous rule
+#: (at least one declared, non-empty field).
+REQUIRED_CREDENTIAL_KEYS: Dict[str, tuple] = {
+    const.FEISHU: (
+        "feishu_app_id",
+        "feishu_app_secret",
+    ),
+    const.WECOM_BOT: (
+        "wecom_bot_id",
+        "wecom_bot_secret",
+    ),
+    const.QQ: (
+        "qq_app_id",
+        "qq_app_secret",
+    ),
+    const.TELEGRAM: (
+        "telegram_token",
+    ),
+    const.SLACK: (
+        "slack_bot_token",
+        "slack_app_token",
+    ),
+    const.DISCORD: (
+        "discord_token",
+    ),
+}
+
+
+def required_credential_keys(channel_type: str) -> tuple:
+    """Keys that must be present and non-empty for *channel_type* to start.
+
+    Empty for a type whose minimum set has not been verified yet (see
+    :data:`REQUIRED_CREDENTIAL_KEYS`), which leaves that type's validation to the
+    "at least one declared field" rule it had before.
+    """
+    return REQUIRED_CREDENTIAL_KEYS.get(_normalize_type(channel_type), ())
+
 # Channel types that actually support running more than one instance today.
 # Others may appear in channel_instances but will run as a single instance
 # (their @singleton is not yet bypassed); we log and fall back gracefully.
@@ -124,6 +183,11 @@ class ChannelInstance:
     #: True when synthesized from legacy channel_type rather than an explicit
     #: channel_instances record. Legacy instances carry no credential override.
     legacy: bool = True
+    #: Owning tenant for a tenant-owned instance (empty for legacy / team.json
+    #: instances). This is the **authoritative anchor** for inbound routing: it
+    #: comes from the instance registration row, never from the message or from
+    #: whatever Agent the instance happens to be bound to.
+    tenant_id: str = ""
 
 
 def _normalize_type(channel_type: str) -> str:
@@ -214,23 +278,361 @@ def _explicit_instances(raw_list: list) -> List[ChannelInstance]:
     return out
 
 
-def resolve_channel_instances(settings: Mapping[str, Any]) -> List[ChannelInstance]:
+def resolve_channel_instances(
+    settings: Mapping[str, Any],
+    tenant_instances: Optional[List[ChannelInstance]] = None,
+) -> List[ChannelInstance]:
     """Channel instances to run for *settings*.
 
     Prefers explicit ``channel_instances`` (multi-Agent); otherwise synthesizes
     the legacy set from ``channel_type``. The ``web`` console is intentionally
     not represented here — it is managed separately by the launcher.
+
+    *tenant_instances* are tenant-owned channels resolved from the identity
+    store (see :func:`load_tenant_channel_instances`) and are appended to the
+    roster list, so one uniform list drives the launcher. An ``instance_id``
+    already present in the roster is skipped: the roster is the source of truth
+    for a given id, and starting it twice would open two identical connections.
     """
     raw_list = settings.get("channel_instances")
     if isinstance(raw_list, list) and raw_list:
         instances = _explicit_instances(raw_list)
-        if instances:
-            return instances
-        logger.warning(
-            "[ChannelInstances] channel_instances present but yielded nothing; "
-            "falling back to legacy channel_type"
+        if not instances:
+            logger.warning(
+                "[ChannelInstances] channel_instances present but yielded nothing; "
+                "falling back to legacy channel_type"
+            )
+            instances = _legacy_instances(settings)
+    else:
+        instances = _legacy_instances(settings)
+
+    if not tenant_instances:
+        return instances
+
+    seen_ids = {inst.instance_id for inst in instances}
+    merged = list(instances)
+    for inst in tenant_instances:
+        if inst.instance_id in seen_ids:
+            logger.warning(
+                f"[ChannelInstances] tenant instance '{inst.instance_id}' collides "
+                f"with a roster instance of the same id, skipping"
+            )
+            continue
+        seen_ids.add(inst.instance_id)
+        merged.append(inst)
+    return merged
+
+
+# ---------------------------------------------------------------------------
+# Runtime state for tenant-owned instances.
+#
+# Restarting a channel is a *process* concern, not durable state: the record
+# lives here rather than in the identity store, and is rebuilt by the startup
+# synthesis after a restart. It exists so a save can report an honest
+# "not applied yet, and here is why" instead of silently leaving the previous
+# credentials in service.
+# ---------------------------------------------------------------------------
+
+_runtime_state: Dict[str, Dict[str, Any]] = {}
+_runtime_state_guard = threading.Lock()
+
+#: One lock per instance id, so two concurrent saves of the same instance cannot
+#: start/stop it twice. Created on first use and never removed (a bounded set:
+#: one entry per instance the process has touched).
+_restart_locks: Dict[str, threading.Lock] = {}
+_restart_locks_guard = threading.Lock()
+
+
+def _instance_restart_lock(instance_id: str) -> threading.Lock:
+    with _restart_locks_guard:
+        lock = _restart_locks.get(instance_id)
+        if lock is None:
+            lock = threading.Lock()
+            _restart_locks[instance_id] = lock
+        return lock
+
+
+def _record_runtime_state(instance_id: str, *, applied: bool,
+                          pending: bool = False, error: str = "") -> Dict[str, Any]:
+    state = {"applied": bool(applied), "pending": bool(pending),
+             "error": str(error or "")}
+    with _runtime_state_guard:
+        _runtime_state[instance_id] = state
+    return dict(state)
+
+
+def instance_runtime_state(instance_id: str) -> Dict[str, Any]:
+    """The last observed runtime outcome for one instance (never raises)."""
+    with _runtime_state_guard:
+        state = _runtime_state.get(instance_id)
+        return dict(state) if state else {"applied": False, "pending": True, "error": ""}
+
+
+def _runtime_manager():
+    """The process's ChannelManager, or None when this process runs no channels.
+
+    Resolved through the app module the same way the platform channel handlers
+    do, so an imported ``channel_instances`` never has to own the manager.
+    """
+    import sys
+
+    app_module = sys.modules.get("__main__") or sys.modules.get("app")
+    return getattr(app_module, "_channel_mgr", None) if app_module else None
+
+
+def _stop_instance_runtime(instance_id: str) -> None:
+    mgr = _runtime_manager()
+    if mgr is None:
+        return
+    try:
+        remover = getattr(mgr, "remove_channel", None)
+        if callable(remover):
+            remover(instance_id)
+        else:
+            mgr.stop(instance_id)
+    except Exception as e:  # stopping is best-effort; the caller reports state
+        logger.warning(f"[ChannelInstances] failed to stop '{instance_id}': {e}")
+
+
+def apply_tenant_instance_runtime(instance_id: str) -> Dict[str, Any]:
+    """Make one tenant instance's running state match its stored state, now.
+
+    Called after a create / edit / enable / disable so the change takes effect
+    without a maintenance window. Serialized per instance, and it never raises:
+    the credential write has already committed, so a runtime failure must be
+    *reported* (``applied`` / ``pending`` / ``error``) rather than turned into a
+    failed save.
+
+    The old run is always stopped on the way in, including when the new
+    credentials cannot be decrypted or started. That is deliberate: leaving the
+    previous run up would be "silently keeping the old credential in service",
+    which the requirement forbids.
+
+    Identity mode is deliberately not consulted. This is only reachable from a
+    tenant-channel write path, which exists in database mode alone, and the row
+    lookup below already answers "is there anything to run" honestly; a mode
+    check would instead report a stored instance as applied when it never was.
+    """
+    with _instance_restart_lock(instance_id):
+        try:
+            from auth.service import get_identity_service
+
+            service = get_identity_service()
+            row = service.get_tenant_channel_instance_row(instance_id)
+        except Exception as e:
+            _stop_instance_runtime(instance_id)
+            logger.error(
+                f"[ChannelInstances] cannot read instance '{instance_id}': {e}")
+            return _record_runtime_state(
+                instance_id, applied=False, error=f"instance lookup failed: {e}")
+
+        if row is None or not row.get("active"):
+            # Deleted or disabled: nothing should be running under this id.
+            _stop_instance_runtime(instance_id)
+            return _record_runtime_state(instance_id, applied=True)
+
+        try:
+            credentials = service.channel_instance_credentials(
+                row["tenant_id"], instance_id)
+        except Exception as e:
+            _stop_instance_runtime(instance_id)
+            logger.error(
+                f"[ChannelInstances] instance '{instance_id}' credentials "
+                f"unusable, stopping it: {e}")
+            return _record_runtime_state(
+                instance_id, applied=False,
+                error=f"credentials unusable: {getattr(e, 'code', '') or e}")
+
+        inst = ChannelInstance(
+            instance_id=instance_id,
+            channel_type=_normalize_type(str(row.get("channel_type") or "")),
+            agent_id=str(row.get("agent_id") or ""),
+            credentials=credentials,
+            legacy=False,
+            tenant_id=str(row.get("tenant_id") or ""),
         )
-    return _legacy_instances(settings)
+
+        mgr = _runtime_manager()
+        if mgr is None:
+            # A console-only process (or a test harness) with no channels: the
+            # credentials are fine, the effect is simply not observable here.
+            return _record_runtime_state(instance_id, applied=False, pending=True)
+
+        # ``restart`` stops the previous run itself, but the guarantee "the old
+        # credential is never left serving" must not depend on another object's
+        # internal ordering: stop it here first, so a failure to start still
+        # leaves nothing running under the previous credentials.
+        _stop_instance_runtime(instance_id)
+        try:
+            mgr.restart(inst)
+        except Exception as e:
+            logger.error(
+                f"[ChannelInstances] instance '{instance_id}' did not start: {e}",
+                exc_info=True)
+            return _record_runtime_state(
+                instance_id, applied=False, error=str(e) or e.__class__.__name__)
+        logger.info(f"[ChannelInstances] instance '{instance_id}' applied immediately")
+        return _record_runtime_state(instance_id, applied=True)
+
+
+def load_tenant_channel_instances() -> List[ChannelInstance]:
+    """Tenant-owned channel instances to run, from the identity store.
+
+    Thin adapter over the identity layer, imported lazily so ``channel/`` never
+    hard-depends on ``auth`` at import time (``channel/external_identity.py``
+    does the same). Returns ``[]`` outside database mode.
+
+    This runs during startup, *before* the Web console serves. A failure to
+    read the store — or a single instance whose credential cannot be decrypted
+    — is therefore logged and degraded, never fatal: the remaining channels and
+    the console still come up.
+    """
+    from channel.external_identity import is_database_mode
+
+    if not is_database_mode():
+        return []
+
+    try:
+        from auth.service import get_identity_service
+
+        service = get_identity_service()
+        rows = service.list_enabled_tenant_channel_instances()
+    except Exception as e:
+        logger.error(
+            f"[ChannelInstances] cannot read tenant channel instances; starting "
+            f"without them: {e}"
+        )
+        return []
+
+    out: List[ChannelInstance] = []
+    for row in rows:
+        instance_id = str(row.get("id") or "")
+        tenant_id = str(row.get("tenant_id") or "")
+        try:
+            credentials = service.channel_instance_credentials(tenant_id, instance_id)
+        except Exception as e:
+            logger.error(
+                f"[ChannelInstances] tenant instance '{instance_id}' (tenant "
+                f"'{tenant_id}') has unusable credentials, skipping: {e}"
+            )
+            continue
+        out.append(
+            ChannelInstance(
+                instance_id=instance_id,
+                channel_type=_normalize_type(str(row.get("channel_type") or "")),
+                agent_id=str(row.get("agent_id") or ""),
+                credentials=credentials,
+                legacy=False,
+                # Ownership comes from the registration row, so inbound routing
+                # never has to infer a tenant from the bound Agent.
+                tenant_id=tenant_id,
+            )
+        )
+    if out:
+        logger.info(
+            f"[ChannelInstances] loaded {len(out)} tenant-owned channel instance(s)"
+        )
+    return out
+
+
+#: Display labels for the channel types a tenant may own, kept beside
+#: ``CREDENTIAL_KEYS`` so the console never has to carry a second copy of the
+#: field contract. A type missing here still works (its code is shown).
+TENANT_CHANNEL_LABELS: Dict[str, Dict[str, str]] = {
+    const.FEISHU: {"zh": "飞书", "en": "Feishu"},
+    const.DINGTALK: {"zh": "钉钉", "en": "DingTalk"},
+    const.WECOM_BOT: {"zh": "企微智能机器人", "en": "WeCom Bot"},
+    const.WEIXIN: {"zh": "微信", "en": "WeChat"},
+    const.QQ: {"zh": "QQ 机器人", "en": "QQ Bot"},
+    const.TELEGRAM: {"zh": "Telegram", "en": "Telegram"},
+    const.SLACK: {"zh": "Slack", "en": "Slack"},
+    const.DISCORD: {"zh": "Discord", "en": "Discord"},
+}
+
+#: Icon + colour per channel type, so the console renders the tenant cards with
+#: the same appearance as the platform cards without keeping a second copy of
+#: this mapping in JavaScript. A type missing here still renders (generic icon).
+TENANT_CHANNEL_APPEARANCE: Dict[str, Dict[str, str]] = {
+    const.FEISHU: {"icon": "fa-paper-plane", "color": "blue"},
+    const.DINGTALK: {"icon": "fa-comments", "color": "blue"},
+    const.WECOM_BOT: {"icon": "fa-robot", "color": "emerald"},
+    const.WEIXIN: {"icon": "fa-comment", "color": "emerald"},
+    const.QQ: {"icon": "fa-comment", "color": "blue"},
+    const.TELEGRAM: {"icon": "fa-paper-plane", "color": "sky"},
+    const.SLACK: {"icon": "fa-hashtag", "color": "purple"},
+    const.DISCORD: {"icon": "fa-discord", "color": "indigo"},
+}
+
+#: Credential field labels for the tenant form. A key missing here falls back to
+#: its own name, so adding a key to CREDENTIAL_KEYS never breaks the form.
+CREDENTIAL_FIELD_LABELS: Dict[str, Dict[str, str]] = {
+    "feishu_app_id": {"zh": "App ID", "en": "App ID"},
+    "feishu_app_secret": {"zh": "App Secret", "en": "App Secret"},
+    "feishu_token": {"zh": "校验 Token（可选）", "en": "Verification Token (optional)"},
+    "feishu_bot_name": {"zh": "机器人名称（可选）", "en": "Bot name (optional)"},
+    "dingtalk_client_id": {"zh": "Client ID", "en": "Client ID"},
+    "dingtalk_client_secret": {"zh": "Client Secret", "en": "Client Secret"},
+    "dingtalk_robot_code": {"zh": "机器人编码", "en": "Robot code"},
+    "wecom_bot_id": {"zh": "Bot ID", "en": "Bot ID"},
+    "wecom_bot_secret": {"zh": "Secret", "en": "Secret"},
+    "wecom_bot_token": {"zh": "Token", "en": "Token"},
+    "wecom_bot_encoding_aes_key": {"zh": "EncodingAESKey", "en": "EncodingAESKey"},
+    "weixin_token": {"zh": "Token", "en": "Token"},
+    "weixin_base_url": {"zh": "回调基址", "en": "Callback base URL"},
+    "qq_app_id": {"zh": "App ID", "en": "App ID"},
+    "qq_app_secret": {"zh": "App Secret", "en": "App Secret"},
+    "telegram_token": {"zh": "Bot Token", "en": "Bot Token"},
+    "slack_bot_token": {"zh": "Bot Token (xoxb-)", "en": "Bot Token (xoxb-)"},
+    "slack_app_token": {"zh": "App Token (xapp-)", "en": "App Token (xapp-)"},
+    "discord_token": {"zh": "Bot Token", "en": "Bot Token"},
+}
+
+#: Credential keys whose value must never be echoed back to a client.
+_SECRET_KEY_HINTS = ("secret", "token", "aes", "key", "password")
+
+
+def tenant_channel_types() -> List[Dict[str, Any]]:
+    """Channel types a tenant may own, with the fields its form must collect.
+
+    This mirrors the server-side gate exactly — a type is offered only when it
+    is both multi-instance ready and has declared credential keys — so the
+    console cannot present a type that ``create_tenant_channel_instance`` would
+    then reject. Labels are display-only; the credential *keys* are the contract
+    (the server rejects any field outside them).
+    """
+    out: List[Dict[str, Any]] = []
+    for channel_type in sorted(MULTI_INSTANCE_READY):
+        keys = CREDENTIAL_KEYS.get(channel_type) or ()
+        if not keys:
+            continue
+        required = set(REQUIRED_CREDENTIAL_KEYS.get(channel_type) or ())
+        out.append({
+            "channel_type": channel_type,
+            "label": TENANT_CHANNEL_LABELS.get(
+                channel_type, {"zh": channel_type, "en": channel_type}),
+            # Appearance is presentation-only, but keeping it server-side stops
+            # the console from carrying a second copy that drifts from this one.
+            "icon": (TENANT_CHANNEL_APPEARANCE.get(channel_type) or {}).get(
+                "icon", "fa-tower-broadcast"),
+            "color": (TENANT_CHANNEL_APPEARANCE.get(channel_type) or {}).get(
+                "color", "primary"),
+            "credential_fields": [
+                {
+                    "key": key,
+                    "label": CREDENTIAL_FIELD_LABELS.get(
+                        key, {"zh": key, "en": key}),
+                    # Secret-looking fields render as password inputs and are
+                    # never sent back down; the bundle is write-only.
+                    "secret": any(hint in key for hint in _SECRET_KEY_HINTS),
+                    # Required-ness travels with the same declaration the server
+                    # validates against, so the console never keeps a second
+                    # copy of the minimum set that could drift from this one.
+                    "required": key in required,
+                }
+                for key in keys
+            ],
+        })
+    return out
 
 
 # ---------------------------------------------------------------------------

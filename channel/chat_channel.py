@@ -244,6 +244,30 @@ class ChatChannel(Channel):
         from channel import external_identity as ex
         from common import memory  # noqa: F401  (module import side effects)
 
+        # Which tenant owns this message? A tenant-owned channel instance owns
+        # both the identity anchor and the Agent choice: its row is the source
+        # of truth (never a context field, which a stale or forged stamp could
+        # set), and its tenant default overrides the process-global default,
+        # which belongs to whichever tenant was provisioned first.
+        instance_tenant = ex.instance_tenant_id(context)
+        if instance_tenant:
+            from auth.service import get_identity_service
+
+            pinned = str(context.get("bound_agent_id") or "").strip() or \
+                get_identity_service().resolved_default_agent_id(instance_tenant)
+            if not pinned:
+                logger.info(
+                    f"[chat_channel] tenant channel instance has no Agent "
+                    f"tenant={instance_tenant} instance={context.get('instance_id')}"
+                )
+                self._send_reply(
+                    context, Reply(ReplyType.TEXT, ex.deny_notice(ex.AGENT_UNAVAILABLE))
+                )
+                return True
+            # Pin the route to this tenant's Agent so neither the instance
+            # binding fallback nor the process default can answer for it.
+            context["bound_agent_id"] = pinned
+
         try:
             agent_id = Bridge().get_agent_bridge().route_context(context)
         except AgentUnavailableError as e:
@@ -263,6 +287,28 @@ class ChatChannel(Channel):
         except Exception:
             agent_id = None  # route failure handled below as an unbounded agent
 
+        if instance_tenant:
+            pinned = str(context.get("bound_agent_id") or "").strip()
+            if agent_id != pinned:
+                # The router fell back (its binding was missing or disabled).
+                # Serving the fallback would answer this tenant's user with
+                # another tenant's Agent, so refuse instead.
+                logger.warning(
+                    f"[chat_channel] tenant channel instance refused a routing "
+                    f"fallback instance={context.get('instance_id')} "
+                    f"pinned={pinned} routed={agent_id}"
+                )
+                self._send_reply(
+                    context,
+                    Reply(
+                        ReplyType.TEXT,
+                        _t("该助手当前已停用，请联系管理员。",
+                           "This assistant is currently disabled. Please contact an administrator."),
+                    ),
+                )
+                return True
+            agent_id = pinned
+
         if not context.get("external_identity"):
             logger.warning(
                 f"[chat_channel] db external inbound missing identity stamp, "
@@ -273,12 +319,44 @@ class ChatChannel(Channel):
             )
             return True
 
-        ctx, reason = ex.resolve_actor_for_context(context, agent_id)
+        ctx, reason = ex.resolve_actor_for_context(context, agent_id, instance_tenant)
         if reason is not None:
+            # The notice tells the author to ask an administrator, so the log
+            # has to tell the administrator what to bind. Without the triple the
+            # only recovery is reproducing the message with instrumentation: the
+            # subject is not stored anywhere on this path, because the binding
+            # that would carry it is precisely what is missing.
+            ext = context.get("external_identity") or {}
             logger.info(
                 f"[chat_channel] db external inbound denied reason={reason} "
-                f"channel={context.get('channel_type')}, agent={agent_id}"
+                f"channel={context.get('channel_type')}, agent={agent_id}, "
+                f"identity=({ext.get('provider')}, {ext.get('issuer')}, "
+                f"{ext.get('subject')})"
             )
+            if reason == ex.UNBOUND:
+                # Remember the author so the administrator does not have to
+                # read this log to find their open_id: the attempt is offered
+                # for one-click binding in the console. Scoped to the instance's
+                # tenant so the right tenant's administrator is shown it.
+                # The evidence (name, preview, group) is what makes the row
+                # identifiable — an open_id alone names nobody.
+                try:
+                    from auth.service import get_identity_service
+                    from channel.external_identity import attempt_evidence
+
+                    get_identity_service().record_external_identity_attempt(
+                        provider=str(ext.get("provider") or ""),
+                        issuer=str(ext.get("issuer") or ""),
+                        subject=str(ext.get("subject") or ""),
+                        tenant_id=instance_tenant,
+                        channel_type=str(context.get("channel_type") or ""),
+                        instance_id=str(context.get("instance_id") or ""),
+                        **attempt_evidence(context),
+                    )
+                except Exception:  # noqa: BLE001 - a refusal must still be sent
+                    logger.warning(
+                        "[chat_channel] failed to record unbound attempt",
+                        exc_info=True)
             self._send_reply(
                 context, Reply(ReplyType.TEXT, ex.deny_notice(reason))
             )

@@ -5,6 +5,7 @@ Provides high-level interface for memory operations
 """
 
 import os
+import re
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 import hashlib
@@ -277,11 +278,15 @@ class MemoryManager:
         except Exception:
             files_before = -1  # unknown -> do not stamp
 
-        files_to_scan: List[tuple] = []  # (file_path, source, scope, user_id)
+        # (file_path, source, scope, user_id, rel_path_or_None). ``rel_path`` is
+        # the index label and the key files are deduped on; it is explicit for
+        # user-domain files, which live outside the Agent workspace and so
+        # cannot be derived with ``relative_to(workspace_dir)``.
+        files_to_scan: List[tuple] = []
 
         memory_file = Path(workspace_dir) / "MEMORY.md"
         if memory_file.exists():
-            files_to_scan.append((memory_file, "memory", "shared", None))
+            files_to_scan.append((memory_file, "memory", "shared", None, None))
 
         if memory_dir.exists():
             for file_path in memory_dir.rglob("*.md"):
@@ -309,7 +314,33 @@ class MemoryManager:
                 else:
                     user_id = None
                     scope = "shared"
-                files_to_scan.append((file_path, "memory", scope, user_id))
+                files_to_scan.append((file_path, "memory", scope, user_id, None))
+
+        # The current user's personal memory lives in the user domain, beside
+        # the Agents. Each Agent's index covers it too, which is what makes a
+        # user's personal memory visible from every Agent they may use, while
+        # retrieval stays filtered to `scope='shared' OR user_id = ?`.
+        from common.runtime_identity import current_identity
+        _uid = current_identity().user_id
+        # A user id becomes a path segment; refuse anything that could escape it.
+        if _uid and re.fullmatch(r"[A-Za-z0-9._-]+", _uid):
+            from common import state_dir
+            personal_main = state_dir.memory_file()
+            if personal_main.exists():
+                files_to_scan.append(
+                    (personal_main, "memory", "user", _uid,
+                     f"memory/users/{_uid}/MEMORY.md"))
+            personal_dir = state_dir.memory_dir(ensure=False)
+            if personal_dir.exists():
+                for file_path in personal_dir.rglob("*.md"):
+                    rel = file_path.relative_to(personal_dir)
+                    if any(part.startswith('.') for part in rel.parts):
+                        continue
+                    if "dreams" in rel.parts:
+                        continue
+                    files_to_scan.append(
+                        (file_path, "memory", "user", _uid,
+                         f"memory/users/{_uid}/{rel.as_posix()}"))
 
         from config import conf
         if conf().get("knowledge", True):
@@ -319,7 +350,18 @@ class MemoryManager:
             knowledge_dir = Path(state_dir.knowledge_dir(base=workspace_dir))
             if knowledge_dir.exists():
                 for file_path in knowledge_dir.rglob("*.md"):
-                    files_to_scan.append((file_path, "knowledge", "shared", None))
+                    rel = file_path.relative_to(knowledge_dir)
+                    if any(part.startswith('.') for part in rel.parts):
+                        continue
+                    # The shared base lives outside every Agent workspace, so
+                    # the label must be derived from the knowledge root. Deriving
+                    # it with ``relative_to(workspace_dir)`` raised ValueError
+                    # and aborted the entire sync. The "knowledge/" prefix keeps
+                    # the label identical to the in-workspace case, so nothing
+                    # already indexed has to be re-labelled.
+                    files_to_scan.append(
+                        (file_path, "knowledge", "shared", None,
+                         (Path("knowledge") / rel).as_posix()))
 
         # Pass 1: inline chunking + change detection. Inlined (instead of
         # calling self._prepare_file_for_sync) so this method does not depend
@@ -327,13 +369,23 @@ class MemoryManager:
         # where the class object is older than the method's source.
         pending: List[Dict[str, Any]] = []
         workspace_dir_path = self.config.get_workspace()
-        for file_path, source, scope, user_id in files_to_scan:
+        for file_path, source, scope, user_id, explicit_rel in files_to_scan:
             try:
                 content = file_path.read_text(encoding='utf-8')
             except Exception:
                 continue
             file_hash = MemoryStorage.compute_hash(content)
-            rel_path = str(file_path.relative_to(workspace_dir_path))
+            if explicit_rel is not None:
+                rel_path = explicit_rel
+            else:
+                try:
+                    rel_path = str(file_path.relative_to(workspace_dir_path))
+                except ValueError:
+                    # No out-of-workspace file may take the whole sync down with
+                    # it (that would silently stop indexing *everything* else).
+                    # Every such file is collected with an explicit label above;
+                    # falling back to the bare name keeps this path crash-free.
+                    rel_path = file_path.name
             if self.storage.get_file_hash(rel_path) == file_hash:
                 continue
             # Markdown files (memory + knowledge) get structure-aware chunking;

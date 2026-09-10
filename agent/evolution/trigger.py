@@ -61,6 +61,12 @@ def note_user_turn(agent, channel_type: str = "", receiver: str = "") -> None:
       _evo_turns         : user turns since the last evolution
       _evo_channel_type  : originating channel (for later notify)
       _evo_receiver      : push target for notify
+      _evo_user_id       : the verified user this activity belongs to
+
+    ``_evo_user_id`` is captured here, on the request path, because the sweep
+    runs later on a background thread where the runtime identity is gone. It
+    decides whose personal memory the pass consolidates, so it must come from
+    the verified identity — never from a caller-supplied value.
     """
     try:
         agent._evo_last_active = time.time()
@@ -69,6 +75,10 @@ def note_user_turn(agent, channel_type: str = "", receiver: str = "") -> None:
             agent._evo_channel_type = channel_type
         if receiver:
             agent._evo_receiver = receiver
+        from common.runtime_identity import current_user_id
+        uid = current_user_id()
+        if uid:
+            agent._evo_user_id = uid
     except Exception:
         pass
 
@@ -141,6 +151,10 @@ def _scan_once(agent_bridge, cfg) -> None:
 
             channel_type = getattr(agent, "_evo_channel_type", "") or ""
             receiver = getattr(agent, "_evo_receiver", "") or ""
+            # Captured on the request path: the ambient identity is not carried
+            # onto this background thread, and the user decides whose personal
+            # memory is consolidated (None keeps the historical shared pass).
+            user_id = getattr(agent, "_evo_user_id", None)
 
             run_evolution_for_session(
                 agent_bridge,
@@ -148,6 +162,7 @@ def _scan_once(agent_bridge, cfg) -> None:
                 agent_id=agent_id,
                 channel_type=channel_type,
                 receiver=receiver,
+                user_id=user_id,
                 idle_minutes=(now - last_active) / 60 if last_active > 0 else 0.0,
             )
         except Exception as e:

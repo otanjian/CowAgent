@@ -20,6 +20,7 @@ Key invariants enforced here (from the specs):
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import secrets
@@ -43,6 +44,7 @@ from auth.policy import (
     BUILTIN_ROLES,
     TENANT_ADMIN_CODE,
     MEMBER_CODE,
+    PLATFORM_ADMIN_CODE,
     PERMISSION_CATALOG,
     normalize_permissions,
     RESOURCE_KINDS,
@@ -81,6 +83,16 @@ _SIGNED_CONSOLE_PAGES: Dict[str, Dict[str, object]] = {
     "admin.branding": {"permission": "", "scope": "platform", "label": "品牌设置"},
     "admin.settings": {"permission": "", "scope": "platform", "label": "系统设置"},
 }
+
+#: Console pages owned by the built-in ``tenant_admin`` qualification itself —
+#: the current tenant's 组织与权限 group (成员管理 / 角色权限 / 组织架构). A
+#: restrictive ``menu`` grant held by *another* role of a tenant admin must not
+#: strip the management surface the qualification confers, so these pages are
+#: exempt from menu-grant denial for a tenant admin. An ordinary member is still
+#: bound by their menu grants, and platform ``all`` is unrestricted separately.
+_TENANT_ADMIN_CORE_PAGES: frozenset = frozenset({
+    "admin.members", "admin.roles", "admin.organization",
+})
 
 
 #: Resource-kind + action -> the functional permission that must also be held.
@@ -123,6 +135,22 @@ _ROLE_CODE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 #: External identity provider names (feishu/dingtalk/wecom/...). Lowercased at
 #: bind time so inbound resolution can normalize identically.
 _PROVIDER_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+
+logger = logging.getLogger("rongai.identity.service")
+
+
+def _validate_new_account(username: str, temporary_password: str) -> None:
+    """Guard for creating an account with an operator-supplied password.
+
+    Shared by the member create flow and the platform-side tenant-admin create
+    flow so the two cannot drift apart. Uniqueness is deliberately *not* checked
+    here: that needs the caller's connection and transaction.
+    """
+    if (temporary_password.lower() in _COMMON_PASSWORDS
+            or len(temporary_password) < MIN_PASSWORD_LENGTH):
+        raise IdentityServiceError("weak temporary password", code="weak_password")
+    if not _USERNAME_RE.fullmatch(username.strip()):
+        raise IdentityServiceError("invalid username", code="invalid_username")
 
 #: Default lifetime (seconds) of an initial/temporary password. A real bootstrap
 #: (allow_weak=False) and every issued temp password carry a finite expiry so a
@@ -179,9 +207,14 @@ def _deployment_shared_base(svc=None) -> Optional[str]:
                 common = os.path.commonpath([base, other_root])
             except ValueError:  # different drives (Windows): never ancestors
                 continue
-            # Equal, or one contains the other -> deriving under it would
-            # produce a tenant root that can never resolve.
-            if common == base or common == other_root:
+            # Reject only when the base equals or sits INSIDE an existing
+            # tenant root: new tenants derive ``<base>/tenants/<code>``, which
+            # would then land inside that tenant. A base that merely *contains*
+            # an existing tenant root is the intended layout (tenants are
+            # siblings under ``<base>/tenants``), so it must stay usable for
+            # every later tenant. The derived root's own overlap is validated
+            # precisely by ``_assert_new_tenant_root_clear`` before any write.
+            if common == other_root:
                 raise IdentityServiceError(
                     "tenant shared root base %r overlaps tenant %r root %r; "
                     "configure 'tenant_shared_base' (or env COW_TENANT_BASE) "
@@ -198,9 +231,10 @@ def _derive_tenant_shared_root(code: str, svc=None) -> str:
 
     Deriving a NEW tenant's root under an EXISTING tenant's root would trip the
     read-time cross-tenant containment guard for both tenants, so the controlled
-    base must be outside every tenant root. Raises a 503 ``config_error`` when
-    no usable base is available so a tenant is never created with an unusable/
-    overlapping root (design §4).
+    base must not sit inside any existing tenant root (tenants derived from the
+    same base are siblings and do not overlap). Raises a 503 ``config_error``
+    when no usable base is available so a tenant is never created with an
+    unusable/overlapping root (design §4).
     """
     base = _deployment_shared_base(svc)
     if not base:
@@ -344,7 +378,7 @@ class IdentityService:
                 "INSERT INTO users(id, username, display_name, password_hash,"
                 " active, is_platform_admin, must_change_password,"
                 " temp_password_expires_at, version)"
-                " VALUES (?,?,?,?,1,1,?,?,1)",
+                " VALUES (?,?,?,?,1,0,?,?,1)",
                 (user_id, admin_username, admin_display, admin_hash,
                  # A test/bootstrap admin (allow_weak) skips the forced first-login
                  # password change so it can be used immediately. A real bootstrap
@@ -353,6 +387,9 @@ class IdentityService:
                  0 if allow_weak else 1,
                  None if allow_weak else _now() + TEMPORARY_PASSWORD_TTL_SECONDS),
             )
+            # The initial admin is a platform admin: mirror column starts at 0
+            # and is promoted through the single write path (binding + mirror).
+            self._set_platform_role(con, user_id, True, user_id)
             con.execute(
                 "INSERT INTO memberships(id, tenant_id, user_id, display_name, active, version)"
                 " VALUES (?,?,?,?,1,1)",
@@ -466,8 +503,57 @@ class IdentityService:
         tenant = self.get_tenant(tenant_id)
         return tenant.get("default_agent_id") if tenant else None
 
+    def resolved_default_agent_id(self, tenant_id: str) -> Optional[str]:
+        """The Agent an Agent-less request from this tenant should use.
+
+        A session must still be anchored to one Agent, but the user must not
+        have to choose it. Order:
+
+        1. the tenant's configured ``default_agent_id``;
+        2. among the tenant's bound Agents, the tenant-*shared* ones (a private
+           Agent is readable only by its owner, so the shared entry must not be
+           pinned to one);
+        3. failing that, every bound Agent.
+
+        Steps 2 and 3 pick the smallest stable id, so the answer never depends
+        on binding insert order. Read-only by design: a GET must not mutate the
+        tenant, and writing here would put a read path under ``tenants.version``
+        conflict handling. Returns None only when the tenant holds no Agent.
+
+        Single source of truth: the Web layer delegates here rather than
+        re-deriving the rule, so all read paths agree.
+        """
+        configured = self.tenant_default_agent_id(tenant_id)
+        if configured:
+            return configured
+        bindings = self.agents_for_tenant(tenant_id)
+        if not bindings:
+            return None
+        shared = [b["agent_id"] for b in bindings
+                  if b.get("private_owner_user_id") is None]
+        pool = shared or [b["agent_id"] for b in bindings]
+        return sorted(pool)[0]
+
+    def clone_of(self, tenant_id: str, source_agent_id: str) -> Optional[Dict[str, Any]]:
+        """Return the binding this tenant cloned from ``source_agent_id``.
+
+        Clone provenance is what makes a copy idempotent: the clone's own id is
+        freshly generated, so only ``cloned_from_agent_id`` can tell a re-run
+        "this source already landed here". Returns None when the tenant holds no
+        clone of that source (or when only a plain bind exists).
+        """
+        rows = self._store.execute(
+            "SELECT * FROM agent_bindings"
+            " WHERE tenant_id=? AND cloned_from_agent_id=?",
+            (tenant_id, source_agent_id),
+        )
+        return dict(rows[0]) if rows else None
+
     def bind_agent(self, *, tenant_id: str, agent_id: str,
-                   private_owner_user_id: Optional[str] = None) -> Dict[str, Any]:
+                   private_owner_user_id: Optional[str] = None,
+                   cloned_from_agent_id: Optional[str] = None,
+                   actor_user_id: Optional[str] = None,
+                   actor_username: Optional[str] = None) -> Dict[str, Any]:
         """Register/bind a global agent to a tenant (task 4.1 migration).
 
         Idempotent: re-running with the same ``agent_id``+``tenant_id`` does not
@@ -476,19 +562,40 @@ class IdentityService:
         tenant-shared. The binding is the single source of truth for which
         tenant can see the agent.
 
+        ``cloned_from_agent_id`` records copy provenance (change
+        copy-default-tenant-agents) so a repeated copy knows which sources have
+        already landed. At most one clone of a given source may exist per tenant
+        (enforced by a partial unique index); a violation is reported as 409 so
+        the caller can treat it as "already copied" rather than corrupting the
+        roster. ``actor_user_id``/``actor_username`` are optional so the copy flow
+        can attribute the bind without changing existing callers.
+
         Cross-tenant re-binding is rejected: an agent_id already bound to a
         different tenant cannot be re-pointed here (no ordinary API may re-bind).
         """
         existing = self.get_agent_binding(agent_id)
         if existing:
             if existing["tenant_id"] == tenant_id:
-                # Already bound to this tenant -> idempotent success.
+                # Already bound to this tenant -> idempotent success, repairing a
+                # missing owner/provenance if the caller now supplies one.
+                patch: Dict[str, Any] = {}
                 if private_owner_user_id is not None and existing.get("private_owner_user_id") is None:
-                    with self._tx() as con:
-                        con.execute(
-                            "UPDATE agent_bindings SET private_owner_user_id=? WHERE agent_id=?",
-                            (private_owner_user_id, agent_id))
-                        con.commit()
+                    patch["private_owner_user_id"] = private_owner_user_id
+                if cloned_from_agent_id is not None and existing.get("cloned_from_agent_id") is None:
+                    patch["cloned_from_agent_id"] = cloned_from_agent_id
+                if patch:
+                    assignments = ", ".join("%s=?" % key for key in patch)
+                    try:
+                        with self._tx() as con:
+                            con.execute(
+                                "UPDATE agent_bindings SET %s WHERE agent_id=?" % assignments,
+                                tuple(patch.values()) + (agent_id,))
+                            con.commit()
+                    except sqlite3.IntegrityError:
+                        raise IdentityServiceError(
+                            "agent %r already has a clone of source %r in this tenant"
+                            % (agent_id, cloned_from_agent_id),
+                            code="conflict", status=409)
                     existing = self.get_agent_binding(agent_id)
                 return existing
             raise IdentityServiceError(
@@ -497,20 +604,168 @@ class IdentityService:
         tenant = self.get_tenant(tenant_id)
         if not tenant:
             raise IdentityServiceError("tenant not found", code="not_found", status=404)
+        try:
+            with self._tx() as con:
+                con.execute(
+                    "INSERT INTO agent_bindings(agent_id, tenant_id, private_owner_user_id,"
+                    " cloned_from_agent_id) VALUES (?,?,?,?)",
+                    (agent_id, tenant_id, private_owner_user_id, cloned_from_agent_id))
+                self._audit_in_tx(
+                    con,
+                    actor_username=actor_username, actor_user_id=actor_user_id,
+                    tenant_id=tenant_id, target_tenant_id=tenant_id,
+                    action="agent.bind", target=f"agent:{agent_id}",
+                    redacted_changes={"tenant_id": tenant_id,
+                                      "private_owner_user_id": private_owner_user_id,
+                                      "cloned_from_agent_id": cloned_from_agent_id},
+                    result="success")
+                con.commit()
+        except sqlite3.IntegrityError:
+            # The partial unique index is the authority on "one clone per source
+            # per tenant"; translate it so callers get a 409, not a 500.
+            raise IdentityServiceError(
+                "agent %r already has a clone of source %r in this tenant"
+                % (agent_id, cloned_from_agent_id),
+                code="conflict", status=409)
+        return self.get_agent_binding(agent_id)
+
+    def set_tenant_default_agent(self, *, tenant_id: str, agent_id: str,
+                                 actor_user_id: Optional[str] = None) -> Dict[str, Any]:
+        """Appoint one of a tenant's *bound* agents as its tenant default.
+
+        Used by the copy flow so a tenant that receives cloned agents also gets a
+        default to chat with. Narrow on purpose: it only accepts an agent already
+        bound to the tenant, and it deliberately does **not** bump the tenant's
+        ``version`` — it runs inside the tenant editor's single batch-commit
+        chain, where bumping the version here would invalidate the draft the
+        operator is still editing (the version is chained once, by the step that
+        commits the remaining tabs).
+        """
+        self._require_platform_admin(actor_user_id)
+        return self._appoint_tenant_default_agent(
+            tenant_id=tenant_id, agent_id=agent_id, actor_user_id=actor_user_id)
+
+    def appoint_tenant_default_agent(self, *, tenant_id: str, agent_id: str,
+                                     actor_user_id: Optional[str] = None) -> Dict[str, Any]:
+        """Appoint a tenant's default Agent from the tenant's *own* console.
+
+        The tenant-console twin of :meth:`set_tenant_default_agent`: a tenant
+        administrator may appoint one of its own bound Agents, so a tenant that
+        creates its first Agent immediately has a default to chat with. A
+        platform admin passes too (it may manage any tenant). The binding is
+        still the authority: an unbound Agent is refused, so this can never
+        point a tenant default at another tenant's Agent.
+        """
+        self._require_tenant_admin(actor_user_id, tenant_id)
+        return self._appoint_tenant_default_agent(
+            tenant_id=tenant_id, agent_id=agent_id, actor_user_id=actor_user_id)
+
+    def _appoint_tenant_default_agent(self, *, tenant_id: str, agent_id: str,
+                                      actor_user_id: Optional[str]) -> Dict[str, Any]:
+        """Appoint a bound Agent as the tenant default. Callers gate first."""
         with self._tx() as con:
+            tenant = con.execute("SELECT id FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+            if not tenant:
+                raise IdentityServiceError("tenant not found", code="not_found", status=404)
+            binding = con.execute(
+                "SELECT agent_id FROM agent_bindings WHERE tenant_id=? AND agent_id=?",
+                (tenant_id, agent_id)).fetchone()
+            if not binding:
+                raise IdentityServiceError(
+                    "agent is not bound to this tenant", code="not_found", status=404)
             con.execute(
-                "INSERT INTO agent_bindings(agent_id, tenant_id, private_owner_user_id)"
-                " VALUES (?,?,?)", (agent_id, tenant_id, private_owner_user_id))
+                "UPDATE tenants SET default_agent_id=?, updated_at=unixepoch() WHERE id=?",
+                (agent_id, tenant_id))
+            # A tenant default must be tenant-shared: ``private_owner_user_id``
+            # is an exclusive read gate enforced on the chat path, so a private
+            # default would lock every other member out of the entry the console
+            # offers them. Appointing is itself the explicit act that shares it.
+            cleared = con.execute(
+                "SELECT private_owner_user_id FROM agent_bindings"
+                " WHERE tenant_id=? AND agent_id=?", (tenant_id, agent_id)).fetchone()
+            if cleared and cleared["private_owner_user_id"] is not None:
+                con.execute(
+                    "UPDATE agent_bindings SET private_owner_user_id=NULL"
+                    " WHERE tenant_id=? AND agent_id=?", (tenant_id, agent_id))
             self._audit_in_tx(
                 con,
-                actor_username=None, actor_user_id=None,
-                tenant_id=tenant_id, target_tenant_id=tenant_id,
-                action="agent.bind", target=f"agent:{agent_id}",
-                redacted_changes={"tenant_id": tenant_id,
-                                  "private_owner_user_id": private_owner_user_id},
-                result="success")
+                actor_username=None, actor_user_id=actor_user_id,
+                tenant_id=None, target_tenant_id=tenant_id,
+                action="tenant.set_default_agent", target=f"tenant:{tenant_id}",
+                redacted_changes={"default_agent_id": agent_id}, result="success")
             con.commit()
-        return self.get_agent_binding(agent_id)
+        return {"id": tenant_id, "default_agent_id": agent_id}
+
+    def make_agent_tenant_shared(self, *, agent_id: str, actor_user_id: Optional[str] = None) -> Dict[str, Any]:
+        """Drop an Agent's private owner, making it readable tenant-wide.
+
+        Ownership has to be *set* explicitly, so there must be an explicit way
+        to give it up. ``bind_agent`` cannot do this: it only repairs a missing
+        owner, never clears one, which is why a legacy Agent stamped with the
+        initial admin can never become shared through that path.
+
+        Gated to a platform admin or a tenant admin of the owning tenant, and
+        audited, because it widens who can read the Agent's memory.
+        """
+        binding = self.get_agent_binding(agent_id)
+        if not binding:
+            raise IdentityServiceError("agent not bound to a tenant",
+                                      code="not_found", status=404)
+        if actor_user_id is not None:
+            self._require_tenant_admin(actor_user_id, binding["tenant_id"])
+        with self._tx() as con:
+            con.execute(
+                "UPDATE agent_bindings SET private_owner_user_id=NULL WHERE agent_id=?",
+                (agent_id,))
+            self._audit_in_tx(
+                con,
+                actor_username=None, actor_user_id=actor_user_id,
+                tenant_id=None, target_tenant_id=binding["tenant_id"],
+                action="agent.make_tenant_shared", target=f"agent:{agent_id}",
+                redacted_changes={"private_owner_user_id": None}, result="success")
+            con.commit()
+        return {"agent_id": agent_id, "tenant_id": binding["tenant_id"],
+                "private_owner_user_id": None}
+
+    def ensure_shared_default_agents(self) -> Dict[str, Any]:
+        """Correct existing rows so every resolvable tenant default is shared.
+
+        Earlier writes inferred a private owner from whoever acted
+        (``register_default_tenancy`` stamped the initial admin; the console
+        adoption stamped the creating user). Installations that predate the fix
+        therefore hold private Agents that a tenant resolves as its default —
+        unusable by every other member.
+
+        Idempotent and audited; only the Agent each tenant actually resolves as
+        its default is touched, so an unrelated private Agent keeps its owner.
+        """
+        updated = 0
+        resolved: Dict[str, str] = {}
+        for tenant in self.list_tenants():
+            tenant_id = tenant["id"]
+            configured = self.tenant_default_agent_id(tenant_id)
+            target = configured or self.resolved_default_agent_id(tenant_id)
+            if not target:
+                continue
+            resolved[tenant_id] = target
+            binding = self.get_agent_binding(target)
+            if not binding or binding.get("private_owner_user_id") is None:
+                continue
+            with self._tx() as con:
+                con.execute(
+                    "UPDATE agent_bindings SET private_owner_user_id=NULL"
+                    " WHERE agent_id=?", (target,))
+                self._audit_in_tx(
+                    con,
+                    actor_username=None, actor_user_id=None,
+                    tenant_id=None, target_tenant_id=tenant_id,
+                    action="agent.make_tenant_shared", target=f"agent:{target}",
+                    redacted_changes={"private_owner_user_id": None,
+                                      "reason": "shared_default_backfill"},
+                    result="success")
+                con.commit()
+            updated += 1
+        return {"updated": updated, "resolved": resolved}
 
     def register_default_tenancy(
         self, *, tenant_id: str, private_owner_user_id: str, agent_ids: List[str],
@@ -645,8 +900,23 @@ class IdentityService:
 
     def is_platform_admin_user(self, user_id: str) -> bool:
         """True when the user is an active platform admin (the ``all`` source)."""
-        user = self._find_user_by_id(user_id)
-        return bool(user and user["active"] and user["is_platform_admin"])
+        return self._has_platform_admin_binding(user_id)
+
+    def _has_platform_admin_binding(self, user_id: str) -> bool:
+        """True when the active user holds the platform_admin role binding.
+
+        The platform-scoped role binding is the sole source of truth for the
+        platform qualification; ``users.is_platform_admin`` is only a derived
+        mirror and is never read here.
+        """
+        rows = self._store.execute(
+            "SELECT u.active AS active FROM users u"
+            " JOIN user_platform_roles upr ON upr.user_id = u.id"
+            " JOIN platform_roles r ON r.id = upr.platform_role_id"
+            " WHERE u.id = ? AND r.code = ?",
+            (user_id, PLATFORM_ADMIN_CODE),
+        )
+        return bool(rows and rows[0]["active"])
 
     def authorization_mode(self, user_id: str, tenant_id: Optional[str]) -> str:
         """Return ``all`` for an active platform admin, else ``role``.
@@ -1072,20 +1342,13 @@ class IdentityService:
         )
 
     def is_platform_admin(self, user_id: str) -> bool:
-        user = self._find_user_by_id(user_id)
-        return bool(user and user["active"] and user["is_platform_admin"])
+        return self._has_platform_admin_binding(user_id)
 
     def _is_tenant_admin(self, user_id: str, tenant_id: str) -> bool:
         membership = self._membership(user_id, tenant_id)
         if not membership or not membership["active"] or not membership["user_active"]:
             return False
         return TENANT_ADMIN_CODE in self._role_codes_for_membership(membership["id"])
-
-    def _count_valid_platform_admins(self, con=None) -> int:
-        sql = "SELECT COUNT(*) AS c FROM users WHERE is_platform_admin=1 AND active=1"
-        if con is not None:
-            return con.execute(sql).fetchone()["c"]
-        return self._store.execute(sql)[0]["c"]
 
     def _count_valid_tenant_admins(self, tenant_id: str, con=None) -> int:
         sql = (
@@ -1226,6 +1489,59 @@ class IdentityService:
                               "retry_after": retry_after,
                               "rate_limited": True},
             result="denied",
+        )
+
+    def require_recent_password(self, user_id: str, recent_password: str) -> None:
+        """Re-authenticate the actor for a sensitive write.
+
+        The public form of the guard every sensitive service method applies
+        internally. Orchestration that spans more than one service method (and
+        more than one store) still owes the caller the same proof that the person
+        at the keyboard is the account holder, and it must run *before* any of
+        those writes.
+        """
+        self._require_recent_password(user_id, recent_password)
+
+    def record_agent_copy_event(
+        self, *, actor_user_id: Optional[str] = None,
+        actor_username: Optional[str] = None,
+        source_tenant_id: Optional[str] = None,
+        target_tenant_id: Optional[str] = None,
+        selected: Optional[List[str]] = None,
+        copied: Optional[List[str]] = None,
+        skipped: Optional[List[str]] = None,
+        failed: Optional[List[str]] = None,
+        default_agent_id: Optional[str] = None,
+        result: str = "success",
+        reason: Optional[str] = None,
+    ) -> None:
+        """Record one sanitized audit event for an agent-copy request.
+
+        Copying agents into a tenant is a platform-admin-only cross-tenant write,
+        so both its completion and its *refusal* are recorded. Only ids and
+        counts are stored — never a workspace path, password, hash, token or
+        credential. ``result`` is ``success``, ``partial`` (some agents failed)
+        or ``denied``.
+        """
+        changes: Dict[str, Any] = {
+            "source_tenant_id": source_tenant_id,
+            "selected_agent_ids": list(selected or []),
+            "copied_agent_ids": list(copied or []),
+            "skipped_agent_ids": list(skipped or []),
+            "failed_agent_ids": list(failed or []),
+            "default_agent_id": default_agent_id,
+        }
+        if reason:
+            changes["reason"] = reason
+        self._audit.record(
+            actor_user_id=actor_user_id,
+            actor_username=actor_username,
+            tenant_id=None,
+            target_tenant_id=target_tenant_id,
+            action="tenant.copy_agents",
+            target=f"tenant:{target_tenant_id}" if target_tenant_id else "n/a",
+            redacted_changes=changes,
+            result=result,
         )
 
     def _find_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
@@ -1597,6 +1913,24 @@ class IdentityService:
         def read_ok(perms: set, pid: str) -> bool:
             return pid in perms
 
+        # Menu (navigation) grants, design D1. Compat rule: only a member whose
+        # effective roles carry at least one explicit ``menu`` grant is bound by
+        # that set. Built-in roles and legacy custom roles with no menu grant
+        # keep the functional-permission behaviour, so introducing menu grants
+        # never silently hides a page for an existing account. Platform ``all``
+        # is never restricted.
+        menu_grants = {
+            str(g.get("resource_id"))
+            for g in grants
+            if g.get("resource_kind") == "menu"
+        }
+        menu_gated = mode != "all" and bool(menu_grants)
+
+        def menu_view_ok(pid: str) -> bool:
+            if not menu_gated:
+                return True
+            return f"nav:{pid}" in menu_grants
+
         def resource_state(kind: str, action: str, perm: str) -> bool:
             """True when the identity may read this resource kind (catalog open)."""
             if mode == "all":
@@ -1661,6 +1995,49 @@ class IdentityService:
                 "reason": "",
                 "actions": {"update": is_platform_admin, "create": is_platform_admin},
             }
+        # Message channels: ONE page key with two relative scopes (design D7).
+        # A platform admin manages the instance-level (global) config through
+        # ``/api/channels``; a tenant admin manages its own tenant's instances
+        # through ``/api/tenant/channels``. Both interfaces are reachable in
+        # database mode, so a page that reports ``available`` here is not a
+        # promise the API contradicts — and the interface still refuses the
+        # scope each operator does not own.
+        if consumers.get("channels", {}).get("available"):
+            if is_platform_admin:
+                scope, allowed = "platform", True
+            elif is_admin:
+                scope, allowed = "tenant", True
+            else:
+                scope, allowed = "tenant", False
+            result["admin.channels"] = {
+                "available": allowed,
+                "read_allowed": allowed,
+                "scope": scope,
+                "reason": "" if allowed else "no_tenant_control",
+                "actions": {"create": allowed, "update": allowed},
+            }
+        # Agent-development catalogs: ``admin.skills`` (工具与技能) is registered
+        # with an empty functional permission, so without an explicit branch it
+        # would be invisible to everyone but a platform ``all`` account. The
+        # built-in tenant_admin qualifies as its own tenant's manager and may
+        # read the tenant's skills/tools catalog without a per-resource grant
+        # (read-only: the write paths still require ``skill.enable``/``skill.edit``
+        # and an explicit grant — the same read trust the tenant-admin Agent
+        # exemption already extends). A plain member still needs the functional
+        # read permission *and* an explicit grant.
+        if consumers.get("tools", {}).get("available"):
+            catalog_readable = bool(
+                mode == "all" or is_admin
+                or ("skill.read" in permissions and resource_ids_for(grants, "skill", "read"))
+                or ("tool.read" in permissions and resource_ids_for(grants, "tool", "read"))
+            )
+            result["admin.skills"] = {
+                "available": catalog_readable,
+                "read_allowed": catalog_readable,
+                "scope": _SIGNED_CONSOLE_PAGES["admin.skills"].get("scope", "agent"),
+                "reason": "" if catalog_readable else "no_resource_grant",
+                "actions": {},
+            }
         # Signed-but-not-yet-available pages (business consumers still closed).
         for pid, meta in _SIGNED_CONSOLE_PAGES.items():
             if pid in result:
@@ -1688,6 +2065,30 @@ class IdentityService:
                 "reason": "consumer_closed" if identity_admin_open else "deferred",
                 "actions": {},
             }
+        # Menu (navigation) grants, applied as one final pass over every signed
+        # page so the rule is uniform (workbench and admin alike). Compat rule
+        # (design D1): only a member whose roles carry at least one explicit
+        # ``menu`` grant is bound by that set — built-in roles and legacy custom
+        # roles keep the functional-permission behaviour; platform ``all`` is
+        # never restricted. A page denied here is marked ``menu_denied`` so the
+        # console can distinguish "not granted" from "consumer closed".
+        if menu_gated:
+            for pid, entry in result.items():
+                if pid not in signed or not isinstance(entry, dict):
+                    continue
+                # The built-in tenant_admin qualification owns the current
+                # tenant's 组织与权限 pages (成员管理 / 角色权限 / 组织架构); a
+                # restrictive menu grant carried by another of the admin's roles
+                # must not hide the surface the qualification itself confers.
+                if is_admin and pid in _TENANT_ADMIN_CORE_PAGES:
+                    continue
+                if menu_view_ok(pid):
+                    continue
+                entry["read_allowed"] = False
+                entry["available"] = False
+                entry["reason"] = "menu_not_granted"
+                entry["actions"] = {}
+                entry["menu_denied"] = True
         return result
 
     def _consumer_availability(self) -> Dict[str, Dict[str, Any]]:
@@ -1807,13 +2208,26 @@ class IdentityService:
         actor_user_id: str,
         code: str,
         name: str,
-        admin_username: str,
-        admin_display: str,
-        admin_password: str,
+        admin_username: Optional[str] = None,
+        admin_display: str = "",
+        admin_password: Optional[str] = None,
         recent_password: str,
         shared_root: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Platform admin creates a tenant + initial admin, with a same-transaction audit.
+        """Platform admin creates a tenant, with an optional initial admin.
+
+        Tenant lifecycle and account provisioning are separate concerns: by
+        default the new tenant is created as a bare skeleton (tenant row,
+        built-in roles, virtual org root) with **no** admin account or
+        membership. The initial admin is then bound by the independent
+        "configure tenant admin" operation, which only ever attaches an
+        existing User. Supplying an explicit ``admin_username`` +
+        ``admin_password`` pair keeps the original behaviour (account, active
+        membership and ``tenant_admin`` binding written in the same
+        transaction) for CLI ``bootstrap``/``register`` and in-place callers.
+        An admin-less tenant is created ``active=1`` and may stay without a
+        valid ``tenant_admin`` until one is bound; the "restore tenant"
+        continuity check is unaffected (design §4).
 
         ``shared_root`` is optional. The web form must not accept a client-supplied
         path (design §4); when omitted/empty the service derives a controlled root
@@ -1828,7 +2242,15 @@ class IdentityService:
             raise IdentityServiceError("invalid tenant code", code="invalid_code")
         if self._find_tenant_by_code(code):
             raise IdentityServiceError("tenant code already exists", code="conflict", status=409)
-        if admin_password.lower() in _COMMON_PASSWORDS or len(admin_password) < MIN_PASSWORD_LENGTH:
+        admin_username = (admin_username or "").strip()
+        admin_password = admin_password or ""
+        # A username+password pair is the single source of truth for "build the
+        # initial admin here"; no separate boolean to contradict it. The weak
+        # password check only runs when a password is actually supplied, so a
+        # password-less create request is never rejected for that reason.
+        create_admin = bool(admin_username and admin_password)
+        if create_admin and (admin_password.lower() in _COMMON_PASSWORDS
+                             or len(admin_password) < MIN_PASSWORD_LENGTH):
             raise IdentityServiceError("weak admin password", code="weak_password")
         # Web form never supplies a shared root; derive a controlled one before
         # touching the DB so a missing/overlapping deployment root fails cleanly
@@ -1841,12 +2263,13 @@ class IdentityService:
         _assert_new_tenant_root_clear(shared_root, self)
 
         tenant_id = self._new_id("tnt")
-        user_id = self._new_id("usr")
-        membership_id = self._new_id("mem")
         role_admin_id = self._new_id("role")
         role_member_id = self._new_id("role")
         dept_root_id = self._new_id("dept")
-        admin_hash = hash_password(admin_password)  # expensive, outside the lock
+        if create_admin:
+            user_id = self._new_id("usr")
+            membership_id = self._new_id("mem")
+            admin_hash = hash_password(admin_password)  # expensive, outside the lock
 
         with self._tx() as con:
             con.execute(
@@ -1854,18 +2277,19 @@ class IdentityService:
                 " VALUES (?,?,?,1,?,1)",
                 (tenant_id, code, name.strip(), shared_root),
             )
-            con.execute(
-                "INSERT INTO users(id, username, display_name, password_hash,"
-                " active, is_platform_admin, must_change_password, temp_password_expires_at, version)"
-                " VALUES (?,?,?,?,1,0,1,?,1)",
-                (user_id, admin_username, admin_display, admin_hash,
-                 int(time.time()) + 86400 * 3),
-            )
-            con.execute(
-                "INSERT INTO memberships(id, tenant_id, user_id, display_name, active, version)"
-                " VALUES (?,?,?,?,1,1)",
-                (membership_id, tenant_id, user_id, admin_display),
-            )
+            if create_admin:
+                con.execute(
+                    "INSERT INTO users(id, username, display_name, password_hash,"
+                    " active, is_platform_admin, must_change_password, temp_password_expires_at, version)"
+                    " VALUES (?,?,?,?,1,0,1,?,1)",
+                    (user_id, admin_username, admin_display, admin_hash,
+                     int(time.time()) + 86400 * 3),
+                )
+                con.execute(
+                    "INSERT INTO memberships(id, tenant_id, user_id, display_name, active, version)"
+                    " VALUES (?,?,?,?,1,1)",
+                    (membership_id, tenant_id, user_id, admin_display),
+                )
             con.execute(
                 "INSERT INTO roles(id, tenant_id, code, name, builtin, permissions_json, version)"
                 " VALUES (?,?,?,?,1,?,1)",
@@ -1879,10 +2303,11 @@ class IdentityService:
                  json.dumps(["tenant.info.read", "agent.read", "history.read",
                              "knowledge.read", "memory.read", "todo.read", "todo.write"])),
             )
-            con.execute(
-                "INSERT INTO membership_roles(membership_id, role_id) VALUES (?,?)",
-                (membership_id, role_admin_id),
-            )
+            if create_admin:
+                con.execute(
+                    "INSERT INTO membership_roles(membership_id, role_id) VALUES (?,?)",
+                    (membership_id, role_admin_id),
+                )
             con.execute(
                 "INSERT INTO departments(id, tenant_id, parent_id, code, name, sort_order, active, version)"
                 " VALUES (?,?,NULL,'__root__','组织根',0,1,1)",
@@ -1896,7 +2321,8 @@ class IdentityService:
                 target_tenant_id=tenant_id,
                 action="tenant.create",
                 target=f"tenant:{tenant_id}",
-                redacted_changes={"code": code, "name": name},
+                redacted_changes={"code": code, "name": name,
+                                  "initial_admin": admin_username if create_admin else None},
                 result="success",
             )
             con.commit()
@@ -1943,6 +2369,71 @@ class IdentityService:
             con.commit()
         return {"id": tenant_id, "active": active}
 
+    def _bind_tenant_admin_in_tx(self, con, tenant_id: str, user_id: str,
+                                 display_name: str) -> str:
+        """Ensure ``user_id`` is an active ``tenant_admin`` of ``tenant_id``.
+
+        Returns the membership id. The caller owns the transaction and the audit
+        event, so this can serve both "bind an existing account" and "create a
+        new account" without duplicating the membership semantics.
+
+        The per-tenant display name of an existing member is editable ("pick an
+        account, then rename it"). Only the membership row changes: the
+        account's global display name and its memberships in other tenants are
+        left alone. An empty value means "no change", so a client that never
+        collected a name cannot blank an existing one.
+        """
+        admin_role = con.execute(
+            "SELECT * FROM roles WHERE tenant_id=? AND code=?",
+            (tenant_id, TENANT_ADMIN_CODE),
+        ).fetchone()
+        if not admin_role:
+            raise IdentityServiceError("tenant has no admin role", code="missing_role", status=500)
+        membership = con.execute(
+            "SELECT * FROM memberships WHERE tenant_id=? AND user_id=?",
+            (tenant_id, user_id),
+        ).fetchone()
+        if membership:
+            membership_id = membership["id"]
+            new_name = (display_name or "").strip()
+            keep_name = (not new_name) or membership["display_name"] == new_name
+            if not membership["active"]:
+                # recovery of a disabled membership
+                if keep_name:
+                    con.execute(
+                        "UPDATE memberships SET active=1, version=version+1 WHERE id=?",
+                        (membership["id"],),
+                    )
+                else:
+                    con.execute(
+                        "UPDATE memberships SET active=1, display_name=?,"
+                        " version=version+1 WHERE id=?",
+                        (new_name, membership["id"]),
+                    )
+            elif not keep_name:
+                con.execute(
+                    "UPDATE memberships SET display_name=?, version=version+1"
+                    " WHERE id=?",
+                    (new_name, membership["id"]),
+                )
+        else:
+            membership_id = self._new_id("mem")
+            con.execute(
+                "INSERT INTO memberships(id, tenant_id, user_id, display_name, active, version)"
+                " VALUES (?,?,?,?,1,1)",
+                (membership_id, tenant_id, user_id, display_name),
+            )
+        bound = con.execute(
+            "SELECT COUNT(*) c FROM membership_roles WHERE membership_id=? AND role_id=?",
+            (membership_id, admin_role["id"]),
+        ).fetchone()["c"]
+        if not bound:
+            con.execute(
+                "INSERT INTO membership_roles(membership_id, role_id) VALUES (?,?)",
+                (membership_id, admin_role["id"]),
+            )
+        return membership_id
+
     def set_tenant_admin(self, actor_user_id: str, tenant_id: str, user_id: str,
                          display_name: str, recent_password: str) -> Dict[str, Any]:
         """Platform admin configures a tenant admin (bind existing or new user)."""
@@ -1955,43 +2446,8 @@ class IdentityService:
             user = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
             if not user or not user["active"]:
                 raise IdentityServiceError("user not found or disabled", code="not_found", status=404)
-            admin_role = con.execute(
-                "SELECT * FROM roles WHERE tenant_id=? AND code=?",
-                (tenant_id, TENANT_ADMIN_CODE),
-            ).fetchone()
-            if not admin_role:
-                raise IdentityServiceError("tenant has no admin role", code="missing_role", status=500)
-            membership = con.execute(
-                "SELECT * FROM memberships WHERE tenant_id=? AND user_id=?",
-                (tenant_id, user_id),
-            ).fetchone()
-            if membership:
-                if not membership["active"]:
-                    # recovery of a disabled membership
-                    con.execute(
-                        "UPDATE memberships SET active=1, version=version+1 WHERE id=?",
-                        (membership["id"],),
-                    )
-                    membership_id = membership["id"]
-                else:
-                    membership_id = membership["id"]
-            else:
-                membership_id = self._new_id("mem")
-                con.execute(
-                    "INSERT INTO memberships(id, tenant_id, user_id, display_name, active, version)"
-                    " VALUES (?,?,?,?,1,1)",
-                    (membership_id, tenant_id, user_id, display_name),
-                )
-            # ensure admin role binding
-            bound = con.execute(
-                "SELECT COUNT(*) c FROM membership_roles WHERE membership_id=? AND role_id=?",
-                (membership_id, admin_role["id"]),
-            ).fetchone()["c"]
-            if not bound:
-                con.execute(
-                    "INSERT INTO membership_roles(membership_id, role_id) VALUES (?,?)",
-                    (membership_id, admin_role["id"]),
-                )
+            membership_id = self._bind_tenant_admin_in_tx(
+                con, tenant_id=tenant_id, user_id=user_id, display_name=display_name)
             self._audit_in_tx(
                 con, actor_user_id=actor_user_id, tenant_id=None,
                 target_tenant_id=tenant_id, action="tenant.set_admin",
@@ -1999,6 +2455,47 @@ class IdentityService:
                 redacted_changes={"username": user["username"]}, result="success")
             con.commit()
         return {"membership_id": membership_id}
+
+    def create_tenant_admin_account(self, *, actor_user_id: str, tenant_id: str,
+                                    username: str, display_name: str,
+                                    temporary_password: str,
+                                    recent_password: str) -> Dict[str, Any]:
+        """Create a brand new account and make it this tenant's admin.
+
+        The account, its membership, the ``tenant_admin`` binding and the audit
+        event are committed in one transaction. A failure must not leave an
+        orphan account behind, mirroring ``create_member``'s contract on the
+        tenant-admin side of the house.
+        """
+        self._require_platform_admin(actor_user_id)
+        self._require_recent_password(actor_user_id, recent_password)
+        _validate_new_account(username, temporary_password)
+        username = username.strip()
+        # Hash before taking the write lock: hashing is deliberately expensive.
+        temp_hash = hash_password(temporary_password)
+        expiry = int(time.time()) + 86400 * 3
+        with self._tx() as con:
+            tenant = con.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+            if not tenant:
+                raise IdentityServiceError("tenant not found", code="not_found", status=404)
+            if con.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone():
+                raise IdentityServiceError("username already exists", code="conflict", status=409)
+            user_id = self._new_id("usr")
+            con.execute(
+                "INSERT INTO users(id, username, display_name, password_hash, active,"
+                " is_platform_admin, must_change_password, temp_password_expires_at, version)"
+                " VALUES (?,?,?,?,1,0,1,?,1)",
+                (user_id, username, display_name, temp_hash, expiry),
+            )
+            membership_id = self._bind_tenant_admin_in_tx(
+                con, tenant_id=tenant_id, user_id=user_id, display_name=display_name)
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=None,
+                target_tenant_id=tenant_id, action="tenant.create_admin",
+                target=f"membership:{membership_id}",
+                redacted_changes={"username": username}, result="success")
+            con.commit()
+        return {"membership_id": membership_id, "user_id": user_id}
 
     def set_tenant_name(self, actor_user_id: str, tenant_id: str, name: str,
                         expected_version: int, recent_password: str) -> Dict[str, Any]:
@@ -2027,6 +2524,63 @@ class IdentityService:
             con.commit()
         return {"id": tenant_id, "name": name}
 
+    def set_tenant_profile(self, actor_user_id: str, tenant_id: str, name: str,
+                           active: bool, expected_version: int,
+                           recent_password: str) -> Dict[str, Any]:
+        """Edit a tenant's name and enabled state in one transaction.
+
+        The tenant page saves both fields with a single action, so they must
+        commit atomically: exactly one version bump and one audit event. Both
+        existing guards still apply (enabling requires a valid active
+        tenant_admin; disabling must not leave an enabled member without another
+        active tenant), and a rejected guard rolls the name change back too -
+        there is no partial apply. The tenant's ``shared_root`` is never editable
+        here.
+        """
+        self._require_platform_admin(actor_user_id)
+        self._require_recent_password(actor_user_id, recent_password)
+        name = name.strip()
+        if not name:
+            raise IdentityServiceError("tenant name is required", code="bad_request", status=400)
+        with self._tx() as con:
+            row = con.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+            if not row:
+                raise IdentityServiceError("tenant not found", code="not_found", status=404)
+            if row["version"] != expected_version:
+                raise IdentityServiceError("version conflict", code="conflict", status=409)
+            if active:
+                # Enabling still requires a valid active tenant_admin.
+                if self._count_valid_tenant_admins(tenant_id, con) < 1:
+                    raise IdentityServiceError(
+                        "tenant has no valid admin", code="no_admin", status=409)
+            # Active member->tenant continuity: disabling a tenant must not leave
+            # any of its enabled members with no other active tenant.
+            affected_user_ids: List[str] = []
+            if not active:
+                rows = con.execute(
+                    "SELECT DISTINCT m.user_id FROM memberships m"
+                    " JOIN users u ON u.id=m.user_id"
+                    " WHERE m.tenant_id=? AND m.active=1 AND u.active=1",
+                    (tenant_id,),
+                ).fetchall()
+                affected_user_ids = [r["user_id"] for r in rows]
+            con.execute(
+                "UPDATE tenants SET name=?, active=?, version=version+1 WHERE id=?",
+                (name, int(active), tenant_id),
+            )
+            if not active:
+                self._check_all_affected_active_tenant_continuity(con, affected_user_ids)
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=None,
+                target_tenant_id=tenant_id, action="tenant.set_profile",
+                target=f"tenant:{tenant_id}",
+                redacted_changes={"name": name, "active": bool(active)},
+                result="success")
+            con.commit()
+        # The row was version-checked under the write lock, so exactly one bump.
+        return {"id": tenant_id, "name": name, "active": bool(active),
+                "version": expected_version + 1}
+
     def set_platform_user_status(
         self, *, actor_user_id: str, user_id: str, active: bool,
         is_platform_admin: bool, expected_version: int, recent_password: str,
@@ -2053,7 +2607,13 @@ class IdentityService:
         with self._tx() as con:
             # Re-verify actor on the SAME connection holding the write lock.
             actor = con.execute("SELECT * FROM users WHERE id=?", (actor_user_id,)).fetchone()
-            if not actor or not actor["active"] or not actor["is_platform_admin"]:
+            actor_binding = con.execute(
+                "SELECT 1 FROM user_platform_roles upr"
+                " JOIN platform_roles r ON r.id = upr.platform_role_id"
+                " WHERE upr.user_id = ? AND r.code = ?",
+                (actor_user_id, PLATFORM_ADMIN_CODE),
+            ).fetchone()
+            if not actor or not actor["active"] or actor_binding is None:
                 raise IdentityServiceError("forbidden", code="forbidden", status=403)
             if not verify_password(recent_password, actor["password_hash"]):
                 raise IdentityServiceError("recent password required", code="invalid_old", status=401)
@@ -2063,7 +2623,6 @@ class IdentityService:
             if target["version"] != expected_version:
                 raise IdentityServiceError("version conflict", code="conflict", status=409)
             target_active = bool(target["active"])
-            target_admin = bool(target["is_platform_admin"])
 
             self._check_platform_admin_continuity(
                 con, actor_user_id=actor_user_id, target=target,
@@ -2088,9 +2647,10 @@ class IdentityService:
                     code="last_active_tenant_required", status=409)
 
             con.execute(
-                "UPDATE users SET active=?, is_platform_admin=?, version=version+1 WHERE id=?",
-                (int(active), int(is_platform_admin), user_id),
+                "UPDATE users SET active=?, version=version+1 WHERE id=?",
+                (int(active), user_id),
             )
+            self._set_platform_role(con, user_id, is_platform_admin, actor_user_id)
             self._audit_in_tx(
                 con, actor_user_id=actor_user_id, actor_username=actor["username"],
                 tenant_id=None, target_tenant_id=None, action="user.set_status",
@@ -2152,7 +2712,13 @@ class IdentityService:
         temp_hash = hash_password(temp_password)
         with self._tx() as con:
             actor = con.execute("SELECT * FROM users WHERE id=?", (actor_user_id,)).fetchone()
-            if not actor or not actor["active"] or not actor["is_platform_admin"]:
+            actor_binding = con.execute(
+                "SELECT 1 FROM user_platform_roles upr"
+                " JOIN platform_roles r ON r.id = upr.platform_role_id"
+                " WHERE upr.user_id = ? AND r.code = ?",
+                (actor_user_id, PLATFORM_ADMIN_CODE),
+            ).fetchone()
+            if not actor or not actor["active"] or actor_binding is None:
                 raise IdentityServiceError("forbidden", code="forbidden", status=403)
             if not verify_password(recent_password, actor["password_hash"]):
                 raise IdentityServiceError("recent password required", code="invalid_old", status=401)
@@ -2190,27 +2756,37 @@ class IdentityService:
 
         When the actor demotes or disables themselves, another *completed*
         password-change platform admin must remain; an admin who is still
-        forced-password-change does not count as a usable fallback.
+        forced-password-change does not count as a usable fallback. The count is
+        driven by the platform-role binding (not the mirror column).
         """
-        target_removes_admin = target["is_platform_admin"] and not target_admin
+        row = con.execute(
+            "SELECT 1 FROM user_platform_roles upr"
+            " JOIN platform_roles r ON r.id = upr.platform_role_id"
+            " WHERE upr.user_id = ? AND r.code = ?",
+            (target["id"], PLATFORM_ADMIN_CODE),
+        ).fetchone()
+        target_has_binding = row is not None
+        target_removes_admin = target_has_binding and not target_admin
         actor_is_target = actor_user_id == target["id"]
         if not (target_removes_admin or (actor_is_target and not target_active)):
             return
-        if target_removes_admin or (actor_is_target and not target_active):
-            # Count other active, non-must_change platform admins after excluding
-            # the target (and the actor if same).
-            rows = con.execute(
-                "SELECT id, active, is_platform_admin, must_change_password"
-                " FROM users WHERE is_platform_admin=1 AND active=1"
-            ).fetchall()
-            valid_others = sum(
-                1 for r in rows
-                if r["id"] != target["id"] and not r["must_change_password"]
-            )
-            if valid_others < 1:
-                raise IdentityServiceError(
-                    "cannot remove the last completed platform admin",
-                    code="last_admin", status=409)
+        # Count other active, non-must_change platform admins after excluding
+        # the target (and the actor if same).
+        rows = con.execute(
+            "SELECT u.id, u.must_change_password FROM users u"
+            " JOIN user_platform_roles upr ON upr.user_id = u.id"
+            " JOIN platform_roles r ON r.id = upr.platform_role_id"
+            " WHERE r.code = ? AND u.active = 1",
+            (PLATFORM_ADMIN_CODE,),
+        ).fetchall()
+        valid_others = sum(
+            1 for r in rows
+            if r["id"] != target["id"] and not r["must_change_password"]
+        )
+        if valid_others < 1:
+            raise IdentityServiceError(
+                "cannot remove the last completed platform admin",
+                code="last_admin", status=409)
 
     def _check_all_tenant_admin_continuity_for_user(self, con, user_id) -> None:
         """On global disable, every enabled tenant this user administers must
@@ -2295,14 +2871,72 @@ class IdentityService:
         return {"items": [dict(r) for r in rows], "total": total, "page": page}
 
     def _require_platform_admin(self, user_id: str) -> None:
-        user = self._find_user_by_id(user_id)
-        if not user or not user["active"] or not user["is_platform_admin"]:
+        if not self.is_platform_admin_user(user_id):
             raise IdentityServiceError("forbidden", code="forbidden", status=403)
 
     def _require_recent_password(self, user_id: str, recent_password: str) -> None:
         user = self._find_user_by_id(user_id)
         if not user or not verify_password(recent_password, user["password_hash"]):
             raise IdentityServiceError("recent password required", code="invalid_old", status=401)
+
+    def _require_channel_write_authorization(
+        self,
+        actor_user_id: str,
+        tenant_id: str,
+        channel_type: str,
+        recent_password: str,
+        scan_ticket: str,
+    ) -> None:
+        """Authorize a channel write by password, or by the grant a scan minted.
+
+        A password proves the operator is present. A *completed* scan proves the
+        same thing by another route — it cannot finish without the operator's own
+        phone and vendor account — so a create that follows a scan may present
+        the scan's one-time grant instead (``auth.scan_authorization``). The
+        grant is bound to the same actor, tenant and channel type, and is
+        redeemed once the row commits.
+
+        An explicit password always wins when both are present, so the manual
+        path keeps its existing behaviour and failure codes.
+        """
+        if recent_password:
+            self._require_recent_password(actor_user_id, recent_password)
+            return
+        from auth import scan_authorization
+
+        if scan_authorization.verify(
+                scan_ticket, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                channel_type=channel_type):
+            return
+        raise IdentityServiceError(
+            "recent password required", code="invalid_old", status=401)
+
+    def _set_platform_role(self, con, user_id: str, granted: bool,
+                           actor_user_id: str) -> None:
+        """Grant/revoke the platform_admin binding and sync the mirror column.
+
+        The single write path for the platform qualification: it inserts/removes
+        the ``user_platform_roles`` binding and, in the same transaction, updates
+        the derived ``users.is_platform_admin`` mirror so the two can never be
+        observably inconsistent. ``actor_user_id`` is reserved for a future
+        binding-level audit event (the caller currently writes the audit).
+        """
+        if granted:
+            con.execute(
+                "INSERT OR IGNORE INTO user_platform_roles(user_id, platform_role_id)"
+                " SELECT ?, id FROM platform_roles WHERE code = ?",
+                (user_id, PLATFORM_ADMIN_CODE),
+            )
+        else:
+            con.execute(
+                "DELETE FROM user_platform_roles WHERE user_id = ?"
+                " AND platform_role_id IN (SELECT id FROM platform_roles WHERE code = ?)",
+                (user_id, PLATFORM_ADMIN_CODE),
+            )
+        con.execute(
+            "UPDATE users SET is_platform_admin = ? WHERE id = ?",
+            (int(granted), user_id),
+        )
 
     # --- external identities (admin-bound IM -> account mapping) -----------
 
@@ -2361,6 +2995,29 @@ class IdentityService:
         a 409 ``conflict`` and never overwrites.
         """
         self._require_platform_admin(actor_user_id)
+        return self._bind_external_identity_row(
+            actor_user_id=actor_user_id,
+            user_id=user_id,
+            provider=provider,
+            issuer=issuer,
+            subject=subject,
+        )
+
+    def _bind_external_identity_row(
+        self,
+        *,
+        actor_user_id: str,
+        user_id: str,
+        provider: str,
+        issuer: str,
+        subject: str,
+    ) -> Dict[str, Any]:
+        """Insert a binding; the caller has already established authorization.
+
+        Shared by the platform and tenant surfaces so both validate, audit and
+        clear pending attempts identically — a divergence here would be a
+        security-relevant difference between the two entry points.
+        """
         provider = (provider or "").strip().lower()
         issuer = (issuer or "").strip()
         subject = (subject or "").strip()
@@ -2401,6 +3058,14 @@ class IdentityService:
                     "subject": subject, "binding_id": binding_id,
                 },
             )
+            # The triple is no longer pending: the next inbound resolves to a
+            # user, so keeping it in the "waiting to be bound" list would invite
+            # an administrator to bind it twice.
+            con.execute(
+                "DELETE FROM external_identity_attempts"
+                " WHERE provider=? AND issuer=? AND subject=?",
+                (provider, issuer, subject),
+            )
         return {
             "id": binding_id, "user_id": user_id, "provider": provider,
             "issuer": issuer, "subject": subject,
@@ -2439,6 +3104,164 @@ class IdentityService:
                     "subject": row["subject"], "binding_id": binding_id,
                 },
             )
+
+    # --- tenant-scoped external identity administration --------------------
+    #
+    # A tenant administrator is usually the person who knows which of their
+    # members owns which IM account, so the capability is opened to them — under
+    # containment supplied by the *membership*, not by a separate check that a
+    # future caller could forget. Every tenant-scoped entry point starts from a
+    # membership id and resolves it inside the acting tenant; an id belonging to
+    # another organization simply does not match, and is reported as not-found
+    # rather than forbidden so a refusal fingerprints nothing.
+
+    def _member_user_id_in_tenant(self, tenant_id: str, member_id: str) -> str:
+        rows = self._store.execute(
+            "SELECT user_id FROM memberships WHERE id=? AND tenant_id=?",
+            (member_id, tenant_id),
+        )
+        if not rows:
+            raise IdentityServiceError(
+                "member not found", code="not_found", status=404)
+        return rows[0]["user_id"]
+
+    def _require_tenant_admin_of(self, actor_user_id: str, tenant_id: str) -> None:
+        if not self._is_tenant_admin(actor_user_id, tenant_id):
+            raise IdentityServiceError(
+                "tenant administrator required", code="forbidden", status=403)
+
+    def bind_external_identity_for_tenant(
+        self,
+        *,
+        actor_user_id: str,
+        tenant_id: str,
+        member_id: str,
+        provider: str,
+        issuer: str,
+        subject: str,
+    ) -> Dict[str, Any]:
+        """Bind a triple to one of *this tenant's* members (tenant admin)."""
+        self._require_tenant_admin_of(actor_user_id, tenant_id)
+        user_id = self._member_user_id_in_tenant(tenant_id, member_id)
+        return self._bind_external_identity_row(
+            actor_user_id=actor_user_id, user_id=user_id,
+            provider=provider, issuer=issuer, subject=subject)
+
+    def list_external_identities_for_tenant(
+        self,
+        *,
+        actor_user_id: str,
+        tenant_id: str,
+        member_id: str,
+    ) -> Dict[str, Any]:
+        """List one of *this tenant's* members' bindings (tenant admin)."""
+        self._require_tenant_admin_of(actor_user_id, tenant_id)
+        user_id = self._member_user_id_in_tenant(tenant_id, member_id)
+        return self.list_external_identities(user_id=user_id)
+
+    def delete_external_identity_for_tenant(
+        self, *, actor_user_id: str, tenant_id: str, binding_id: str
+    ) -> None:
+        """Unbind, but only when the binding's user is a member of this tenant.
+
+        The owning tenant is re-derived from the binding rather than trusted
+        from the caller, so a guessed binding id cannot pull a binding out of
+        another organization.
+        """
+        self._require_tenant_admin_of(actor_user_id, tenant_id)
+        rows = self._store.execute(
+            "SELECT user_id FROM external_identities WHERE id=?",
+            (binding_id,),
+        )
+        members = self._store.execute(
+            "SELECT 1 FROM memberships WHERE tenant_id=? AND user_id=?",
+            (tenant_id, rows[0]["user_id"]),
+        ) if rows else []
+        if not rows or not members:
+            raise IdentityServiceError(
+                "external identity binding not found",
+                code="not_found", status=404)
+        self.delete_external_identity(
+            actor_user_id=actor_user_id, binding_id=binding_id)
+
+    # --- pending attempts: where an administrator finds an ``open_id`` ------
+
+    def record_external_identity_attempt(
+        self,
+        *,
+        provider: str,
+        issuer: str,
+        subject: str,
+        tenant_id: str = "",
+        channel_type: str = "",
+        instance_id: str = "",
+        sender_name: str = "",
+        message_preview: str = "",
+        is_group: bool = False,
+    ) -> None:
+        """Remember an inbound author that resolved to no account.
+
+        Best-effort by design: this runs on the inbound path of a message that
+        is already being refused, and remembering the attempt must never turn a
+        "not bound yet" reply into a crash, so failures are swallowed.
+
+        ``sender_name``/``message_preview``/``is_group`` are the evidence an
+        administrator judges the row by. A repeat refreshes the preview to the
+        newest message (the latest thing said is the best clue) but never lets a
+        blank name erase a known one — a channel that only learns the name on a
+        later message must be able to fill the gap.
+        """
+        provider = (provider or "").strip().lower()
+        issuer = (issuer or "").strip()
+        subject = (subject or "").strip()
+        sender_name = (sender_name or "").strip()
+        message_preview = (message_preview or "").strip()
+        if not provider or not subject:
+            return
+        try:
+            with self._tx() as con:
+                con.execute(
+                    "INSERT INTO external_identity_attempts"
+                    " (provider, issuer, subject, tenant_id, channel_type,"
+                    "  instance_id, attempts, last_seen_at, sender_name,"
+                    "  message_preview, is_group)"
+                    " VALUES (?,?,?,?,?,?,1,unixepoch(),?,?,?)"
+                    " ON CONFLICT(provider, issuer, subject) DO UPDATE SET"
+                    "  attempts = attempts + 1,"
+                    "  last_seen_at = unixepoch(),"
+                    "  tenant_id = excluded.tenant_id,"
+                    "  channel_type = excluded.channel_type,"
+                    "  instance_id = excluded.instance_id,"
+                    "  sender_name = CASE WHEN excluded.sender_name != ''"
+                    "        THEN excluded.sender_name ELSE sender_name END,"
+                    "  message_preview = CASE WHEN excluded.message_preview != ''"
+                    "        THEN excluded.message_preview ELSE message_preview END,"
+                    "  is_group = excluded.is_group",
+                    (provider, issuer, subject, tenant_id or "",
+                     channel_type or "", instance_id or "", sender_name,
+                     message_preview, 1 if is_group else 0),
+                )
+        except Exception:  # pragma: no cover - defensive, inbound must survive
+            logger.warning(
+                "[identity] failed to record unbound inbound attempt "
+                "provider=%s issuer=%s", provider, issuer, exc_info=True)
+
+    def list_external_identity_attempts(
+        self, *, actor_user_id: str, tenant_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """List pending attempts for a tenant admin, or all for the platform."""
+        if tenant_id is None:
+            self._require_platform_admin(actor_user_id)
+            rows = self._store.execute(
+                "SELECT * FROM external_identity_attempts"
+                " ORDER BY last_seen_at DESC LIMIT 200")
+        else:
+            self._require_tenant_admin_of(actor_user_id, tenant_id)
+            rows = self._store.execute(
+                "SELECT * FROM external_identity_attempts WHERE tenant_id=?"
+                " ORDER BY last_seen_at DESC LIMIT 200",
+                (tenant_id,))
+        return {"items": [dict(r) for r in rows], "total": len(rows)}
 
     def find_user_for_external_identity(
         self, provider: str, issuer: str, subject: str
@@ -2518,6 +3341,32 @@ class IdentityService:
             items.append(item)
         return {"items": items, "total": total, "page": page}
 
+    def tenant_admins(self, tenant_id: str) -> List[Dict[str, Any]]:
+        """Current valid ``tenant_admin`` members of a tenant, earliest first.
+
+        "Valid" uses the same predicate as ``_count_valid_tenant_admins``: the
+        membership, the account and the role binding must all be active. The
+        tenant editor reads this to show who currently administers the tenant
+        without guessing from the candidate account list.
+
+        Read-only projection: only the membership/account identifiers, the login
+        name and the membership display name are returned. Password material is
+        never selected, so it cannot leak through this path. An unknown tenant
+        (or one with no valid admin) yields an empty list rather than an error.
+        """
+        rows = self._store.execute(
+            "SELECT m.id AS membership_id, u.id AS user_id,"
+            " u.username, m.display_name"
+            " FROM memberships m"
+            " JOIN users u ON u.id=m.user_id"
+            " JOIN membership_roles mr ON mr.membership_id=m.id"
+            " JOIN roles r ON r.id=mr.role_id"
+            " WHERE m.tenant_id=? AND m.active=1 AND u.active=1 AND r.code=?"
+            " ORDER BY m.created_at, m.rowid",
+            (tenant_id, TENANT_ADMIN_CODE),
+        )
+        return [dict(r) for r in rows]
+
     def create_member(
         self,
         *,
@@ -2551,10 +3400,7 @@ class IdentityService:
             else:
                 if existing_user:
                     raise IdentityServiceError("username already exists", code="conflict", status=409)
-                if temporary_password.lower() in _COMMON_PASSWORDS or len(temporary_password) < MIN_PASSWORD_LENGTH:
-                    raise IdentityServiceError("weak temporary password", code="weak_password")
-                if not _USERNAME_RE.fullmatch(username.strip()):
-                    raise IdentityServiceError("invalid username", code="invalid_username")
+                _validate_new_account(username, temporary_password)
                 user_id = self._new_id("usr")
                 con.execute(
                     "INSERT INTO users(id, username, display_name, password_hash, active,"
@@ -3136,13 +3982,7 @@ class IdentityService:
     def _is_control(self, actor_user_id: str, tenant_id: str) -> bool:
         """True when ``actor_user_id`` may manage this tenant's control plane
         (platform admin, or an active tenant_admin member of the tenant)."""
-        user = self._store.execute(
-            "SELECT is_platform_admin, active FROM users WHERE id=?",
-            (actor_user_id,),
-        )
-        if not user or not user[0]["active"]:
-            return False
-        if user[0]["is_platform_admin"]:
+        if self.is_platform_admin_user(actor_user_id):
             return True
         rows = self._store.execute(
             "SELECT COUNT(*) c FROM memberships m"
@@ -3373,6 +4213,492 @@ class IdentityService:
                 target=f"credential:{row['id']}", redacted_changes={}, result="success")
             con.commit()
         return True
+
+    # --- tenant-owned channel instances (tenant-owned-message-channels 2.x) -
+
+    def _channel_credential_keys(self, channel_type: str) -> Optional[tuple]:
+        """Credential field names for a tenant-ownable channel type.
+
+        ``None`` means the type cannot be owned per tenant: unknown, or not yet
+        multi-instance ready. Imported lazily so ``auth`` never acquires an
+        import-time dependency on ``channel`` (that layer lazily imports this
+        service in turn).
+        """
+        from channel.channel_instances import CREDENTIAL_KEYS, MULTI_INSTANCE_READY
+        ctype = (channel_type or "").strip()
+        if ctype not in MULTI_INSTANCE_READY:
+            return None
+        return CREDENTIAL_KEYS.get(ctype)
+
+    def _require_instance_agent(self, tenant_id: str, agent_id: str) -> str:
+        """Return a validated bound Agent id; ``''`` means deliberately unbound.
+
+        A channel instance may only point at an Agent that is bound to the same
+        tenant, so a tenant cannot route its inbound traffic into another
+        tenant's workspace.
+        """
+        agent_id = (agent_id or "").strip()
+        if not agent_id:
+            return ""
+        binding = self.get_agent_binding(agent_id)
+        if not binding or binding["tenant_id"] != tenant_id:
+            raise IdentityServiceError(
+                "agent is not available to this tenant", code="forbidden", status=403)
+        return agent_id
+
+    def _validated_channel_bundle(self, channel_type: str, credentials) -> str:
+        """Validate a credential bundle and return its plaintext JSON.
+
+        Field names are checked against the channel type's declared credential
+        keys so a typo cannot be stored as an inert secret that silently makes
+        the instance unusable at startup. Beyond that, the bundle must contain
+        every key the channel class needs to *start*: storing a bundle that can
+        only fail later, as a startup error the operator has to go looking for,
+        is the failure this refuses to allow.
+
+        On a rotation the caller passes the merged bundle (see
+        :meth:`_merge_rotation_bundle`), so the minimum-set rule is judged on
+        what the instance will actually run with.
+        """
+        import json
+
+        from channel.channel_instances import required_credential_keys
+
+        keys = self._channel_credential_keys(channel_type)
+        if keys is None:
+            raise IdentityServiceError(
+                "channel type is not available for tenant configuration",
+                code="bad_request", status=400)
+        if not isinstance(credentials, dict) or not credentials:
+            raise IdentityServiceError(
+                "channel credentials are required", code="bad_request", status=400)
+        bundle = {}
+        for key, value in credentials.items():
+            if key not in keys:
+                raise IdentityServiceError(
+                    f"unknown credential field {key!r}", code="bad_request", status=400)
+            text = "" if value is None else str(value)
+            if not text.strip():
+                raise IdentityServiceError(
+                    f"credential field {key!r} is required",
+                    code="bad_request", status=400)
+            bundle[key] = text
+        missing = [key for key in required_credential_keys(channel_type)
+                   if not bundle.get(key)]
+        if missing:
+            raise IdentityServiceError(
+                "credential field(s) required: " + ", ".join(missing),
+                code="bad_request", status=400)
+        return json.dumps(bundle, ensure_ascii=False, sort_keys=True)
+
+    def _merge_rotation_bundle(
+        self, tenant_id: str, instance_id: str, provided: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Merge a rotation's fields over the bundle already stored.
+
+        The console's edit form deliberately sends only what the operator
+        retyped — a blank secret field is documented as "keeps the stored value"
+        — so replacing the bundle with just the provided fields would silently
+        drop the rest of a working credential.
+
+        If the stored bundle cannot be read (the master key changed, or the
+        credential was revoked), the provided fields are treated as a complete
+        replacement rather than making the instance unrecoverable.
+        """
+        try:
+            stored = self.channel_instance_credentials(tenant_id, instance_id)
+        except IdentityServiceError:
+            return dict(provided)
+        return {**{str(key): value for key, value in stored.items()}, **provided}
+
+    def _instance_projection(self, row) -> Dict[str, Any]:
+        """Masked, credential-free view of one tenant channel instance.
+
+        Plaintext never reaches this projection, so there is nothing to redact:
+        the bundle lives only in ``credentials.ciphertext``.
+        """
+        return {
+            "id": row["id"],
+            "tenant_id": row["tenant_id"],
+            "channel_type": row["channel_type"],
+            "display_name": row["display_name"],
+            "agent_id": row["agent_id"],
+            "active": bool(row["active"]),
+            "version": row["version"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def create_tenant_channel_instance(
+        self,
+        *,
+        actor_user_id: str,
+        tenant_id: str,
+        channel_type: str,
+        display_name: str,
+        recent_password: str,
+        agent_id: str = "",
+        credentials=None,
+        scan_ticket: str = "",
+    ) -> Dict[str, Any]:
+        """Create a tenant-owned channel instance with one encrypted bundle.
+
+        The instance row, its single credential, the first credential version
+        and both audit events commit in one transaction: a rejected create must
+        not leave an orphan credential behind. The bundle is stored as JSON in
+        one ``credentials`` row keyed ``channel:<instance_id>`` rather than one
+        row per field, so a single decrypt yields the whole set.
+
+        ``scan_ticket`` carries the grant a completed vendor scan minted (see
+        ``auth.scan_authorization``). It stands in for ``recent_password`` on the
+        auto-persist path, where the operator never sees a prompt.
+        """
+        import json
+
+        from auth.crypto import encrypt_secret
+
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError(
+                "channel instance manage denied", code="forbidden", status=403)
+        ctype = (channel_type or "").strip()
+        self._require_channel_write_authorization(
+            actor_user_id, tenant_id, ctype, recent_password, scan_ticket)
+        bundle_json = self._validated_channel_bundle(ctype, credentials)
+        display_name = (display_name or "").strip()
+        if not display_name:
+            raise IdentityServiceError(
+                "display name is required", code="bad_request", status=400)
+        agent_id = self._require_instance_agent(tenant_id, agent_id)
+        try:
+            ciphertext = encrypt_secret(bundle_json)
+        except Exception as error:
+            from common.log import logger
+            logger.error(f"[Identity] channel credential encrypt unavailable: {error}")
+            raise IdentityServiceError(
+                "credential encryption unavailable", code="credential_crypto",
+                status=500) from error
+        instance_id = self._new_id("chan")
+        credential_id = self._new_id("cred")
+        with self._tx() as con:
+            dup = con.execute(
+                "SELECT 1 FROM tenant_channel_instances"
+                " WHERE tenant_id=? AND display_name=? AND active=1",
+                (tenant_id, display_name),
+            ).fetchone()
+            if dup:
+                raise IdentityServiceError(
+                    "display name exists", code="conflict", status=409)
+            con.execute(
+                "INSERT INTO tenant_channel_instances(id, tenant_id, channel_type,"
+                " display_name, agent_id, active, version, created_by)"
+                " VALUES (?,?,?,?,?,1,1,?)",
+                (instance_id, tenant_id, ctype, display_name, agent_id, actor_user_id),
+            )
+            con.execute(
+                "INSERT INTO credentials(id, tenant_id, name, resource_kind,"
+                " resource_id, ciphertext, active, version, created_by)"
+                " VALUES (?,?,?,?,?,?,1,1,?)",
+                (credential_id, tenant_id, f"channel:{instance_id}", "channel",
+                 instance_id, ciphertext, actor_user_id),
+            )
+            con.execute(
+                "INSERT INTO credential_versions(credential_id, version, ciphertext,"
+                " action, changed_by) VALUES (?,1,?,?,?)",
+                (credential_id, ciphertext, "create", actor_user_id),
+            )
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                target_tenant_id=tenant_id, action="credential.create",
+                target=f"credential:{credential_id}",
+                redacted_changes={"name": f"channel:{instance_id}",
+                                  "resource_kind": "channel",
+                                  "resource_id": instance_id},
+                result="success")
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                target_tenant_id=tenant_id, action="channel.instance.create",
+                target=f"channel_instance:{instance_id}",
+                redacted_changes={"channel_type": ctype, "display_name": display_name,
+                                  "agent_id": agent_id,
+                                  "credential_fields": sorted(json.loads(bundle_json))},
+                result="success")
+            con.commit()
+            row = con.execute(
+                "SELECT * FROM tenant_channel_instances WHERE id=?", (instance_id,)
+            ).fetchone()
+        # Redeem the grant only now that the row is committed. A write refused
+        # after authorization — a duplicate name, say — must not cost the
+        # operator another scan (see ``auth.scan_authorization``).
+        if scan_ticket:
+            from auth import scan_authorization
+            scan_authorization.consume(
+                scan_ticket, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                channel_type=ctype)
+        return self._instance_projection(row)
+
+    def get_tenant_channel_instance_row(
+        self, instance_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """One tenant channel instance row by its globally-unique id.
+
+        Internal, system-side, like :meth:`channel_instance_credentials`: it takes
+        no actor (none exists on the runtime path), is **not** reachable over
+        HTTP (``ROUTE_POLICY`` has no endpoint for it), and returns instance
+        metadata only — never credential material. The lookup is by
+        ``instance_id`` because that is how an inbound message and a hot restart
+        name their channel; the owning ``tenant_id`` comes back with the row and
+        is the authoritative anchor (see ``channel/external_identity.py``).
+        """
+        rows = self._store.execute(
+            "SELECT id, tenant_id, channel_type, display_name, agent_id, active,"
+            " version FROM tenant_channel_instances WHERE id=?",
+            (instance_id,),
+        )
+        return dict(rows[0]) if rows else None
+
+    def list_tenant_channel_instances(
+        self, *, actor_user_id: str, tenant_id: str
+    ) -> Dict[str, Any]:
+        """Masked, credential-free list of this tenant's channel instances.
+
+        Control of the tenant is required: a non-controller gets 403 rather than
+        an empty list, so a probe cannot distinguish "no instances" from "not
+        allowed".
+        """
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError(
+                "channel instance list denied", code="forbidden", status=403)
+        rows = self._store.execute(
+            "SELECT * FROM tenant_channel_instances WHERE tenant_id=?"
+            " ORDER BY display_name", (tenant_id,))
+        items = [self._instance_projection(row) for row in rows]
+        return {"items": items, "total": len(items)}
+
+    def update_tenant_channel_instance(
+        self,
+        *,
+        actor_user_id: str,
+        tenant_id: str,
+        instance_id: str,
+        expected_version: int,
+        recent_password: str,
+        display_name: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        credentials=None,
+    ) -> Dict[str, Any]:
+        """Edit a tenant channel instance, optionally rotating its bundle.
+
+        Rotation appends a ``credential_versions`` row and updates the existing
+        credential in place — never a second credential row, so an instance is
+        always exactly one credential. A stale ``expected_version`` aborts
+        before any field or bundle changes.
+        """
+        from auth.crypto import encrypt_secret
+
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError(
+                "channel instance manage denied", code="forbidden", status=403)
+        self._require_recent_password(actor_user_id, recent_password)
+        if agent_id is not None:
+            agent_id = self._require_instance_agent(tenant_id, agent_id)
+        with self._tx() as con:
+            row = con.execute(
+                "SELECT * FROM tenant_channel_instances WHERE id=? AND tenant_id=?",
+                (instance_id, tenant_id),
+            ).fetchone()
+            if not row:
+                raise IdentityServiceError(
+                    "channel instance not found", code="not_found", status=404)
+            if row["version"] != expected_version:
+                raise IdentityServiceError("version conflict", code="conflict", status=409)
+            new_name = row["display_name"] if display_name is None else display_name.strip()
+            if not new_name:
+                raise IdentityServiceError(
+                    "display name is required", code="bad_request", status=400)
+            new_agent = row["agent_id"] if agent_id is None else agent_id
+            if new_name != row["display_name"]:
+                dup = con.execute(
+                    "SELECT 1 FROM tenant_channel_instances"
+                    " WHERE tenant_id=? AND display_name=? AND id<>? AND active=1",
+                    (tenant_id, new_name, instance_id),
+                ).fetchone()
+                if dup:
+                    raise IdentityServiceError(
+                        "display name exists", code="conflict", status=409)
+            rotated_id = None
+            if credentials is not None:
+                # A rotation carries only the fields the operator retyped, so it
+                # is merged over the stored bundle before validation — the
+                # minimum set is then judged on what the instance will run with,
+                # not on how much the operator happened to retype.
+                effective = credentials
+                if isinstance(credentials, dict) and credentials:
+                    effective = self._merge_rotation_bundle(
+                        tenant_id, instance_id, credentials)
+                bundle_json = self._validated_channel_bundle(
+                    row["channel_type"], effective)
+                ciphertext = encrypt_secret(bundle_json)
+                cred = con.execute(
+                    "SELECT id FROM credentials WHERE tenant_id=? AND name=? AND active=1",
+                    (tenant_id, f"channel:{instance_id}"),
+                ).fetchone()
+                if not cred:
+                    raise IdentityServiceError(
+                        "channel credential not found", code="not_found", status=404)
+                next_version = con.execute(
+                    "SELECT COALESCE(MAX(version), 0) + 1 v FROM credential_versions"
+                    " WHERE credential_id=?", (cred["id"],),
+                ).fetchone()["v"]
+                con.execute(
+                    "INSERT INTO credential_versions(credential_id, version, ciphertext,"
+                    " action, changed_by) VALUES (?,?,?,?,?)",
+                    (cred["id"], next_version, ciphertext, "rotated", actor_user_id),
+                )
+                con.execute(
+                    "UPDATE credentials SET ciphertext=?, version=?,"
+                    " updated_at=unixepoch() WHERE id=?",
+                    (ciphertext, next_version, cred["id"]),
+                )
+                rotated_id = cred["id"]
+            con.execute(
+                "UPDATE tenant_channel_instances SET display_name=?, agent_id=?,"
+                " version=version+1, updated_at=unixepoch() WHERE id=?",
+                (new_name, new_agent, instance_id),
+            )
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                target_tenant_id=tenant_id, action="channel.instance.update",
+                target=f"channel_instance:{instance_id}",
+                redacted_changes={"display_name": new_name, "agent_id": new_agent},
+                result="success")
+            if rotated_id:
+                self._audit_in_tx(
+                    con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                    target_tenant_id=tenant_id, action="credential.rotate",
+                    target=f"credential:{rotated_id}", redacted_changes={},
+                    result="success")
+            con.commit()
+            updated = con.execute(
+                "SELECT * FROM tenant_channel_instances WHERE id=?", (instance_id,)
+            ).fetchone()
+        return self._instance_projection(updated)
+
+    def set_tenant_channel_instance_active(
+        self,
+        *,
+        actor_user_id: str,
+        tenant_id: str,
+        instance_id: str,
+        active: bool,
+        expected_version: int,
+        recent_password: str,
+    ) -> Dict[str, Any]:
+        """Enable or disable a tenant channel instance (disable = rollback).
+
+        Only the switch and the instance version change: the credential and its
+        version history are untouched, so re-enabling keeps working and the
+        maintenance-window rollback path needs no data restore.
+        """
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError(
+                "channel instance manage denied", code="forbidden", status=403)
+        self._require_recent_password(actor_user_id, recent_password)
+        with self._tx() as con:
+            row = con.execute(
+                "SELECT * FROM tenant_channel_instances WHERE id=? AND tenant_id=?",
+                (instance_id, tenant_id),
+            ).fetchone()
+            if not row:
+                raise IdentityServiceError(
+                    "channel instance not found", code="not_found", status=404)
+            if row["version"] != expected_version:
+                raise IdentityServiceError("version conflict", code="conflict", status=409)
+            if active:
+                # Enabling must not collide with another enabled instance of the
+                # same name: the partial unique index would otherwise raise a
+                # raw constraint error instead of an actionable conflict.
+                clash = con.execute(
+                    "SELECT 1 FROM tenant_channel_instances"
+                    " WHERE tenant_id=? AND display_name=? AND id<>? AND active=1",
+                    (tenant_id, row["display_name"], instance_id),
+                ).fetchone()
+                if clash:
+                    raise IdentityServiceError(
+                        "display name exists", code="conflict", status=409)
+            con.execute(
+                "UPDATE tenant_channel_instances SET active=?, version=version+1,"
+                " updated_at=unixepoch() WHERE id=?",
+                (int(bool(active)), instance_id),
+            )
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                target_tenant_id=tenant_id,
+                action="channel.instance.enable" if active else "channel.instance.disable",
+                target=f"channel_instance:{instance_id}",
+                redacted_changes={"active": bool(active)}, result="success")
+            con.commit()
+            updated = con.execute(
+                "SELECT * FROM tenant_channel_instances WHERE id=?", (instance_id,)
+            ).fetchone()
+        return self._instance_projection(updated)
+
+    def list_enabled_tenant_channel_instances(self) -> List[Dict[str, Any]]:
+        """Every enabled tenant channel instance, for the startup path.
+
+        Internal and system-side, like :meth:`channel_instance_credentials`:
+        it takes no actor (none exists at startup), is not reachable over HTTP,
+        and returns the instance *metadata* only — no credential material.
+        """
+        rows = self._store.execute(
+            "SELECT id, tenant_id, channel_type, display_name, agent_id, version"
+            " FROM tenant_channel_instances WHERE active=1"
+            " ORDER BY tenant_id, display_name"
+        )
+        return [dict(row) for row in rows]
+
+    def channel_instance_credentials(
+        self, tenant_id: str, instance_id: str
+    ) -> Dict[str, Any]:
+        """Decrypt one tenant channel instance's credential bundle.
+
+        Internal, unattended path for channel startup: there is no actor to
+        authorize, so it is keyed by ``tenant_id`` **and** ``instance_id`` —
+        never by name alone — and is not reachable over HTTP (the route table
+        and ``ROUTE_POLICY`` have no endpoint for it). It reuses the existing
+        credential storage and encryption and does **not** relax the
+        actor-checked :meth:`resolve_credential` beside it.
+
+        The plaintext bundle is returned once to the caller and is never
+        logged or cached here.
+        """
+        import json
+
+        from auth.crypto import decrypt_secret
+
+        rows = self._store.execute(
+            "SELECT id, ciphertext, active, resource_kind, resource_id"
+            " FROM credentials WHERE tenant_id=? AND name=?",
+            (tenant_id, f"channel:{instance_id}"),
+        )
+        if not rows or not rows[0]["active"]:
+            raise IdentityServiceError(
+                "channel credential not found", code="not_found", status=404)
+        row = rows[0]
+        # The bundle must be the one bound to this exact instance; a mismatched
+        # binding means the credential was repointed and must not be trusted.
+        if row["resource_kind"] != "channel" or row["resource_id"] != instance_id:
+            raise IdentityServiceError(
+                "channel credential binding mismatch", code="forbidden", status=403)
+        try:
+            return json.loads(decrypt_secret(row["ciphertext"]))
+        except IdentityServiceError:
+            raise
+        except Exception as error:
+            from common.log import logger
+            logger.error(f"[Identity] channel credential '{row['id']}' decrypt failed")
+            raise IdentityServiceError(
+                "channel credential decrypt failed", code="credential_crypto",
+                status=500) from error
 
     # --- approvals (open-database-runtime 8.x) -----------------------------
 

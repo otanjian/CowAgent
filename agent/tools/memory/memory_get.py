@@ -60,6 +60,30 @@ class MemoryGetTool(BaseTool):
                 "description": "Relative path to the memory or knowledge file (e.g. 'MEMORY.md', 'memory/2026-01-01.md', 'knowledge/concepts/moe.md')"
             }
     
+    @staticmethod
+    def _resolve_user_scoped(path, uid, state_dir):
+        """Map ``memory/users/<uid>/...`` onto the caller's user domain.
+
+        Returns ``(path, None)`` when the request stays inside the caller's own
+        namespace, or ``(None, error_message)`` when it does not.
+        """
+        parts = path.split('/')
+        owner = parts[2] if len(parts) > 2 else ''
+        rest = '/'.join(parts[3:])
+        if owner != uid:
+            return None, "Error: Access denied: user-scoped memory"
+        if not rest:
+            return None, f"Error: File not found: {path}"
+        if rest == 'MEMORY.md':
+            target = state_dir.memory_file()
+        else:
+            target = state_dir.memory_dir(ensure=False) / rest
+        real_target = os.path.realpath(str(target))
+        real_root = os.path.realpath(str(state_dir.user_root()))
+        if real_target != real_root and not real_target.startswith(real_root + os.sep):
+            return None, "Error: Access denied: path outside user memory"
+        return target, None
+
     def execute(self, args: dict):
         """
         Execute memory file read
@@ -86,17 +110,31 @@ class MemoryGetTool(BaseTool):
             # Exceptions: MEMORY.md in root, knowledge/ files at workspace root
             if not path.startswith('memory/') and not path.startswith('knowledge/') and not path.startswith('/') and path != 'MEMORY.md':
                 path = f'memory/{path}'
-            
-            file_path = (workspace_dir / path).resolve()
-            workspace_resolved = workspace_dir.resolve()
 
-            # Use os.path.realpath + os.sep for cross-platform path validation.
-            # str(Path).startswith(str + '/') fails on Windows where Path uses
-            # backslashes — see MemoryService._resolve_path for the same pattern.
-            real_file = os.path.realpath(str(file_path))
-            real_workspace = os.path.realpath(str(workspace_resolved))
-            if real_file != real_workspace and not real_file.startswith(real_workspace + os.sep):
-                return ToolResult.fail(f"Error: Access denied: path outside workspace")
+            from common.runtime_identity import current_identity
+            from common import state_dir
+            uid = current_identity().user_id
+
+            if uid and path.startswith('memory/users/'):
+                # Personal memory lives in the user domain, beside the Agents.
+                # The id in the path is a claim; the verified identity is the
+                # authority, so another user's namespace is refused outright.
+                file_path, denied = self._resolve_user_scoped(path, uid, state_dir)
+                if denied:
+                    return ToolResult.fail(denied)
+            else:
+                # Legacy install with no user dimension keeps the historical
+                # workspace-relative behaviour.
+                file_path = (workspace_dir / path).resolve()
+                workspace_resolved = workspace_dir.resolve()
+
+                # Use os.path.realpath + os.sep for cross-platform path validation.
+                # str(Path).startswith(str + '/') fails on Windows where Path uses
+                # backslashes — see MemoryService._resolve_path for the same pattern.
+                real_file = os.path.realpath(str(file_path))
+                real_workspace = os.path.realpath(str(workspace_resolved))
+                if real_file != real_workspace and not real_file.startswith(real_workspace + os.sep):
+                    return ToolResult.fail(f"Error: Access denied: path outside workspace")
             
             if not file_path.exists():
                 return ToolResult.fail(f"Error: File not found: {path}")

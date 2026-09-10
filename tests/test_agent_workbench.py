@@ -179,6 +179,11 @@ class TestWorkbenchProjection(unittest.TestCase):
             def check_resource_action(self, *a, **kw):
                 return True
 
+            def resolved_default_agent_id(self, tenant_id):
+                # This test pins the functional chat.use gate. There is no tenant
+                # default to relax onto, so the Agent stays grant-gated here.
+                return None
+
         with patch("auth.service.get_identity_service",
                    return_value=_AllowAgentSvc()):
             can_chat, reason = _workbench_chat_readiness(ctx, "any-agent")
@@ -205,6 +210,11 @@ class TestWorkbenchProjection(unittest.TestCase):
         class _AllowSvc:
             def check_resource_action(self, *a, **kw):
                 return True
+
+            def resolved_default_agent_id(self, tenant_id):
+                # This test pins the explicit-grant path; keep the shared-default
+                # relaxation out of the way so the grant check is what passes.
+                return None
 
         with patch("auth.service.get_identity_service", return_value=_AllowSvc()):
             self.assertEqual(_workbench_chat_readiness(admin, "any-agent"),

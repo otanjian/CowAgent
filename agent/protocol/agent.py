@@ -8,6 +8,7 @@ from agent.protocol.models import LLMRequest, LLMModel
 from agent.protocol.agent_stream import AgentStreamExecutor
 from agent.protocol.result import AgentAction, AgentActionType, ToolResult, AgentResult
 from agent.tools.base_tool import BaseTool, ToolStage, is_tool_available
+from common.runtime_identity import current_user_id
 
 
 class Agent:
@@ -726,7 +727,7 @@ class Agent:
         # recording as long-term memory.
         if flush_mgr and llm_summary:
             try:
-                user_id = getattr(self, "_current_user_id", None)
+                user_id = current_user_id()
                 flush_mgr.write_daily_summary(summary, user_id=user_id, reason="trim")
             except Exception as e:
                 logger.debug(f"[Agent] compact write_daily_summary skipped: {e}")

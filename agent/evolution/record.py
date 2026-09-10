@@ -18,10 +18,13 @@ from common.log import logger
 
 
 def _evolution_dir(workspace_dir: Path, user_id: Optional[str] = None) -> Path:
-    base = Path(workspace_dir) / "memory"
     if user_id:
-        return base / "users" / user_id / "evolution"
-    return base / "evolution"
+        # Personal evolution records belong with the user, not in the Agent's
+        # workspace: the same user evolves the same personal memory from every
+        # Agent, so the log has to live in one place beside them.
+        from common import state_dir
+        return state_dir.memory_dir(ensure=True) / "evolution"
+    return Path(workspace_dir) / "memory" / "evolution"
 
 
 def append_session_evolution(

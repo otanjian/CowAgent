@@ -69,6 +69,18 @@ def current_agent_id() -> Optional[str]:
     return _current.get().agent_id
 
 
+def current_user_id() -> Optional[str]:
+    """The verified end user this work belongs to, or None.
+
+    The single source for user-scoped memory ownership. Callers must not accept
+    a user id from their arguments: whoever supplies it decides whose private
+    memory is written or read, so it has to come from the verified runtime
+    identity. None (legacy, or a machine-initiated run) means "no user
+    dimension", which the memory layer treats as the pre-existing behaviour.
+    """
+    return _current.get().user_id or None
+
+
 @contextmanager
 def identity_scope(**overrides: Any) -> Iterator[RuntimeIdentity]:
     """Derive an identity from the ambient one for the duration of a block.

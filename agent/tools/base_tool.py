@@ -87,6 +87,15 @@ class BaseTool:
     # only for work that is independent by construction and slow enough that
     # queueing it is the dominant cost.
     parallel_safe: bool = False
+    # Whether the tool carries its own per-identity authorization, so the coarse
+    # ``tool.execute`` resource grant must not also gate it. Off by default: a
+    # normal tool is only runnable once an administrator grants its
+    # ``builtin:<tool>`` execute action to the caller's role. A tool that only
+    # touches the caller's own data and refuses on its own when the caller is
+    # not allowed (personal todo, scheduler) turns this on, so a logged-in user
+    # can create their own todo/reminder in chat just as the console page lets
+    # them - without the administrator having to grant the tool explicitly.
+    self_authorized: bool = False
 
     def renders_own_cards(self, arguments: dict) -> bool:
         """Whether this call reports itself, so the caller should stay quiet.

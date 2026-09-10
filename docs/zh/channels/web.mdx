@@ -100,7 +100,7 @@ Web 控制台可以展示你自己的品牌：品牌名称、Logo 简述、自�
 - **新建会话**：点击历史会话页顶部的「新对话」按钮或聊天输入区的 `+` 按钮创建新会话
 - **会话操作**：点击会话项右侧的「⋯」按钮，可置顶或取消置顶、重命名、删除会话；删除需确认，确认后永久删除该会话及其所有消息
 - **清除上下文**：点击输入区的清除按钮，在当前会话中插入一条分隔线，分隔线以上的消息仍然展示但不再作为模型的上下文输入
-- **工作空间 / 模型 / 权限**：在输入框下方可为当前会话单独设置项目工作空间、模型和权限；使用多个项目时，历史会话会自动按项目分组。详见 [项目架构 - 项目工作空间](/zh/intro/architecture#project-workspace)
+- **工作空间 / 模型**：在输入框下方可为当前会话单独设置项目工作空间与模型；使用多个项目时，历史会话会自动按项目分组。详见 [项目架构 - 项目工作空间](/zh/intro/architecture#project-workspace)
 
 <Frame caption="会话按工作空间分组，可为当前会话单独设置工作空间与模型">
   <img src="https://cdn.jsdelivr.net/gh/zhayujie/cowagent-assets@main/screenshots/zh/web-console-workspace-project-demo.png" style={{ maxWidth: "800px" }} />
@@ -108,11 +108,7 @@ Web 控制台可以展示你自己的品牌：品牌名称、Logo 简述、自�
 
 #### 权限模式
 
-可为当前会话设置权限模式，控制 Agent 对文件与命令的操作范围：只读（read-only）、工作空间可写（workspace-write）、完全访问（full-access）。工具调用因权限被拦截时会给出可点击的提示，便于就地调整。
-
-<Frame caption="会话级权限模式：只读、工作空间可写、完全访问">
-  <img src="https://cdn.jsdelivr.net/gh/zhayujie/cowagent-assets@main/screenshots/zh/web-console-access-mode.png" style={{ maxWidth: "600px" }} />
-</Frame>
+Agent 能触及的文件与命令范围由权限模式决定：只读（read-only）、工作空间可写（workspace-write）、完全访问（full-access）。单租户安装在「控制台 → 安全设置」中选择全局默认权限，新会话继承该默认值；多租户（数据库模式）下该设置只读，实际能执行什么由调用者的**角色资源授权**决定——某个角色能用哪些工具、哪些资源由管理员分配，会话内不提供放宽权限的入口。工具被拦截时控制台仍会说明原因，但不再提供就地调整权限的按钮。
 
 #### 智能体
 

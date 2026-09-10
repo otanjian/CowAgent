@@ -160,10 +160,25 @@ def test_platform_admin_passes(svc):
 def test_deny_notice_is_bilingual_and_stable():
     for reason in (ex.UNBOUND, ex.NOT_MEMBER, ex.PERMISSION_DENIED,
                    ex.PASSWORD_CHANGE_REQUIRED, ex.TENANT_UNBOUND,
-                   ex.UNSUPPORTED_CHANNEL):
+                   ex.AGENT_UNAVAILABLE, ex.UNSUPPORTED_CHANNEL):
         text = ex.deny_notice(reason)
         assert isinstance(text, str) and len(text) > 10
     assert ex.deny_notice("unknown-code")
+
+
+def test_an_instance_anchor_does_not_need_the_agent_binding(svc):
+    """TENANT_UNBOUND is a legacy-path answer only.
+
+    An instance-owned message is anchored by its instance row, so a missing
+    Agent route no longer means "no organization" — the caller passes the
+    effective Agent alongside the anchor instead.
+    """
+    legacy_ctx, legacy_reason = ex.resolve_actor_for_context(_ctx(), "unbound-agent")
+    assert legacy_ctx is None and legacy_reason == ex.TENANT_UNBOUND
+
+    ctx, reason = ex.resolve_actor_for_context(_ctx(), "shared-agent", svc.tenant)
+    assert reason is None
+    assert ctx.tenant_id == svc.tenant
 
 
 class _ThinChannel(ChatChannel):
@@ -200,6 +215,282 @@ def test_preflight_denied_sends_notice(svc, monkeypatch):
     assert ch._preflight_external_inbound(context) is True
     assert len(ch.sent) == 1 and ch.sent[0].type == ReplyType.TEXT
     assert "管理员" in ch.sent[0].content  # fixed bilingual notice, no model call
+
+
+def test_a_denied_inbound_is_remembered_so_an_admin_can_pick_it(svc, monkeypatch):
+    """The console's "waiting to be bound" list is fed by this path.
+
+    Without it an administrator cannot bind anybody: they are asked for an
+    ``open_id`` that only exists inside the log line this denial writes.
+    """
+    monkeypatch.setattr("channel.external_identity.is_database_mode", lambda: True)
+    monkeypatch.setattr("bridge.bridge.Bridge", _FakeBridge(agent_id="shared-agent"))
+    ch = _ThinChannel("feishu")
+    context = _ctx(subject="ou_stranger")
+    context["channel_type"] = "feishu"
+    context["instance_id"] = "chan_x"
+    assert ch._preflight_external_inbound(context) is True
+
+    items = svc.service.list_external_identity_attempts(
+        actor_user_id=svc.root)["items"]
+    assert [a["subject"] for a in items] == ["ou_stranger"]
+    assert items[0]["provider"] == "feishu"
+    assert items[0]["issuer"] == "cli_app_acme"
+    assert items[0]["channel_type"] == "feishu"
+    assert items[0]["instance_id"] == "chan_x"
+
+
+class _FakeMsg:
+    """The subset of ``ChatMessage`` the attempt evidence is read from."""
+
+    def __init__(self, *, nickname="", content="", ctype=None, is_group=False,
+                 resolved_name=None):
+        from bridge.context import ContextType
+
+        self.actual_user_nickname = nickname
+        self.from_user_nickname = nickname
+        self.content = content
+        self.ctype = ctype or ContextType.TEXT
+        self.is_group = is_group
+        self._resolved_name = resolved_name
+
+    def content_with_quote(self):
+        return self.content
+
+    def resolve_sender_name(self):
+        """Optional channel hook: a provider that only knows an opaque id."""
+        if self._resolved_name is None:
+            raise AssertionError("the resolver must not be asked when a name exists")
+        return self._resolved_name
+
+
+def test_a_denied_inbound_carries_who_and_what_was_said(svc, monkeypatch):
+    """The evidence is read from the standard message fields, not from Feishu.
+
+    Any channel that populates ``ChatMessage`` therefore gets the same
+    administrator experience without a per-provider code path.
+    """
+    monkeypatch.setattr("channel.external_identity.is_database_mode", lambda: True)
+    monkeypatch.setattr("bridge.bridge.Bridge", _FakeBridge(agent_id="shared-agent"))
+    ch = _ThinChannel("feishu")
+    context = _ctx(subject="ou_stranger")
+    context["channel_type"] = "feishu"
+    context["instance_id"] = "chan_x"
+    context["msg"] = _FakeMsg(nickname="张三", content="帮我查下报销")
+    assert ch._preflight_external_inbound(context) is True
+
+    item = svc.service.list_external_identity_attempts(
+        actor_user_id=svc.root)["items"][0]
+    assert item["sender_name"] == "张三"
+    assert item["message_preview"] == "帮我查下报销"
+    assert item["is_group"] == 0
+
+
+def test_a_group_denial_is_marked_as_one(svc, monkeypatch):
+    monkeypatch.setattr("channel.external_identity.is_database_mode", lambda: True)
+    monkeypatch.setattr("bridge.bridge.Bridge", _FakeBridge(agent_id="shared-agent"))
+    ch = _ThinChannel("feishu")
+    context = _ctx(subject="ou_stranger")
+    context["instance_id"] = "chan_x"
+    context["isgroup"] = True
+    context["msg"] = _FakeMsg(nickname="李四", content="总结一下", is_group=True)
+    assert ch._preflight_external_inbound(context) is True
+
+    item = svc.service.list_external_identity_attempts(
+        actor_user_id=svc.root)["items"][0]
+    assert item["is_group"] == 1
+
+
+def test_a_non_text_denial_previews_its_kind_not_a_local_path(svc, monkeypatch):
+    """An image message's ``content`` is a downloaded file path.
+
+    Storing it would put a server filesystem path in front of an administrator
+    and identify nothing, so a non-text message is summarised by kind.
+    """
+    from bridge.context import ContextType
+
+    monkeypatch.setattr("channel.external_identity.is_database_mode", lambda: True)
+    monkeypatch.setattr("bridge.bridge.Bridge", _FakeBridge(agent_id="shared-agent"))
+    ch = _ThinChannel("feishu")
+    context = _ctx(subject="ou_stranger")
+    context["instance_id"] = "chan_x"
+    context["msg"] = _FakeMsg(nickname="王五",
+                              content="/var/folders/tmp/abc123.png",
+                              ctype=ContextType.IMAGE)
+    assert ch._preflight_external_inbound(context) is True
+
+    item = svc.service.list_external_identity_attempts(
+        actor_user_id=svc.root)["items"][0]
+    assert "/var/folders" not in item["message_preview"]
+    assert item["message_preview"], "a kind label is still evidence"
+
+
+def test_a_channel_that_only_knows_an_opaque_id_can_still_name_the_sender(svc, monkeypatch):
+    """Feishu carries an open_id, not a name — the optional hook bridges that.
+
+    Asked lazily, so channels that already have the name never pay for a lookup.
+    """
+    monkeypatch.setattr("channel.external_identity.is_database_mode", lambda: True)
+    monkeypatch.setattr("bridge.bridge.Bridge", _FakeBridge(agent_id="shared-agent"))
+    ch = _ThinChannel("feishu")
+    context = _ctx(subject="ou_stranger")
+    context["instance_id"] = "chan_x"
+    context["msg"] = _FakeMsg(content="帮我查下报销", resolved_name="张三")
+    assert ch._preflight_external_inbound(context) is True
+
+    item = svc.service.list_external_identity_attempts(
+        actor_user_id=svc.root)["items"][0]
+    assert item["sender_name"] == "张三"
+    assert item["message_preview"] == "帮我查下报销"
+
+
+def test_a_name_lookup_that_fails_leaves_the_attempt_bindable(svc, monkeypatch):
+    monkeypatch.setattr("channel.external_identity.is_database_mode", lambda: True)
+    monkeypatch.setattr("bridge.bridge.Bridge", _FakeBridge(agent_id="shared-agent"))
+
+    class _AngryResolver(_FakeMsg):
+        def resolve_sender_name(self):
+            raise RuntimeError("no contact scope")
+
+    ch = _ThinChannel("feishu")
+    context = _ctx(subject="ou_stranger")
+    context["instance_id"] = "chan_x"
+    context["msg"] = _AngryResolver(content="你好")
+    assert ch._preflight_external_inbound(context) is True
+
+    items = svc.service.list_external_identity_attempts(
+        actor_user_id=svc.root)["items"]
+    assert [a["subject"] for a in items] == ["ou_stranger"]
+    assert items[0]["sender_name"] == ""
+    assert items[0]["message_preview"] == "你好"
+
+
+def test_a_quoted_reply_previews_the_authors_own_words(svc, monkeypatch):
+    """A reply's quoted parent is scaffolding; the sender's words are the clue."""
+    monkeypatch.setattr("channel.external_identity.is_database_mode", lambda: True)
+    monkeypatch.setattr("bridge.bridge.Bridge", _FakeBridge(agent_id="shared-agent"))
+
+    class _QuotedMsg:
+        actual_user_nickname = "张三"
+        content = "这笔报销按新标准"
+        is_group = False
+
+        def content_with_quote(self):
+            return ("[Quoted message]\n旧标准是什么\n[/Quoted message]\n\n"
+                    "这笔报销按新标准")
+
+    from bridge.context import ContextType
+    _QuotedMsg.ctype = ContextType.TEXT
+
+    ch = _ThinChannel("feishu")
+    context = _ctx(subject="ou_stranger")
+    context["instance_id"] = "chan_x"
+    context["msg"] = _QuotedMsg()
+    assert ch._preflight_external_inbound(context) is True
+
+    item = svc.service.list_external_identity_attempts(
+        actor_user_id=svc.root)["items"][0]
+    assert item["message_preview"] == "这笔报销按新标准"
+    assert "Quoted message" not in item["message_preview"]
+
+
+def test_a_long_message_is_truncated(svc, monkeypatch):
+    monkeypatch.setattr("channel.external_identity.is_database_mode", lambda: True)
+    monkeypatch.setattr("bridge.bridge.Bridge", _FakeBridge(agent_id="shared-agent"))
+    ch = _ThinChannel("feishu")
+    context = _ctx(subject="ou_stranger")
+    context["instance_id"] = "chan_x"
+    context["msg"] = _FakeMsg(nickname="张三", content="很长的内容" * 200)
+    assert ch._preflight_external_inbound(context) is True
+
+    item = svc.service.list_external_identity_attempts(
+        actor_user_id=svc.root)["items"][0]
+    assert len(item["message_preview"]) <= 200
+
+
+def test_a_failing_evidence_extraction_still_refuses_the_message(svc, monkeypatch):
+    """The refusal is the contract; the evidence is a courtesy."""
+    monkeypatch.setattr("channel.external_identity.is_database_mode", lambda: True)
+    monkeypatch.setattr("bridge.bridge.Bridge", _FakeBridge(agent_id="shared-agent"))
+
+    class _ExplodingMsg:
+        @property
+        def actual_user_nickname(self):
+            raise RuntimeError("boom")
+
+        @property
+        def content(self):
+            raise RuntimeError("boom")
+
+    ch = _ThinChannel("feishu")
+    context = _ctx(subject="ou_stranger")
+    context["instance_id"] = "chan_x"
+    context["msg"] = _ExplodingMsg()
+    assert ch._preflight_external_inbound(context) is True
+    assert len(ch.sent) == 1 and "管理员" in ch.sent[0].content
+
+
+def test_an_authorized_inbound_remembers_nothing(svc, monkeypatch):
+    monkeypatch.setattr("channel.external_identity.is_database_mode", lambda: True)
+    monkeypatch.setattr("bridge.bridge.Bridge", _FakeBridge(agent_id="shared-agent"))
+    ch = _ThinChannel("feishu")
+    assert ch._preflight_external_inbound(_ctx()) is False
+    assert svc.service.list_external_identity_attempts(
+        actor_user_id=svc.root)["items"] == []
+
+
+def test_a_non_binding_denial_is_not_offered_for_binding(svc, monkeypatch):
+    """Only ``external_unbound`` is answered by binding an account.
+
+    A known author who is simply not in this organization cannot be fixed by
+    binding them again, so offering them in the list would be a dead end.
+    """
+    monkeypatch.setattr("channel.external_identity.is_database_mode", lambda: True)
+    monkeypatch.setattr("bridge.bridge.Bridge", _FakeBridge(agent_id="shared-agent"))
+    other = svc.service.create_tenant(
+        actor_user_id=svc.root, code="other2", name="Other2", shared_root="",
+        admin_username="other2", admin_display="Other2",
+        admin_password="OtherPass123!", recent_password="Str0ngAdminPass",
+    )["id"]
+    _bind_user(svc, "foreign2", "ou_elsewhere", tenant=other)
+    ch = _ThinChannel("feishu")
+    assert ch._preflight_external_inbound(_ctx(subject="ou_elsewhere")) is True
+    assert svc.service.list_external_identity_attempts(
+        actor_user_id=svc.root)["items"] == []
+
+
+def test_a_binding_deny_logs_the_triple_an_admin_needs(svc, monkeypatch):
+    """The notice tells the user to ask an administrator, so the log has to
+    tell the administrator what to bind.
+
+    Without the triple the only way to recover is to reproduce the message with
+    instrumentation, because the subject is never stored anywhere on the deny
+    path — the binding that would carry it is exactly what is missing.
+    """
+    monkeypatch.setattr("channel.external_identity.is_database_mode", lambda: True)
+    monkeypatch.setattr("bridge.bridge.Bridge", _FakeBridge(agent_id="shared-agent"))
+    lines = []
+
+    class _Recorder:
+        def info(self, msg, *a, **k):
+            lines.append(str(msg) % a if a else str(msg))
+
+        def warning(self, msg, *a, **k):
+            lines.append(str(msg) % a if a else str(msg))
+
+        def error(self, msg, *a, **k):
+            lines.append(str(msg) % a if a else str(msg))
+
+    monkeypatch.setattr("channel.chat_channel.logger", _Recorder())
+    ch = _ThinChannel("feishu")
+    ch._preflight_external_inbound(_ctx(subject="ou_stranger"))
+
+    deny = [line for line in lines if "external inbound denied" in line]
+    assert deny, f"the deny was not logged at all: {lines}"
+    joined = " ".join(deny)
+    assert "ou_stranger" in joined, "the admin cannot bind without the subject"
+    assert "cli_app_acme" in joined, "the issuer decides which app the binding fits"
+    assert "feishu" in joined
 
 
 def test_preflight_unstamped_sends_unsupported(svc, monkeypatch):

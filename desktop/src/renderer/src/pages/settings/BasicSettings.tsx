@@ -416,6 +416,11 @@ const BasicSettings: React.FC<BasicSettingsProps> = ({ baseUrl, onLangChange, on
     { value: '__custom__', label: t('config_custom_option') },
   ]
 
+  // In database mode the session permission mode is not what gates execution -
+  // the caller's role resource grants are - so the global default is shown
+  // read-only as an explanation, never as a knob that could widen a session.
+  const permissionEditable = config?.permission_mode_editable !== false
+
   return (
     <div className="grid gap-5">
       {/* Model — provider/model selection only; credentials live in Models tab */}
@@ -588,9 +593,13 @@ const BasicSettings: React.FC<BasicSettingsProps> = ({ baseUrl, onLangChange, on
       {/* Security */}
       <Card icon={<ShieldCheck size={16} />} title={t('config_security')}>
         <div className="space-y-4">
-          <Field label={t('config_permission')} hint={t('config_permission_desc')}>
+          <Field
+            label={t('config_permission')}
+            hint={permissionEditable ? t('config_permission_desc') : t('config_permission_role_desc')}
+          >
             <Dropdown
               value={permissionMode}
+              disabled={!permissionEditable}
               options={PERMISSION_MODE_ORDER.filter(
                 (m) => !config?.permission_modes?.length || config.permission_modes.includes(m)
               ).map((m) => ({
@@ -600,7 +609,7 @@ const BasicSettings: React.FC<BasicSettingsProps> = ({ baseUrl, onLangChange, on
               }))}
               onChange={savePermission}
             />
-            {permStatus && <p className="text-xs text-accent mt-1">{permStatus}</p>}
+            {permissionEditable && permStatus && <p className="text-xs text-accent mt-1">{permStatus}</p>}
           </Field>
           <Field label={t('config_password')} hint={t('config_password_hint')}>
             <div className="relative">

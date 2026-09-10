@@ -1,0 +1,175 @@
+// Starting a chat must never be gated on choosing an Agent (tasks 1.8 / 2.4).
+// A tenant that owns several Agents anchors the conversation to the default
+// one; the caret is the optional "switch / team" entry. Browser acceptance owns
+// the visual layout — these run the shipped functions.
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+const source = fs.readFileSync(
+    path.join(__dirname, '../channel/web/static/js/console.js'), 'utf8');
+
+function section(start, end) {
+    const from = source.indexOf(start), to = source.indexOf(end, from);
+    assert.ok(from >= 0 && to > from, `section ${start} .. ${end}`);
+    return source.slice(from, to);
+}
+
+function node() {
+    const classes = new Set(['hidden']);
+    return {
+        innerHTML: '', textContent: '', dataset: {},
+        classList: {
+            add: (...xs) => xs.forEach(x => classes.add(x)),
+            remove: (...xs) => xs.forEach(x => classes.delete(x)),
+            contains: x => classes.has(x),
+            toggle: (x, on) => { if (on) classes.add(x); else classes.delete(x); return on; },
+        },
+    };
+}
+
+/** The slice that decides chat-launch behaviour, with a recorded newChat(). */
+function launchHarness(agents, payload) {
+    const nodes = new Map();
+    const calls = { newChat: 0, team: 0 };
+    const ctx = {
+        agentCatalog: agents, activeAgentId: '', defaultAgentId: '',
+        _authEpoch: 1, tenant: 'tenant-a', selectedAdminAgentId: '',
+        channelInstances: [], rosterRevision: '', currentView: 'chat',
+        sessionStorage: { getItem: () => ctx.tenant },
+        fetch: async () => ({
+            json: async () => payload
+                || { status: 'success', agents, default_agent_id: 'owner' },
+        }),
+        writeScopedPreference() {}, renderAgentsGrid() {}, closeAgentDetail() {},
+        renderComposerIdentity() {}, renderMemoryAgentSelect() {}, refreshBubbleAvatars() {},
+        renderAgentDetail() {}, openAgentDetail() {},
+        agentAvatarHTML: a => `<avatar>${a.name}</avatar>`,
+        escapeHtml: x => String(x), t: x => x,
+        newChat: () => { calls.newChat += 1; },
+        openTeamChatModal: () => { calls.team += 1; },
+        document: { getElementById(id) { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); } },
+    };
+    vm.createContext(ctx);
+    for (const [start, end] of [
+        ['function normalizeAgentCatalogEntry(', 'function loadAgentCatalog()'],
+        ['function loadAgentCatalog()', 'function renderAgentsGrid()'],
+        ['function findAgent(', 'function enabledAgents()'],
+        ['function enabledAgents()', 'function availableChatAgents()'],
+        ['function availableChatAgents()', '/* An uploaded avatar'],
+        ['function multiAgentMode()', '// Who is answering'],
+        ['/* The session-panel "新对话" button.', 'function startSoloChat('],
+    ]) {
+        vm.runInContext(section(start, end), ctx);
+    }
+    // The shipped avatar helper pulls in branding lookups this harness has no
+    // reason to model; the menu's *structure* is what these tests pin.
+    ctx.agentAvatarHTML = a => `<avatar>${a.name}</avatar>`;
+    return { ctx, calls, get: id => ctx.document.getElementById(id) };
+}
+
+const agent = (id, extra = {}) =>
+    ({ id, name: id, enabled: true, can_chat: true, is_default: false, ...extra });
+
+test('entering chat with several Agents anchors the default, no picker', async () => {
+    const { ctx, get } = launchHarness([
+        agent('research'), agent('owner', { is_default: true }), agent('coder'),
+    ]);
+    await ctx.loadAgentCatalog();
+    assert.equal(ctx.activeAgentId, 'owner',
+        'a multi-Agent tenant did not anchor the default Agent');
+    // The menu exists but stays shut until the user asks for it.
+    assert.ok(get('new-chat-menu').classList.contains('hidden'));
+    // The caret is offered precisely when there is something to choose between.
+    assert.equal(get('new-chat-caret').classList.contains('hidden'), false);
+});
+
+test('the new-chat button starts a chat instead of forcing a choice', () => {
+    const { ctx, calls, get } = launchHarness([
+        agent('research'), agent('owner', { is_default: true }), agent('coder'),
+    ]);
+    ctx.activeAgentId = 'owner';
+    // Click on the button body: no caret in the event path.
+    ctx.onNewChatButton({ target: { closest: () => null }, stopPropagation() {} });
+    assert.equal(calls.newChat, 1, 'the primary action did not start a chat');
+    assert.ok(get('new-chat-menu').classList.contains('hidden'),
+        'the picker was forced open');
+});
+
+test('the caret opens the optional switch / team picker', () => {
+    const { ctx, calls, get } = launchHarness([
+        agent('research'), agent('owner', { is_default: true }), agent('coder'),
+    ]);
+    let stopped = false;
+    ctx.onNewChatButton({
+        target: { closest: sel => (sel === '#new-chat-caret' ? {} : null) },
+        stopPropagation() { stopped = true; },
+    });
+    assert.equal(calls.newChat, 0, 'the caret started a chat instead of opening the picker');
+    assert.ok(stopped);
+    assert.equal(get('new-chat-menu').classList.contains('hidden'), false);
+    // It lists a solo chat per Agent plus the team entry.
+    assert.match(get('new-chat-menu').innerHTML, /startSoloChat\('owner'\)/);
+    assert.match(get('new-chat-menu').innerHTML, /openTeamChatModal/);
+});
+
+test('a single Agent behaves like the console before Agents existed', async () => {
+    const { ctx, calls, get } = launchHarness([agent('owner', { is_default: true })]);
+    await ctx.loadAgentCatalog();
+    assert.equal(ctx.activeAgentId, 'owner');
+    // Nothing to choose between -> no caret at all.
+    assert.ok(get('new-chat-caret').classList.contains('hidden'));
+    ctx.onNewChatButton({ target: { closest: () => null }, stopPropagation() {} });
+    assert.equal(calls.newChat, 1);
+});
+
+test('re-clicking the caret closes the picker again', () => {
+    const { ctx, get } = launchHarness([agent('a'), agent('b')]);
+    const caretEvent = {
+        target: { closest: sel => (sel === '#new-chat-caret' ? {} : null) },
+        stopPropagation() {},
+    };
+    ctx.onNewChatButton(caretEvent);
+    assert.equal(get('new-chat-menu').classList.contains('hidden'), false);
+    ctx.onNewChatButton(caretEvent);
+    assert.ok(get('new-chat-menu').classList.contains('hidden'),
+        'a second caret click did not close the picker');
+});
+
+// The console must never *invent* an Agent id. A literal fallback on an empty
+// catalogue becomes a real request: the global fetch wrapper copies the active
+// id onto every /message and /api call, so a made-up id is sent to the server,
+// which rejects it as "agent not found" — reporting a routing failure when the
+// member simply may not see any Agent. Sending no id lets the server anchor the
+// session to the tenant default instead.
+
+test('an empty Agent catalogue anchors nothing instead of inventing "default"', async () => {
+    const { ctx } = launchHarness([], { status: 'success', agents: [] });
+    await ctx.loadAgentCatalog();
+    assert.equal(ctx.defaultAgentId, '',
+        'the console invented a default Agent id out of an empty catalogue');
+    assert.equal(ctx.activeAgentId, '',
+        'an invented id would ride every request and be rejected as "agent not found"');
+});
+
+test('a remembered Agent the catalogue no longer offers is dropped', async () => {
+    const { ctx } = launchHarness([agent('owner', { is_default: true })]);
+    // A stale value survives in scoped storage: an older build, a deleted
+    // Agent, or a tenant the account no longer belongs to.
+    ctx.activeAgentId = 'default';
+    await ctx.loadAgentCatalog();
+    assert.equal(ctx.activeAgentId, 'owner',
+        'a stale Agent id kept riding the requests instead of the real default');
+});
+
+test('a remembered Agent the catalogue still offers is kept', async () => {
+    const { ctx } = launchHarness([
+        agent('owner', { is_default: true }), agent('research'),
+    ]);
+    ctx.activeAgentId = 'research';
+    await ctx.loadAgentCatalog();
+    assert.equal(ctx.activeAgentId, 'research',
+        'an explicit choice was reset to the default while it was still available');
+});

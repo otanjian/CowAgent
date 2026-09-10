@@ -10,6 +10,7 @@ the identity service. Authorization is independent of the frontend.
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Dict, List, Optional
 
 import web
@@ -23,6 +24,8 @@ from auth.policy import (
 )
 from auth.service import IdentityService, IdentityServiceError
 from auth.runtime import RequestContext, IdentityContextError
+from agent.tenant_provisioning import TenantProvisioningError
+from common.log import logger
 from channel.web.auth_handlers import (
     _get_service,
     _is_database,
@@ -69,12 +72,66 @@ def _recent_password(ctx: RequestContext) -> str:
     return str(data.get("recent_password", "") or "")
 
 
+def _int_or_zero(value: Any) -> int:
+    """Coerce an optimistic-concurrency token; 0 can never match a real version,
+    so a malformed value fails the version check (409) instead of erroring."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _opt_str(data: Dict[str, Any], key: str) -> Optional[str]:
+    """``None`` when the key is absent (leave unchanged), else a string."""
+    if key not in data or data.get(key) is None:
+        return None
+    return str(data.get(key))
+
+
 def _tenant_public(tenant: Dict[str, Any]) -> Dict[str, Any]:
     """Whitelist a tenant dictionary for a normal (non-platform) response.
 
     Never exposes the host ``shared_root`` path, password hashes or credentials.
     """
     return {k: v for k, v in tenant.items() if k != "shared_root"}
+
+
+#: Fixed isolation identifier for a tenant's space. The host directory is never
+#: part of the projection, so a client only learns the isolation kind.
+TENANT_SPACE_ISOLATION = "dedicated-root"
+
+
+def _tenant_space_public(tenant: Dict[str, Any]) -> Dict[str, Any]:
+    """Read-only projection of the tenant's space (its shared root).
+
+    A tenant's space IS ``tenants.shared_root``: the per-tenant directory derived
+    at creation and guarded by the cross-tenant containment check. The base spec
+    forbids returning the host path, so this carries only a logical identifier, a
+    readiness flag and the fixed isolation kind. A root that cannot be validated
+    is reported as unavailable rather than failing the surrounding read.
+    """
+    root = str(tenant.get("shared_root") or "")
+    ready = False
+    if root:
+        try:
+            from common.state_dir import validate_tenant_shared_root
+            validate_tenant_shared_root(
+                root, tenant_id=tenant.get("id"), svc=_get_service())
+            ready = os.path.isdir(root)
+        except Exception:
+            ready = False
+    return {
+        "id": tenant.get("code"),
+        "status": "ready" if ready else "unavailable",
+        "isolation": TENANT_SPACE_ISOLATION,
+    }
+
+
+def _tenant_platform_public(tenant: Dict[str, Any]) -> Dict[str, Any]:
+    """Platform-side tenant projection: public fields plus the read-only space."""
+    out = _tenant_public(tenant)
+    out["space"] = _tenant_space_public(tenant)
+    return out
 
 
 # --- Platform users -------------------------------------------------------
@@ -229,6 +286,113 @@ class PlatformUserExternalIdentityHandler:
         return _json({"status": "success"})
 
 
+class TenantMemberExternalIdentitiesHandler:
+    """GET/POST /api/tenant/members/{member_id}/external-identities.
+
+    The tenant-administrator surface for the same job the platform handlers
+    above do: a tenant admin usually knows which of their members owns which IM
+    account, so they are the right person to bind it.
+
+    The member id in the path is the *membership* id, resolved inside the
+    acting tenant by the service layer. That is what confines this surface to
+    one organization: another tenant's membership is simply not found, so no
+    separate containment check exists here to be forgotten or mis-ordered.
+    """
+
+    def GET(self, member_id: str):
+        _guard_database()
+        ctx = _require_context(require_tenant=True)
+        _require_tenant_admin(ctx)
+        svc = _get_service()
+        try:
+            result = svc.list_external_identities_for_tenant(
+                actor_user_id=ctx.user_id,
+                tenant_id=ctx.tenant_id,
+                member_id=member_id,
+            )
+        except IdentityServiceError as e:
+            return _service_error(e)
+        return _json({"status": "success", **result})
+
+    def POST(self, member_id: str):
+        _guard_database()
+        ctx = _require_context(require_tenant=True)
+        _require_tenant_admin(ctx)
+        try:
+            data = json.loads(web.data())
+        except Exception:
+            return _error("Invalid request", 400, "invalid_request")
+        svc = _get_service()
+        try:
+            binding = svc.bind_external_identity_for_tenant(
+                actor_user_id=ctx.user_id,
+                tenant_id=ctx.tenant_id,
+                member_id=member_id,
+                provider=str(data.get("provider", "") or ""),
+                issuer=str(data.get("issuer", "") or ""),
+                subject=str(data.get("subject", "") or ""),
+            )
+        except IdentityServiceError as e:
+            return _service_error(e)
+        return _json({"status": "success", "binding": binding})
+
+
+class TenantMemberExternalIdentityHandler:
+    """DELETE /api/tenant/members/{member_id}/external-identities/{binding_id}."""
+
+    def DELETE(self, member_id: str, binding_id: str):
+        _guard_database()
+        ctx = _require_context(require_tenant=True)
+        _require_tenant_admin(ctx)
+        svc = _get_service()
+        try:
+            svc.delete_external_identity_for_tenant(
+                actor_user_id=ctx.user_id,
+                tenant_id=ctx.tenant_id,
+                binding_id=binding_id,
+            )
+        except IdentityServiceError as e:
+            return _service_error(e)
+        return _json({"status": "success"})
+
+
+class ExternalIdentityAttemptsHandler:
+    """GET pending (unbound) inbound authors for the binding picker.
+
+    Registered twice, once per scope, because "which attempts may I see" is the
+    same question as "whose administrator am I": a tenant admin sees only the
+    attempts delivered by their own tenant's channel instances, while a platform
+    admin sees all of them — including the unattributed ones, which have no
+    tenant to show them to.
+    """
+
+    _scope = "tenant"
+
+    def GET(self):
+        _guard_database()
+        if self._scope == "platform":
+            ctx = _require_context()
+            _require_platform_admin(ctx)
+            actor, tenant_id = ctx.user_id, None
+        else:
+            ctx = _require_context(require_tenant=True)
+            _require_tenant_admin(ctx)
+            actor, tenant_id = ctx.user_id, ctx.tenant_id
+        svc = _get_service()
+        try:
+            result = svc.list_external_identity_attempts(
+                actor_user_id=actor, tenant_id=tenant_id)
+        except IdentityServiceError as e:
+            return _service_error(e)
+        return _json({"status": "success", **result})
+
+
+class PlatformExternalIdentityAttemptsHandler(ExternalIdentityAttemptsHandler):
+    """The same list, with the platform-wide view (see the base class)."""
+
+    _scope = "platform"
+
+
 # --- Platform tenants -----------------------------------------------------
 
 class PlatformTenantsHandler:
@@ -259,9 +423,14 @@ class PlatformTenantsHandler:
                 # The web form never supplies a shared_root; the service derives
                 # it under the deployment-controlled root so a client cannot
                 # inject an arbitrary server path (design §4).
-                admin_username=str(data.get("admin_username", "")),
-                admin_display=str(data.get("admin_display", "") or data.get("admin_username", "")),
-                admin_password=str(data.get("admin_password", "")),
+                #
+                # Tenant lifecycle and account provisioning are separate: the
+                # form carries no admin_* fields, so the new tenant starts as a
+                # bare skeleton and the admin is bound afterwards through the
+                # "configure tenant admin" flow. Any stale admin_* field a
+                # cached frontend still sends is deliberately ignored rather
+                # than accepted (it would silently create an account with an
+                # attacker-chosen username/password).
                 recent_password=_recent_password(ctx),
             )
         except IdentityServiceError as e:
@@ -270,7 +439,14 @@ class PlatformTenantsHandler:
 
 
 class PlatformTenantHandler:
-    """GET one tenant; POST edit name/active (platform admin)."""
+    """GET one tenant; POST edit name/active (platform admin).
+
+    ``POST`` dispatches on an explicit ``operation`` (``profile`` / ``name`` /
+    ``status``). ``profile`` edits the name and the enabled flag together in one
+    transaction, which is what the tenant page saves. A request without
+    ``operation`` keeps the pre-existing behaviour of dispatching on the presence
+    of the ``name`` key, so older clients and cached static assets still work.
+    """
 
     def GET(self, tenant_id: str):
         _guard_database()
@@ -280,7 +456,9 @@ class PlatformTenantHandler:
         tenant = svc.get_tenant(tenant_id)
         if not tenant:
             return _error("tenant not found", 404, "not_found")
-        return _json({"status": "success", "tenant": _tenant_public(tenant)})
+        # Platform read carries the read-only space projection; the member-facing
+        # TenantInfoHandler deliberately does not.
+        return _json({"status": "success", "tenant": _tenant_platform_public(tenant)})
 
     def POST(self, tenant_id: str):
         _guard_database()
@@ -290,9 +468,23 @@ class PlatformTenantHandler:
             data = json.loads(web.data())
         except Exception:
             return _error("Invalid request", 400, "invalid_request")
+        operation = str(data.get("operation", "") or "").strip()
+        if operation not in ("", "profile", "name", "status"):
+            # An unknown operation must not silently fall through to a write.
+            return _error("unknown operation", 400, "invalid_request")
         svc = _get_service()
         try:
-            if "name" in data and data.get("name") is not None:
+            if operation == "profile":
+                result = svc.set_tenant_profile(
+                    actor_user_id=ctx.user_id,
+                    tenant_id=tenant_id,
+                    name=str(data.get("name", "")),
+                    active=bool(data.get("active", True)),
+                    expected_version=int(data.get("expected_version", 0)),
+                    recent_password=_recent_password(ctx),
+                )
+            elif operation == "name" or (
+                    not operation and "name" in data and data.get("name") is not None):
                 result = svc.set_tenant_name(
                     actor_user_id=ctx.user_id,
                     tenant_id=tenant_id,
@@ -314,7 +506,21 @@ class PlatformTenantHandler:
 
 
 class PlatformTenantAdminsHandler:
-    """Configure tenant admin (platform admin). """
+    """Read/configure a tenant's admin (platform admin).
+
+    ``GET`` exposes the tenant's current valid ``tenant_admin`` members so the
+    editor can show who administers it; the projection carries no credentials.
+    ``POST`` binds an existing account or creates a new one.
+    """
+
+    def GET(self, tenant_id: str):
+        _guard_database()
+        ctx = _require_context()
+        _require_platform_admin(ctx)
+        svc = _get_service()
+        if not svc.get_tenant(tenant_id):
+            return _error("tenant not found", 404, "not_found")
+        return _json({"status": "success", "items": svc.tenant_admins(tenant_id)})
 
     def POST(self, tenant_id: str):
         _guard_database()
@@ -324,18 +530,133 @@ class PlatformTenantAdminsHandler:
             data = json.loads(web.data())
         except Exception:
             return _error("Invalid request", 400, "invalid_request")
+        mode = str(data.get("mode", "existing") or "existing")
+        if mode not in ("existing", "new"):
+            # An unrecognised mode must not silently fall back to either path.
+            return _error("Invalid request", 400, "invalid_request")
         svc = _get_service()
         try:
-            result = svc.set_tenant_admin(
-                actor_user_id=ctx.user_id,
-                tenant_id=tenant_id,
-                user_id=str(data.get("user_id", "") or ""),
-                display_name=str(data.get("display_name", "")),
-                recent_password=_recent_password(ctx),
-            )
+            if mode == "new":
+                username = str(data.get("username", "") or "").strip()
+                display_name = str(data.get("display_name", "") or "").strip()
+                temporary_password = str(data.get("temporary_password", "") or "")
+                if not username or not display_name or not temporary_password:
+                    return _error("Invalid request", 400, "invalid_request")
+                result = svc.create_tenant_admin_account(
+                    actor_user_id=ctx.user_id,
+                    tenant_id=tenant_id,
+                    username=username,
+                    display_name=display_name,
+                    temporary_password=temporary_password,
+                    recent_password=_recent_password(ctx),
+                )
+            else:
+                result = svc.set_tenant_admin(
+                    actor_user_id=ctx.user_id,
+                    tenant_id=tenant_id,
+                    user_id=str(data.get("user_id", "") or ""),
+                    display_name=str(data.get("display_name", "")),
+                    recent_password=_recent_password(ctx),
+                )
         except IdentityServiceError as e:
             return _service_error(e)
         return _json({"status": "success", "membership": result})
+
+
+def _tenant_agent_provisioner():
+    """Build the agent-provisioning orchestration for the current request.
+
+    The imports are local so this module — loaded early by the web layer — does
+    not pull the agent package or the config loader into its import graph.
+    """
+    from agent.admin import AgentAdminService
+    from agent.tenant_provisioning import TenantAgentProvisioner
+    from config import get_data_root
+    return TenantAgentProvisioner(
+        _get_service(),
+        AgentAdminService(os.path.join(get_data_root(), "config.json")),
+    )
+
+
+class PlatformTenantAgentsHandler:
+    """Copy the source tenant's agents into a tenant (platform admin).
+
+    ``GET`` is the tenant editor's Agent tab: the target's own bound agents (no
+    host paths, no credentials) plus the copyable candidates from the resolved
+    source tenant, each flagged with whether it already has a clone here. When no
+    source can be resolved the read still succeeds and reports the reason, so the
+    tab renders the tenant's current state instead of an error.
+
+    ``POST`` copies a checked selection. Copying agents across tenants is a
+    sensitive write, so the actor's recent password is required — and a refusal
+    is audited, because a denied attempt on this route is a deliberate
+    cross-tenant write rather than a typo.
+    """
+
+    def _deny(self, ctx: RequestContext, tenant_id: str, reason: str) -> None:
+        try:
+            _get_service().record_agent_copy_event(
+                actor_user_id=ctx.user_id, actor_username=ctx.username,
+                target_tenant_id=tenant_id, result="denied", reason=reason)
+        except Exception:
+            pass  # never let bookkeeping mask the refusal itself
+        raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
+                            _error("forbidden", 403, "forbidden"))
+
+    def GET(self, tenant_id: str):
+        _guard_database()
+        ctx = _require_context()
+        _require_platform_admin(ctx)
+        try:
+            reading = _tenant_agent_provisioner().read_tenant(tenant_id)
+        except TenantProvisioningError as e:
+            return _error(str(e), e.status, e.code)
+        return _json({"status": "success", **reading})
+
+    def POST(self, tenant_id: str):
+        _guard_database()
+        ctx = _require_context()
+        if not ctx.is_platform_admin:
+            self._deny(ctx, tenant_id, "not a platform administrator")
+        try:
+            data = json.loads(web.data())
+        except Exception:
+            return _error("Invalid request", 400, "invalid_request")
+        if str(data.get("action", "") or "") != "copy":
+            return _error("Invalid request", 400, "invalid_request")
+        selected = data.get("source_agent_ids")
+        if not isinstance(selected, list) or not all(
+                isinstance(item, str) for item in selected):
+            return _error("Invalid request", 400, "invalid_request")
+        provisioner = _tenant_agent_provisioner()
+        try:
+            result = provisioner.copy(
+                target_tenant_id=tenant_id, source_agent_ids=selected,
+                recent_password=_recent_password(ctx),
+                actor_user_id=ctx.user_id, actor_username=ctx.username)
+        except TenantProvisioningError as e:
+            return _error(str(e), e.status, e.code)
+        except IdentityServiceError as e:
+            return _service_error(e)
+        self._reload_runtime(provisioner)
+        return _json({"status": "success", **result})
+
+    @staticmethod
+    def _reload_runtime(provisioner) -> None:
+        """Make the new agents usable without a restart.
+
+        Imported lazily because ``web_channel`` owns the live runtime and imports
+        this module, so the dependency must only run one way at import time. A
+        hiccup here must not turn a completed copy into a reported failure, so it
+        is logged and swallowed.
+        """
+        try:
+            from channel.web import web_channel
+            admin_service = getattr(provisioner, "admin", None)
+            if admin_service is not None:
+                web_channel._reload_agent_runtime(admin_service)
+        except Exception as exc:
+            logger.warning("[Admin] agent runtime reload after copy failed: %s", exc)
 
 
 # --- Current tenant membership -------------------------------------------
@@ -591,6 +912,164 @@ class TenantDepartmentHandler:
 
 # --- Identity audit -------------------------------------------------------
 
+def _apply_channel_runtime(instance_id: str) -> Dict[str, Any]:
+    """Bring one tenant instance's run in line with what was just stored.
+
+    Called on every tenant channel write, after the credential has committed.
+    The result is reported rather than raised: turning a saved instance into a
+    5xx would invite the operator to retry a write that already succeeded. The
+    reconciler itself promises not to raise; the guard here is the last line of
+    that promise, so a fault in it still yields a diagnosable "not applied yet".
+    """
+    from channel.channel_instances import apply_tenant_instance_runtime
+
+    try:
+        return apply_tenant_instance_runtime(instance_id)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.error(
+            f"[TenantChannels] runtime apply failed for '{instance_id}': {e}")
+        return {"applied": False, "pending": True,
+                "error": f"runtime apply failed: {e}"}
+
+
+def _reject_channel_write(action: str, ctx, e: Exception) -> str:
+    """Log and answer a refused tenant-channel write.
+
+    A refusal is answered to the console as a small error card, which leaves
+    nothing behind in the audit log or the database. Without this line an
+    operator reporting "it did not save" is indistinguishable from one whose
+    request never arrived, so the reason is recorded server-side.
+    """
+    code = getattr(e, "code", "") or "internal"
+    status = getattr(e, "status", 500)
+    logger.warning(
+        "[TenantChannels] rejected %s for tenant=%s user=%s: %s (%s/%s)",
+        action, getattr(ctx, "tenant_id", ""), getattr(ctx, "user_id", ""),
+        e.args[0] if e.args else e, status, code)
+    return _service_error(e)
+
+
+class TenantChannelsHandler:
+    """Current tenant's own message channels (``/api/tenant/channels``).
+
+    A tenant administrator configures *its* channel applications here; the
+    instance/global page stays platform-domain (``/api/channels``). Both the
+    instance and its credential are owned by ``ctx.tenant_id`` — the client
+    never names a tenant, so it cannot address another one.
+
+    Credentials are write-only and never echoed: the create/edit responses are
+    the masked projection. Sensitive writes carry ``recent_password`` and every
+    update carries ``expected_version`` (409 on a stale one).
+    """
+
+    def GET(self):
+        _guard_database()
+        ctx = _require_context(require_tenant=True)
+        _require_tenant_admin(ctx)
+        svc = _get_service()
+        try:
+            listing = svc.list_tenant_channel_instances(
+                actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id)
+        except IdentityServiceError as e:
+            return _service_error(e)
+        # The form's type/field contract comes from the same declaration the
+        # server validates against, so the console cannot offer a type or a
+        # field that creating would reject.
+        from channel.channel_instances import tenant_channel_types
+        return _json({"status": "success",
+                      "channel_types": tenant_channel_types(),
+                      **listing})
+
+    def POST(self):
+        _guard_database()
+        ctx = _require_context(require_tenant=True)
+        _require_tenant_admin(ctx)
+        try:
+            data = json.loads(web.data())
+        except Exception:
+            return _error("Invalid request", 400, "invalid_request")
+        svc = _get_service()
+        try:
+            created = svc.create_tenant_channel_instance(
+                actor_user_id=ctx.user_id,
+                tenant_id=ctx.tenant_id,
+                channel_type=str(data.get("channel_type", "") or ""),
+                display_name=str(data.get("display_name", "") or ""),
+                agent_id=str(data.get("agent_id", "") or ""),
+                credentials=data.get("credentials"),
+                recent_password=str(data.get("recent_password", "") or ""),
+                scan_ticket=str(data.get("scan_ticket", "") or ""),
+            )
+        except IdentityServiceError as e:
+            return _reject_channel_write("create", ctx, e)
+        return _json({"status": "success", "instance": created,
+                      "runtime": _apply_channel_runtime(created["id"])})
+
+
+class TenantChannelHandler:
+    """Edit one of the current tenant's channel instances (``/api/tenant/channels/:id``)."""
+
+    def POST(self, instance_id: str):
+        _guard_database()
+        ctx = _require_context(require_tenant=True)
+        _require_tenant_admin(ctx)
+        try:
+            data = json.loads(web.data())
+        except Exception:
+            return _error("Invalid request", 400, "invalid_request")
+        if "expected_version" not in data:
+            return _error("expected_version is required", 400, "invalid_request")
+        svc = _get_service()
+        try:
+            updated = svc.update_tenant_channel_instance(
+                actor_user_id=ctx.user_id,
+                tenant_id=ctx.tenant_id,
+                instance_id=instance_id,
+                expected_version=_int_or_zero(data.get("expected_version")),
+                display_name=_opt_str(data, "display_name"),
+                agent_id=_opt_str(data, "agent_id"),
+                credentials=data.get("credentials"),
+                recent_password=str(data.get("recent_password", "") or ""),
+            )
+        except IdentityServiceError as e:
+            return _reject_channel_write("update", ctx, e)
+        return _json({"status": "success", "instance": updated,
+                      "runtime": _apply_channel_runtime(instance_id)})
+
+
+class TenantChannelActiveHandler:
+    """Enable/disable one of the current tenant's instances.
+
+    Disabling keeps the row and its credential version history; it only flips
+    the switch, so an operator can restore the instance later.
+    """
+
+    def POST(self, instance_id: str):
+        _guard_database()
+        ctx = _require_context(require_tenant=True)
+        _require_tenant_admin(ctx)
+        try:
+            data = json.loads(web.data())
+        except Exception:
+            return _error("Invalid request", 400, "invalid_request")
+        if "expected_version" not in data:
+            return _error("expected_version is required", 400, "invalid_request")
+        svc = _get_service()
+        try:
+            updated = svc.set_tenant_channel_instance_active(
+                actor_user_id=ctx.user_id,
+                tenant_id=ctx.tenant_id,
+                instance_id=instance_id,
+                active=bool(data.get("active")),
+                expected_version=_int_or_zero(data.get("expected_version")),
+                recent_password=str(data.get("recent_password", "") or ""),
+            )
+        except IdentityServiceError as e:
+            return _reject_channel_write("toggle", ctx, e)
+        return _json({"status": "success", "instance": updated,
+                      "runtime": _apply_channel_runtime(instance_id)})
+
+
 class IdentityAuditHandler:
     def GET(self):
         _guard_database()
@@ -608,7 +1087,7 @@ class IdentityAuditHandler:
         try:
             since_v = int(inp.since) if inp.since else None
             until_v = int(inp.until) if inp.until else None
-            actor_id = None if ctx.is_platform_admin else None
+            actor_id = None
             result = svc.list_audit_paged(
                 None if ctx.is_platform_admin else ctx.tenant_id,
                 actor_id=actor_id,

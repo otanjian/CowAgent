@@ -7,6 +7,7 @@ URLs stay 404, a matched route with an unregistered method is rejected (405),
 and legacy mode is not gated by the database closure.
 """
 
+import json
 import os
 import tempfile
 import unittest
@@ -151,6 +152,49 @@ class HttpPolicyTests(unittest.TestCase):
         self.assertTrue(matched)
         self.assertEqual(entry["policy"], "tenant")
 
+    def test_tenant_admins_read_registered(self):
+        """The tenant editor reads the current tenant admin over
+        ``GET /api/platform/tenants/:id/admins`` (the handler implements GET and
+        the editor's read-only block needs it). Only POST was registered, so the
+        completeness gate answered 405 and the console showed "read failed" —
+        exactly the failure mode this pins. Both methods must be platform-domain
+        and must reach the handler rather than being rejected by the gate."""
+        from auth.http_policy import _match_policy
+        for method in ("GET", "POST"):
+            entry, matched = _match_policy("/api/platform/tenants/tnt_1/admins", method)
+            self.assertTrue(matched, method)
+            self.assertIsNotNone(entry, f"{method} is not registered for the admins route")
+            self.assertEqual(entry["policy"], "platform", method)
+
+    def test_tenant_admins_get_reaches_handler_through_real_app(self):
+        # Observed through the real app factory: no session means the handler's
+        # own auth gate answers 401. A 405 here would mean the completeness gate
+        # rejected the method before the handler could run.
+        self._patch_db()
+        resp = self._request("/api/platform/tenants/tnt_1/admins", method="GET")
+        self.assertNotEqual(resp.status, "405 Method Not Allowed")
+        self.assertTrue(str(resp.status).startswith("401"), resp.status)
+
+    def test_tenant_agents_read_and_copy_are_registered(self):
+        """The tenant editor's Agent tab reads (GET) and copies (POST) over the
+        same route. Both methods must be platform-domain: a missing GET would
+        405 the tab the moment it opens, and a missing POST would make the
+        copy silently unreachable."""
+        from auth.http_policy import _match_policy
+        for method in ("GET", "POST"):
+            entry, matched = _match_policy("/api/platform/tenants/tnt_1/agents", method)
+            self.assertTrue(matched, method)
+            self.assertIsNotNone(entry, f"{method} is not registered for the agents route")
+            self.assertEqual(entry["policy"], "platform", method)
+
+    def test_tenant_agents_get_reaches_handler_through_real_app(self):
+        # Observed through the real app factory: no session means the handler's
+        # own auth gate answers 401, never a 405 from the completeness gate.
+        self._patch_db()
+        resp = self._request("/api/platform/tenants/tnt_1/agents", method="GET")
+        self.assertNotEqual(resp.status, "405 Method Not Allowed")
+        self.assertTrue(str(resp.status).startswith("401"), resp.status)
+
     def test_require_read_permission_allows_platform_admin_in_database(self):
         # A platform admin (authorization_mode "all") must pass a functional
         # read-permission gate even when their role set lacks the specific
@@ -209,6 +253,160 @@ class HttpPolicyTests(unittest.TestCase):
             with patch("channel.web.auth_handlers._require_context", return_value=_ctx(True)):
                 web_channel._require_platform_console()  # must not raise
 
+    def test_still_closed_interactive_channel_actions(self):
+        """Weixin QR login stays closed; the Feishu register flow is now open
+        under a ``personal`` policy with both methods declared (the start call is
+        a GET, so an unregistered GET would have been a 405, not a 503)."""
+        from auth.http_policy import _match_policy
+
+        entry, matched = _match_policy("/api/weixin/qrlogin", "GET")
+        self.assertTrue(matched)
+        self.assertEqual(entry["policy"], "closed")
+
+        for method in ("GET", "POST"):
+            entry, matched = _match_policy("/api/feishu/register", method)
+            self.assertTrue(matched, method)
+            self.assertIsNotNone(entry, f"{method} is not registered for /api/feishu/register")
+            self.assertEqual(entry["policy"], "personal", method)
+
+        # The deferred consumer is untouched: still a 503 in database mode.
+        self._patch_db()
+        resp = self._request("/api/weixin/qrlogin", method="GET")
+        self.assertEqual(resp.status, "503 Service Unavailable")
+
+    def test_register_route_rejects_unregistered_method(self):
+        """Opening the route must not open every method on it.
+
+        A known path with an unregistered HTTP method is still rejected by the
+        completeness gate (405) before any handler runs.
+        """
+        self._patch_db()
+        for path, method in (("/api/feishu/register", "DELETE"),
+                             ("/api/weixin/qrlogin", "POST")):
+            resp = self._request(path, method=method)
+            self.assertEqual(resp.status, "405 Method Not Allowed", (path, method))
+
+    def test_instance_channel_route_is_platform_for_get_and_post(self):
+        """``/api/channels`` serves the instance-level page. Only GET used to be
+        registered, so a POST was rejected by the completeness gate; the page
+        saves and connects through POST, so both methods must be declared."""
+        from auth.http_policy import _match_policy
+        for method in ("GET", "POST"):
+            entry, matched = _match_policy("/api/channels", method)
+            self.assertTrue(matched, method)
+            self.assertIsNotNone(entry, f"{method} is not registered for /api/channels")
+            self.assertEqual(entry["policy"], "platform", method)
+
+    def test_instance_channel_page_reachable_by_platform_admin(self):
+        """The capability report signs ``channels`` as available; before this
+        change the endpoint answered 503, so the report and reality disagreed."""
+        self._patch_db()
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        for method in ("GET", "POST"):
+            resp = self._request("/api/channels", method=method,
+                                 data=json.dumps({"action": "save", "channel": "feishu"})
+                                 if method == "POST" else None,
+                                 headers={"Cookie": f"cow_session={token}"})
+            self.assertNotEqual(resp.status, "503 Service Unavailable",
+                                f"{method}: {resp.data}")
+            self.assertNotEqual(resp.status, "405 Method Not Allowed",
+                                f"{method}: {resp.data}")
+
+    def test_tenant_channel_routes_are_tenant_domain(self):
+        from auth.http_policy import _match_policy
+        for path, method in (("/api/tenant/channels", "GET"),
+                             ("/api/tenant/channels", "POST"),
+                             ("/api/tenant/channels/chan_1", "POST"),
+                             ("/api/tenant/channels/chan_1/active", "POST")):
+            entry, matched = _match_policy(path, method)
+            self.assertTrue(matched, f"{path} {method}")
+            self.assertIsNotNone(entry, f"{path} {method} is not registered")
+            self.assertEqual(entry["policy"], "tenant", f"{path} {method}")
+
+    def test_tenant_channel_routes_require_auth_not_closed(self):
+        self._patch_db()
+        for path, method in (("/api/tenant/channels", "GET"),
+                             ("/api/tenant/channels", "POST"),
+                             ("/api/tenant/channels/chan_1", "POST"),
+                             ("/api/tenant/channels/chan_1/active", "POST")):
+            # A tenant endpoint resolves the tenant selection before the session
+            # (the documented contract: missing tenant is 400, bad session 401),
+            # so name a tenant and expect 401 rather than a 503 (still closed) or
+            # 405 (method not registered).
+            resp = self._request(path, method=method,
+                                 headers={"X-Tenant-ID": "tnt_1"})
+            self.assertTrue(str(resp.status).startswith("401"),
+                            f"{path} {method} got {resp.status}")
+
+    def test_tenant_channel_unregistered_method_is_rejected(self):
+        """Registration completeness (7.6): the route exists, but DELETE is not
+        part of its contract and must not reach the handler."""
+        from auth.http_policy import _match_policy
+        entry, matched = _match_policy("/api/tenant/channels", "DELETE")
+        self.assertTrue(matched)
+        self.assertIsNone(entry)
+        self._patch_db()
+        resp = self._request("/api/tenant/channels", method="DELETE")
+        self.assertEqual(resp.status, "405 Method Not Allowed")
+
+    def test_external_identity_binding_routes_are_registered_per_scope(self):
+        """Both administrators maintain IM bindings, through different surfaces.
+
+        A tenant admin must go through the tenant routes (which confine them to
+        their own memberships); the platform routes stay platform-only. Pinning
+        both here is what keeps "the tenant surface" from quietly becoming a
+        widening of the global one.
+        """
+        from auth.http_policy import _match_policy
+        tenant_routes = (
+            ("/api/tenant/members/mem_1/external-identities", "GET"),
+            ("/api/tenant/members/mem_1/external-identities", "POST"),
+            ("/api/tenant/members/mem_1/external-identities/ext_1", "DELETE"),
+            ("/api/tenant/external-identity-attempts", "GET"),
+        )
+        for path, method in tenant_routes:
+            entry, matched = _match_policy(path, method)
+            self.assertTrue(matched, f"{path} {method}")
+            self.assertIsNotNone(entry, f"{path} {method} is not registered")
+            self.assertEqual(entry["policy"], "tenant", f"{path} {method}")
+
+        platform_routes = (
+            ("/api/platform/users/usr_1/external-identities", "GET"),
+            ("/api/platform/users/usr_1/external-identities", "POST"),
+            ("/api/platform/users/usr_1/external-identities/ext_1", "DELETE"),
+            ("/api/platform/external-identity-attempts", "GET"),
+        )
+        for path, method in platform_routes:
+            entry, matched = _match_policy(path, method)
+            self.assertTrue(matched, f"{path} {method}")
+            self.assertIsNotNone(entry, f"{path} {method} is not registered")
+            self.assertEqual(entry["policy"], "platform", f"{path} {method}")
+
+    def test_the_member_update_route_kept_its_policy(self):
+        """The new member sub-routes must not have displaced the plain one.
+
+        ``/api/tenant/members/{id}`` is matched by the *shorter* pattern, so
+        adding two nested routes next to it is exactly the edit that can shadow
+        or overwrite it — which would silently disable member editing.
+        """
+        from auth.http_policy import _match_policy
+        entry, matched = _match_policy("/api/tenant/members/mem_1", "POST")
+        self.assertTrue(matched)
+        self.assertIsNotNone(entry, "member update lost its policy entry")
+        self.assertEqual(entry["policy"], "tenant")
+
+    def test_the_new_binding_routes_require_auth_not_closed(self):
+        """They are tenant/platform domain, so an anonymous call is 401 with a
+        tenant header — not 503 (still closed) and not 405 (unregistered)."""
+        self._patch_db()
+        for path, method in (
+                ("/api/tenant/members/mem_1/external-identities", "GET"),
+                ("/api/tenant/external-identity-attempts", "GET")):
+            resp = self._request(path, method=method,
+                                 headers={"X-Tenant-ID": "tnt_1"})
+            self.assertTrue(str(resp.status).startswith("401"),
+                            f"{path} {method} got {resp.status}")
+
     def test_projects_routes_open_in_database(self):
         # /api/projects* (except browse) must now be tenant domain, not 503.
         self._patch_db()
@@ -231,6 +429,59 @@ class HttpPolicyTests(unittest.TestCase):
         resp = self._request("/api/projects/browse", method="GET")
         self.assertEqual(resp.status, "503 Service Unavailable")
         self.assertIn("database_unavailable", resp.data.decode("utf-8"))
+
+    def test_agent_write_routes_registered(self):
+        """The whole agent management surface is POST/PUT, but only GET was
+        registered, so the completeness gate answered 405 and the console's
+        "创建智能体" button did nothing (the handler's own auth never ran).
+
+        ``AgentsHandler`` implements GET+POST for create/update/archive/delete/
+        knowledge-mode/team-bind; ``AgentAvatarHandler`` POSTs the upload; and
+        ``AgentCoreFileHandler`` PUTs an edited core file. Each method must be
+        registered as a tenant-domain route."""
+        from auth.http_policy import _match_policy
+        for path, method in [
+            ("/api/agents", "POST"),
+            ("/api/agents/agent_a/avatar", "POST"),
+            ("/api/agents/agent_a/files/AGENT.md", "PUT"),
+        ]:
+            entry, matched = _match_policy(path, method)
+            self.assertTrue(matched, f"{path} {method} does not match any route")
+            self.assertIsNotNone(entry, f"{path} {method} is not registered")
+            self.assertEqual(entry["policy"], "tenant", f"{path} {method}")
+
+    def test_agent_create_reaches_handler_through_real_app(self):
+        # No session means the handler's own auth gate answers 401. A 405 here
+        # means the completeness gate rejected the method first, which is exactly
+        # the reported "创建智能体" failure.
+        self._patch_db()
+        # Pass data=b"" (the existing convention) so _request omits the body and
+        # web.py never tries to encode a bytes payload.
+        resp = self._request("/api/agents", method="POST", data=b"",
+                             headers={"X-Tenant-ID": "tnt_1"})
+        self.assertNotEqual(resp.status, "405 Method Not Allowed")
+        self.assertTrue(str(resp.status).startswith("401"), resp.status)
+
+    def test_session_detail_write_methods_registered(self):
+        """``SessionDetailHandler`` implements PUT (rename / pin) and DELETE
+        (delete conversation), both used by the console; only GET was registered
+        so rename, pin and delete all 405'd before the handler ran."""
+        from auth.http_policy import _match_policy
+        for path, method in [
+            ("/api/sessions/sess_a", "PUT"),
+            ("/api/sessions/sess_a", "DELETE"),
+        ]:
+            entry, matched = _match_policy(path, method)
+            self.assertTrue(matched, f"{path} {method} does not match any route")
+            self.assertIsNotNone(entry, f"{path} {method} is not registered")
+            self.assertEqual(entry["policy"], "tenant", f"{path} {method}")
+
+    def test_session_delete_reaches_handler_through_real_app(self):
+        self._patch_db()
+        resp = self._request("/api/sessions/sess_a", method="DELETE",
+                             headers={"X-Tenant-ID": "tnt_1"})
+        self.assertNotEqual(resp.status, "405 Method Not Allowed")
+        self.assertTrue(str(resp.status).startswith("401"), resp.status)
 
 
 if __name__ == "__main__":

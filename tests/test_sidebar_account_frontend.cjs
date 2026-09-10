@@ -138,7 +138,7 @@ function setup(transport = async () => response(database()), { agentWrapper = fa
     node('account-menu-identity').appendChild(node('account-menu-username'));
     node('account-menu-logout').appendChild(node('account-menu-logout-label'));
     node('sidebar-version').tagName = 'A';
-    node('sidebar-version').setAttribute('href', 'https://github.com/zhayujie/CowAgent/releases');
+    node('sidebar-version').setAttribute('href', 'https://www.rsm.global/china/zh-hans');
     for (const id of ['sidebar-account-menu', 'account-menu-identity', 'account-menu-status',
         'account-menu-retry', 'account-menu-logout', 'auth-check-retry', 'login-form', 'logout-btn-header',
         'tenant-menu', 'lang-menu']) node(id).classList.add('hidden');

@@ -540,7 +540,7 @@ function _isDefaultLogoDescription(desc) {
     const value = String(desc || '').trim();
     if (!value) return true;
     // Treat the current default and the legacy caption as built-in defaults so
-    // path-based sidebar captions (工作台 / 管理控制台) can replace them.
+    // path-based sidebar captions (工作台 / 控制台) can replace them.
     return value === DEFAULT_BRAND.logo_description
         || value === '工作台'
         || value === '控制台'
@@ -691,10 +691,10 @@ const I18N = {
     zh: {
         console: '控制台',
         nav_chat: '工作台', nav_manage: '管理', nav_monitor: '监控', nav_system: '系统设置',
-        nav_workbench: '工作台', nav_admin_console: '管理控制台',
+        nav_workbench: '工作台', nav_admin_console: '控制台',
         nav_return_workbench: '返回工作台',
         nav_admin_overview: '控制台概览',
-        admin_home_title: '管理控制台',
+        admin_home_title: '控制台',
         admin_home_hint: '选择左侧菜单管理智能体、组织与平台配置。',
         admin_home_kpi_agents: '智能体总数',
         admin_home_kpi_messages_today: '今日消息数',
@@ -717,7 +717,7 @@ const I18N = {
         admin_home_desc_branding: '自定义平台Logo、名称与主题风格，打造专属品牌',
         admin_home_desc_logs: '实时查看系统运行日志，排查问题与性能监控',
         admin_home_desc_audit: '查看操作日志与安全审计记录，追溯所有行为',
-        nav_admin_denied: '当前账号无权进入管理控制台。',
+        nav_admin_denied: '当前账号无权进入控制台。',
         sidebar_history_records: '会话历史',
         sidebar_history_view_all: '查看全部',
         sidebar_history_empty: '暂无历史会话',
@@ -785,6 +785,33 @@ const I18N = {
         member_section_tenants: '所属租户',
         member_tenants: '租户',
         member_tenants_title: '调整所属租户',
+        extid_title: '外部身份',
+        extid_bound_title: '已绑定身份',
+        extid_no_bindings: '该账号还没有绑定任何外部身份，绑定后对方发消息才会被识别。',
+        extid_add_title: '绑定新的外部身份',
+        extid_field_issuer: '应用 App ID（可留空）',
+        extid_field_subject: 'open_id',
+        extid_field_hint: 'open_id 由对方在 IM 中产生：让其先给机器人发一条消息，再从下方「待绑定」里点选，无需手抄。',
+        extid_bind: '绑定',
+        extid_attempts_title: '待绑定（发过消息但未识别）',
+        extid_attempts_hint: '这些账号给机器人发过消息，但系统找不到对应成员。点一条即可自动填入上面的表单。',
+        extid_no_attempts: '暂无待绑定记录',
+        extid_group_tag: '群聊',
+        extid_unnamed_sender: '未识别昵称',
+        extid_bound_ok: '已绑定',
+        extid_unbound_ok: '已解绑',
+        extid_error_subject_required: '请填写 open_id',
+        extid_error_conflict: '该外部身份已绑定到其他账号，请先解绑',
+        extid_error_forbidden: '你没有管理该账号的权限',
+        extid_error_not_found: '账号或绑定不存在',
+        extid_error_bad_request: '渠道或 open_id 格式不正确',
+        extid_error_generic: '操作失败，请重试',
+        extid_provider_unknown: '未知渠道',
+        extid_provider_feishu: '飞书',
+        extid_provider_wecom_bot: '企业微信智能机器人',
+        extid_provider_weixin: '微信',
+        extid_provider_dingtalk: '钉钉',
+        extid_provider_wechatcom_app: '企业微信应用',
         admin_field_tenants: '目标租户', admin_field_tenants_hint: '可选择多个租户；新建账号将创建于所选租户',
         admin_field_tenants_edit_hint: '勾选/取消以增删所属租户（仅限你有管理资格的租户）',
         member_search_placeholder: '搜索账号 / 姓名',
@@ -844,7 +871,14 @@ const I18N = {
         admin_resource_kind_model: '模型',
         admin_resource_kind_agent: '智能体',
         admin_field_platform_admin: '平台管理员',
-        admin_field_admin_user_id: '管理员账号 ID', admin_field_admin_user_id_hint: '已有有效账号的用户 ID',
+        admin_field_admin_user_id: '管理员账号 ID', admin_field_admin_user_id_hint: '从下方当前有效账号中选择',
+        admin_user_picker_search_placeholder: '按显示名或登录名搜索',
+        admin_user_picker_loading: '正在加载账号…',
+        admin_user_picker_empty: '当前没有可绑定的有效账号',
+        admin_user_picker_load_failed: '账号加载失败，请重试',
+        admin_user_picker_truncated: '结果已截断，请用搜索缩小范围',
+        admin_user_picker_selected: '已选择：',
+        admin_user_picker_required: '请先选择一个有效账号',
         admin_tenant_admin: '管理员',
         admin_tenant_roles: '角色',
         admin_tenant_admin_edit: '配置租户管理员',
@@ -860,6 +894,67 @@ const I18N = {
         platform_admin_badge: '平台管理员',
         admin_tab_members: '租户成员', admin_tab_platform: '平台账号',
         tenant_edit_title: '编辑租户',
+        tenant_tab_basic: '基本信息',
+        tenant_tab_model: '模型授权',
+        tenant_tab_tool: '工具授权',
+        tenant_tab_admin: '租户管理',
+        tenant_tab_basic_hint: '维护租户编码、名称与启用状态。编码在创建后不可修改，保存只提交本标签的改动。',
+        tenant_tab_model_hint: '从平台模型目录中勾选该租户可用的模型并授予使用动作。',
+        tenant_tab_tool_hint: '从平台工具目录中勾选该租户可用的工具并授予读取、执行与配置动作。',
+        tenant_tab_admin_hint: '为该租户指定租户管理员，并查看其租户空间。',
+        tenant_space_title: '租户空间',
+        tenant_space_hint: '租户空间由服务端按租户编码派生，此处只读展示。',
+        tenant_space_id: '空间标识',
+        tenant_space_status: '状态',
+        tenant_space_ready: '可用',
+        tenant_space_not_ready: '未就绪',
+        tenant_space_isolation: '隔离类型',
+        tenant_space_unavailable: '当前没有租户空间信息',
+        tenant_current_admin_label: '当前租户管理员',
+        tenant_current_admin_none: '尚未指定租户管理员',
+        tenant_current_admin_unavailable: '当前管理员信息读取失败，可重新打开该标签重试。',
+        tenant_tab_agent: '智能体',
+        tenant_tab_agent_hint: '查看该租户当前绑定的智能体；从来源租户勾选候选并复制为独立智能体，复制后两侧各自维护。',
+        tenant_agent_copy_title: '从默认租户复制智能体',
+        tenant_agent_copy_hint: '勾选要复制到本租户的智能体；已同步的候选不可重复勾选。未勾选任何候选时不会提交复制。',
+        tenant_agent_current_title: '当前智能体',
+        tenant_agent_current_empty: '该租户暂无智能体，可从下方复制。',
+        tenant_agent_current_unavailable: '当前智能体列表读取失败，可重新打开该标签重试。',
+        tenant_agent_enabled: '已启用',
+        tenant_agent_disabled: '已停用',
+        tenant_agent_default_badge: '默认',
+        tenant_agent_copied_badge: '已同步',
+        tenant_agent_source_label: '来源租户',
+        tenant_agent_source_unavailable: '当前没有可用的复制来源。',
+        tenant_agent_source_empty: '来源租户没有可复制的智能体。',
+        tenant_agent_selected_count: '已选 {n} 个',
+        tenant_agent_result_copied: '本次新增',
+        tenant_agent_result_skipped: '已跳过',
+        tenant_agent_result_default: '承接的默认智能体',
+        tenant_agent_result_failed: '失败',
+        tenant_agent_pick_required: '请至少勾选一个要复制的智能体。',
+        tenant_agent_partial_failed: '部分智能体复制失败，请查看下方失败明细后重试。',
+        tenant_agent_create_hint: '租户创建完成后，可在此从默认租户复制智能体。',
+        admin_back_to_list: '返回租户列表',
+        tenant_editor_conflict: '该租户已被其他会话修改，请重新加载后再试。',
+        tenant_editor_create_hint: '创建成功后可在其余标签继续配置授权与管理员。',
+        tenant_editor_created_hint: '租户已创建，可继续配置模型授权、工具授权与管理员。',
+        tenant_editor_save_failed_step: '保存未完成，失败步骤',
+        tenant_password_title: '确认当前密码',
+        tenant_password_hint: '请输入你的登录密码以授权本次保存。',
+        tenant_password_required: '请输入当前密码。',
+        tenant_password_wrong: '密码不正确，请重试。',
+        tenant_admin_mode_existing: '选择已有账号',
+        tenant_admin_mode_new: '创建新账号',
+        tenant_admin_new_username: '用户名',
+        tenant_admin_new_display: '显示名称',
+        tenant_admin_new_password: '初始密码',
+        tenant_admin_new_username_required: '创建新账号需要填写用户名。',
+        tenant_admin_new_display_required: '创建新账号需要填写显示名称。',
+        tenant_admin_new_password_required: '创建新账号需要设置初始密码。',
+        tenant_admin_username_taken: '该用户名已被占用；可改用「选择已有账号」直接指定该账号，或换一个用户名。',
+        tenant_admin_weak_password: '初始密码不满足强度要求：至少 8 位，且不要使用常见口令。',
+        tenant_admin_invalid_username: '用户名不合法：需以字母或数字开头，仅可包含字母、数字、点、下划线和连字符。',
         member_edit_title: '编辑成员',
         role_edit_title: '编辑角色',
         role_tab_basic: '基本信息',
@@ -1170,7 +1265,8 @@ const I18N = {
         config_password_hint: '留空则不启用密码保护',
         config_permission: '默认权限',
         config_permission_hint: '新会话的默认权限范围，决定 Agent 能修改哪些文件、能执行哪些命令',
-        config_permission_desc: '新会话默认使用该权限；单个会话可在输入框下方单独调整',
+        config_permission_desc: '新会话默认使用该权限',
+        config_permission_role_desc: '本机对话的执行权限由管理员分配的角色资源授权决定，此处仅供查看。',
         config_password_changed: '密码已更新',
         config_password_cleared: '密码已清除',
         config_password_security_warning: '⚠️ 警告：目前密码为空且对外连接埠开放，建议重启服务，或检查是否调整监听位址绑定。',
@@ -1195,6 +1291,34 @@ const I18N = {
         channels_connect_btn: '接入', channels_cancel: '取消',
         channels_select_placeholder: '选择要接入的通道...',
         channels_empty: '暂未接入任何通道', channels_empty_desc: '点击右上角「接入通道」按钮开始配置',
+        channels_not_open: '该功能尚未开放', channels_not_open_desc: '当前部署未开放实例级渠道配置，请联系平台管理员',
+        channels_no_permission: '没有访问权限', channels_no_permission_desc: '当前账号无权管理消息渠道，请联系管理员',
+        channels_load_failed: '加载失败', channels_load_failed_desc: '无法获取渠道配置，请稍后重试',
+        tenant_channel_desc: '配置本租户的消息渠道，凭据加密存储且不会回显',
+        tenant_channel_held_hint: '已通过扫码获取，留空即使用该值',
+        tenant_channel_empty_desc: '还没有为本租户配置任何渠道',
+        tenant_channel_active: '已启用', tenant_channel_inactive: '已停用',
+        tenant_channel_enable: '启用', tenant_channel_disable: '停用',
+        tenant_channel_edit: '编辑', tenant_channel_edit_title: '编辑渠道',
+        tenant_channel_type_label: '渠道类型', tenant_channel_display_label: '显示名称',
+        tenant_channel_agent_label: '绑定 Agent', tenant_channel_agent_none: '不绑定',
+        tenant_channel_save: '保存',
+        tenant_channel_secret_note: '密钥类字段留空表示保持原值不变；保存后即时生效，无需重启服务',
+        tenant_channel_applied: '已保存，并已即时生效',
+        tenant_channel_not_applied: '已保存，但尚未生效：',
+        tenant_channel_error_required: '请填写必填凭据：',
+        tenant_channel_scan_manual_hint: '扫码不可用时可改用手工填写凭据',
+        tenant_password_prompt: '请输入当前账号密码以确认操作',
+        tenant_channel_error_password_required: '请输入当前账号密码以确认本次操作',
+        tenant_channel_scan_autosaved: '已自动保存，可在列表中查看',
+        tenant_channel_error_password: '密码校验失败，请重新输入',
+        tenant_channel_error_conflict: '显示名称已被同租户的启用实例占用，或数据已被他人修改',
+        tenant_channel_error_agent: '绑定的 Agent 不属于本租户',
+        tenant_channel_error_missing: '目标渠道不存在',
+        tenant_channel_error_invalid: '提交内容不合法，请检查后重试',
+        tenant_channel_error_network: '与服务器通信失败，请检查网络后重试',
+        tenant_channel_error_crypto: '服务端未配置凭据加密主密钥，无法保存凭据；请联系管理员配置后重试',
+        tenant_channel_error_display_required: '请填写渠道名称（用于在列表中区分该渠道）',
         channels_disconnect_confirm: '确认断开该通道？配置将保留但通道会停止运行。',
         channels_connected: '已接入', channels_connecting: '接入中...',
         weixin_scan_title: '微信扫码登录', weixin_scan_desc: '请使用微信扫描下方二维码',
@@ -1347,17 +1471,14 @@ const I18N = {
         project_rename_title: '重命名项目',
         project_delete_title: '删除项目',
         project_delete_confirm: '确认删除项目「{name}」？仅移除项目记录，磁盘上的文件不会被删除，其下会话将回到默认空间。',
-        perm_menu_title: '本次会话权限',
         perm_read_only: '只读',
         perm_workspace_write: '工作区可写',
         perm_full_access: '全部可访问',
         perm_read_only_desc: '只能查看和分析，不修改任何文件',
         perm_workspace_write_desc: '在当前工作空间内自由读写，空间之外的写入会被拒绝',
         perm_full_access_desc: '不加限制，可修改任意位置（当前默认）',
-        perm_follow_global: '跟随全局设置',
-        perm_tip: '权限：{name}',
         perm_denied_hint: '当前权限为「{name}」，此操作被拒绝。',
-        perm_denied_action: '调整权限',
+        perm_denied_role_hint: '此操作未被授权。执行权限由你的角色决定，如需使用请联系管理员。',
         model_menu_title: '本次会话模型',
         model_follow_global: '跟随全局设置',
         model_follow_agent: '跟随智能体默认模型',
@@ -1447,10 +1568,10 @@ const I18N = {
 
         console: '控制台',
         nav_chat: '工作台', nav_manage: '管理', nav_monitor: '監控', nav_system: '系統設定',
-        nav_workbench: '工作台', nav_admin_console: '管理控制台',
+        nav_workbench: '工作台', nav_admin_console: '控制台',
         nav_return_workbench: '返回工作台',
         nav_admin_overview: '控制台概覽',
-        admin_home_title: '管理控制台',
+        admin_home_title: '控制台',
         admin_home_hint: '選擇左側選單管理智慧體、組織與平台設定。',
         admin_home_kpi_agents: '智慧體總數',
         admin_home_kpi_messages_today: '今日訊息數',
@@ -1473,7 +1594,7 @@ const I18N = {
         admin_home_desc_branding: '自訂平台 Logo、名稱與主題風格，打造專屬品牌',
         admin_home_desc_logs: '即時查看系統運行日誌，排查問題與效能監控',
         admin_home_desc_audit: '查看操作日誌與安全稽核記錄，追溯所有行為',
-        nav_admin_denied: '目前帳號無權進入管理控制台。',
+        nav_admin_denied: '目前帳號無權進入控制台。',
         sidebar_history_records: '會話歷史',
         sidebar_history_view_all: '查看全部',
         sidebar_history_empty: '暫無歷史會話',
@@ -1540,6 +1661,33 @@ const I18N = {
         member_section_tenants: '所屬租戶',
         member_tenants: '租戶',
         member_tenants_title: '調整所屬租戶',
+        extid_title: '外部身分',
+        extid_bound_title: '已綁定身分',
+        extid_no_bindings: '該帳號還沒有綁定任何外部身分，綁定後對方發訊息才會被識別。',
+        extid_add_title: '綁定新的外部身分',
+        extid_field_issuer: '應用 App ID（可留空）',
+        extid_field_subject: 'open_id',
+        extid_field_hint: 'open_id 由對方在 IM 中產生：讓其先給機器人發一則訊息，再從下方「待綁定」點選，無需手抄。',
+        extid_bind: '綁定',
+        extid_attempts_title: '待綁定（發過訊息但未識別）',
+        extid_attempts_hint: '這些帳號給機器人發過訊息，但系統找不到對應成員。點一筆即可自動填入上面的表單。',
+        extid_no_attempts: '暫無待綁定紀錄',
+        extid_group_tag: '群聊',
+        extid_unnamed_sender: '未識別暱稱',
+        extid_bound_ok: '已綁定',
+        extid_unbound_ok: '已解綁',
+        extid_error_subject_required: '請填寫 open_id',
+        extid_error_conflict: '該外部身分已綁定到其他帳號，請先解綁',
+        extid_error_forbidden: '你沒有管理該帳號的權限',
+        extid_error_not_found: '帳號或綁定不存在',
+        extid_error_bad_request: '渠道或 open_id 格式不正確',
+        extid_error_generic: '操作失敗，請重試',
+        extid_provider_unknown: '未知渠道',
+        extid_provider_feishu: '飛書',
+        extid_provider_wecom_bot: '企業微信智能機器人',
+        extid_provider_weixin: '微信',
+        extid_provider_dingtalk: '釘釘',
+        extid_provider_wechatcom_app: '企業微信應用',
         admin_field_tenants: '目標租戶', admin_field_tenants_hint: '可選擇多個租戶；新帳號將建立於所選租戶',
         admin_field_tenants_edit_hint: '勾選/取消以增刪所屬租戶（僅限你有管理資格的租戶）',
         member_search_placeholder: '搜尋帳號 / 姓名',
@@ -1599,7 +1747,14 @@ const I18N = {
         admin_resource_kind_model: '模型',
         admin_resource_kind_agent: '智慧體',
         admin_field_platform_admin: '平台管理員',
-        admin_field_admin_user_id: '管理員帳號 ID', admin_field_admin_user_id_hint: '已有有效帳號的使用者 ID',
+        admin_field_admin_user_id: '管理員帳號 ID', admin_field_admin_user_id_hint: '從下方目前有效帳號中選擇',
+        admin_user_picker_search_placeholder: '按顯示名稱或登入名稱搜尋',
+        admin_user_picker_loading: '正在載入帳號…',
+        admin_user_picker_empty: '目前沒有可綁定的有效帳號',
+        admin_user_picker_load_failed: '帳號載入失敗，請重試',
+        admin_user_picker_truncated: '結果已截斷，請用搜尋縮小範圍',
+        admin_user_picker_selected: '已選擇：',
+        admin_user_picker_required: '請先選擇一個有效帳號',
         admin_tenant_admin: '管理員',
         admin_tenant_roles: '角色',
         admin_tenant_admin_edit: '設定租戶管理員',
@@ -1615,6 +1770,67 @@ const I18N = {
         platform_admin_badge: '平台管理員',
         admin_tab_members: '租戶成員', admin_tab_platform: '平台帳號',
         tenant_edit_title: '編輯租戶',
+        tenant_tab_basic: '基本資訊',
+        tenant_tab_model: '模型授權',
+        tenant_tab_tool: '工具授權',
+        tenant_tab_admin: '租戶管理',
+        tenant_tab_basic_hint: '維護租戶編碼、名稱與啟用狀態。編碼在建立後不可修改，儲存只提交本標籤的變更。',
+        tenant_tab_model_hint: '從平台模型目錄中勾選該租戶可用的模型並授予使用動作。',
+        tenant_tab_tool_hint: '從平台工具目錄中勾選該租戶可用的工具並授予讀取、執行與設定動作。',
+        tenant_tab_admin_hint: '為該租戶指定租戶管理員，並檢視其租戶空間。',
+        tenant_space_title: '租戶空間',
+        tenant_space_hint: '租戶空間由服務端依租戶編碼派生，此處僅唯讀顯示。',
+        tenant_space_id: '空間識別',
+        tenant_space_status: '狀態',
+        tenant_space_ready: '可用',
+        tenant_space_not_ready: '未就緒',
+        tenant_space_isolation: '隔離類型',
+        tenant_space_unavailable: '目前沒有租戶空間資訊',
+        tenant_current_admin_label: '目前租戶管理員',
+        tenant_current_admin_none: '尚未指定租戶管理員',
+        tenant_current_admin_unavailable: '目前管理員資訊讀取失敗，可重新開啟該標籤重試。',
+        tenant_tab_agent: '智能體',
+        tenant_tab_agent_hint: '檢視該租戶目前綁定的智能體；從來源租戶勾選候選並複製為獨立智能體，複製後兩側各自維護。',
+        tenant_agent_copy_title: '從預設租戶複製智能體',
+        tenant_agent_copy_hint: '勾選要複製到本租戶的智能體；已同步的候選不可重複勾選。未勾選任何候選時不會提交複製。',
+        tenant_agent_current_title: '目前智能體',
+        tenant_agent_current_empty: '該租戶尚無智能體，可從下方複製。',
+        tenant_agent_current_unavailable: '目前智能體清單讀取失敗，可重新開啟該標籤重試。',
+        tenant_agent_enabled: '已啟用',
+        tenant_agent_disabled: '已停用',
+        tenant_agent_default_badge: '預設',
+        tenant_agent_copied_badge: '已同步',
+        tenant_agent_source_label: '來源租戶',
+        tenant_agent_source_unavailable: '目前沒有可用的複製來源。',
+        tenant_agent_source_empty: '來源租戶沒有可複製的智能體。',
+        tenant_agent_selected_count: '已選 {n} 個',
+        tenant_agent_result_copied: '本次新增',
+        tenant_agent_result_skipped: '已跳過',
+        tenant_agent_result_default: '承接的預設智能體',
+        tenant_agent_result_failed: '失敗',
+        tenant_agent_pick_required: '請至少勾選一個要複製的智能體。',
+        tenant_agent_partial_failed: '部分智能體複製失敗，請查看下方失敗明細後重試。',
+        tenant_agent_create_hint: '租戶建立完成後，可在此從預設租戶複製智能體。',
+        admin_back_to_list: '返回租戶清單',
+        tenant_editor_conflict: '該租戶已被其他工作階段修改，請重新載入後再試。',
+        tenant_editor_create_hint: '建立成功後可在其餘標籤繼續設定授權與管理員。',
+        tenant_editor_created_hint: '租戶已建立，可繼續設定模型授權、工具授權與管理員。',
+        tenant_editor_save_failed_step: '儲存未完成，失敗步驟',
+        tenant_password_title: '確認目前密碼',
+        tenant_password_hint: '請輸入你的登入密碼以授權本次儲存。',
+        tenant_password_required: '請輸入目前密碼。',
+        tenant_password_wrong: '密碼不正確，請重試。',
+        tenant_admin_mode_existing: '選擇現有帳號',
+        tenant_admin_mode_new: '建立新帳號',
+        tenant_admin_new_username: '使用者名稱',
+        tenant_admin_new_display: '顯示名稱',
+        tenant_admin_new_password: '初始密碼',
+        tenant_admin_new_username_required: '建立新帳號需要填寫使用者名稱。',
+        tenant_admin_new_display_required: '建立新帳號需要填寫顯示名稱。',
+        tenant_admin_new_password_required: '建立新帳號需要設定初始密碼。',
+        tenant_admin_username_taken: '此使用者名稱已被占用；可改用「選擇現有帳號」直接指定該帳號，或換一個使用者名稱。',
+        tenant_admin_weak_password: '初始密碼不符合強度要求：至少 8 位，且不要使用常見密碼。',
+        tenant_admin_invalid_username: '使用者名稱不合法：需以字母或數字開頭，僅可包含字母、數字、點、底線與連字號。',
         member_edit_title: '編輯成員',
         role_edit_title: '編輯角色',
         role_tab_basic: '基本資訊',
@@ -1922,7 +2138,8 @@ const I18N = {
         config_password_hint: '留空則不啟用密碼保護',
         config_permission: '預設權限',
         config_permission_hint: '新會話的預設權限範圍，決定 Agent 能修改哪些檔案、能執行哪些命令',
-        config_permission_desc: '新會話預設使用該權限；單個會話可在輸入框下方單獨調整',
+        config_permission_desc: '新會話預設使用該權限',
+        config_permission_role_desc: '本機對話的執行權限由管理員分配的角色資源授權決定，此處僅供檢視。',
         config_password_changed: '密碼已更新',
         config_password_cleared: '密碼已清除',
         config_password_security_warning: '⚠️ 警告：目前密碼為空且對外連接埠開放，建議重啟服務，或檢查是否調整監聽位址綁定。',
@@ -1947,6 +2164,34 @@ const I18N = {
         channels_connect_btn: '接入', channels_cancel: '取消',
         channels_select_placeholder: '選擇要接入的管道...',
         channels_empty: '暫未接入任何管道', channels_empty_desc: '點選右上角「接入管道」按鈕開始設定',
+        channels_not_open: '該功能尚未開放', channels_not_open_desc: '目前部署未開放實例級管道設定，請聯絡平台管理員',
+        channels_no_permission: '沒有存取權限', channels_no_permission_desc: '目前帳號無權管理訊息管道，請聯絡管理員',
+        channels_load_failed: '載入失敗', channels_load_failed_desc: '無法取得管道設定，請稍後重試',
+        tenant_channel_desc: '設定本租戶的訊息管道，憑證加密儲存且不會回顯',
+        tenant_channel_held_hint: '已透過掃碼取得，留空即使用該值',
+        tenant_channel_empty_desc: '還沒有為本租戶設定任何管道',
+        tenant_channel_active: '已啟用', tenant_channel_inactive: '已停用',
+        tenant_channel_enable: '啟用', tenant_channel_disable: '停用',
+        tenant_channel_edit: '編輯', tenant_channel_edit_title: '編輯管道',
+        tenant_channel_type_label: '管道類型', tenant_channel_display_label: '顯示名稱',
+        tenant_channel_agent_label: '綁定 Agent', tenant_channel_agent_none: '不綁定',
+        tenant_channel_save: '儲存',
+        tenant_channel_secret_note: '密鑰類欄位留空表示維持原值不變；儲存後即時生效，無需重啟服務',
+        tenant_channel_applied: '已儲存，並已即時生效',
+        tenant_channel_not_applied: '已儲存，但尚未生效：',
+        tenant_channel_error_required: '請填寫必填憑證：',
+        tenant_channel_scan_manual_hint: '掃碼不可用時可改用手工填寫憑證',
+        tenant_password_prompt: '請輸入目前帳號密碼以確認操作',
+        tenant_channel_error_password_required: '請輸入目前帳號密碼以確認本次操作',
+        tenant_channel_scan_autosaved: '已自動儲存，可在清單中查看',
+        tenant_channel_error_password: '密碼驗證失敗，請重新輸入',
+        tenant_channel_error_conflict: '顯示名稱已被同租戶的啟用實例佔用，或資料已被他人修改',
+        tenant_channel_error_agent: '綁定的 Agent 不屬於本租戶',
+        tenant_channel_error_missing: '目標管道不存在',
+        tenant_channel_error_invalid: '提交內容不合法，請檢查後重試',
+        tenant_channel_error_network: '與伺服器通訊失敗，請檢查網路後重試',
+        tenant_channel_error_crypto: '伺服器未設定憑證加密主金鑰，無法儲存憑證；請聯絡管理員設定後重試',
+        tenant_channel_error_display_required: '請填寫管道名稱（用於在列表中區分該管道）',
         channels_disconnect_confirm: '確認斷開該管道？設定將保留但管道會停止執行。',
         channels_connected: '已接入', channels_connecting: '接入中...',
         weixin_scan_title: '微信掃碼登入', weixin_scan_desc: '請使用微信掃描下方二維碼',
@@ -2099,17 +2344,14 @@ const I18N = {
         project_rename_title: '重新命名專案',
         project_delete_title: '刪除專案',
         project_delete_confirm: '確認刪除專案「{name}」？僅移除專案記錄，磁碟上的檔案不會被刪除，其下會話將回到預設空間。',
-        perm_menu_title: '本次會話權限',
         perm_read_only: '唯讀',
         perm_workspace_write: '工作區可寫',
         perm_full_access: '全部可存取',
         perm_read_only_desc: '只能查看和分析，不修改任何檔案',
         perm_workspace_write_desc: '在目前工作空間內自由讀寫，空間之外的寫入會被拒絕',
         perm_full_access_desc: '不加限制，可修改任意位置（目前預設）',
-        perm_follow_global: '跟隨全域設定',
-        perm_tip: '權限：{name}',
         perm_denied_hint: '目前權限為「{name}」，此操作被拒絕。',
-        perm_denied_action: '調整權限',
+        perm_denied_role_hint: '此操作未獲授權。執行權限由你的角色決定，如需使用請聯絡管理員。',
         model_menu_title: '本次會話模型',
         model_follow_global: '跟隨全域設定',
         model_follow_agent: '跟隨智慧體預設模型',
@@ -2194,10 +2436,10 @@ const I18N = {
     en: {
         console: 'Console',
         nav_chat: 'Workbench', nav_manage: 'Management', nav_monitor: 'Monitor', nav_system: 'System Settings',
-        nav_workbench: 'Workbench', nav_admin_console: 'Admin Console',
+        nav_workbench: 'Workbench', nav_admin_console: 'Console',
         nav_return_workbench: 'Back to Workbench',
         nav_admin_overview: 'Console Overview',
-        admin_home_title: 'Admin Console',
+        admin_home_title: 'Console',
         admin_home_hint: 'Use the sidebar to manage agents, organization, and platform settings.',
         admin_home_kpi_agents: 'Agents',
         admin_home_kpi_messages_today: 'Messages today',
@@ -2287,6 +2529,33 @@ const I18N = {
         member_section_tenants: 'Tenants',
         member_tenants: 'Tenants',
         member_tenants_title: 'Adjust member tenants',
+        extid_title: 'External identity',
+        extid_bound_title: 'Bound identities',
+        extid_no_bindings: 'No external identity is bound to this account yet. Until one is, messages from this person cannot be recognised.',
+        extid_add_title: 'Bind a new external identity',
+        extid_field_issuer: 'App ID (optional)',
+        extid_field_subject: 'open_id',
+        extid_field_hint: 'The open_id is produced by the person in IM: have them message the bot first, then pick it from "Waiting to be bound" below — no copying from logs.',
+        extid_bind: 'Bind',
+        extid_attempts_title: 'Waiting to be bound (messaged but unrecognised)',
+        extid_attempts_hint: 'These accounts messaged the bot but match no member. Pick one to fill the form above.',
+        extid_no_attempts: 'Nothing waiting to be bound',
+        extid_group_tag: 'Group',
+        extid_unnamed_sender: 'Unnamed sender',
+        extid_bound_ok: 'Bound',
+        extid_unbound_ok: 'Unbound',
+        extid_error_subject_required: 'open_id is required',
+        extid_error_conflict: 'This external identity is already bound to another account; unbind it first',
+        extid_error_forbidden: 'You cannot manage this account',
+        extid_error_not_found: 'Account or binding not found',
+        extid_error_bad_request: 'The channel or open_id is not valid',
+        extid_error_generic: 'The operation failed; please retry',
+        extid_provider_unknown: 'Unknown channel',
+        extid_provider_feishu: 'Feishu',
+        extid_provider_wecom_bot: 'WeCom bot',
+        extid_provider_weixin: 'WeChat',
+        extid_provider_dingtalk: 'DingTalk',
+        extid_provider_wechatcom_app: 'WeCom app',
         admin_field_tenants: 'Target tenants', admin_field_tenants_hint: 'Select multiple; a new account is created in the selected tenants',
         admin_field_tenants_edit_hint: 'Check/uncheck to add/remove membership (only tenants you administer)',
         member_search_placeholder: 'Search account / name',
@@ -2346,7 +2615,14 @@ const I18N = {
         admin_resource_kind_model: 'Models',
         admin_resource_kind_agent: 'Agents',
         admin_field_platform_admin: 'Platform admin',
-        admin_field_admin_user_id: 'Admin account ID', admin_field_admin_user_id_hint: 'User ID of an existing active account',
+        admin_field_admin_user_id: 'Admin account ID', admin_field_admin_user_id_hint: 'Pick from the valid accounts listed below',
+        admin_user_picker_search_placeholder: 'Search by display or login name',
+        admin_user_picker_loading: 'Loading accounts…',
+        admin_user_picker_empty: 'No valid accounts available to bind',
+        admin_user_picker_load_failed: 'Could not load accounts. Please retry.',
+        admin_user_picker_truncated: 'Results truncated — refine with the search box',
+        admin_user_picker_selected: 'Selected:',
+        admin_user_picker_required: 'Choose a valid account first',
         admin_tenant_admin: 'Admin',
         admin_tenant_roles: 'Roles',
         admin_tenant_admin_edit: 'Configure tenant admin',
@@ -2362,6 +2638,67 @@ const I18N = {
         platform_admin_badge: 'Platform admin',
         admin_tab_members: 'Tenant members', admin_tab_platform: 'Platform accounts',
         tenant_edit_title: 'Edit tenant',
+        tenant_tab_basic: 'Basics',
+        tenant_tab_model: 'Model grants',
+        tenant_tab_tool: 'Tool grants',
+        tenant_tab_admin: 'Tenant admin',
+        tenant_tab_basic_hint: 'Maintain the tenant code, name and enabled state. The code is fixed after creation; saving sends only this tab.',
+        tenant_tab_model_hint: 'Pick the models this tenant may use from the platform catalog and grant the use action.',
+        tenant_tab_tool_hint: 'Pick the tools this tenant may use from the platform catalog and grant read, execute and configure.',
+        tenant_tab_admin_hint: 'Designate the tenant admin and review the tenant space.',
+        tenant_space_title: 'Tenant space',
+        tenant_space_hint: 'The tenant space is derived server-side from the tenant code and shown read-only here.',
+        tenant_space_id: 'Space id',
+        tenant_space_status: 'Status',
+        tenant_space_ready: 'Ready',
+        tenant_space_not_ready: 'Not ready',
+        tenant_space_isolation: 'Isolation',
+        tenant_space_unavailable: 'No tenant space information',
+        tenant_current_admin_label: 'Current tenant admin',
+        tenant_current_admin_none: 'No tenant admin designated yet',
+        tenant_current_admin_unavailable: 'Could not read the current admin. Reopen the tab to retry.',
+        tenant_tab_agent: 'Agents',
+        tenant_tab_agent_hint: 'Review the agents bound to this tenant, then copy candidates from the source tenant as independent agents that evolve separately.',
+        tenant_agent_copy_title: 'Copy agents from the default tenant',
+        tenant_agent_copy_hint: 'Pick the agents to copy into this tenant. An already-synced candidate cannot be picked again, and nothing is copied while no candidate is picked.',
+        tenant_agent_current_title: 'Current agents',
+        tenant_agent_current_empty: 'This tenant has no agents yet; copy some from below.',
+        tenant_agent_current_unavailable: 'Could not read the agent list. Reopen the tab to retry.',
+        tenant_agent_enabled: 'Enabled',
+        tenant_agent_disabled: 'Disabled',
+        tenant_agent_default_badge: 'Default',
+        tenant_agent_copied_badge: 'Synced',
+        tenant_agent_source_label: 'Source tenant',
+        tenant_agent_source_unavailable: 'No copy source is available right now.',
+        tenant_agent_source_empty: 'The source tenant has no copyable agents.',
+        tenant_agent_selected_count: '{n} selected',
+        tenant_agent_result_copied: 'Copied',
+        tenant_agent_result_skipped: 'Skipped',
+        tenant_agent_result_default: 'Default agent taken over',
+        tenant_agent_result_failed: 'Failed',
+        tenant_agent_pick_required: 'Pick at least one agent to copy.',
+        tenant_agent_partial_failed: 'Some agents could not be copied. Review the failures below and retry.',
+        tenant_agent_create_hint: 'Once the tenant exists, copy agents from the default tenant here.',
+        admin_back_to_list: 'Back to tenants',
+        tenant_editor_conflict: 'This tenant was changed in another session. Reload and try again.',
+        tenant_editor_create_hint: 'After creation, use the other tabs to configure grants and the tenant admin.',
+        tenant_editor_created_hint: 'Tenant created. You can now configure model grants, tool grants and the tenant admin.',
+        tenant_editor_save_failed_step: 'Save did not finish; failed step',
+        tenant_password_title: 'Confirm your password',
+        tenant_password_hint: 'Enter your sign-in password to authorize this save.',
+        tenant_password_required: 'Enter your current password.',
+        tenant_password_wrong: 'That password is incorrect. Try again.',
+        tenant_admin_mode_existing: 'Select an existing account',
+        tenant_admin_mode_new: 'Create a new account',
+        tenant_admin_new_username: 'Username',
+        tenant_admin_new_display: 'Display name',
+        tenant_admin_new_password: 'Initial password',
+        tenant_admin_new_username_required: 'Creating an account requires a username.',
+        tenant_admin_new_display_required: 'Creating an account requires a display name.',
+        tenant_admin_new_password_required: 'Creating an account requires an initial password.',
+        tenant_admin_username_taken: 'That username is taken. Select the existing account instead, or choose another username.',
+        tenant_admin_weak_password: 'The initial password is too weak: use at least 8 characters and avoid common passwords.',
+        tenant_admin_invalid_username: 'Invalid username: start with a letter or digit; only letters, digits, dot, underscore and hyphen are allowed.',
         member_edit_title: 'Edit member',
         role_edit_title: 'Edit role',
         role_tab_basic: 'Basics',
@@ -2672,7 +3009,8 @@ const I18N = {
         config_password_hint: 'Leave empty to disable password protection',
         config_permission: 'Default permissions',
         config_permission_hint: 'The default scope for new chats: which files the agent may change and which commands it may run',
-        config_permission_desc: 'New chats start with this; each chat can be changed under the input box',
+        config_permission_desc: 'New chats start with this',
+        config_permission_role_desc: 'Execution permissions for chats here are decided by the role resource grants assigned by an administrator; this is read-only.',
         config_password_changed: 'Password updated',
         config_password_cleared: 'Password cleared',
         config_password_security_warning: '⚠️ Warning: Password is now empty and the port is exposed. Consider restarting the service or adjusting the listening address binding.',
@@ -2697,6 +3035,34 @@ const I18N = {
         channels_connect_btn: 'Connect', channels_cancel: 'Cancel',
         channels_select_placeholder: 'Select a channel to connect...',
         channels_empty: 'No channels connected', channels_empty_desc: 'Click the "Connect" button above to get started',
+        channels_not_open: 'This feature is not open yet', channels_not_open_desc: 'This deployment does not expose instance-level channel configuration; contact a platform administrator',
+        channels_no_permission: 'No access', channels_no_permission_desc: 'Your account may not manage messaging channels; contact an administrator',
+        channels_load_failed: 'Failed to load', channels_load_failed_desc: 'Could not load channel configuration; please retry',
+        tenant_channel_desc: 'Configure this tenant\'s messaging channels; credentials are encrypted and never echoed back',
+        tenant_channel_held_hint: 'Obtained by scanning; leave blank to use it',
+        tenant_channel_empty_desc: 'No channel has been configured for this tenant yet',
+        tenant_channel_active: 'Enabled', tenant_channel_inactive: 'Disabled',
+        tenant_channel_enable: 'Enable', tenant_channel_disable: 'Disable',
+        tenant_channel_edit: 'Edit', tenant_channel_edit_title: 'Edit channel',
+        tenant_channel_type_label: 'Channel type', tenant_channel_display_label: 'Display name',
+        tenant_channel_agent_label: 'Bound Agent', tenant_channel_agent_none: 'Not bound',
+        tenant_channel_save: 'Save',
+        tenant_channel_secret_note: 'Leave a secret field blank to keep the stored value; changes take effect immediately, with no restart needed',
+        tenant_channel_applied: 'Saved, and in service now',
+        tenant_channel_not_applied: 'Saved, but not in service yet:',
+        tenant_channel_error_required: 'Fill in the required credentials:',
+        tenant_channel_scan_manual_hint: 'If the scan is unavailable, enter the credentials manually',
+        tenant_password_prompt: 'Enter your current password to confirm',
+        tenant_channel_error_password_required: 'Enter your current password to confirm this action',
+        tenant_channel_scan_autosaved: 'Saved automatically — find it in the list',
+        tenant_channel_error_password: 'Password verification failed, please retry',
+        tenant_channel_error_conflict: 'The display name is taken by another enabled instance, or the record changed elsewhere',
+        tenant_channel_error_agent: 'The bound Agent does not belong to this tenant',
+        tenant_channel_error_missing: 'The channel no longer exists',
+        tenant_channel_error_invalid: 'The submitted values are not valid; please review and retry',
+        tenant_channel_error_network: 'Could not reach the server; check your connection and retry',
+        tenant_channel_error_crypto: 'The server has no credential encryption master key configured, so credentials cannot be stored; ask an administrator to configure it',
+        tenant_channel_error_display_required: 'Give the channel a name so it can be told apart in the list',
         channels_disconnect_confirm: 'Disconnect this channel? Config will be preserved but the channel will stop.',
         channels_connected: 'Connected', channels_connecting: 'Connecting...',
         weixin_scan_title: 'WeChat QR Login', weixin_scan_desc: 'Scan the QR code below with WeChat',
@@ -2849,17 +3215,14 @@ const I18N = {
         project_rename_title: 'Rename project',
         project_delete_title: 'Delete project',
         project_delete_confirm: 'Delete project “{name}”? Only the project record is removed — files on disk are kept, and its chats revert to the default workspace.',
-        perm_menu_title: 'Permissions for this chat',
         perm_read_only: 'Read-only',
         perm_workspace_write: 'Workspace write',
         perm_full_access: 'Full access',
         perm_read_only_desc: 'Read and analyse only; no file is modified',
         perm_workspace_write_desc: 'Write freely inside this workspace; writes outside it are refused',
         perm_full_access_desc: 'No limits, anywhere on the machine (current default)',
-        perm_follow_global: 'Follow global setting',
-        perm_tip: 'Permissions: {name}',
         perm_denied_hint: 'This session is “{name}”, so the action was refused.',
-        perm_denied_action: 'Adjust permissions',
+        perm_denied_role_hint: 'This action is not authorized. Execution is decided by your role; ask an administrator to grant it.',
         model_menu_title: 'Model for this chat',
         model_follow_global: 'Follow global setting',
         model_follow_agent: 'Follow the agent\u2019s default model',
@@ -3739,6 +4102,7 @@ function _bootAreaDefaultView() {
         }
     } catch (_) {}
     if (pendingWb && VIEW_META[pendingWb]) navigateTo(pendingWb);
+    else if (VIEW_META['chat']) navigateTo('chat');
 }
 
 const ADMIN_HOME_DESC_KEYS = {
@@ -3915,7 +4279,7 @@ function navigateTo(viewId) {
         return;
     }
     if (!VIEW_META[viewId]) return;
-    // Cross-area: open the other named window instead of rendering the wrong shell.
+    // Cross-area: switch to the other area in the SAME window (no reload).
     const here = _navAreaFromPath(location.pathname);
     const want = _viewTargetArea(viewId);
     if (want !== here) {
@@ -4193,7 +4557,7 @@ window.addEventListener('resize', () => {
 let agentCatalog = [];
 let channelInstances = [];
 let rosterRevision = '';
-let defaultAgentId = readScopedPreference('cow_default_agent') || 'default';
+let defaultAgentId = readScopedPreference('cow_default_agent') || '';
 let selectedAdminAgentId = '';
 let selectedCoreRevision = '';
 let installedSkills = [];
@@ -4315,14 +4679,24 @@ function loadAgentCatalog() {
             agentCatalog = (data.agents || []).map(normalizeAgentCatalogEntry);
             channelInstances = data.channel_instances || [];
             rosterRevision = data.revision || '';
+            // Never invent an Agent id. The global fetch wrapper copies the active
+            // id onto every /message and /api call, so a made-up fallback becomes a
+            // real request the server rejects ("agent not found") — a routing error
+            // reported where the truth is "you may not see any Agent". An empty id
+            // sends nothing and lets the server anchor the tenant's default Agent.
             defaultAgentId = data.default_agent_id || agentCatalog.find(agent => agent.is_default === true)?.id
-                || (agentCatalog[0] && agentCatalog[0].id) || 'default';
+                || (agentCatalog[0] && agentCatalog[0].id) || '';
             writeScopedPreference('cow_default_agent', defaultAgentId);
             // The default Agent leads every list it appears in — menus, the grid,
             // the memory picker — so its position never depends on load order.
             agentCatalog.sort((a, b) => (b.id === defaultAgentId) - (a.id === defaultAgentId));
-            // Reading configuration must not replace a bound session's owner.
-            // A deleted owner remains explicit and the server rejects its run.
+            // A remembered Agent this catalogue no longer offers — deleted, unbound,
+            // or a literal written by an older build — must stop riding the requests.
+            // Reading configuration must not replace a bound session's owner, so an
+            // id the catalogue still offers always survives as the explicit choice.
+            if (activeAgentId && !agentCatalog.some(agent => agent.id === activeAgentId)) {
+                activeAgentId = '';
+            }
             if (!activeAgentId) {
                 activeAgentId = defaultAgentId;
                 writeScopedPreference('cow_active_agent', activeAgentId);
@@ -4794,7 +5168,7 @@ function renderAgentDetail() {
 
     if (!isDefault) {
         const dd = document.getElementById('agent-edit-model');
-        const opts = agentModelDropdownOptions();
+        const opts = agentModelDropdownOptions(agent);
         const current = agent.model ? `${agent.bot_type || ''}|${agent.model}` : '';
         initDropdown(dd, opts, current, () => {}, { placeholder: t('agents_model_follows_global') });
     }
@@ -4833,7 +5207,7 @@ function renderAvatarPicker(containerId, agent, onUpload) {
 /* Flattened for the styled dropdown: one row per model, its provider carried in
    the value (a model asked of the wrong vendor is an error), its brand shown as
    a dim hint. The first row clears the choice back to the configured model. */
-function agentModelDropdownOptions() {
+function agentModelDropdownOptions(agent) {
     const opts = [{ value: '', label: t('agents_model_follows_global') }];
     const providers = (_sessCfg && _sessCfg.model && _sessCfg.model.providers) || [];
     providers.forEach(p => {
@@ -4841,6 +5215,16 @@ function agentModelDropdownOptions() {
             opts.push({ value: `${p.id}|${m}`, label: m, hint: localizedLabel(p.label) });
         });
     });
+    // A pinned model whose provider is no longer in the catalog (its key was
+    // removed, say) must still show as the selection. Otherwise the picker
+    // falls back to the "follow global" row and the next save silently clears
+    // the pin. Mirrors the desktop Agent editor.
+    if (agent && agent.model) {
+        const current = `${agent.bot_type || ''}|${agent.model}`;
+        if (!opts.some(o => o.value === current)) {
+            opts.push({ value: current, label: agent.model, hint: agent.bot_type || undefined });
+        }
+    }
     return opts;
 }
 
@@ -4988,13 +5372,16 @@ function renderAgentCapabilitiesPane() {
     const pane = document.getElementById('agent-detail-skills');
     const agent = findAgent(selectedAdminAgentId);
     if (!pane || !agent) return;
-    const toolsLoaded = agent.tools_allowlist != null || agent.tools_denylist.length > 0;
+    // tools_denylist is optional on older agents; default to [] so we never
+    // read .length on undefined. (tools_allowlist null means "no allowlist".)
+    const allowlist = agent.tools_allowlist ?? null;
+    const denylist = agent.tools_denylist ?? [];
     const render = () => {
         const all = agent.skills == null;
         const picked = new Set(all ? [] : agent.skills);
         const sops = agent.sops || [];
-        const allowlist = new Set(agent.tools_allowlist || []);
-        const denylist = new Set(agent.tools_denylist || []);
+        const allowSet = new Set(allowlist || []);
+        const denySet = new Set(denylist);
         pane.innerHTML = `
             <div class="agent-cap-section">
                 <div class="agent-cap-title">${escapeHtml(t('agents_skills_label'))}</div>
@@ -5031,8 +5418,8 @@ function renderAgentCapabilitiesPane() {
                 <p class="text-xs text-slate-400 mb-2">${escapeHtml(t('agents_tools_hint'))}</p>
                 <div class="agent-tool-grid" id="agent-tools-allow">
                     ${(installedTools || []).map(tool => {
-                        const a = allowlist.has(tool.name);
-                        const d = denylist.has(tool.name);
+                        const a = allowSet.has(tool.name);
+                        const d = denySet.has(tool.name);
                         return `<div class="agent-tool-row">
                             <span class="agent-tool-chip"><input type="checkbox" class="agent-tool-allow" value="${escapeHtml(tool.name)}" ${a ? 'checked' : ''} ${d ? 'disabled' : ''}>${escapeHtml(t('agents_allow'))}</span>
                             <span class="agent-tool-chip"><input type="checkbox" class="agent-tool-deny" value="${escapeHtml(tool.name)}" ${d ? 'checked' : ''} ${a ? 'disabled' : ''}>${escapeHtml(t('agents_deny'))}</span>
@@ -6065,7 +6452,7 @@ function setTeamMembers(ids) {
         body: JSON.stringify({ members: unique.length ? unique : null }),
     }).then(r => r.json()).then(data => {
         if (data.status === 'success') {
-            _sessCfg = { model: data.model, permission: data.permission, team: data.team };
+            _sessCfg = { model: data.model, team: data.team };
             renderComposerIdentity();
             // Inviting or removing someone changes whether one model can speak
             // for this conversation.
@@ -7770,8 +8157,6 @@ const PERMISSION_META = {
 // Last state from GET /api/sessions/<id>/settings; null until first fetch.
 let _sessCfg = null;
 
-function _permBtn() { return document.getElementById('permission-selector-btn'); }
-function _permMenu() { return document.getElementById('permission-selector-menu'); }
 function _modelBtn() { return document.getElementById('model-selector-btn'); }
 function _modelMenu() { return document.getElementById('model-selector-menu'); }
 
@@ -7779,7 +8164,7 @@ function _permLabel(mode) { return t((PERMISSION_META[mode] || {}).key || 'perm_
 
 /** Close every composer popover except `keep` (so one chip's menu replaces another's). */
 function _closeComposerMenus(keep) {
-    [[_wsSelMenu(), _wsSelBtn()], [_permMenu(), _permBtn()], [_modelMenu(), _modelBtn()]]
+    [[_wsSelMenu(), _wsSelBtn()], [_modelMenu(), _modelBtn()]]
         .forEach(([menu, btn]) => {
             if (!menu || menu === keep) return;
             menu.classList.add('hidden');
@@ -7798,38 +8183,13 @@ async function refreshSessionSettings() {
         const data = await res.json();
         if (sessionId !== requestSession || activeAgentId !== requestAgent) return;
         if (data.status !== 'success') return;
-        _sessCfg = { model: data.model, permission: data.permission, team: data.team };
+        _sessCfg = { model: data.model, team: data.team };
     } catch (e) {
         // Keep whatever the chips already show rather than blanking them.
         return;
     }
-    _renderPermissionChip();
     _renderModelChip();
     renderComposerIdentity();
-}
-
-function _renderPermissionChip() {
-    const btn = _permBtn();
-    if (!btn || !_sessCfg) return;
-    const state = _sessCfg.permission || {};
-    const mode = state.mode || 'full-access';
-    const meta = PERMISSION_META[mode] || PERMISSION_META['full-access'];
-
-    const label = document.getElementById('permission-selector-label');
-    if (label) label.textContent = _permLabel(mode);
-    const icon = document.getElementById('permission-selector-icon');
-    if (icon) icon.className = `fas ${meta.icon}`;
-
-    // One colour per mode, so an unrestricted session is visibly different from
-    // a read-only one without having to read the label.
-    btn.classList.remove('perm-read-only', 'perm-workspace-write', 'perm-full-access');
-    btn.classList.add(`perm-${mode}`);
-
-    const tip = t('perm_tip').replace('{name}', _permLabel(mode))
-        + (state.source === 'global' ? ` · ${t('perm_follow_global')}` : '');
-    btn.setAttribute('data-tooltip', tip);
-    btn.setAttribute('data-tooltip-pos', 'top');
-    btn.setAttribute('data-tip-float', '');
 }
 
 function _renderModelChip() {
@@ -7859,63 +8219,11 @@ function _renderModelChip() {
     btn.setAttribute('data-tip-float', '');
 }
 
-function togglePermissionSelector(event) {
-    if (event) { event.preventDefault(); event.stopPropagation(); }
-    const menu = _permMenu();
-    if (!menu) return;
-    if (!menu.classList.contains('hidden')) {
-        _closeComposerMenus();
-        return;
-    }
-    _closeComposerMenus(menu);
-    const open = () => { renderPermissionMenu(); menu.classList.remove('hidden'); _permBtn()?.classList.add('open'); };
-    if (_sessCfg) open(); else refreshSessionSettings().then(open);
-}
-
-function renderPermissionMenu() {
-    const menu = _permMenu();
-    if (!menu) return;
-    const state = (_sessCfg && _sessCfg.permission) || {};
-    const modes = state.modes && state.modes.length ? state.modes : Object.keys(PERMISSION_META);
-    const current = state.mode || 'full-access';
-    const isGlobal = state.source === 'global';
-
-    const parts = [`<div class="composer-menu-title">${escapeHtml(t('perm_menu_title'))}</div>`];
-    // Menu order follows PERMISSION_META, not the backend tuple, so the list
-    // reads consistently even if the backend reorders its modes. "Follow global"
-    // is intentionally not a row of its own: picking a mode simply pins it, and
-    // clicking the already-active mode clears the pin (back to global) so the
-    // behaviour is still reachable without cluttering the menu.
-    Object.keys(PERMISSION_META).filter(m => modes.includes(m)).forEach(mode => {
-        const meta = PERMISSION_META[mode];
-        const active = mode === current;
-        // When this mode is the active one AND it is pinned, clicking it clears
-        // the pin; otherwise clicking pins this mode.
-        const arg = (active && !isGlobal) ? 'null' : `'${mode}'`;
-        parts.push(`
-            <button class="composer-menu-item ${active ? 'active' : ''}" onclick="selectSessionPermission(${arg})">
-                <i class="fas ${meta.icon}"></i>
-                <span class="composer-menu-body">
-                    <span class="composer-menu-name">${escapeHtml(t(meta.key))}</span>
-                    <span class="composer-menu-desc">${escapeHtml(t(meta.key + '_desc'))}</span>
-                </span>
-                ${active ? '<i class="fas fa-check composer-menu-check"></i>' : ''}
-            </button>`);
-    });
-
-    menu.innerHTML = parts.join('');
-}
-
-/** Pin this session's permission mode, or pass null to follow the global one. */
-async function selectSessionPermission(mode) {
-    _closeComposerMenus();
-    await _applySessionSettings({ permission: mode });
-}
-
-// Insert an actionable hint after a tool card whose call was refused by the
-// permission gate. Clicking it opens the permission selector under the input so
-// the user can raise the mode without hunting for the chip.
-function _appendPermissionDeniedHint(toolEl, mode) {
+// Insert an explanatory hint after a tool card whose call was refused by the
+// permission gate. The refusal reason already sits in the tool card; this is a
+// short human sentence. There is deliberately no action button: execution is
+// governed by the caller's role grants, not by a switch in the conversation.
+function _appendPermissionDeniedHint(toolEl, mode, kind) {
     if (!toolEl || !toolEl.parentElement) return;
     // Avoid stacking duplicate hints if the model retries the same blocked call.
     if (toolEl.nextElementSibling
@@ -7923,19 +8231,16 @@ function _appendPermissionDeniedHint(toolEl, mode) {
         && toolEl.nextElementSibling.classList.contains('perm-denied-hint')) {
         return;
     }
-    const label = _permLabel(mode || (_sessCfg && _sessCfg.permission && _sessCfg.permission.mode) || 'workspace-write');
+    // Only a legacy mode refusal names a mode; a role/isolation/quota refusal in
+    // database mode must not blame a session mode the user cannot change.
+    const text = (kind === 'mode' && mode)
+        ? t('perm_denied_hint').replace('{name}', _permLabel(mode))
+        : t('perm_denied_role_hint');
     const hint = document.createElement('div');
     hint.className = 'perm-denied-hint';
     hint.innerHTML = `
         <i class="fas fa-shield-halved"></i>
-        <span class="perm-denied-text">${escapeHtml(t('perm_denied_hint').replace('{name}', label))}</span>
-        <button type="button" class="perm-denied-btn">${escapeHtml(t('perm_denied_action'))}</button>`;
-    hint.querySelector('.perm-denied-btn').addEventListener('click', (e) => {
-        e.stopPropagation();
-        const btn = _permBtn();
-        if (btn) { btn.scrollIntoView({ block: 'nearest' }); }
-        togglePermissionSelector();
-    });
+        <span class="perm-denied-text">${escapeHtml(text)}</span>`;
     toolEl.parentElement.insertBefore(hint, toolEl.nextElementSibling);
 }
 
@@ -8009,8 +8314,7 @@ async function _applySessionSettings(body) {
         });
         const data = await res.json();
         if (data.status !== 'success') { _wsToast(data.message || t('session_settings_failed')); return; }
-        _sessCfg = { model: data.model, permission: data.permission };
-        _renderPermissionChip();
+        _sessCfg = { model: data.model };
         _renderModelChip();
     } catch (e) {
         _wsToast(t('session_settings_failed'));
@@ -8018,7 +8322,7 @@ async function _applySessionSettings(body) {
 }
 
 document.addEventListener('click', (e) => {
-    [[_permMenu(), _permBtn()], [_modelMenu(), _modelBtn()]].forEach(([menu, btn]) => {
+    [[_modelMenu(), _modelBtn()]].forEach(([menu, btn]) => {
         if (!menu || menu.classList.contains('hidden')) return;
         if (menu.contains(e.target) || (btn && btn.contains(e.target))) return;
         menu.classList.add('hidden');
@@ -9109,11 +9413,12 @@ function startSSE(requestId, loadingEl, timestamp, titleInfo, replayItems) {
                         if (outputSection) outputSection.remove();
                     }
                     if (isError) toolEl.classList.add('tool-failed');
-                    // A permission refusal is not an ordinary failure: surface a
-                    // one-click way to raise this session's permission instead of
-                    // leaving the user to decode the model's error text.
+                    // A permission refusal is not an ordinary failure: add a short
+                    // sentence explaining it instead of leaving the user to decode
+                    // the model's error text. There is no action button — execution
+                    // is decided by the caller's role, not by a chat control.
                     if (item.permission_denied) {
-                        _appendPermissionDeniedHint(toolEl, item.permission_mode);
+                        _appendPermissionDeniedHint(toolEl, item.permission_mode, item.permission_denial_kind);
                     }
                     toolElements.delete(item.tool_call_id);
                 }
@@ -10245,12 +10550,21 @@ function addLoadingIndicator() {
     return el;
 }
 
-/* The session-panel "新对话" button. With a single Agent there is nobody to
-   choose between, so it just starts a chat. With several, it opens a menu: pick
-   an Agent for a solo chat, or open the team picker for a group chat. */
+/* The session-panel "新对话" button. Starting a chat is never a decision: the
+   button opens one with the default-anchored Agent straight away, so a tenant
+   that owns several Agents does not gate the primary action on a picker.
+   The caret is the *optional* "switch Agent / start a team chat" entry, and
+   only exists once there is more than one Agent. */
 function onNewChatButton(event) {
-    if (!multiAgentMode()) { newChat(true); return; }
-    if (event) event.stopPropagation();
+    const onCaret = event && event.target && event.target.closest
+        && event.target.closest('#new-chat-caret');
+    if (!onCaret) { newChat(true); return; }
+    event.stopPropagation();
+    openNewChatMenu();
+}
+
+/* The optional picker: a solo chat per Agent, or a team chat. */
+function openNewChatMenu() {
     const menu = document.getElementById('new-chat-menu');
     if (!menu) { newChat(true); return; }
     if (!menu.classList.contains('hidden')) { menu.classList.add('hidden'); return; }
@@ -10433,9 +10747,8 @@ function _applyInputTooltips() {
     set('mic-btn', 'mic_idle_title');
     // Send button only carries a tooltip while it acts as the cancel button.
     _setBtnTooltip(sendBtn, sendBtnMode === 'cancel' ? t('tip_cancel') : '');
-    // The permission / model chips carry translated labels and tooltips, so they
-    // are repainted here too (this runs on every language switch).
-    _renderPermissionChip();
+    // The model chip carries translated labels and tooltips, so it is repainted
+    // here too (this runs on every language switch).
     _renderModelChip();
 }
 
@@ -10737,6 +11050,13 @@ const SIDEBAR_RECENT_LIMIT = 10;
 function _sidebarRecentLimit(items) {
     return Array.isArray(items) ? items.slice(0, SIDEBAR_RECENT_LIMIT) : [];
 }
+// The 会话历史 block is the `history` workbench menu entry. It is denied when the
+// authoritative projection withholds its menu grant; an unknown projection (or
+// legacy mode) never denies.
+function _sidebarRecentDenied() {
+    if (typeof _viewNavDenied !== 'function') return false;
+    return !!_viewNavDenied('history');
+}
 // === SIDEBAR_RECENT_END ===
 
 let _sidebarRecentItems = [];
@@ -10781,6 +11101,13 @@ function loadSidebarRecentSessions() {
     const wrap = document.getElementById('sidebar-recent');
     if (!wrap) return;
     if (typeof _navAreaFromPath === 'function' && _navAreaFromPath(location.pathname) !== 'workbench') return;
+    // A withheld menu grant hides the block and skips the request entirely: never
+    // fetch history the identity is not allowed to see in the navigation.
+    const denied = typeof _sidebarRecentDenied === 'function' && _sidebarRecentDenied();
+    if (wrap.classList.contains('hidden') || denied) {
+        wrap.classList.add('hidden');
+        return;
+    }
     const seq = ++_sidebarRecentSeq;
     fetch(`/api/sessions?page=1&page_size=${SIDEBAR_RECENT_LIMIT}&scope=all`)
         .then(async r => {
@@ -11908,6 +12235,10 @@ function initDropdown(el, options, selectedValue, onChange, opts) {
     // "pick or empty" capabilities (asr / embedding) where we want the
     // user to make an explicit choice.
     opts = opts || {};
+    // opts.readOnly: the control still renders the effective value but cannot
+    // be opened or changed. Used for settings that are owned by another layer
+    // (e.g. the default permission in database mode, which roles own).
+    el._ddReadOnly = !!opts.readOnly;
     const textEl = el.querySelector('.cfg-dropdown-text');
     const menuEl = el.querySelector('.cfg-dropdown-menu');
     const selEl = el.querySelector('.cfg-dropdown-selected');
@@ -11964,6 +12295,7 @@ function initDropdown(el, options, selectedValue, onChange, opts) {
             }
             item.addEventListener('click', (e) => {
                 e.stopPropagation();
+                if (el._ddReadOnly) return;
                 el._ddValue = opt.value;
                 textEl.textContent = opt.label;
                 // Now that a real option is picked, drop the muted placeholder
@@ -12004,6 +12336,7 @@ function initDropdown(el, options, selectedValue, onChange, opts) {
     if (!el._ddBound) {
         selEl.addEventListener('click', (e) => {
             e.stopPropagation();
+            if (el._ddReadOnly) return;
             document.querySelectorAll('.cfg-dropdown.open').forEach(d => { if (d !== el) d.classList.remove('open'); });
             const willOpen = !el.classList.contains('open');
             if (willOpen) {
@@ -12091,15 +12424,33 @@ function initConfigView(data) {
     // language selector: the card's save button belongs to the password field,
     // and a security default that silently waited for a save would be worse than
     // one that takes effect immediately.
+    //
+    // In database mode this setting is owned by role resource grants, so it is
+    // rendered read-only: it explains the effective default but offers no knob
+    // that a tenant user could turn to widen what their session may run.
     const permEl = document.getElementById('cfg-permission');
     if (permEl) {
+        const editable = data.permission_mode_editable !== false;
         const offered = data.permission_modes && data.permission_modes.length
             ? data.permission_modes
             : Object.keys(PERMISSION_META);
         const permOpts = Object.keys(PERMISSION_META)
             .filter(mode => offered.includes(mode))
             .map(mode => ({ value: mode, label: t(PERMISSION_META[mode].key) }));
-        initDropdown(permEl, permOpts, data.agent_permission_mode || 'full-access', saveGlobalPermission);
+        initDropdown(
+            permEl,
+            permOpts,
+            data.agent_permission_mode || 'full-access',
+            editable ? saveGlobalPermission : null,
+            { readOnly: !editable }
+        );
+        permEl.classList.toggle('cfg-dropdown-readonly', !editable);
+        if (editable) permEl.removeAttribute('aria-disabled');
+        else permEl.setAttribute('aria-disabled', 'true');
+        const descEl = document.getElementById('cfg-permission-desc');
+        const roleDescEl = document.getElementById('cfg-permission-role-desc');
+        if (descEl) descEl.classList.toggle('hidden', !editable);
+        if (roleDescEl) roleDescEl.classList.toggle('hidden', editable);
     }
 
     const pwdInput = document.getElementById('cfg-password');
@@ -12643,7 +12994,7 @@ function _brandingRenderPreview() {
         el.src = logoUrl;
         el.alt = '';
     });
-    // Sidebar caption: default maps to 工作台 / 管理控制台 by path; custom
+    // Sidebar caption: default maps to 工作台 / 控制台 by path; custom
     // brand descriptions still paint as configured.
     canvas.querySelectorAll('[data-brand-slot="caption"]').forEach(el => {
         const captionHelper = (typeof window !== 'undefined' && window
@@ -15450,23 +15801,877 @@ function isMultiInstanceType(name) {
     return channelsMultiAgent && multiInstanceTypes.indexOf(name) !== -1;
 }
 
-function loadChannelsView() {
+// --- Scope resolution and failure presentation ---------------------------
+// The 消息渠道 page is ONE console page serving two scopes (server reports the
+// relative scope in the projection). These helpers are pure so the contract is
+// testable without a DOM.
+function channelScope() {
+    const ctx = (typeof _baseAuthContext === 'function') ? _baseAuthContext() : null;
+    const pages = ctx && ctx.console_pages && typeof ctx.console_pages === 'object'
+        ? ctx.console_pages : null;
+    const page = pages && pages['admin.channels'];
+    if (page && (page.scope === 'tenant' || page.scope === 'platform')) return page.scope;
+    // Unknown projection (legacy install / not yet loaded) keeps the historic
+    // instance-level page rather than guessing the tenant scope.
+    return 'platform';
+}
+
+// The page header is static markup in chat.html and is shared by both scopes,
+// so the tenant render must not paint a second copy. Only the description
+// differs, and it moves with the scope (keeping data-i18n in step so a language
+// switch re-translates it rather than reverting to the platform copy).
+function syncChannelsHeader(scope) {
+    const subtitle = document.getElementById('channels-subtitle');
+    if (!subtitle) return;
+    const key = scope === 'tenant' ? 'tenant_channel_desc' : 'channels_desc';
+    subtitle.dataset.i18n = key;
+    subtitle.textContent = t(key);
+}
+
+// The header's single "接入通道" button is static markup, so it cannot bind one
+// scope's handler directly in the HTML. Dispatch to the form that matches the
+// scope the button is being shown in.
+function openChannelsAddEntry() {
+    if (channelScope() === 'tenant') return openTenantChannelForm();
+    return openAddChannelPanel();
+}
+
+// Map a failed /api/channels response to the explanation the page shows. The
+// distinction matters to the operator: "you may not" is actionable by asking an
+// administrator, "not open yet" is not a permission problem at all.
+function channelsFailureKey(status, code) {
+    if (String(code || '') === 'database_unavailable') return 'channels_not_open';
+    if (Number(status) === 403) return 'channels_no_permission';
+    if (Number(status) === 405 || Number(status) === 503) return 'channels_not_open';
+    return 'channels_load_failed';
+}
+
+// A scan start can fail before any register session exists: the route may be
+// closed in this identity mode (405/503) or the caller may lack permission
+// (403). Those deserve the same reason-specific explanation the page-level
+// loader gives, not a generic "scan failed" that hides the cause.
+function scanFailureText(status, code, message) {
+    const key = channelsFailureKey(status, code);
+    if (key !== 'channels_load_failed') return `${t(key)}：${t(key + '_desc')}`;
+    return message || t('feishu_scan_fail');
+}
+
+// Replace the spinner with a terminal explanation. MUST always render something
+// final: the page must never be left on "loading" for a request that has failed.
+function renderChannelsUnavailable(container, status, code) {
+    if (!container) return;
+    const key = channelsFailureKey(status, code);
+    container.classList.remove('hidden');
+    container.innerHTML = `
+        <div class="flex flex-col items-center justify-center py-16" id="channels-unavailable">
+            <div class="w-14 h-14 rounded-2xl bg-slate-100 dark:bg-white/5 flex items-center justify-center mb-4">
+                <i class="fas fa-circle-info text-slate-400 text-lg"></i>
+            </div>
+            <p class="text-slate-600 dark:text-slate-300 font-medium">${t(key)}</p>
+            <p class="text-sm text-slate-400 dark:text-slate-500 mt-1">${t(key + '_desc')}</p>
+        </div>`;
+}
+
+// --- Tenant-owned channel instances --------------------------------------
+// Credentials are write-only: the server never returns a secret, so the list
+// shows the instance metadata only and the form always starts empty for a
+// secret field. `tenantChannelDraft` preserves what the operator typed when a
+// write is rejected, so a conflict or a policy error does not clear the form.
+let tenantChannelTypes = [];
+let tenantChannelInstances = [];
+let tenantChannelDraft = null;
+
+function tenantChannelType(type) {
+    return tenantChannelTypes.find(t => t.channel_type === type) || null;
+}
+
+function channelTypeLabel(type) {
+    const spec = tenantChannelType(type);
+    if (!spec || !spec.label) return type;
+    return spec.label[currentLang] || spec.label.en || type;
+}
+
+function channelFieldLabel(field) {
+    if (!field || !field.label) return (field && field.key) || '';
+    return field.label[currentLang] || field.label.en || field.key;
+}
+
+// The form's type list is exactly what the server offered — never a local copy,
+// so an unsupported type (e.g. the deferred 企微自建应用) cannot be submitted.
+function tenantChannelTypeOptions() {
+    return tenantChannelTypes.map(spec => ({
+        value: spec.channel_type,
+        label: `${spec.label[currentLang] || spec.label.en} (${spec.channel_type})`,
+    }));
+}
+
+function tenantChannelAgentOptions(selected) {
+    return [
+        { value: '', label: t('tenant_channel_agent_none') },
+        ...(agentCatalog || []).map(a => ({
+            value: a.id,
+            label: a.name ? `${a.name} (${a.id})` : a.id,
+        })),
+    ];
+}
+
+// Channel types whose setup can be completed by scanning a QR code, and the
+// function that starts each flow. Declared rather than inferred from the label
+// so adding a scan flow is one line here and the contract test can pin the set.
+const TENANT_CHANNEL_SCAN_TYPES = {
+    feishu: 'startFeishuRegister',
+    wecom_bot: 'startTenantWecomScan',
+};
+
+function tenantChannelSupportsScan(channelType) {
+    return Object.prototype.hasOwnProperty.call(
+        TENANT_CHANNEL_SCAN_TYPES, channelType || '');
+}
+
+// Icon / colour come from the server's type description (the same declaration
+// the platform page uses) with a neutral fallback for an unknown type.
+function tenantChannelAppearance(channelType) {
+    const spec = tenantChannelType(channelType);
+    return {
+        icon: (spec && spec.icon) || 'fa-tower-broadcast',
+        color: (spec && spec.color) || 'primary',
+    };
+}
+
+// The inline create/edit form for one tenant channel, in the same shape as the
+// platform card: a Tab strip (扫码 / 手工填写) for scan-capable types and the
+// credential form below it. Only the fields the server declared are rendered, so
+// the form cannot submit a key the server would reject.
+function buildTenantChannelForm(inst) {
+    const draft = tenantChannelDraft || {};
+    const channelType = (inst && inst.channel_type) || draft.channel_type || '';
+    const spec = tenantChannelType(channelType);
+    const fields = spec ? spec.credential_fields : [];
+    const iid = (inst && inst.id) || 'new';
+    const editing = !!(inst && inst.id);
+    const supportsScan = tenantChannelSupportsScan(channelType);
+    const scanStart = supportsScan ? TENANT_CHANNEL_SCAN_TYPES[channelType] : '';
+    const mode = draft.mode === 'scan' && supportsScan ? 'scan' : 'manual';
+    const scanStatusId = `tenant-channel-scan-status-${iid}`;
+
+    const activeClasses = 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 shadow-sm';
+    const inactiveClasses = 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200';
+    const tabs = supportsScan ? `
+        <div class="flex items-center justify-center gap-1 mb-5 bg-slate-100 dark:bg-white/5 rounded-lg p-1">
+            <button type="button" data-tenant-channel-mode="scan"
+                onclick="switchTenantChannelMode('${escapeHtml(iid)}', 'scan')"
+                class="flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${mode === 'scan' ? activeClasses : inactiveClasses}">
+                ${t('feishu_mode_scan')}
+            </button>
+            <button type="button" data-tenant-channel-mode="manual"
+                onclick="switchTenantChannelMode('${escapeHtml(iid)}', 'manual')"
+                class="flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${mode === 'manual' ? activeClasses : inactiveClasses}">
+                ${t('feishu_mode_manual')}
+            </button>
+        </div>` : `
+        <div class="flex items-center justify-center gap-1 mb-5 bg-slate-100 dark:bg-white/5 rounded-lg p-1">
+            <button type="button" data-tenant-channel-mode="manual"
+                class="flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${activeClasses}">
+                ${t('feishu_mode_manual')}
+            </button>
+        </div>`;
+
+    // Both panes stay in the DOM and only their visibility toggles, so switching
+    // to the scan tab and back cannot wipe credentials the operator already
+    // typed. The scan pane never persists anything: it only fills the draft.
+    const scanPane = supportsScan ? `
+        <div id="tenant-channel-pane-scan-${escapeHtml(iid)}" class="${mode === 'scan' ? '' : 'hidden'}">
+            <div class="flex flex-col items-center py-4">
+                <p class="text-sm text-slate-600 dark:text-slate-300 mb-3 text-center">${t('feishu_scan_desc')}</p>
+                <button type="button" onclick="${scanStart}('${scanStatusId}', '${escapeHtml(iid)}')"
+                    class="mt-2 px-6 py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-medium
+                           cursor-pointer transition-colors duration-150">
+                    <i class="fas fa-qrcode mr-2"></i>${t('feishu_scan_btn')}
+                </button>
+                <div id="${scanStatusId}" class="mt-4 w-full"></div>
+            </div>
+        </div>` : '';
+
+    const manualPane = `
+        <div id="tenant-channel-pane-manual-${escapeHtml(iid)}" class="${mode === 'manual' ? '' : 'hidden'}">
+            <div class="space-y-4">
+                <div id="tenant-channel-fields" class="space-y-4">
+                    ${fields.map(f => `
+                        <div>
+                            <label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">
+                                ${escapeHtml(channelFieldLabel(f))}${f.required ? ' <span class="text-red-500">*</span>' : ''}</label>
+                            ${tenantChannelFieldInput(f, (draft.credentials || {})[f.key])}
+                        </div>`).join('')}
+                </div>
+                <p class="text-xs text-slate-400 dark:text-slate-500">${t('tenant_channel_secret_note')}</p>
+            </div>
+        </div>`;
+
+    return `
+        <div class="space-y-4" data-tenant-channel-form="${escapeHtml(iid)}">
+            <div id="tenant-channel-error" class="hidden text-sm text-red-500"></div>
+            ${editing ? '' : `
+            <div>
+                <label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">${t('tenant_channel_type_label')}</label>
+                <select id="tenant-channel-type" onchange="changeTenantChannelType(this.value)"
+                    class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#141414] text-sm">
+                    <option value="">${t('channels_select_placeholder')}</option>
+                    ${tenantChannelTypes.map(s =>
+                        `<option value="${escapeHtml(s.channel_type)}" ${s.channel_type === channelType ? 'selected' : ''}>
+                            ${escapeHtml(s.label[currentLang] || s.label.en)}</option>`).join('')}
+                </select>
+            </div>`}
+            ${tabs}
+            <div>
+                <label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">${t('tenant_channel_display_label')}${editing ? '' : ' <span class="text-red-500">*</span>'}</label>
+                <input id="tenant-channel-display" type="text"
+                    value="${escapeHtml(draft.display_name || (inst && inst.display_name) || '')}"${editing ? '' : ' data-tenant-channel-display-required="1"'}
+                    class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#141414] text-sm">
+            </div>
+            <div>
+                <label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">${t('tenant_channel_agent_label')}</label>
+                <select id="tenant-channel-agent"
+                    class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#141414] text-sm">
+                    ${tenantChannelAgentOptions().map(o => {
+                        const selected = String(o.value) === String(
+                            draft.agent_id !== undefined && draft.agent_id !== null
+                                ? draft.agent_id : ((inst && inst.agent_id) || ''));
+                        return `<option value="${escapeHtml(o.value)}"${selected ? ' selected' : ''}>${escapeHtml(o.label)}</option>`;
+                    }).join('')}
+                </select>
+            </div>
+            ${scanPane}
+            ${manualPane}
+            <div class="flex items-center justify-end gap-3 pt-1">
+                <button type="button" onclick="closeTenantChannelForm()"
+                    class="px-4 py-2 rounded-lg border border-slate-200 dark:border-white/10 text-slate-600 dark:text-slate-300 text-sm font-medium cursor-pointer">
+                    ${t('channels_cancel')}</button>
+                <button type="button" onclick="submitTenantChannel()" ${editing ? '' : ''}
+                    class="px-4 py-2 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium cursor-pointer">
+                    ${t('tenant_channel_save')}</button>
+            </div>
+        </div>`;
+}
+
+// One tenant channel instance as a card, using the same shell as the platform
+// page so the two lists are recognisably the same interface. Editing happens
+// inline in the card rather than in a separate panel.
+function renderTenantChannelCard(inst) {
+    const appearance = tenantChannelAppearance(inst.channel_type);
+    const editing = !!(tenantChannelDraft && tenantChannelDraft.instance_id === inst.id);
+    const badge = inst.active
+        ? `<span class="px-2 py-0.5 rounded-full text-[11px] bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">${t('tenant_channel_active')}</span>`
+        : `<span class="px-2 py-0.5 rounded-full text-[11px] bg-slate-100 text-slate-500 dark:bg-white/5 dark:text-slate-400">${t('tenant_channel_inactive')}</span>`;
+    const statusText = `${badge}${inst.agent_id ? ` <span class="text-xs text-slate-400">· ${escapeHtml(inst.agent_id)}</span>` : ''}`;
+    return `
+        <div class="bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10 p-5"
+             data-tenant-channel-row="${escapeHtml(inst.id)}">
+            ${buildChannelCardShell({
+                iid: inst.id,
+                label: inst.display_name,
+                icon: appearance.icon,
+                color: appearance.color,
+                statusDot: inst.active ? 'bg-primary-400' : 'bg-slate-300',
+                statusText: statusText,
+                subtitle: `${escapeHtml(channelTypeLabel(inst.channel_type))} · ${escapeHtml(inst.id)}`,
+                headerMb: true,
+                actionsHtml: `
+                    <div class="flex items-center gap-2 shrink-0">
+                        <button type="button" onclick="openTenantChannelForm('${escapeHtml(inst.id)}')"
+                            class="text-xs px-3 py-1.5 rounded-lg border border-slate-200 dark:border-white/10
+                                   text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/5 cursor-pointer">
+                            ${t('tenant_channel_edit')}</button>
+                        <button type="button" onclick="toggleTenantChannel('${escapeHtml(inst.id)}', ${inst.active ? 'false' : 'true'})"
+                            class="text-xs px-3 py-1.5 rounded-lg border border-slate-200 dark:border-white/10
+                                   text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/5 cursor-pointer">
+                            ${inst.active ? t('tenant_channel_disable') : t('tenant_channel_enable')}</button>
+                    </div>`,
+                bodyHtml: editing ? buildTenantChannelForm(inst) : '',
+            })}
+        </div>`;
+}
+
+function tenantChannelFieldInput(field, value) {
+    const val = value === undefined || value === null ? '' : String(value);
+    // Required-ness is the server's declaration; without it the console would
+    // keep a second copy of the minimum set and drift from what the server
+    // enforces on save.
+    const required = field.required ? ' data-tenant-channel-required="1"' : '';
+    if (field.secret) {
+        // Never pre-filled: the server has no plaintext to send back, and an
+        // edit must not render a stored secret. A scan is the one case where
+        // the console does hold the plaintext, and the operator cannot
+        // otherwise tell that it arrived — so say so, without putting the value
+        // in the DOM.
+        const held = val
+            ? `<p class="mt-1 text-xs text-emerald-600 dark:text-emerald-400"
+                   data-tenant-channel-held="${escapeHtml(field.key)}">${escapeHtml(t('tenant_channel_held_hint'))}</p>`
+            : '';
+        return `<input type="password" autocomplete="new-password"${required}
+                       data-tenant-channel-field="${escapeHtml(field.key)}"
+                       value="" placeholder="${escapeHtml(channelFieldLabel(field))}"
+                       class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10
+                              bg-white dark:bg-[#141414] text-sm text-slate-700 dark:text-slate-200">${held}`;
+    }
+    return `<input type="text"${required}
+                   data-tenant-channel-field="${escapeHtml(field.key)}"
+                   value="${escapeHtml(val)}" placeholder="${escapeHtml(channelFieldLabel(field))}"
+                   class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10
+                          bg-white dark:bg-[#141414] text-sm text-slate-700 dark:text-slate-200">`;
+}
+
+// Required credential fields the operator has left empty, for a create. An edit
+// is deliberately exempt: a blank secret there means "keep the stored value",
+// which the server honours by merging over the existing bundle.
+function tenantChannelMissingRequiredFields(channelType, collected) {
+    const entry = (tenantChannelTypes || []).find(
+        item => item.channel_type === channelType);
+    if (!entry) return [];  // unknown type: the server decides, not the console
+    const provided = collected || {};
+    return (entry.credential_fields || []).filter(
+        field => field.required && !String(provided[field.key] || '').trim());
+}
+
+function collectTenantChannelFields() {
+    const out = {};
+    document.querySelectorAll('[data-tenant-channel-field]').forEach(el => {
+        const key = el.getAttribute('data-tenant-channel-field');
+        const value = (el.value || '').trim();
+        if (value) out[key] = value;
+    });
+    return out;
+}
+
+// Build the create/update body. Only the fields the caller actually supplied
+// are sent, so editing a display name never blanks a stored secret.
+function tenantChannelPayload(form) {
+    const payload = {};
+    if (form.display_name !== undefined) payload.display_name = form.display_name;
+    if (form.agent_id !== undefined) payload.agent_id = form.agent_id;
+    if (form.credentials !== undefined) payload.credentials = form.credentials;
+    if (form.expected_version !== undefined) payload.expected_version = form.expected_version;
+    payload.recent_password = form.recent_password || '';
+    // Only sent when a scan minted one: the server treats it as standing in for
+    // the password, so an empty value must stay absent rather than be sent.
+    if (form.scan_ticket) payload.scan_ticket = form.scan_ticket;
+    return payload;
+}
+
+function tenantChannelWriteErrorKey(status, code) {
+    const code_text = String(code || '');
+    if (code_text === 'invalid_old') return 'tenant_channel_error_password';
+    // A misconfigured deployment is not something "you got wrong": the
+    // operator can retry forever and never succeed, so it must say so.
+    if (code_text === 'credential_crypto') return 'tenant_channel_error_crypto';
+    if (Number(status) === 409) return 'tenant_channel_error_conflict';
+    if (code_text === 'forbidden' || Number(status) === 403) return 'tenant_channel_error_agent';
+    if (Number(status) === 404) return 'tenant_channel_error_missing';
+    return 'tenant_channel_error_invalid';
+}
+
+function tenantChannelTypeLabelForStatus(status) {
+    return tenantChannelWriteErrorKey(status, '');
+}
+
+function loadTenantChannelsView() {
     const container = document.getElementById('channels-content');
     if (!container) return Promise.resolve();
     container.innerHTML = `<div class="flex items-center gap-2 py-8 justify-center text-slate-400 dark:text-slate-500 text-sm">
         <i class="fas fa-spinner fa-spin text-xs"></i><span>Loading...</span></div>`;
 
     const roster = agentCatalog.length ? Promise.resolve() : loadAgentCatalog();
-    return roster.then(() => fetch('/api/channels').then(r => r.json()).then(data => {
-        if (data.status !== 'success') return;
-        channelsData = data.channels || [];
-        channelsMultiAgent = !!data.multi_agent;
-        multiInstanceTypes = data.multi_instance_types || [];
-        channelInstancesView = data.instances || [];
-        renderActiveChannels();
-    }).catch(() => {
-        container.innerHTML = '<p class="text-sm text-red-400 py-8 text-center">Failed to load channels</p>';
-    }));
+    return roster.then(() => fetch('/api/tenant/channels')
+        .then(r => r.json().then(data => ({ status: r.status, data })))
+        .then(({ status, data }) => {
+            if (!data || data.status !== 'success') {
+                renderChannelsUnavailable(container, status, data && data.code);
+                return;
+            }
+            tenantChannelTypes = data.channel_types || [];
+            tenantChannelInstances = data.items || [];
+            renderTenantChannels();
+        })
+        .catch(() => renderChannelsUnavailable(container, 0, 'network')));
+}
+
+// Whether the last tenant channel write is actually in service yet. A write
+// commits to the identity store first and is brought up in the running process
+// afterwards, so "success" only means the row was stored. Reporting that
+// distinction is the point: an operator who is not told otherwise assumes the
+// channel is live, and a channel that silently kept the previous credentials
+// would be worse than one that is plainly down.
+let tenantChannelRuntimeNotice = null;
+
+function tenantChannelRuntimeNoticeFrom(data) {
+    const runtime = (data && data.runtime) || null;
+    if (!runtime) return null;
+    return {
+        applied: !!runtime.applied,
+        pending: !!runtime.pending,
+        reason: String(runtime.error || ''),
+    };
+}
+
+function tenantChannelRuntimeNoticeHtml() {
+    const notice = tenantChannelRuntimeNotice;
+    if (!notice) return '';
+    const tone = notice.applied
+        ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-300'
+        : 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300';
+    const text = notice.applied
+        ? t('tenant_channel_applied')
+        : (notice.reason
+            ? `${t('tenant_channel_not_applied')} ${notice.reason}`
+            : t('tenant_channel_not_applied'));
+    return `<div class="mb-4 px-3 py-2 rounded-lg text-xs ${tone}" data-tenant-channel-runtime>${escapeHtml(text)}</div>`;
+}
+
+function renderTenantChannels() {
+    const container = document.getElementById('channels-content');
+    if (!container) return;
+    const addPanel = document.getElementById('channels-add-panel');
+    if (addPanel) { addPanel.classList.add('hidden'); addPanel.innerHTML = ''; }
+
+    if (!tenantChannelInstances.length && !tenantChannelDraft) {
+        container.innerHTML = `
+            ${tenantChannelRuntimeNoticeHtml()}
+            <div class="flex flex-col items-center justify-center py-20">
+                <div class="w-16 h-16 rounded-2xl bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center mb-4">
+                    <i class="fas fa-tower-broadcast text-blue-400 text-xl"></i>
+                </div>
+                <p class="text-slate-500 dark:text-slate-400 font-medium">${t('channels_empty')}</p>
+                <p class="text-sm text-slate-400 dark:text-slate-500 mt-1">${t('tenant_channel_empty_desc')}</p>
+                <button onclick="openTenantChannelForm()"
+                    class="mt-4 px-4 py-2 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium cursor-pointer">
+                    ${t('channels_add')}</button>
+            </div>`;
+        return;
+    }
+
+    const rows = tenantChannelInstances.map(inst => renderTenantChannelCard(inst)).join('');
+    // The "add" draft has no instance row yet; it renders as its own card so the
+    // create form uses exactly the same Tab shape as an existing card.
+    const draftCard = (tenantChannelDraft && !tenantChannelDraft.instance_id)
+        ? `
+        <div class="bg-white dark:bg-[#1A1A1A] rounded-xl border border-primary-200 dark:border-primary-800 p-5"
+             data-tenant-channel-row="new">
+            ${buildChannelCardShell({
+                iid: 'new',
+                label: tenantChannelDraft.display_name || t('channels_add'),
+                icon: tenantChannelAppearance(tenantChannelDraft.channel_type).icon,
+                color: tenantChannelAppearance(tenantChannelDraft.channel_type).color,
+                statusDot: 'bg-amber-400 animate-pulse',
+                statusText: `<span class="text-xs text-amber-500">${t('channels_connecting')}</span>`,
+                subtitle: tenantChannelDraft.channel_type || '',
+                headerMb: true,
+                actionsHtml: '',
+                bodyHtml: buildTenantChannelForm(null),
+            })}
+        </div>` : '';
+
+    // The page title / description / "add" button live in the static header
+    // (chat.html) and are settled by syncChannelsHeader, so this list renders
+    // only the notice and the cards.
+    container.innerHTML = `
+        ${tenantChannelRuntimeNoticeHtml()}
+        <div class="grid gap-4">${draftCard}${rows}</div>`;
+}
+
+// Inline create/edit. The form lives inside the card now, so this records the
+// draft (which survives a rejected write) and repaints the list; it no longer
+// builds a separate panel.
+function openTenantChannelForm(instanceId) {
+    const inst = instanceId
+        ? tenantChannelInstances.find(i => i.id === instanceId) || null
+        : null;
+    const previous = tenantChannelDraft;
+    const sameTarget = previous && previous.instance_id === (instanceId || '');
+    const draft = sameTarget ? previous : null;
+    const type = (inst && inst.channel_type) || (draft && draft.channel_type) || '';
+
+    tenantChannelDraft = {
+        instance_id: instanceId || '',
+        channel_type: type,
+        display_name: (inst && inst.display_name) || (draft && draft.display_name) || '',
+        agent_id: (inst && inst.agent_id) || (draft && draft.agent_id) || '',
+        active: inst ? !!inst.active : true,
+        credentials: (draft && draft.credentials) || {},
+        mode: (draft && draft.mode) || (tenantChannelSupportsScan(type) ? 'scan' : 'manual'),
+        expected_version: inst ? inst.version : undefined,
+    };
+    renderTenantChannels();
+}
+
+// Toggle the scan / manual panes of one inline form. Both panes stay rendered;
+// only their visibility changes, so moving between them keeps typed input.
+function switchTenantChannelMode(iid, mode) {
+    if (!tenantChannelDraft) return;
+    tenantChannelDraft.mode = mode === 'scan' ? 'scan' : 'manual';
+    const scanPane = document.getElementById(`tenant-channel-pane-scan-${iid}`);
+    const manualPane = document.getElementById(`tenant-channel-pane-manual-${iid}`);
+    if (scanPane) scanPane.classList.toggle('hidden', mode !== 'scan');
+    if (manualPane) manualPane.classList.toggle('hidden', mode !== 'manual');
+    const card = document.querySelector(`[data-tenant-channel-row="${iid}"]`);
+    if (!card) return;
+    const activeClasses = 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 shadow-sm';
+    const inactiveClasses = 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200';
+    card.querySelectorAll('[data-tenant-channel-mode]').forEach(btn => {
+        const isActive = btn.getAttribute('data-tenant-channel-mode') === mode;
+        btn.className = `flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${isActive ? activeClasses : inactiveClasses}`;
+    });
+}
+
+// Switching the type of a create form resets the credentials (the previous
+// type's keys no longer apply) but keeps what the operator typed for the name.
+function changeTenantChannelType(channelType) {
+    if (!tenantChannelDraft) return;
+    const display = document.getElementById('tenant-channel-display');
+    if (display) tenantChannelDraft.display_name = display.value || '';
+    tenantChannelDraft.channel_type = channelType || '';
+    tenantChannelDraft.credentials = {};
+    tenantChannelDraft.mode = tenantChannelSupportsScan(channelType) ? 'scan' : 'manual';
+    renderTenantChannels();
+}
+
+// Pre-fill the inline create form from a scan result. The values live in the
+// in-memory draft until the write lands, and both this draft and the secret
+// field are dropped when the form is closed.
+//
+// ``scanTicket`` is the grant the server minted for this very scan. It is what
+// lets the write that follows skip the password prompt, so a successful scan
+// becomes a stored channel instead of a filled-in form nobody submits.
+function applyScanToTenantForm(credentials, scanTicket) {
+    const draft = tenantChannelDraft;
+    if (!draft) return false;
+    const display = document.getElementById('tenant-channel-display');
+    if (display) draft.display_name = display.value || draft.display_name;
+    // The re-render below rebuilds the form, so anything the operator chose
+    // before scanning has to be read back into the draft first — otherwise the
+    // agent selection, say, silently reverts to the default.
+    const agent = document.getElementById('tenant-channel-agent');
+    if (agent) draft.agent_id = agent.value || '';
+    draft.credentials = Object.assign({}, draft.credentials, credentials || {});
+    applyScanTicketToTenantForm(scanTicket);
+    // Show the operator what the scan produced so they can review before saving.
+    draft.mode = 'manual';
+    renderTenantChannels();
+    return true;
+}
+
+function applyFeishuScanToTenantForm(appId, appSecret, scanTicket) {
+    return applyScanToTenantForm({
+        feishu_app_id: appId || '',
+        feishu_app_secret: appSecret || '',
+    }, scanTicket);
+}
+
+// A scan's one-time grant is carried beside the credentials, never among them:
+// it is not part of the bundle the server stores, it is the proof of presence
+// that lets the create skip the password prompt.
+function applyScanTicketToTenantForm(scanTicket) {
+    const draft = tenantChannelDraft;
+    if (!draft || !scanTicket) return false;
+    draft.scan_ticket = scanTicket;
+    return true;
+}
+
+// The name a scan-created channel gets without asking the operator for one. The
+// app id is the only part of a scan result a person can tell apart in a list,
+// so the name is the type plus its last four characters.
+function tenantChannelAutoName(channelType, credentials) {
+    const spec = tenantChannelType(channelType) || {};
+    const typeLabel = (spec.label && (spec.label[currentLang] || spec.label.en))
+        || channelType || '';
+    const firstKey = (spec.credential_fields || []).length
+        ? spec.credential_fields[0].key : '';
+    const source = String((credentials || {})[firstKey] || '');
+    const tail = source.slice(-4);
+    return tail ? `${typeLabel} · ${tail}` : typeLabel;
+}
+
+// A password must be collected in a real element. ``window.prompt`` is a native
+// dialog the browser may suppress — after "prevent this page from creating
+// additional dialogs" it returns null with no visible signal — and a null reads
+// as an empty password, so the write is refused 401 while the operator has no
+// idea a prompt was ever expected. That is exactly how a successful scan used
+// to end up as no channel at all.
+function recentPasswordDialogHtml() {
+    return `
+        <div class="bg-white dark:bg-[#1A1A1A] rounded-xl p-5 w-80 shadow-xl">
+            <p class="text-sm font-medium text-slate-800 dark:text-slate-100 mb-1">${escapeHtml(t('admin_field_recent_password'))}</p>
+            <p class="text-xs text-slate-400 dark:text-slate-500 mb-3">${escapeHtml(t('admin_field_recent_password_hint'))}</p>
+            <input id="tenant-channel-password" type="password" autocomplete="current-password"
+                class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#141414] text-sm">
+            <div class="flex justify-end gap-2 mt-4">
+                <button type="button" data-recent-password-cancel
+                    class="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 text-slate-600 dark:text-slate-300 text-xs font-medium cursor-pointer">${escapeHtml(t('channels_cancel'))}</button>
+                <button type="button" data-recent-password-ok
+                    class="px-3 py-1.5 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium cursor-pointer">${escapeHtml(t('tenant_channel_save'))}</button>
+            </div>
+        </div>`;
+}
+
+// Resolves the password, or ``null`` if the operator cancelled. Cancelling is
+// distinguishable from an empty password, so the caller can stop instead of
+// sending a write that is certain to be refused.
+function askRecentPassword() {
+    return new Promise((resolve) => {
+        const host = document.createElement('div');
+        host.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/40';
+        host.setAttribute('data-recent-password-dialog', '1');
+        host.innerHTML = recentPasswordDialogHtml();
+        const done = (value) => {
+            host.remove();
+            resolve(value);
+        };
+        const field = host.querySelector('#tenant-channel-password');
+        const confirm = host.querySelector('[data-recent-password-ok]');
+        if (!field || !confirm) { done(null); return; }
+        if (confirm.addEventListener) {
+            confirm.addEventListener('click', () => done(field.value || ''));
+            const cancel = host.querySelector('[data-recent-password-cancel]');
+            if (cancel && cancel.addEventListener) {
+                cancel.addEventListener('click', () => done(null));
+            }
+            field.addEventListener('keydown', (event) => {
+                if (event && event.key === 'Enter') done(field.value || '');
+            });
+        }
+        if (document.body && document.body.appendChild) document.body.appendChild(host);
+        if (field.focus) field.focus();
+    });
+}
+
+// WeCom Intelligent Bot scan. The flow is driven entirely by the vendor's
+// browser SDK (``WECOM_BOT_SOURCE`` is a static constant, so nothing is held
+// server-side and database mode needs no extra plumbing). If the SDK cannot
+// load — offline or a blocked CDN — the manual credential pane is still
+// rendered, so the operator always has a way to finish.
+function startTenantWecomScan(statusId, iid) {
+    const statusEl = document.getElementById(statusId || `tenant-channel-scan-status-${iid}`);
+    const fail = (message) => {
+        if (statusEl) {
+            statusEl.innerHTML = `<p class="text-sm text-red-500 text-center">${escapeHtml(message)}</p>
+                <p class="text-xs text-slate-400 dark:text-slate-500 text-center mt-1">${t('tenant_channel_scan_manual_hint')}</p>`;
+        }
+    };
+    ensureWecomSdkLoaded().then(() => {
+        WecomAIBotSDK.openBotInfoAuthWindow({
+            source: WECOM_BOT_SOURCE,
+            onCreated: function (bot) {
+                if (statusEl) {
+                    statusEl.innerHTML = `
+                        <div class="flex flex-col items-center py-2">
+                            <div class="w-10 h-10 rounded-full bg-emerald-50 dark:bg-emerald-900/30 flex items-center justify-center mb-2">
+                                <i class="fas fa-check text-emerald-500 text-lg"></i>
+                            </div>
+                            <p class="text-sm font-medium text-emerald-600 dark:text-emerald-400">${t('wecom_scan_success')}</p>
+                        </div>`;
+                }
+                applyScanToTenantForm({
+                    wecom_bot_id: bot.botid || '',
+                    wecom_bot_secret: bot.secret || '',
+                });
+            },
+            onError: function (err) {
+                fail(t('wecom_scan_fail') + ': ' + ((err && (err.message || err.code)) || ''));
+            },
+        });
+    }).catch(err => fail('SDK load failed: ' + (err && err.message ? err.message : '')));
+}
+
+function closeTenantChannelForm() {
+    tenantChannelDraft = null;
+    const panel = document.getElementById('channels-add-panel');
+    if (panel) { panel.classList.add('hidden'); panel.innerHTML = ''; }
+    renderTenantChannels();
+}
+
+function tenantChannelFormError(key, detail) {
+    const el = document.getElementById('tenant-channel-error');
+    if (!el) return;
+    el.textContent = detail ? `${t(key)} ${detail}` : t(key);
+    el.classList.remove('hidden');
+}
+
+function submitTenantChannel() {
+    const draft = tenantChannelDraft;
+    if (!draft) return Promise.resolve();
+    // Keep what was typed so a rejected write does not clear the form.
+    draft.channel_type = draft.channel_type || '';
+    draft.display_name = (document.getElementById('tenant-channel-display') || {}).value || '';
+    draft.agent_id = (document.getElementById('tenant-channel-agent') || {}).value || '';
+    // Merge over the draft rather than replace it. Secret inputs are rendered
+    // blank by policy, so a secret that a scan just handed us lives only in the
+    // draft; replacing would erase it, and the create would then be refused as
+    // "missing a required field" — a successful scan that never becomes a
+    // channel. Merging also keeps the documented "leave blank to keep the
+    // stored value" behavior, because an untouched secret input contributes
+    // nothing at all.
+    draft.credentials = Object.assign({}, draft.credentials, collectTenantChannelFields());
+
+    const editing = !!draft.instance_id;
+    // The name is what the operator will see in the list and the duplicate
+    // check keys on, and the server refuses an empty one. Rejection there reads
+    // as a generic "save failed", so catch it here where the reason is obvious.
+    if (!editing && !String(draft.display_name || '').trim()) {
+        tenantChannelFormError('tenant_channel_error_display_required');
+        return Promise.resolve();
+    }
+    // A create must carry the whole minimum set. The check happens before the
+    // request so the operator gets the missing field names instead of a generic
+    // rejection — and the draft survives, so nothing they typed is lost.
+    if (!editing) {
+        const missing = tenantChannelMissingRequiredFields(
+            draft.channel_type, draft.credentials);
+        if (missing.length) {
+            tenantChannelFormError('tenant_channel_error_required',
+                missing.map(f => channelFieldLabel(f)).join(' / '));
+            return Promise.resolve();
+        }
+    }
+
+    // Proof of presence. A scan already supplied it, and asking for a password
+    // anyway would make every scan a two-step flow again — so a grant short
+    // circuits the dialog entirely. Everything else collects a password in a
+    // real element; see askRecentPassword for why a native prompt is not
+    // acceptable here.
+    const grant = String(draft.scan_ticket || '');
+    let asking;
+    if (grant) {
+        asking = Promise.resolve(draft.recent_password || '');
+    } else if (draft.recent_password) {
+        asking = Promise.resolve(draft.recent_password);
+    } else {
+        asking = askRecentPassword();
+    }
+    return asking.then((password) => {
+        // Cancelled: stop rather than send a write certain to be refused.
+        if (password === null) return undefined;
+        if (!grant && !String(password || '')) {
+            tenantChannelFormError('tenant_channel_error_password_required');
+            return undefined;
+        }
+        draft.recent_password = password || '';
+
+        const body = tenantChannelPayload(editing
+            ? {
+                display_name: draft.display_name,
+                agent_id: draft.agent_id,
+                expected_version: draft.expected_version,
+                credentials: Object.keys(draft.credentials).length ? draft.credentials : undefined,
+                recent_password: draft.recent_password,
+                scan_ticket: grant,
+            }
+            : {
+                display_name: draft.display_name,
+                agent_id: draft.agent_id,
+                expected_version: undefined,
+                credentials: draft.credentials,
+                recent_password: draft.recent_password,
+                scan_ticket: grant,
+            });
+        if (!editing) {
+            body.channel_type = draft.channel_type;
+            delete body.expected_version;
+        }
+
+        const url = editing
+            ? `/api/tenant/channels/${encodeURIComponent(draft.instance_id)}`
+            : '/api/tenant/channels';
+        return fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        }).then(r => r.json().then(data => ({ status: r.status, data })).catch(() => ({ status: r.status, data: null })))
+            .then(({ status, data }) => {
+                if (!data || data.status !== 'success') {
+                    // A refused grant is spent: drop it so a retry collects a
+                    // password instead of failing the same way forever.
+                    if (status === 401) draft.scan_ticket = '';
+                    tenantChannelFormError(tenantChannelWriteErrorKey(status, data && data.code));
+                    return; // draft (and the rendered inputs) survive
+                }
+                tenantChannelRuntimeNotice = tenantChannelRuntimeNoticeFrom(data);
+                tenantChannelDraft = null;
+                loadTenantChannelsView();
+            })
+            // A transport failure is not a rejected form: saying "the values
+            // are not valid" sends the operator looking for a mistake that is
+            // not there.
+            .catch(() => tenantChannelFormError('tenant_channel_error_network'));
+    });
+}
+
+// The write a scan owes the server once it reports success: no second click,
+// and no password prompt, because the scan's grant is the proof of presence.
+// The name is derived rather than asked for, so the operator's only act is the
+// scan itself.
+function autoPersistScannedTenantChannel() {
+    const draft = tenantChannelDraft;
+    if (!draft) return Promise.resolve();
+    if (!draft.scan_ticket) {
+        // Without a grant this would have to ask for a password, which is the
+        // manual path; leave the form for the operator to submit.
+        return Promise.resolve();
+    }
+    const display = document.getElementById('tenant-channel-display');
+    if (display && !String(display.value || '').trim()) {
+        display.value = tenantChannelAutoName(draft.channel_type, draft.credentials);
+    }
+    return submitTenantChannel();
+}
+
+function toggleTenantChannel(instanceId, active) {
+    const inst = tenantChannelInstances.find(i => i.id === instanceId);
+    if (!inst) return Promise.resolve();
+    // The password goes through the same element the save path uses, so it
+    // cannot be silently suppressed the way a native prompt can.
+    return askRecentPassword().then((recent) => {
+        if (recent === null) return undefined;
+        return fetch(`/api/tenant/channels/${encodeURIComponent(instanceId)}/active`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ active: !!active, expected_version: inst.version, recent_password: recent || '' }),
+        }).then(r => r.json().then(data => ({ status: r.status, data })).catch(() => ({ status: r.status, data: null })))
+            .then(({ status, data }) => {
+                if (!data || data.status !== 'success') {
+                    const container = document.getElementById('channels-content');
+                    renderChannelsUnavailable(container, status, data && data.code);
+                    return;
+                }
+                tenantChannelRuntimeNotice = tenantChannelRuntimeNoticeFrom(data);
+                loadTenantChannelsView();
+            });
+    });
+}
+
+function loadChannelsView() {
+    const scope = channelScope();
+    syncChannelsHeader(scope);
+    if (scope === 'tenant') return loadTenantChannelsView();
+    const container = document.getElementById('channels-content');
+    if (!container) return Promise.resolve();
+    container.innerHTML = `<div class="flex items-center gap-2 py-8 justify-center text-slate-400 dark:text-slate-500 text-sm">
+        <i class="fas fa-spinner fa-spin text-xs"></i><span>Loading...</span></div>`;
+
+    const roster = agentCatalog.length ? Promise.resolve() : loadAgentCatalog();
+    return roster.then(() => fetch('/api/channels')
+        .then(r => r.json().then(data => ({ status: r.status, data })).catch(() => ({ status: r.status, data: null })))
+        .then(({ status, data }) => {
+            // A failed request must resolve to a final explanation, never to a
+            // page that keeps spinning because the payload had no channels.
+            if (!data || data.status !== 'success') {
+                renderChannelsUnavailable(container, status, data && data.code);
+                return;
+            }
+            channelsData = data.channels || [];
+            channelsMultiAgent = !!data.multi_agent;
+            multiInstanceTypes = data.multi_instance_types || [];
+            channelInstancesView = data.instances || [];
+            renderActiveChannels();
+        })
+        .catch(() => renderChannelsUnavailable(container, 0, 'network')));
 }
 
 // Build the list of cards to render. In multi-Agent mode the multi-instance
@@ -15486,6 +16691,37 @@ function channelRenderList() {
         });
     }
     return list;
+}
+
+// Shared channel-card shell for the platform (instance) page and the tenant
+// channel page. Both render the same kinds of channels, so the icon / status
+// dot / label / subtitle / action-slot markup lives in one place: two copies
+// would drift and the two pages would slowly stop looking like each other.
+// ``bodyHtml`` is whatever the caller needs below the header (Tabs, credential
+// form, QR flow), and ``actionsHtml`` replaces the right-hand slot (the
+// platform page passes its disconnect button, the tenant page its own actions).
+function buildChannelCardShell(opts) {
+    const {
+        iid, label, icon = 'fa-tower-broadcast', color = 'primary',
+        statusDot = 'bg-primary-400', statusText = '', subtitle = '',
+        headerMb = true, actionsHtml = '', bodyHtml = '',
+    } = opts || {};
+    return `
+            <div class="flex items-center gap-4${headerMb ? ' mb-5' : ''}">
+                <div class="w-10 h-10 rounded-xl bg-${color}-50 dark:bg-${color}-900/20 flex items-center justify-center flex-shrink-0">
+                    <i class="fas ${icon} text-${color}-500 text-base"></i>
+                </div>
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2">
+                        <span class="font-semibold text-slate-800 dark:text-slate-100">${escapeHtml(label)}</span>
+                        <span class="w-2 h-2 rounded-full ${statusDot}"></span>
+                        ${statusText}
+                    </div>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-mono">${escapeHtml(subtitle || iid)}</p>
+                </div>
+                ${actionsHtml}
+            </div>
+            ${bodyHtml}`;
 }
 
 function renderActiveChannels() {
@@ -15540,27 +16776,19 @@ function renderActiveChannels() {
             statusText = `<span class="text-xs text-primary-500">${t('channels_connected')}</span>`;
         }
 
-        card.innerHTML = `
-            <div class="flex items-center gap-4${hasFields || weixinWaiting || wecomNeedsCreds || isFeishu || multiAgentMode() ? ' mb-5' : ''}">
-                <div class="w-10 h-10 rounded-xl bg-${ch.color}-50 dark:bg-${ch.color}-900/20 flex items-center justify-center flex-shrink-0">
-                    <i class="fas ${ch.icon} text-${ch.color}-500 text-base"></i>
-                </div>
-                <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2">
-                        <span class="font-semibold text-slate-800 dark:text-slate-100">${escapeHtml(label)}</span>
-                        <span class="w-2 h-2 rounded-full ${statusDot}"></span>
-                        ${statusText}
-                    </div>
-                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-mono">${escapeHtml(iid)}</p>
-                </div>
+        card.innerHTML = buildChannelCardShell({
+            iid, label, icon: ch.icon, color: ch.color,
+            statusDot, statusText, subtitle: iid,
+            headerMb: !!(hasFields || weixinWaiting || wecomNeedsCreds || isFeishu || multiAgentMode()),
+            actionsHtml: `
                 <button onclick="disconnectChannel('${ch.name}', '${isInstance ? iid : ''}')"
                     class="px-3 py-1.5 rounded-lg text-xs font-medium
                            bg-red-50 dark:bg-red-900/20 text-red-500 dark:text-red-400
                            hover:bg-red-100 dark:hover:bg-red-900/40
                            cursor-pointer transition-colors flex-shrink-0">
                     ${t('channels_disconnect')}
-                </button>
-            </div>
+                </button>`,
+            bodyHtml: `
             ${multiAgentMode() ? `<div class="channel-agent-bind">
                 <span class="text-xs text-slate-500 whitespace-nowrap" title="${escapeHtml(t('channel_bound_agent_hint'))}">${escapeHtml(t('channel_bound_agent'))}</span>
                 <div id="ch-members-${iid}" class="cfg-dropdown cfg-dropdown-avatar cfg-dropdown-sm cfg-dropdown-multi" tabindex="0" style="width: 200px;">
@@ -15597,7 +16825,8 @@ function renderActiveChannels() {
                                cursor-pointer transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
                         id="ch-save-${iid}">${t('channels_save')}</button>
                 </div>
-            </div>` : '')}`;
+            </div>` : '')}`,
+        });
 
         container.appendChild(card);
         bindSecretFieldEvents(card);
@@ -16387,6 +17616,17 @@ document.addEventListener('DOMContentLoaded', function() {
 // Feishu One-click App Registration (lark-oapi register_app)
 // =====================================================================
 let _feishuRegisterPollTimer = null;
+// The server binds a register session to this browser's identity and hands back
+// an opaque handle; every poll must present it. The server deliberately has no
+// "whoever asks first" fallback, so a poll without the handle cannot address a
+// session at all. Cleared as soon as the session reaches a terminal state or
+// the user leaves the scan tab.
+let _feishuRegisterHandle = '';
+// Set when the currently-running scan was started from a tenant channel form
+// (the instance id), empty when it was started from the platform page. Decides
+// whether a "done" result pre-fills the tenant draft or connects the platform
+// channel.
+let _feishuScanTarget = '';
 
 function _feishuHasCreds(ch) {
     if (!ch || !ch.fields) return false;
@@ -16448,6 +17688,9 @@ function switchFeishuMode(iid, mode) {
     const inactiveClasses = 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200';
 
     stopFeishuRegisterPoll();
+    // Leaving the scan tab abandons the session; drop the handle so a later
+    // poll cannot address it (the server expires it on its own schedule).
+    _feishuRegisterHandle = '';
 
     if (mode === 'scan') {
         scanTab.className = `flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${activeClasses}`;
@@ -16505,18 +17748,30 @@ function stopFeishuRegisterPoll() {
     }
 }
 
-function startFeishuRegister(targetStatusId) {
+function startFeishuRegister(targetStatusId, forInstanceId) {
     const statusId = targetStatusId || 'feishu-scan-status';
+    // When a tenant form started this scan, the result must pre-fill that form
+    // rather than connect the platform-level channel.
+    _feishuScanTarget = forInstanceId || '';
     const statusEl = document.getElementById(statusId);
     if (statusEl) {
         statusEl.innerHTML = `<p class="text-sm text-slate-500 dark:text-slate-400 text-center">${t('feishu_scan_loading')}</p>`;
     }
     stopFeishuRegisterPoll();
+    _feishuRegisterHandle = '';
     fetch('/api/feishu/register')
-        .then(r => r.json())
-        .then(data => {
-            if (data.status !== 'success') {
-                renderFeishuRegisterError(statusId, data.message || t('feishu_scan_fail'));
+        .then(r => r.json().then(data => ({ httpStatus: r.status, data })))
+        .then(({ httpStatus, data }) => {
+            if (!data || data.status !== 'success') {
+                renderFeishuRegisterError(statusId, scanFailureText(
+                    httpStatus, data && data.code, data && data.message));
+                return;
+            }
+            _feishuRegisterHandle = data.handle || '';
+            if (!_feishuRegisterHandle) {
+                // A session we cannot address must not be polled: without the
+                // handle every poll would read as "expired" forever.
+                renderFeishuRegisterError(statusId, t('feishu_scan_fail'));
                 return;
             }
             if (data.register_status === 'downloading') {
@@ -16576,11 +17831,16 @@ function renderFeishuRegisterError(statusId, message) {
 
 function pollFeishuRegisterStatus(statusId) {
     stopFeishuRegisterPoll();
+    if (!_feishuRegisterHandle) {
+        // No live session to poll (never started, or already terminal).
+        return;
+    }
+    const handle = _feishuRegisterHandle;
     _feishuRegisterPollTimer = setTimeout(() => {
         fetch('/api/feishu/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'poll' })
+            body: JSON.stringify({ action: 'poll', handle: handle })
         })
         .then(r => r.json())
         .then(data => {
@@ -16610,14 +17870,28 @@ function pollFeishuRegisterStatus(statusId) {
                                 <i class="fas fa-check text-emerald-500 text-lg"></i>
                             </div>
                             <p class="text-sm font-medium text-emerald-600 dark:text-emerald-400">${t('feishu_scan_success')}</p>
+                            ${_feishuScanTarget ? `<p class="text-xs text-slate-400 dark:text-slate-500 mt-1">${t('tenant_channel_scan_autosaved')}</p>` : ''}
                         </div>`;
                 }
-                connectFeishuAfterRegister(data.app_id, data.app_secret);
+                if (_feishuScanTarget) {
+                    // A tenant scan persists itself: the grant the server minted
+                    // for this scan authorizes the create, so there is no second
+                    // step and no password prompt to lose the channel to.
+                    applyFeishuScanToTenantForm(data.app_id, data.app_secret, data.scan_ticket);
+                    autoPersistScannedTenantChannel();
+                } else {
+                    connectFeishuAfterRegister(data.app_id, data.app_secret);
+                }
+                _feishuRegisterHandle = '';
+                _feishuScanTarget = '';
             } else if (rs === 'expired') {
+                _feishuRegisterHandle = '';
                 renderFeishuRegisterError(statusId, t('feishu_scan_expired'));
             } else if (rs === 'denied') {
+                _feishuRegisterHandle = '';
                 renderFeishuRegisterError(statusId, t('feishu_scan_denied'));
             } else if (rs === 'error') {
+                _feishuRegisterHandle = '';
                 renderFeishuRegisterError(statusId, data.message || t('feishu_scan_fail'));
             } else {
                 pollFeishuRegisterStatus(statusId);
@@ -17971,12 +19245,31 @@ function _navAreaFromPath(pathname) {
     const p = String(pathname || '');
     return p === '/admin' || p.startsWith('/admin/') ? 'admin' : 'workbench';
 }
-const NAV_WINDOW_WORKBENCH = 'cow-workbench';
-const NAV_WINDOW_ADMIN = 'cow-admin';
 function _openNavArea(area, path) {
-    const name = area === 'admin' ? NAV_WINDOW_ADMIN : NAV_WINDOW_WORKBENCH;
     const target = path || (area === 'admin' ? '/admin' : '/chat');
-    return window.open(target, name);
+    // Switch in the SAME window so workbench <-> admin never triggers a full
+    // page load. A full load flashes the login overlay and keeps #app hidden
+    // until /auth/check resolves (the "闪到登录页又好了" symptom). Instead we
+    // update the URL via pushState and re-render the area shell; the CSS
+    // keyed on #app[data-nav-area] toggles which sidebar shell applies.
+    const viaHistory = typeof window !== 'undefined' && window.history
+        && typeof window.history.pushState === 'function';
+    if (viaHistory) {
+        try { window.history.pushState({ cowArea: area }, '', target); }
+        catch (_) { window.location.assign(target); return; }
+    } else {
+        window.location.assign(target);
+        return;
+    }
+    _applyNavAreaAttribute();
+    if (typeof _bootAreaDefaultView === 'function') _bootAreaDefaultView();
+    // The sidebar recent-sessions list is only fetched for the workbench area
+    // (see the guard inside loadSidebarRecentSessions). Because navigation now
+    // happens in-place via pushState (no full page load), the normal boot hook
+    // that fills the list never runs, so the 会话历史 section would render empty
+    // after switching workbench <-> admin. Trigger the fetch here like the
+    // full-page-load path does.
+    if (typeof loadSidebarRecentSessions === 'function') loadSidebarRecentSessions();
 }
 function _qualifyAdminConsoleEntry(opts) {
     // opts: { identityMode, isPlatformAdmin, isTenantAdmin }
@@ -18000,6 +19293,20 @@ function _applyNavAreaAttribute() {
     return area;
 }
 // === NAV_AREA_END ===
+
+// Restore the correct area shell when the user traverses history (back /
+// forward). Because _openNavArea now navigates in-place with pushState, the
+// browser never reloads, so we must re-apply the area attribute and re-render
+// the target area's default view without a full page load.
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('popstate', function () {
+        _applyNavAreaAttribute();
+        if (typeof _bootAreaDefaultView === 'function') _bootAreaDefaultView();
+        // Refill the 会话历史 sidebar list after an in-place back/forward nav,
+        // since no full page load runs the boot hook.
+        if (typeof loadSidebarRecentSessions === 'function') loadSidebarRecentSessions();
+    });
+}
 
 function _setupHeaderTenantSelector() {
     const sel = document.getElementById('tenant-selector');
@@ -18257,7 +19564,7 @@ window.handleLogout = handleLogout;
 const _originalFetch = window.fetch;
 window.fetch = function(...args) {
     const epoch = _authEpoch;
-    return _originalFetch.apply(this, args).then(response => {
+    return _originalFetch.apply(this, args).then(async response => {
         if (response.status === 401 && epoch === _authEpoch
                 && !['unauthenticated', 'logout_pending'].includes(_accountState.phase)
                 && _accountWritePending !== 'login') {
@@ -18266,7 +19573,17 @@ window.fetch = function(...args) {
             let url;
             try { url = new URL(raw, window.location.href); } catch (_) { return response; }
             if (url.origin === window.location.origin && !url.pathname.startsWith('/auth/')) {
-                showLoginScreen();
+                // A 401 carrying ``invalid_old`` is the recent-password factor
+                // refusing one write, not a dead session: the caller is still
+                // authenticated and reports the mistake on its own form. Sending
+                // it to the login screen throws away a filled-in form that only
+                // needs the password retyped — and, because the form reuses the
+                // stored password, does it again on every retry. Read a clone so
+                // the caller can still consume the original body.
+                let code = '';
+                try { code = ((await response.clone().json()) || {}).code || ''; }
+                catch (_) { code = ''; }
+                if (code !== 'invalid_old') showLoginScreen();
             }
         }
         return response;
@@ -18282,7 +19599,7 @@ function initApp() {
     // session/history request can capture an old owner or default.
     if (_identityMode() === 'database') {
         activeAgentId = readScopedPreference('cow_active_agent') || '';
-        defaultAgentId = readScopedPreference('cow_default_agent') || 'default';
+        defaultAgentId = readScopedPreference('cow_default_agent') || '';
         memoryAgentId = readScopedPreference('cow_memory_agent') || '';
         knowledgeAgentId = readScopedPreference('cow_knowledge_agent') || '';
     }
@@ -18485,13 +19802,16 @@ function _viewNavDenied(viewId) {
     if (ctx.authorization_mode === 'all') return null; // platform all
     const key = _consolePageForView(viewId);
     if (!key) return null; // backend didn't sign this page -> leave as-is
-    // Only the admin-management pages are gated by the projection. Workbench
-    // pages (chat/history/agents/todo/tasks/knowledge) are normal business
-    // entry points and are never denied — their consumer availability is
-    // reported separately (e.g. "closed consumer" on the page itself).
-    if (key.indexOf('admin.') !== 0) return null;
     const pages = ctx.console_pages && typeof ctx.console_pages === 'object' ? ctx.console_pages : null;
     if (!pages || !pages[key]) return null; // unknown key -> don't guess
+    // A page whose *menu* grant was withheld is denied for every area, including
+    // workbench pages. This is the authoritative server signal; do not re-derive
+    // it from the client.
+    if (pages[key].menu_denied === true) return { reason: 'denied' };
+    // Workbench pages are normal business entry points: their consumer
+    // availability is reported on the page itself, so they are not denied by the
+    // admin availability/read gate below.
+    if (key.indexOf('admin.') !== 0) return null;
     if (pages[key].available || pages[key].read_allowed) return null;
     return { reason: 'denied' };
 }
@@ -18557,16 +19877,22 @@ function _applySidebarPermissions(self) {
     // Per-item availability from the authoritative projection. In "all" mode a
     // page is available if the backend signed it (available flag) regardless of
     // a read grant. When the projection is unknown (not yet loaded / legacy),
-    // leave items as-is rather than hiding a page on a guess. Only admin.* pages
-    // are gated; workbench pages are normal business entries and stay visible.
+    // leave items as-is rather than hiding a page on a guess.
     const allMode = (mode === 'all');
     if (isDb && ctx) {
         document.querySelectorAll('#sidebar-nav .sidebar-item[data-view]').forEach(item => {
             const viewId = item.getAttribute('data-view');
             const key = _consolePageForView(viewId);
-            if (!key || key.indexOf('admin.') !== 0) return; // not admin page -> leave as-is
+            if (!key) return; // not a signed page -> leave as-is
             const pageInfo = pages && pages[key];
             if (!pageInfo) return; // unknown key -> don't guess
+            // A withheld menu grant hides the entry regardless of area.
+            if (pageInfo.menu_denied === true) {
+                item.classList.add('hidden');
+                return;
+            }
+            // Workbench pages have no admin availability gate here.
+            if (key.indexOf('admin.') !== 0) return;
             const available = allMode ? true : !!(pageInfo.available);
             const readOk = allMode ? true : !!(pageInfo.read_allowed);
             // A page is shown when it is available; if the identity may read it
@@ -18575,6 +19901,12 @@ function _applySidebarPermissions(self) {
             // separate). Hide only when it is genuinely unavailable/denied.
             item.classList.toggle('hidden', !(available || readOk));
         });
+        // 会话历史 (the nested recent-sessions block) is a workbench menu entry
+        // without a `data-view` item, so gate it explicitly by its page key.
+        const recentEl = document.getElementById('sidebar-recent');
+        if (recentEl && typeof _sidebarRecentDenied === 'function') {
+            recentEl.classList.toggle('hidden', _sidebarRecentDenied());
+        }
     }
 
     // Per-item: platform entries only for a platform admin.

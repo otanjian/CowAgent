@@ -18,6 +18,21 @@ def _db_path():
     return os.path.join(tempfile.mkdtemp(), "identity.db")
 
 
+def _platform_bindings(svc, user_id):
+    """Return the platform-role codes bound to ``user_id`` (source of truth)."""
+    import sqlite3
+    con = sqlite3.connect(svc._store.db_path)
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(
+            "SELECT r.code FROM user_platform_roles upr"
+            " JOIN platform_roles r ON r.id = upr.platform_role_id"
+            " WHERE upr.user_id = ?", (user_id,)).fetchall()
+        return {r["code"] for r in rows}
+    finally:
+        con.close()
+
+
 def _setup():
     svc = IdentityService(_db_path())
     svc.bootstrap(
@@ -101,6 +116,31 @@ class PlatformUserStatusTests(unittest.TestCase):
             is_platform_admin=False, expected_version=self.root["version"],
             recent_password="Str0ngAdminFinal")
         self.assertFalse(result["is_platform_admin"])
+
+    def test_promote_and_demote_syncs_platform_role_binding(self):
+        # The platform-role binding is the source of truth; promote/demote must
+        # insert/remove the binding through the public contract.
+        self.svc.change_password(
+            self.svc.login("root", "Str0ngAdminPass").token,
+            "Str0ngAdminPass", "Str0ngRootFinal")
+        self.root = [u for u in self.svc.list_platform_users_paged()["items"]
+                     if u["username"] == "root"][0]
+        self.svc.create_member(
+            actor_user_id=self.root["id"], tenant_id=self.tid, operation="create-new",
+            username="dave", display_name="Dave", temporary_password="Str0ngPassTmp",
+            roles=[], department_id=None)
+        dave = [m for m in self.svc.list_members(self.tid)["items"]
+                if m["username"] == "dave"][0]
+        self.svc.set_platform_user_status(
+            actor_user_id=self.root["id"], user_id=dave["user_id"], active=True,
+            is_platform_admin=True, expected_version=dave["version"],
+            recent_password="Str0ngRootFinal")
+        self.assertEqual(_platform_bindings(self.svc, dave["user_id"]), {"platform_admin"})
+        self.svc.set_platform_user_status(
+            actor_user_id=self.root["id"], user_id=dave["user_id"], active=True,
+            is_platform_admin=False, expected_version=dave["version"] + 1,
+            recent_password="Str0ngRootFinal")
+        self.assertEqual(_platform_bindings(self.svc, dave["user_id"]), set())
 
     def test_disable_revokes_sessions(self):
         # root disables an extra admin, sessions for that user revoked

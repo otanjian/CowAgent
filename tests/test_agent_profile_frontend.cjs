@@ -123,6 +123,24 @@ test('workbench card projects position/category and tags', () => {
     assert.ok(!htmlBare.includes('agent-wb-card-meta'), 'no meta line when empty position/category');
 });
 
+test('agentModelDropdownOptions keeps a pinned model missing from the catalog', () => {
+    const ctx = {
+        console, t: k => k, localizedLabel: x => x,
+        _sessCfg: { model: { providers: [{ id: 'deepseek', label: 'DeepSeek', models: ['deepseek-v4-flash'] }] } },
+    };
+    vm.createContext(ctx);
+    vm.runInContext(section('function agentModelDropdownOptions(', '// Scene catalog options'), ctx);
+    // Catalog hit: one row for the pinned model, no synthetic duplicate.
+    const hit = ctx.agentModelDropdownOptions({ model: 'deepseek-v4-flash', bot_type: 'deepseek' });
+    assert.equal(hit.filter(o => o.value === 'deepseek|deepseek-v4-flash').length, 1);
+    // Catalog miss: the pin is still offered instead of collapsing to "follow global".
+    const miss = ctx.agentModelDropdownOptions({ model: 'gone-model', bot_type: 'deepseek' });
+    const pin = miss.find(o => o.value === 'deepseek|gone-model');
+    assert.ok(pin, 'the pinned model must remain selectable');
+    assert.equal(pin.label, 'gone-model');
+    assert.equal(miss[0].value, '', 'follow-global stays the first row');
+});
+
 test('renderAgentTasksPane fetches tasks scoped to the agent and renders a card', async () => {
     const a = agent({ id: 'proc' });
     const nodes = new Map();

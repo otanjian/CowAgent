@@ -496,6 +496,14 @@ class ConversationStore:
         Returns:
             Chronologically ordered list of message dicts (role, content).
         """
+        # Tenancy dimension: when the caller runs as a verified user, restore
+        # only that user's content — the same rule ``list_sessions`` applies, so
+        # a restored LLM context can never contain another user's turns. With no
+        # user in scope (legacy) the owner filter is skipped and the historical
+        # behaviour is preserved.
+        from common.runtime_identity import current_identity
+        owner_filter = current_identity().user_id or None
+
         with self._lock:
             conn = self._connect()
             try:
@@ -507,15 +515,26 @@ class ConversationStore:
                 ctx_start = ctx_row[0] if ctx_row else 0
 
                 columns = "seq, role, content" + (", extras" if with_authors else "")
-                rows = conn.execute(
-                    f"""
-                    SELECT {columns}
-                    FROM messages
-                    WHERE session_id = ? AND seq >= ?
-                    ORDER BY seq DESC
-                    """,
-                    (session_id, ctx_start),
-                ).fetchall()
+                if owner_filter is not None:
+                    rows = conn.execute(
+                        f"""
+                        SELECT {columns}
+                        FROM messages
+                        WHERE session_id = ? AND seq >= ? AND owner = ?
+                        ORDER BY seq DESC
+                        """,
+                        (session_id, ctx_start, owner_filter),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        f"""
+                        SELECT {columns}
+                        FROM messages
+                        WHERE session_id = ? AND seq >= ?
+                        ORDER BY seq DESC
+                        """,
+                        (session_id, ctx_start),
+                    ).fetchall()
             finally:
                 conn.close()
 
@@ -1451,6 +1470,26 @@ class ConversationStore:
             "page_size": page_size,
             "has_more": offset + page_size < total,
         }
+
+    def get_session_owner(self, session_id: str) -> Optional[str]:
+        """The verified user a session belongs to, or None when unknown.
+
+        ``None`` covers both "no such session yet" (a brand-new conversation
+        before its first message) and "legacy, owner-less" — a caller must
+        distinguish them only if it is safe to assume ownership in either case.
+        Used to decide whether a per-user segment may enter a session's prompt.
+        """
+        with self._lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT owner FROM sessions WHERE session_id=?", (session_id,)
+                ).fetchone()
+            finally:
+                conn.close()
+        if row is None:
+            return None
+        return row[0] or None
 
     def list_sessions(
         self,

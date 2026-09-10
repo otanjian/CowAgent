@@ -28,6 +28,11 @@ class Channel(object):
         #     reads straight from the global conf(), i.e. legacy behavior.
         self.instance_id = ""
         self.bound_agent_id = ""
+        # Owning tenant, when this instance belongs to a tenant instead of the
+        # platform roster. Empty for platform and legacy instances, which keeps
+        # the previous routing behavior. A non-empty value anchors inbound
+        # messages to this tenant and to the tenant's own default Agent.
+        self.tenant_id = ""
         self._creds = {}
         # Teammates this instance's owner (bound_agent_id) may hand work to.
         # Empty for a solo bot. Injected into each inbound message's context so
@@ -49,7 +54,8 @@ class Channel(object):
                 return value
         return conf().get(key, default)
 
-    def apply_instance(self, instance_id="", bound_agent_id="", credentials=None, members=None):
+    def apply_instance(self, instance_id="", bound_agent_id="", credentials=None,
+                       members=None, tenant_id=""):
         """Attach multi-instance identity, credentials and team to this channel.
 
         Called by the factory/manager only on the new multi-instance path;
@@ -64,6 +70,8 @@ class Channel(object):
             self._creds = dict(credentials)
         if members is not None:
             self.members = list(members)
+        if tenant_id:
+            self.tenant_id = tenant_id
         return self
 
     def stamp_instance_context(self, context):
@@ -85,6 +93,14 @@ class Channel(object):
             context["bound_agent_id"] = bound
         if "instance_id" not in context and getattr(self, "instance_id", ""):
             context["instance_id"] = self.instance_id
+        # Observability only: the owning tenant is stamped so logs and traces can
+        # show it, but authorization reads the instance row from the store
+        # (``external_identity.instance_tenant_id``). Never trust this field for
+        # routing: a stale or forged stamp must not move a message between
+        # tenants.
+        tenant = getattr(self, "tenant_id", "")
+        if tenant and "instance_tenant_id" not in context:
+            context["instance_tenant_id"] = tenant
         members = getattr(self, "members", None)
         if members and "members" not in context:
             context["members"] = list(members)

@@ -8,6 +8,12 @@ from common.tmp_dir import TmpDir
 from common import state_dir, utils
 from config import conf
 
+# open_id -> display name. A name is permanent for the process; a failure is
+# remembered as an empty string so a refused author who keeps typing does not
+# generate one contact-API call per message (and a missing scope is not
+# re-attempted on every message). Cleared only by restarting the process.
+_SENDER_NAME_CACHE: dict = {}
+
 
 class FeishuMessage(ChatMessage):
     def __init__(self, event: dict, is_group=False, access_token=None):
@@ -215,6 +221,53 @@ class FeishuMessage(ChatMessage):
             # 私聊
             self.other_user_id = self.from_user_id
             self.actual_user_id = self.from_user_id
+
+    def resolve_sender_name(self) -> str:
+        """Best-effort display name for the author, for the binding console.
+
+        The event carries only an ``open_id``, which names nobody to an
+        administrator deciding whether to bind them. The contact API is asked
+        once per author per process and every failure (no token, missing contact
+        scope, network error) degrades to an empty name: this is only ever called
+        while refusing an unbound message, and an unknown name must not turn that
+        refusal into an error.
+        """
+        if self.actual_user_nickname:
+            return self.actual_user_nickname
+        open_id = self.actual_user_id or self.from_user_id
+        if not open_id or not self.access_token:
+            return ""
+        if open_id in _SENDER_NAME_CACHE:
+            return _SENDER_NAME_CACHE[open_id]
+
+        name = ""
+        try:
+            response = requests.get(
+                url="https://open.feishu.cn/open-apis/contact/v3/users/{}".format(
+                    open_id),
+                headers={"Authorization": "Bearer " + self.access_token},
+                params={"user_id_type": "open_id"},
+                timeout=3,
+            )
+            if response.status_code == 200:
+                payload = response.json()
+                if payload.get("code") == 0:
+                    name = str(
+                        (payload.get("data") or {}).get("user", {}).get("name")
+                        or "")
+            if not name:
+                logger.info(
+                    "[FeiShu] no sender name for %s (status=%s);"
+                    " the attempt will show the message only",
+                    open_id, response.status_code)
+        except Exception as error:  # noqa: BLE001 - naming is a courtesy
+            logger.info("[FeiShu] sender name lookup failed for %s: %s",
+                        open_id, error)
+
+        # Negative results are cached too: a bot without the contact scope must
+        # not pay a failing round trip for every message a stranger sends.
+        _SENDER_NAME_CACHE[open_id] = name
+        return name
 
     def content_with_quote(self) -> str:
         """Return user text with optional quoted-message context for the agent."""

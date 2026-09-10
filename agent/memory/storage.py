@@ -791,6 +791,34 @@ class MemoryStorage:
 
         return []
     
+    @staticmethod
+    def _scope_filter(
+        user_id: Optional[str], scopes: List[str], prefix: str = ""
+    ) -> tuple:
+        """The ONLY place a retrieval WHERE clause may be built (task 5.2).
+
+        Every search backend — FTS5, trigram FTS5, LIKE, and the vector
+        metadata filter — must narrow to (`scopes` IN) and, when a user is in
+        scope, additionally to that user's own rows plus ``shared``. Writing
+        this condition once is the point: a forgotten clause in a new backend
+        is a cross-user leak, and there is no review that reliably catches a
+        missing ``AND`` among three near-identical SQL strings.
+
+        Returns ``(sql_fragment, params)``, the fragment starting with ``AND``
+        so it drops into an existing ``WHERE``. ``prefix`` is the table alias
+        used by the joined FTS queries (``"chunks."``); empty for plain SELECTs.
+        """
+        col = f"{prefix}scope" if prefix else "scope"
+        ucol = f"{prefix}user_id" if prefix else "user_id"
+        placeholders = ",".join("?" * len(scopes))
+        params: List[Any] = list(scopes)
+        fragment = f"AND {col} IN ({placeholders})"
+        if user_id:
+            # "shared" is visible to everyone; a user row only to its owner.
+            fragment += f"\n                AND ({col} = 'shared' OR {ucol} = ?)"
+            params.append(user_id)
+        return fragment, params
+
     def _search_fts5(
         self,
         query: str,
@@ -802,33 +830,19 @@ class MemoryStorage:
         fts_query = self._build_fts_query(query)
         if not fts_query:
             return []
-        
-        scope_placeholders = ','.join('?' * len(scopes))
-        params = [fts_query] + scopes
-        
-        if user_id:
-            sql_query = f"""
+
+        scope_sql, scope_params = self._scope_filter(user_id, scopes, prefix="chunks.")
+        params = [fts_query] + scope_params
+        sql_query = f"""
                 SELECT chunks.*, bm25(chunks_fts) as rank
                 FROM chunks_fts
                 JOIN chunks ON chunks.rowid = chunks_fts.rowid
-                WHERE chunks_fts MATCH ? 
-                AND chunks.scope IN ({scope_placeholders})
-                AND (chunks.scope = 'shared' OR chunks.user_id = ?)
+                WHERE chunks_fts MATCH ?
+                {scope_sql}
                 ORDER BY rank
                 LIMIT ?
             """
-            params.extend([user_id, limit])
-        else:
-            sql_query = f"""
-                SELECT chunks.*, bm25(chunks_fts) as rank
-                FROM chunks_fts
-                JOIN chunks ON chunks.rowid = chunks_fts.rowid
-                WHERE chunks_fts MATCH ? 
-                AND chunks.scope IN ({scope_placeholders})
-                ORDER BY rank
-                LIMIT ?
-            """
-            params.append(limit)
+        params.append(limit)
         
         try:
             rows = self.conn.execute(sql_query, params).fetchall()
@@ -869,8 +883,6 @@ class MemoryStorage:
         if not words:
             return []
 
-        scope_placeholders = ','.join('?' * len(scopes))
-
         # Build LIKE conditions for each word (case-insensitive for ASCII)
         like_conditions = []
         params = []
@@ -879,25 +891,16 @@ class MemoryStorage:
             params.append(f'%{word.lower()}%')
         
         where_clause = ' OR '.join(like_conditions)
-        params.extend(scopes)
-        
-        if user_id:
-            sql_query = f"""
+        scope_sql, scope_params = self._scope_filter(user_id, scopes)
+        params.extend(scope_params)
+
+        sql_query = f"""
                 SELECT * FROM chunks
                 WHERE ({where_clause})
-                AND scope IN ({scope_placeholders})
-                AND (scope = 'shared' OR user_id = ?)
+                {scope_sql}
                 LIMIT ?
             """
-            params.extend([user_id, limit])
-        else:
-            sql_query = f"""
-                SELECT * FROM chunks
-                WHERE ({where_clause})
-                AND scope IN ({scope_placeholders})
-                LIMIT ?
-            """
-            params.append(limit)
+        params.append(limit)
         
         try:
             rows = self.conn.execute(sql_query, params).fetchall()
@@ -1096,32 +1099,20 @@ class MemoryStorage:
         if not trigram_query:
             return []
 
-        scope_placeholders = ','.join('?' * len(scopes))
-        params = [trigram_query] + list(scopes)
+        scope_sql, scope_params = self._scope_filter(
+            user_id, scopes, prefix="chunks.")
+        params = [trigram_query] + scope_params
 
-        if user_id:
-            sql = f"""
+        sql = f"""
                 SELECT chunks.*, bm25(chunks_fts_trigram) as rank
                 FROM chunks_fts_trigram
                 JOIN chunks ON chunks.rowid = chunks_fts_trigram.rowid
                 WHERE chunks_fts_trigram MATCH ?
-                AND chunks.scope IN ({scope_placeholders})
-                AND (chunks.scope = 'shared' OR chunks.user_id = ?)
+                {scope_sql}
                 ORDER BY rank
                 LIMIT ?
             """
-            params.extend([user_id, limit])
-        else:
-            sql = f"""
-                SELECT chunks.*, bm25(chunks_fts_trigram) as rank
-                FROM chunks_fts_trigram
-                JOIN chunks ON chunks.rowid = chunks_fts_trigram.rowid
-                WHERE chunks_fts_trigram MATCH ?
-                AND chunks.scope IN ({scope_placeholders})
-                ORDER BY rank
-                LIMIT ?
-            """
-            params.append(limit)
+        params.append(limit)
 
         try:
             rows = self.conn.execute(sql, params).fetchall()

@@ -149,6 +149,7 @@
     margin: 2px 0 0;
     padding: 0;
 }
+.sidebar-recent.hidden { display: none !important; }
 .sidebar-recent-header {
     display: flex;
     align-items: center;
@@ -2095,6 +2096,19 @@
     transition: border-color 0.2s ease, box-shadow 0.2s ease;
     user-select: none;
 }
+/* Read-only dropdown: still shows the effective value, but reads as a field of
+   record rather than a control. Used where another layer owns the setting. */
+.cfg-dropdown.cfg-dropdown-readonly .cfg-dropdown-selected {
+    cursor: default;
+    background: transparent;
+    border-style: dashed;
+    color: #64748b;
+}
+.cfg-dropdown.cfg-dropdown-readonly .cfg-dropdown-arrow { opacity: 0.35; }
+.dark .cfg-dropdown.cfg-dropdown-readonly .cfg-dropdown-selected {
+    color: #94a3b8;
+    background: transparent;
+}
 .dark .cfg-dropdown-selected {
     border-color: #475569;
     background: rgba(255, 255, 255, 0.05);
@@ -2580,19 +2594,6 @@
 }
 .perm-denied-hint > i { font-size: 12px; color: #64748b; flex-shrink: 0; }
 .perm-denied-text { flex: 1; min-width: 0; }
-.perm-denied-btn {
-    flex-shrink: 0;
-    padding: 4px 12px;
-    border: none;
-    border-radius: 8px;
-    background: #35A85B;
-    color: #fff;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.12s ease;
-}
-.perm-denied-btn:hover { background: #228547; }
 .dark .perm-denied-hint {
     border-color: rgba(255, 255, 255, 0.1);
     background: rgba(255, 255, 255, 0.04);
@@ -2664,11 +2665,10 @@
 /* The Agent identity chip now sits on the far right of the toolbar, so its
    menu is right-anchored to stay on-screen instead of overflowing left. */
 #composer-agent-menu { left: auto; right: 0; }
-/* The permission / model popups live at the card level, whose top edge is the
-   textarea - not the chip that opened them. Anchor them just above the toolbar
-   row instead, so they hug their trigger rather than floating over the input.
+/* The model popup lives at the card level, whose top edge is the textarea -
+   not the chip that opened it. Anchor it just above the toolbar row instead,
+   so it hugs its trigger rather than floating over the input.
    (The agent menu is nested in .composer-identity, so it keeps bottom:100%.) */
-#permission-selector-menu,
 #model-selector-menu {
     bottom: calc(2rem + 14px);
 }
@@ -4643,6 +4643,14 @@ textarea.doc-editor {
     background: #1A1A1A;
     border-top-color: rgba(255,255,255,.08);
 }
+/* Both tabbed editors disable their primary action while a write is in flight.
+   Without a disabled look the button stays green and swallows clicks silently,
+   so make the in-flight state visible. */
+#role-editor-submit:disabled,
+#tenant-editor-submit:disabled {
+    opacity: .6;
+    cursor: wait;
+}
 .role-dirty-pill {
     display: none;
     font-size: 11px;
@@ -4657,6 +4665,113 @@ textarea.doc-editor {
     .role-res-list { grid-template-columns: 1fr; }
     .role-editor-head, .role-editor-body, .role-editor-foot { padding-left: 16px; padding-right: 16px; }
 }
+/* Tenant tabbed editor reuses the role-editor skin (.role-editor-*), so only the
+   tenant-specific affordances get rules of their own: the tabs that stay disabled
+   until the tenant exists, and the read-only tenant space card. */
+.tenant-editor .role-editor-panel { max-width: 1040px; }
+.tenant-editor-tab:disabled { opacity: .45; cursor: not-allowed; }
+.tenant-editor-tab:disabled:hover { color: #64748b; }
+.dark .tenant-editor-tab:disabled:hover { color: #64748b; }
+
+/* Admin tab: pick an existing account or create a new one. Both bodies stay in
+   the DOM (only one is shown) so switching modes never discards input. */
+.tenant-admin-modes {
+    display: inline-flex;
+    gap: .25rem;
+    padding: .25rem;
+    margin-bottom: 1rem;
+    border-radius: .625rem;
+    background: #f1f5f9;
+}
+
+.dark .tenant-admin-modes { background: rgba(255, 255, 255, .06); }
+
+.tenant-admin-mode {
+    padding: .375rem .875rem;
+    border-radius: .5rem;
+    font-size: .8125rem;
+    font-weight: 500;
+    color: #475569;
+    cursor: pointer;
+}
+
+.dark .tenant-admin-mode { color: #cbd5e1; }
+
+.tenant-admin-mode.active {
+    background: #fff;
+    color: #0f172a;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, .08);
+}
+
+.dark .tenant-admin-mode.active { background: rgba(255, 255, 255, .12); color: #fff; }
+
+/* Save-time password prompt. It is a viewport-level dialog so it also covers
+   the full-page tenant editor, which is absolutely positioned inside its view. */
+.tenant-password-modal { z-index: 80; }
+.tenant-password-modal .agent-modal-title { padding-bottom: 8px; }
+.tenant-password-modal .agent-modal-foot { justify-content: flex-end; }
+.tenant-password-modal #tenant-password-input { width: 100%; }
+/* Read-only "current tenant admin" block on the management tab. It reuses the
+   space card's skin so the tab reads as information first, form second. */
+.tenant-current-admin-card {
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid #e9eef5;
+    background: #f8fafc;
+}
+.dark .tenant-current-admin-card {
+    border-color: rgba(255,255,255,.08);
+    background: rgba(255,255,255,.04);
+}
+#tenant-space-card .grid > div {
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid #e9eef5;
+    background: #f8fafc;
+}
+.dark #tenant-space-card .grid > div {
+    border-color: rgba(255,255,255,.08);
+    background: rgba(255,255,255,.04);
+}
+/* Agent tab: the tenant's own agents are a read-only projection, and the
+   copyable candidates are a pick list. A synced candidate is visibly spent so
+   "already copied" is legible without hovering a disabled control. */
+.tenant-agent-block-label {
+    font-size: 10px; letter-spacing: .04em; text-transform: uppercase;
+    color: #94a3b8; margin-bottom: 8px;
+}
+.tenant-agent-row {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 10px; padding: 10px 12px; margin-bottom: 8px;
+    border-radius: 10px; border: 1px solid #e9eef5; background: #f8fafc;
+}
+.dark .tenant-agent-row {
+    border-color: rgba(255,255,255,.08); background: rgba(255,255,255,.04);
+}
+.tenant-agent-row-id { font-size: 10px; color: #94a3b8; }
+.tenant-agent-row-badges { display: flex; align-items: center; gap: 6px; flex: none; }
+.tenant-agent-badge {
+    font-size: 10px; padding: 2px 7px; border-radius: 999px;
+    background: #eef2f7; color: #64748b; white-space: nowrap;
+}
+.dark .tenant-agent-badge { background: rgba(255,255,255,.08); color: #cbd5e1; }
+.tenant-agent-badge.is-default { background: #e8f1ff; color: #2563eb; }
+.dark .tenant-agent-badge.is-default { background: rgba(37,99,235,.18); color: #93c5fd; }
+.tenant-agent-badge.synced { background: #e9f7ef; color: #17803d; }
+.dark .tenant-agent-badge.synced { background: rgba(23,128,61,.18); color: #86efac; }
+.tenant-agent-candidate-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 12px; margin-bottom: 8px; cursor: pointer;
+    border-radius: 10px; border: 1px solid #e9eef5; background: #fff;
+}
+.dark .tenant-agent-candidate-row {
+    border-color: rgba(255,255,255,.08); background: rgba(255,255,255,.03);
+}
+.tenant-agent-candidate-row.is-synced { opacity: .62; cursor: default; }
+.tenant-agent-candidate-main { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.tenant-agent-selected { font-size: 11px; color: #94a3b8; }
+.tenant-agent-source-note { font-size: 11px; color: #64748b; }
+.dark .tenant-agent-source-note { color: #94a3b8; }
 .agent-modal-foot {
     display: flex; align-items: center; gap: 10px;
     padding: 16px 24px 20px; border-top: 1px solid #f1f5f9;
@@ -5241,17 +5356,11 @@ button.composer-menu-item.joined:hover .joined-remove { display: inline; color: 
 #app[data-nav-area="admin"] [data-nav-shell="workbench"] { display: none !important; }
 #app[data-nav-area="admin"] #sidebar-new-chat { display: none !important; }
 .admin-home { max-width: 72rem; margin: 0 auto; }
-.admin-home-title {
-    font-size: 1.5rem; font-weight: 600;
-    color: #1e293b;
-}
-.dark .admin-home-title { color: #f1f5f9; }
-.admin-home-hint { margin-top: 0.5rem; font-size: 0.875rem; color: #64748b; }
 .admin-home-kpis {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0.75rem;
-    margin: 1.5rem 0 1.25rem;
+    margin: 0 0 1.25rem;
 }
 @media (max-width: 900px) {
     .admin-home-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }

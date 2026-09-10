@@ -27,6 +27,8 @@ Agent 不再固定在单一目录下工作，可创建多个项目工作空间�
 - **默认权限设置**：支持设置默认权限模式，新会话按该默认值创建。
 - **拒绝提示可点击**：工具调用因权限被拦截时，给出可点击的提示，便于快速调整权限。
 
+> 后续调整：多租户（数据库模式）安装下，实际执行改由调用者的**角色资源授权**决定，因此会话内的权限切换入口已移除，全局默认权限在该模式下只读；单租户安装仍保留全局默认权限。参见 [架构说明](/zh/intro/architecture#session-settings)。
+
 <img src="https://cdn.jsdelivr.net/gh/zhayujie/cowagent-assets@main/screenshots/zh/web-console-access-mode.png" width="600" />
 
 ## 🖥 桌面客户端

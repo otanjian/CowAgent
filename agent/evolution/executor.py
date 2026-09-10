@@ -449,7 +449,11 @@ def run_evolution_for_session(
         workspace_lock = _get_workspace_lock(Path(workspace_dir))
         workspace_lock.acquire()
         if user_id:
-            memory_file = Path(workspace_dir) / "memory" / "users" / user_id / "MEMORY.md"
+            # Personal memory lives in the user domain, beside the Agents — not
+            # under this Agent's workspace. Resolved through state_dir so the
+            # layout stays in one place.
+            from common import state_dir
+            memory_file = state_dir.memory_file()
         else:
             memory_file = Path(workspace_dir) / "MEMORY.md"
         skills_dir = mem_cfg.get_skills_dir()
@@ -466,7 +470,8 @@ def run_evolution_for_session(
             datetime.now().strftime("%Y-%m-%d") + ".md"
         )
         if user_id:
-            today_daily = Path(workspace_dir) / "memory" / "users" / user_id / (
+            from common import state_dir
+            today_daily = state_dir.memory_dir(ensure=False) / (
                 datetime.now().strftime("%Y-%m-%d") + ".md"
             )
         # AGENT.md (persona) is backed up too so a rare persona edit is undoable.

@@ -143,6 +143,44 @@
         </div>
     </div>
 
+    <!-- ================================================================ -->
+    <!-- Change-password modal (database identity mode)                   -->
+    <!--                                                                  -->
+    <!-- Body-level on purpose: `_enterForcedPassword()` hides #app while  -->
+    <!-- this gate is open, and a modal nested in a hidden ancestor        -->
+    <!-- collapses to 0x0 and becomes invisible.                          -->
+    <!-- ================================================================ -->
+    <div id="account-password-modal" class="agent-modal hidden" role="dialog" aria-modal="true" aria-labelledby="account-password-title">
+        <div class="agent-modal-card">
+            <div class="agent-modal-head">
+                <h3 id="account-password-title" class="agent-modal-title" data-i18n="account_password_title">修改密码</h3>
+                <button type="button" id="account-password-close" class="agent-modal-close" onclick="closeAccountPassword()" aria-label="Close" data-i18n-aria-label="close">×</button>
+            </div>
+            <form id="account-password-form" novalidate>
+                <div class="agent-modal-body">
+                    <p id="account-password-status" class="account-field-status hidden" role="status"></p>
+                    <p class="account-password-note" data-i18n="account_password_note">修改成功后，其他已登录会话也会失效，需要重新登录。</p>
+                    <div class="account-field">
+                        <label for="ap-old-password" data-i18n="account_password_old">原密码</label>
+                        <input id="ap-old-password" type="password" class="account-field-input" autocomplete="current-password" required>
+                    </div>
+                    <div class="account-field">
+                        <label for="ap-new-password" data-i18n="account_password_new">新密码</label>
+                        <input id="ap-new-password" type="password" class="account-field-input" autocomplete="new-password" required>
+                    </div>
+                    <div class="account-field">
+                        <label for="ap-confirm-password" data-i18n="account_password_confirm">确认新密码</label>
+                        <input id="ap-confirm-password" type="password" class="account-field-input" autocomplete="new-password" required>
+                    </div>
+                </div>
+                <div class="agent-modal-foot">
+                    <button type="button" onclick="cancelAccountPassword()" class="agent-btn agent-btn-text" data-i18n="cancel">取消</button>
+                    <button id="ap-submit-btn" type="submit" class="agent-btn agent-btn-primary" data-i18n="account_password_submit">提交修改</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <div id="app" class="flex h-screen hidden">
 
         <!-- ================================================================ -->
@@ -227,7 +265,7 @@
                 <div data-nav-shell="admin" class="admin-nav-shell">
                 <a id="nav-admin-home" class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px] mb-1"
                    data-view="admin-home">
-                    <i class="fas fa-border-all item-icon text-xs w-5 text-center"></i>
+                    <i class="fas fa-sliders item-icon text-xs w-5 text-center"></i>
                     <span data-i18n="nav_admin_overview">控制台概览</span>
                 </a>
 
@@ -342,14 +380,14 @@
             <div data-nav-shell="workbench" class="sidebar-admin-entry-wrap">
                 <a id="nav-open-admin" href="/admin" target="cow-admin" rel="noopener"
                    class="sidebar-item sidebar-admin-entry hidden">
-                    <i class="fas fa-gauge-high item-icon" aria-hidden="true"></i>
-                    <span data-i18n="nav_admin_console">管理控制台</span>
+                    <i class="fas fa-sliders item-icon" aria-hidden="true"></i>
+                    <span data-i18n="nav_admin_console">控制台</span>
                 </a>
             </div>
             <div data-nav-shell="admin" class="sidebar-admin-entry-wrap">
                 <a id="nav-return-workbench" href="/chat" target="cow-workbench" rel="noopener"
                    class="sidebar-item sidebar-admin-entry">
-                    <i class="fas fa-table-columns item-icon" aria-hidden="true"></i>
+                    <i class="fas fa-house item-icon" aria-hidden="true"></i>
                     <span data-i18n="nav_workbench">工作台</span>
                 </a>
             </div>
@@ -414,7 +452,7 @@
                     </button>
                     <div class="account-menu-version">
                         <a id="sidebar-version"
-                           href="https://github.com/zhayujie/CowAgent/releases"
+                           href="https://www.rsm.global/china/zh-hans"
                            target="_blank" rel="noopener noreferrer">容大AI</a>
                         <svg class="account-menu-trailing" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg>
                     </div>
@@ -533,40 +571,6 @@
             </div>
         </div>
 
-
-        <!-- ================================================================ -->
-        <!-- Change-password modal (database identity mode)                   -->
-        <!-- ================================================================ -->
-        <div id="account-password-modal" class="agent-modal hidden" role="dialog" aria-modal="true" aria-labelledby="account-password-title">
-            <div class="agent-modal-card">
-                <div class="agent-modal-head">
-                    <h3 id="account-password-title" class="agent-modal-title" data-i18n="account_password_title">修改密码</h3>
-                    <button type="button" id="account-password-close" class="agent-modal-close" onclick="closeAccountPassword()" aria-label="Close" data-i18n-aria-label="close">×</button>
-                </div>
-                <form id="account-password-form" novalidate>
-                    <div class="agent-modal-body">
-                        <p id="account-password-status" class="account-field-status hidden" role="status"></p>
-                        <p class="account-password-note" data-i18n="account_password_note">修改成功后，其他已登录会话也会失效，需要重新登录。</p>
-                        <div class="account-field">
-                            <label for="ap-old-password" data-i18n="account_password_old">原密码</label>
-                            <input id="ap-old-password" type="password" class="account-field-input" autocomplete="current-password" required>
-                        </div>
-                        <div class="account-field">
-                            <label for="ap-new-password" data-i18n="account_password_new">新密码</label>
-                            <input id="ap-new-password" type="password" class="account-field-input" autocomplete="new-password" required>
-                        </div>
-                        <div class="account-field">
-                            <label for="ap-confirm-password" data-i18n="account_password_confirm">确认新密码</label>
-                            <input id="ap-confirm-password" type="password" class="account-field-input" autocomplete="new-password" required>
-                        </div>
-                    </div>
-                    <div class="agent-modal-foot">
-                        <button type="button" onclick="cancelAccountPassword()" class="agent-btn agent-btn-text" data-i18n="cancel">取消</button>
-                        <button id="ap-submit-btn" type="submit" class="agent-btn agent-btn-primary" data-i18n="account_password_submit">提交修改</button>
-                    </div>
-                </form>
-            </div>
-        </div>
 
         <!-- ================================================================ -->
         <!-- MAIN CONTENT                                                     -->
@@ -741,14 +745,6 @@
                                             <span id="workspace-selector-label" class="composer-chip-label" data-i18n="ws_default_workspace">默认空间</span>
                                             <i class="fas fa-chevron-down composer-chip-caret"></i>
                                         </button>
-
-                                        <button id="permission-selector-btn" type="button" class="composer-chip composer-chip-icon-only"
-                                                onclick="togglePermissionSelector(event)"
-                                                data-tip-float data-tooltip-pos="top">
-                                            <i id="permission-selector-icon" class="fas fa-shield-halved"></i>
-                                            <span id="permission-selector-label" class="composer-chip-label" data-i18n="perm_full_access">全部可访问</span>
-                                            <i class="fas fa-chevron-down composer-chip-caret"></i>
-                                        </button>
                                     </div>
 
                                     <div class="composer-group composer-group-end">
@@ -808,7 +804,6 @@
                                 <div id="slash-menu" class="slash-menu hidden"></div>
                                 <div id="mention-menu" class="mention-menu hidden"></div>
                                 <div id="workspace-selector-menu" class="workspace-selector-menu hidden"></div>
-                                <div id="permission-selector-menu" class="composer-menu hidden"></div>
                                 <div id="model-selector-menu" class="composer-menu composer-menu-wide hidden"></div>
                             </div>
                         </div>
@@ -1324,7 +1319,8 @@
                                                 </div>
                                                 <div class="cfg-dropdown-menu"></div>
                                             </div>
-                                            <p class="text-xs text-slate-400 dark:text-slate-500 mt-1.5" data-i18n="config_permission_desc">新会话默认使用该权限；单个会话可在输入框下方单独调整</p>
+                                            <p id="cfg-permission-desc" class="text-xs text-slate-400 dark:text-slate-500 mt-1.5" data-i18n="config_permission_desc">新会话默认使用该权限</p>
+                                            <p id="cfg-permission-role-desc" class="hidden text-xs text-slate-400 dark:text-slate-500 mt-1.5" data-i18n="config_permission_role_desc">本机对话的执行权限由管理员分配的角色资源授权决定，此处仅供查看。</p>
                                         </div>
                                         <div>
                                             <label class="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5" data-i18n="config_password">访问密码</label>
@@ -1787,9 +1783,9 @@
                             <div class="flex items-center justify-between mb-6">
                                 <div>
                                     <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100" data-i18n="channels_title">消息渠道</h2>
-                                    <p class="text-sm text-slate-500 dark:text-slate-400 mt-1" data-i18n="channels_desc">管理已接入的消息通道</p>
+                                    <p id="channels-subtitle" class="text-sm text-slate-500 dark:text-slate-400 mt-1" data-i18n="channels_desc">管理已接入的消息通道</p>
                                 </div>
-                                <button id="add-channel-btn" onclick="openAddChannelPanel()"
+                                <button id="add-channel-btn" onclick="openChannelsAddEntry()"
                                         class="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary-500 hover:bg-primary-600
                                                text-white text-sm font-medium cursor-pointer transition-colors duration-150">
                                     <i class="fas fa-plus text-xs"></i>
@@ -2203,8 +2199,6 @@
     <div id="view-admin-home" class="view">
         <div class="p-6 h-full overflow-y-auto">
             <div class="admin-home">
-                <h1 class="admin-home-title" data-i18n="admin_home_title">管理控制台</h1>
-                <p class="admin-home-hint" data-i18n="admin_home_hint">选择左侧菜单管理智能体、组织与平台配置。</p>
                 <div id="admin-home-kpis" class="admin-home-kpis" aria-live="polite"></div>
                 <div id="admin-home-shortcuts" class="admin-home-shortcuts"></div>
             </div>

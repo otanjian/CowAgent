@@ -68,10 +68,10 @@ Besides the default workspace, each session can be bound to its own **project di
 
 ### Per-Session Model & Permission {#session-settings}
 
-Workspace, model, and permission can all be **set per session**, falling back to the global default when unset:
+Workspace and model can be **set per session**, falling back to the global default when unset:
 
 - **Model**: different sessions can switch to different models, making it easy to pick the right one per task.
-- **Permission**: controls what the Agent is allowed to do, in three levels — **read-only**, **workspace-write**, and **full-access**. You can set a global default (`agent_permission_mode`) in the config; new sessions inherit it and can be adjusted individually as needed. Permissions reduce the risk of accidental changes; for strong isolation, run inside a container.
+- **Permission**: controls what the Agent is allowed to do, in three levels — **read-only**, **workspace-write**, and **full-access**. On a single-tenant install you set a global default (`agent_permission_mode`) in the config and new sessions inherit it. On a multi-tenant (database) install the setting is read-only: what a session may actually run is decided by the caller's **role resource authorization** (`tool.execute` plus the resource grant), which an administrator assigns — the conversation itself offers no way to widen it. Permissions reduce the risk of accidental changes; for strong isolation, run inside a container.
 
 ## Core Configuration
 

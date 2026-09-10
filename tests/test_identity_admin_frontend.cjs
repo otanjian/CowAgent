@@ -111,7 +111,7 @@ function response(data, status = 200) {
     return { ok: status >= 200 && status < 300, status, json: async () => data };
 }
 
-function setup(permissionResponse = () => response({ status: 'success', permissions: catalog })) {
+function setup(permissionResponse = () => response({ status: 'success', permissions: catalog }), opts = {}) {
     const calls = [];
     const document = { ...eventTarget(), body: element('body'), createElement: element };
     document.getElementById = id => document.body.querySelector('#' + id);
@@ -129,6 +129,10 @@ function setup(permissionResponse = () => response({ status: 'success', permissi
         confirm: () => true,
         fetch: async (url, options) => {
             calls.push({ url, options });
+            if (opts.onWrite && options && options.method && options.method !== 'GET') {
+                const handled = opts.onWrite(url, options);
+                if (handled) return handled;
+            }
             if (url === '/api/tenant/permissions') return permissionResponse();
             if (url === '/api/tenant/roles') return response({ status: 'success', items: [role] });
             if (url === '/api/tenant/roles/' + role.id) return response({ status: 'success' });
@@ -138,8 +142,10 @@ function setup(permissionResponse = () => response({ status: 'success', permissi
                 const itembyKind = {
                     skill: [{ resource_id: 'custom:knowledge-wiki', name: 'knowledge-wiki', capability: 'skill' }],
                     model: [{ resource_id: 'provider:deepseek:deepseek-v4-flash', name: 'deepseek-v4-flash', capability: 'model', provider: 'deepseek' }],
+                    tool: [{ resource_id: 'builtin.read', name: 'read' }],
+                    menu: [{ resource_id: 'nav:chat', name: '对话' }],
                 };
-                return response({ status: 'success', kind, items: itembyKind[kind] || [], total: (itembyKind[kind] || []).length, page: 1, resource_actions: { skill: ['read', 'use', 'edit', 'enable'], model: ['read', 'use'] }[kind] || [] });
+                return response({ status: 'success', kind, items: itembyKind[kind] || [], total: (itembyKind[kind] || []).length, page: 1, resource_actions: { skill: ['read', 'use', 'edit', 'enable'], model: ['read', 'use'], tool: ['read', 'execute', 'configure'], menu: ['view'] }[kind] || [] });
             }
             throw Error('Unexpected request: ' + url);
         },
@@ -270,6 +276,155 @@ test('resource tab preselects existing grants and shows a searchable list', asyn
     assert.ok(boxes.length >= 1, 'skill list renders from the catalog');
     const checked = boxes.filter(b => b.checked).map(b => b.value);
     assert.ok(checked.includes('custom:knowledge-wiki'), 'existing grant is preselected');
+});
+
+test('role create posts the whole draft taken from every tab', async () => {
+    const drain = async (n) => { for (let i = 0; i < n; i++) await settle(); };
+    const h = setup();
+    await h.ctx.loadRolesView();
+    h.node('role-create-btn').dispatch('click');
+    await drain(3);
+    assert.equal(h.editorOpen(), true, 'create opens the editor');
+    // basics tab: name, code and a functional permission
+    h.node('adm-fld-name').value = 'New reviewer';
+    h.node('adm-fld-code').value = 'new-reviewer';
+    const memberPerm = h.permissions().find(p => p.value === 'tenant.members.read');
+    memberPerm.checked = true;
+    memberPerm.dispatch('change');
+    // tool tab: add a tool
+    h.resourceTab('tool').dispatch('click');
+    await drain(3);
+    const toolBoxes = h.resourceList('tool');
+    assert.ok(toolBoxes.length, 'tool list renders from the catalog');
+    toolBoxes[0].checked = true;
+    toolBoxes[0].dispatch('change');
+    // one click on create must send the merged draft
+    h.node('role-editor-submit').dispatch('click');
+    await drain(4);
+    const writes = h.calls.filter(c =>
+        c.options && c.options.method === 'POST' && c.url === '/api/tenant/roles');
+    assert.equal(writes.length, 1, 'create issues exactly one POST');
+    const body = JSON.parse(writes[0].options.body);
+    assert.equal(body.name, 'New reviewer');
+    assert.equal(body.code, 'new-reviewer');
+    assert.ok(body.permissions.includes('tenant.members.read'), 'basic-tab permission is saved');
+    assert.ok(body.resource_grants.some(g => g.resource_kind === 'tool' && g.resource_id === 'builtin.read'), 'tool-tab selection is saved');
+});
+
+test('a successful save must not leave the next editor unusable', async () => {
+    // The submit button is disabled while a write is in flight. Nothing turns
+    // it back on after a success (the editor just closes), so the next create
+    // or edit opened in the same page session renders a dead button: the form
+    // looks fine, clicks do nothing, and no request is sent.
+    const drain = async (n) => { for (let i = 0; i < n; i++) await settle(); };
+    const h = setup();
+    await h.ctx.loadRolesView();
+
+    h.node('role-create-btn').dispatch('click');
+    await drain(3);
+    h.node('adm-fld-name').value = 'First role';
+    h.node('adm-fld-code').value = 'first-role';
+    h.node('role-editor-submit').dispatch('click');
+    await drain(4);
+    assert.equal(h.editorOpen(), false, 'the first create closes the editor');
+    assert.equal(h.node('role-editor-submit').disabled, false,
+        'the submit button is re-enabled after a successful write');
+
+    // Second editor opened from the same page: it must be saveable too.
+    h.node('role-create-btn').dispatch('click');
+    await drain(3);
+    assert.equal(h.editorOpen(), true);
+    assert.equal(h.node('role-editor-submit').disabled, false,
+        'a freshly opened create form starts with an enabled submit button');
+    h.node('adm-fld-name').value = 'Second role';
+    h.node('adm-fld-code').value = 'second-role';
+    h.node('role-editor-submit').dispatch('click');
+    await drain(4);
+    const writes = h.calls.filter(c =>
+        c.options && c.options.method === 'POST' && c.url === '/api/tenant/roles');
+    assert.equal(writes.length, 2, 'the second create also posts');
+});
+
+test('a successful role edit must not leave the next save unusable', async () => {
+    const drain = async (n) => { for (let i = 0; i < n; i++) await settle(); };
+    const h = setup();
+    await editRole(h);
+    h.node('role-editor-submit').dispatch('click');
+    await drain(4);
+    assert.equal(h.editorOpen(), false, 'the save closes the editor');
+    await editRole(h);
+    assert.equal(h.node('role-editor-submit').disabled, false,
+        'reopening the editor re-enables its save button');
+    h.node('role-editor-submit').dispatch('click');
+    await drain(4);
+    const writes = h.calls.filter(c =>
+        c.options && c.options.method === 'POST' && c.url === '/api/tenant/roles/' + role.id);
+    assert.equal(writes.length, 2, 'the second save also posts');
+});
+
+test('a write that never settles can be recovered by reopening the editor', async () => {
+    // A request can hang (server restart, dropped connection). Its in-flight
+    // flag would then stick forever, so going back and opening a fresh form has
+    // to hand the operator a usable button again.
+    const drain = async (n) => { for (let i = 0; i < n; i++) await settle(); };
+    const h = setup(undefined, { onWrite: () => new Promise(() => {}) });
+    await h.ctx.loadRolesView();
+    h.node('role-create-btn').dispatch('click');
+    await drain(3);
+    h.node('adm-fld-name').value = 'Stuck role';
+    h.node('adm-fld-code').value = 'stuck-role';
+    h.node('role-editor-submit').dispatch('click');
+    await drain(2);
+    assert.equal(h.node('role-editor-submit').disabled, true, 'an in-flight write disables the button');
+    // Operator gives up on the stuck write, backs out and opens a new form.
+    h.node('role-editor-back').dispatch('click');
+    await drain(2);
+    h.node('role-create-btn').dispatch('click');
+    await drain(3);
+    assert.equal(h.editorOpen(), true, 'the new form opens');
+    assert.equal(h.node('role-editor-submit').disabled, false, 'the reopened form is usable again');
+});
+
+test('one save persists edits made across several tabs (unified tabbed save)', async () => {
+    // Requirement: clicking the editor's single save must persist every tab,
+    // not just the tab that happens to be active. This guards the regression
+    // where each tab looked like it needed its own save.
+    const drain = async (n) => { for (let i = 0; i < n; i++) await settle(); };
+    const h = setup();
+    await editRole(h);
+    // basics tab: rename + toggle a functional permission
+    const nameEl = h.node('adm-fld-name');
+    nameEl.value = 'Renamed reviewer';
+    nameEl.dispatch('input');
+    const memberPerm = h.permissions().find(p => p.value === 'tenant.members.read');
+    memberPerm.checked = true;
+    memberPerm.dispatch('change');
+    // tool tab: add a tool
+    h.resourceTab('tool').dispatch('click');
+    await drain(3);
+    const toolBoxes = h.resourceList('tool');
+    assert.ok(toolBoxes.length, 'tool list renders from the catalog');
+    toolBoxes[0].checked = true;
+    toolBoxes[0].dispatch('change');
+    // menu tab: add a menu
+    h.resourceTab('menu').dispatch('click');
+    await drain(3);
+    const menuBoxes = h.resourceList('menu');
+    assert.ok(menuBoxes.length, 'menu list renders from the catalog');
+    menuBoxes[0].checked = true;
+    menuBoxes[0].dispatch('change');
+    // a single save
+    h.node('role-editor-submit').dispatch('click');
+    await drain(4);
+    const writes = h.calls.filter(c =>
+        c.options && c.options.method === 'POST' && c.url === '/api/tenant/roles/' + role.id);
+    assert.equal(writes.length, 1, 'exactly one write request for all tabs');
+    const body = JSON.parse(writes[0].options.body);
+    assert.equal(body.name, 'Renamed reviewer', 'basic-tab rename is saved');
+    assert.ok(body.permissions.includes('tenant.members.read'), 'basic-tab permission is saved');
+    assert.ok(body.resource_grants.some(g => g.resource_kind === 'tool' && g.resource_id === 'builtin.read'), 'tool-tab selection is saved');
+    assert.ok(body.resource_grants.some(g => g.resource_kind === 'menu' && g.resource_id === 'nav:chat'), 'menu-tab selection is saved');
+    assert.ok(body.resource_grants.some(g => g.resource_kind === 'model'), 'an untouched tab keeps its grant');
 });
 
 // ---- member ↔ tenant multi-assignment -----------------------------------

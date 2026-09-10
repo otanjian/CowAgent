@@ -93,7 +93,7 @@ def resolve_context(
             user_id=user["id"],
             username=user["username"],
             display_name=user["display_name"],
-            is_platform_admin=bool(user["is_platform_admin"]),
+            is_platform_admin=svc.is_platform_admin_user(user["id"]),
             must_change_password=bool(user["must_change_password"]),
             tenant_id=None,
             membership=None,
@@ -126,7 +126,7 @@ def resolve_context(
         user_id=user["id"],
         username=user["username"],
         display_name=user["display_name"],
-        is_platform_admin=bool(user["is_platform_admin"]),
+        is_platform_admin=svc.is_platform_admin_user(user["id"]),
         must_change_password=bool(user["must_change_password"]),
         tenant_id=header_tenant_id,
         membership=membership,
@@ -140,7 +140,9 @@ def revalidate_context(svc: IdentityService, ctx: RequestContext) -> RequestCont
 
     Used when the caller's authorization may have changed between requests but
     they are still holding the same session. Re-resolves from the database so a
-    revoked role or a disabled membership takes effect immediately.
+    revoked role or a disabled membership takes effect immediately. The platform
+    qualification is re-derived from the role binding (never copied from the
+    stale context), so a revoked platform_admin binding takes effect here too.
     """
     role_codes = svc.role_codes_for(ctx.user_id, ctx.tenant_id) if ctx.tenant_id else []
     permissions = svc.permissions_for(ctx.user_id, ctx.tenant_id) if ctx.tenant_id else set()
@@ -149,7 +151,7 @@ def revalidate_context(svc: IdentityService, ctx: RequestContext) -> RequestCont
         user_id=ctx.user_id,
         username=ctx.username,
         display_name=ctx.display_name,
-        is_platform_admin=ctx.is_platform_admin,
+        is_platform_admin=svc.is_platform_admin_user(ctx.user_id),
         must_change_password=ctx.must_change_password,
         tenant_id=ctx.tenant_id,
         membership=membership,
@@ -191,7 +193,7 @@ def member_context(
         user_id=user["id"],
         username=user["username"],
         display_name=user["display_name"],
-        is_platform_admin=bool(user["is_platform_admin"]),
+        is_platform_admin=svc.is_platform_admin_user(user["id"]),
         must_change_password=bool(user["must_change_password"]),
         tenant_id=tenant_id,
         membership=membership,

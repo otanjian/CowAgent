@@ -20,7 +20,6 @@ import { PaperPlaneIcon } from './icons'
 import { WORKSPACE_DRAG_TYPE } from './FileTree'
 import { iconFor, colorFor } from '../lib/fileKind'
 import WorkspaceSelector from './WorkspaceSelector'
-import PermissionSelector from './PermissionSelector'
 import ModelSelector from './ModelSelector'
 import AgentSelector from './AgentSelector'
 import { useAgentStore, selectMultiAgent } from '../store/agentStore'
@@ -877,7 +876,6 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
           {/* Chips share the flexible middle; each may shrink and truncate. */}
           <div className="flex items-center gap-1 min-w-0 flex-1">
             <WorkspaceSelector sessionId={sessionId} />
-            <PermissionSelector sessionId={sessionId} />
           </div>
 
           <div className="flex items-center gap-1 shrink-0 pl-1">

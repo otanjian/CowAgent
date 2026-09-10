@@ -491,12 +491,13 @@ class ApiClient {
     return this.request(this.scoped(`/api/sessions/${encodeURIComponent(sessionId)}/settings`, agentId))
   }
 
-  /** Set or clear this session's model / permission override, or its team
-   *  members. Pass null to a field to drop the override and follow the global
-   *  default (null members = nobody invited). */
+  /** Set or clear this session's model override, or its team members. Pass null
+   *  to a field to drop the override and follow the global default (null members
+   *  = nobody invited). Execution permission is not settable here: it is owned
+   *  by the caller's role grants. */
   async updateSessionSettings(
     sessionId: string,
-    body: { provider?: string | null; model?: string | null; permission?: string | null; members?: string[] | null },
+    body: { provider?: string | null; model?: string | null; members?: string[] | null },
     agentId?: string
   ): Promise<{ status: string } & Partial<SessionSettingsState> & { message?: string }> {
     return this.request(this.scoped(`/api/sessions/${encodeURIComponent(sessionId)}/settings`, agentId), {

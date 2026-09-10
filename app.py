@@ -90,12 +90,17 @@ def _resolve_startup_channels(raw_channel):
     instances = []
     try:
         from agent import team
-        from channel.channel_instances import resolve_channel_instances
+        from channel.channel_instances import (
+            load_tenant_channel_instances,
+            resolve_channel_instances,
+        )
 
         settings = team.resolve(conf())
-        raw_instances = settings.get("channel_instances")
-        if isinstance(raw_instances, list) and raw_instances:
-            instances = resolve_channel_instances(settings)
+        # Tenant-owned channels live in identity.db, not team.json; in legacy
+        # (non-database) mode the adapter returns [] without touching the
+        # identity store, so this is a no-op for an install that never opts in.
+        tenant_instances = load_tenant_channel_instances()
+        instances = resolve_channel_instances(settings, tenant_instances)
     except Exception as e:
         logger.warning(
             f"[App] Failed to resolve channel_instances, using config.json "
@@ -176,6 +181,7 @@ class ChannelManager:
                     "bound_agent_id": entry.agent_id,
                     "credentials": entry.credentials or None,
                     "members": entry.members or None,
+                    "tenant_id": entry.tenant_id,
                 },
             )
         return (entry, entry, {})

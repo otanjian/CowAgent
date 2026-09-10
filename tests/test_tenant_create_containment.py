@@ -95,6 +95,26 @@ class TenantCreateContainmentTests(unittest.TestCase):
                 os.path.realpath(os.path.join(self.base, "tenants", "derived"))),
             row["shared_root"])
 
+    def test_configured_base_is_reusable_across_tenants(self):
+        """A base stays usable for every later tenant, not just the first.
+
+        Regression: the base-level pre-check rejected any base that merely
+        *contained* an existing tenant root, so the second tenant under the
+        same base was refused (503 config_error) even though its derived root
+        ``<base>/tenants/<code>`` is a sibling and never overlaps.
+        """
+        with patch.dict(os.environ, {"COW_TENANT_BASE": self.base}, clear=False):
+            first = self._create("first")
+            second = self._create("second")
+        self.assertEqual(
+            os.path.realpath(self.svc.get_tenant(first["id"])["shared_root"]),
+            os.path.realpath(os.path.join(self.base, "tenants", "first")))
+        self.assertEqual(
+            os.path.realpath(self.svc.get_tenant(second["id"])["shared_root"]),
+            os.path.realpath(os.path.join(self.base, "tenants", "second")))
+        self.assertIn("first", self._tenant_codes())
+        self.assertIn("second", self._tenant_codes())
+
     def test_disjoint_explicit_root_still_accepted(self):
         created = self._create("side", shared_root=self.disjoint)
         self.assertIn("side", self._tenant_codes())

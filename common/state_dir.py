@@ -414,6 +414,17 @@ def runs_dir(identity=None, ensure: bool = False, base=None) -> Path:
     return _ensure(_user_base(identity, base) / "runs", ensure)
 
 
+def persona_file(identity=None, base=None) -> Path:
+    """The end user's personal persona, layered on top of an Agent's own.
+
+    A file rather than a column, so it is editable in place and versionable.
+    Never created implicitly here: a user without one simply gets no personal
+    segment, which keeps "has not set a persona" distinguishable from "set an
+    empty one". Collapses onto the Agent root while ``user_id`` is unset.
+    """
+    return _user_base(identity, base) / "PERSONA.md"
+
+
 # --- Compatibility -----------------------------------------------------------
 
 

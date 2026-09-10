@@ -51,6 +51,10 @@ def _todo_enabled() -> bool:
 
 class TodoTool(BaseTool):
     name: str = "todo"
+    # Personal todos are the caller's own data; _service() resolves the trusted
+    # identity and enforces todo.read/todo.write on every call, so this tool
+    # does not also need a per-tool tool.execute grant.
+    self_authorized: bool = True
     description: str = (
         "个人待办事项管理（仅当前用户的本人事项）。\n\n"
         "⚠️ 只能用于用户明确请自己记住/跟进的事项，或当前任务确实需要用户补充资料、确认、验收时。"

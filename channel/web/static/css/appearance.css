@@ -801,7 +801,7 @@ html[data-web-palette] #composer-card .composer-hint { margin: 0; padding: 0 4px
 #chat-main.chat-home .composer-send-btn { width: 36px; height: 36px; border-radius: 11px; }
 /* Empty-home popovers open below the composer: long command/model lists must
    not be clipped against the top of the scrollable welcome area. */
-#chat-main.chat-home :is(#attach-menu, #slash-menu, #mention-menu, #workspace-selector-menu, #permission-selector-menu, #model-selector-menu, #composer-agent-menu) {
+#chat-main.chat-home :is(#attach-menu, #slash-menu, #mention-menu, #workspace-selector-menu, #model-selector-menu, #composer-agent-menu) {
     top: calc(100% + 8px);
     bottom: auto;
 }

@@ -8,6 +8,7 @@ import mimetypes
 import os
 import random
 import re
+import secrets
 import shutil
 import sys
 import threading
@@ -44,9 +45,14 @@ from channel.web.admin_handlers import (
     PlatformTenantsHandler,
     PlatformTenantHandler,
     PlatformTenantAdminsHandler,
+    PlatformTenantAgentsHandler,
     TenantInfoHandler,
     TenantMembersHandler,
     TenantMemberHandler,
+    TenantMemberExternalIdentitiesHandler,
+    TenantMemberExternalIdentityHandler,
+    ExternalIdentityAttemptsHandler,
+    PlatformExternalIdentityAttemptsHandler,
     TenantRolesHandler,
     TenantRoleHandler,
     TenantPermissionsHandler,
@@ -59,6 +65,9 @@ from channel.web.admin_handlers import (
     TenantAuthorizationCatalogHandler,
     PlatformTenantAuthorizationCatalogHandler,
     PlatformTenantResourcesHandler,
+    TenantChannelsHandler,
+    TenantChannelHandler,
+    TenantChannelActiveHandler,
 )
 from channel.web.admin_overview import AdminOverviewHandler
 from common import const
@@ -462,6 +471,21 @@ def _require_read_permission(ctx: "Optional[RequestContext]", permission: str) -
                                         "code": "forbidden"}))
 
 
+def _require_catalog_read(ctx: "Optional[RequestContext]", permission: str) -> None:
+    """Gate the tenant skills/tools catalog read for the 工具与技能 console page.
+
+    A platform admin is unrestricted. The built-in tenant_admin reads its own
+    tenant's skills/tools catalog without a per-resource grant — the same read
+    trust ``_tenant_admin_owns_agent`` extends to tenant-bound Agents. A plain
+    member must hold the functional read permission. Read-only: the write paths
+    (``skill.enable``/``skill.edit``) are untouched and still require an
+    explicit grant, so this never widens what a tenant admin may change.
+    """
+    if ctx is not None and (ctx.is_platform_admin or ctx.is_tenant_admin):
+        return
+    _require_read_permission(ctx, permission)
+
+
 def _resource_ids(ctx: "Optional[RequestContext]", kind: str, action: str,
                   permission: Optional[str] = None):
     """Return the resource ids a caller may act on for ``kind``+``action``.
@@ -495,6 +519,66 @@ def _require_resource_action(ctx: "Optional[RequestContext]", kind: str, resourc
                                         "code": "forbidden"}))
 
 
+def _tenant_admin_owns_agent(ctx: "Optional[RequestContext]", agent_id: str) -> bool:
+    """True when ``ctx`` administers the tenant that owns ``agent_id``.
+
+    The tenant binding is the isolation boundary, so a tenant administrator
+    administers its own tenant's Agents without a per-resource grant — the same
+    trust ``_require_agent_create`` and ``_require_chat_use`` already extend to a
+    tenant admin. The explicit binding lookup is what keeps it safe: an Agent
+    bound to another tenant is never "owned", so this grants nothing across
+    tenants (a platform admin is handled by ``check_resource_action`` instead).
+    """
+    if ctx is None or not ctx.is_tenant_admin or not ctx.tenant_id:
+        return False
+    from auth.service import get_identity_service
+    return agent_id in get_identity_service().tenant_agent_ids(ctx.tenant_id)
+
+
+def _tenant_shared_default_agent(ctx: "Optional[RequestContext]", agent_id: str,
+                                 permission: Optional[str] = None,
+                                 tenant_default: Optional[str] = None) -> bool:
+    """True when ``agent_id`` is the caller's *shared* default Agent.
+
+    The console promises a member can open the chat and just type: the server then
+    anchors the session to the tenant's default Agent. That promise only holds if
+    the member can reach that Agent. Demanding a hand-written ``agent:<id>`` grant
+    for the one entry every member shares turns "no Agent selection" back into a
+    locked door — the projection hides the Agent, the console invents a fallback
+    id, and the send fails on an id that was never real.
+
+    So the tenant's *resolved* default Agent is reachable with the functional
+    permission alone. Three conditions keep this narrow:
+
+    * **the caller's own tenant's default** — resolved by
+      :func:`_resolve_tenant_default_agent`, so another tenant's default is never
+      matched, and a tenant boundary is never crossed;
+    * **tenant-shared** — a ``private_owner_user_id`` is an *exclusive* resource,
+      and being the default must not leak it to other members;
+    * **the functional permission** — ``permission``, when given, must be held, so
+      this never hands out a resource the caller has no permission for.
+
+    ``tenant_default`` lets a caller that already resolved the default reuse it
+    instead of re-querying per Agent. Read-only, like every other gate here.
+    """
+    if ctx is None or not agent_id or not ctx.tenant_id:
+        return False
+    if permission is not None and permission not in (ctx.permissions or ()):
+        return False
+    if ctx.is_platform_admin or ctx.is_tenant_admin:
+        # These callers are already unrestricted; this predicate adds nothing.
+        return False
+    if tenant_default is None:
+        tenant_default = _resolve_tenant_default_agent(ctx)
+    if agent_id != tenant_default:
+        return False
+    from auth.service import get_identity_service
+    binding = get_identity_service().get_agent_binding(agent_id)
+    if not binding or binding.get("tenant_id") != ctx.tenant_id:
+        return False
+    return not binding.get("private_owner_user_id")
+
+
 def _require_agent_action(ctx: "Optional[RequestContext]", agent_id: str, action: str,
                           permission: str) -> None:
     """Enforce fine-grained agent authorization for a single agent resource.
@@ -504,6 +588,13 @@ def _require_agent_action(ctx: "Optional[RequestContext]", agent_id: str, action
     action. An agent already bound to the tenant is checked by resource_id.
     """
     if ctx is None:
+        return
+    if _tenant_admin_owns_agent(ctx, agent_id):
+        return
+    # The tenant's shared default Agent is the Agent-less entry point, so read and
+    # use follow the functional permission instead of a per-resource grant. ``edit``
+    # deliberately stays grant-only: being reachable must not imply being rewritable.
+    if action in ("read", "use") and _tenant_shared_default_agent(ctx, agent_id, permission):
         return
     _require_resource_action(ctx, "agent", f"agent:{agent_id}", action, permission)
 
@@ -524,6 +615,47 @@ def _require_agent_create(ctx: "Optional[RequestContext]") -> None:
         raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
                             json.dumps({"status": "error", "message": "forbidden",
                                         "code": "forbidden"}))
+
+
+def _tenant_agent_workspace(ctx: "RequestContext", agent_id: str) -> Optional[str]:
+    """The workspace a tenant-owned Agent must live in, or None to use the default.
+
+    A tenant's Agents belong inside the tenant's own shared root
+    (``<shared_root>/agents/<id>``), never in the instance root: the instance
+    root holds the shared asset library and the other tenants' Agents, so an
+    Agent created there is neither isolated nor visible to the tenant that made
+    it. Returns None when the tenant has no resolved shared root, which leaves
+    the legacy single-tenant instance-root layout untouched.
+    """
+    from auth.service import get_identity_service
+    root = get_identity_service().tenant_shared_root(ctx.tenant_id)
+    if not root:
+        return None
+    return os.path.join(root, "agents", agent_id)
+
+
+def _adopt_created_agent_for_tenant(ctx: "RequestContext", agent_id: str) -> None:
+    """Bind a freshly created Agent to the tenant that created it.
+
+    The read path filters the roster by the tenant binding
+    (``_tenant_agents_projection`` -> ``tenant_agent_ids``), so a write path that
+    skips the binding produces an Agent the creating tenant can never see. The
+    tenant's first Agent also becomes its default, so a tenant that starts empty
+    ends up with something to chat with.
+    """
+    if not agent_id:
+        return
+    from auth.service import get_identity_service
+    svc = get_identity_service()
+    had_agents = bool(svc.tenant_agent_ids(ctx.tenant_id))
+    # Bound tenant-shared: private ownership is an explicit act. Inferring it
+    # from the creator would mark the tenant's first Agent — which the next line
+    # makes the tenant *default* — as that one user's private asset, and
+    # ``private_owner_user_id`` is an exclusive read gate on the chat path.
+    svc.bind_agent(tenant_id=ctx.tenant_id, agent_id=agent_id)
+    if not had_agents and not svc.tenant_default_agent_id(ctx.tenant_id):
+        svc.appoint_tenant_default_agent(
+            tenant_id=ctx.tenant_id, agent_id=agent_id, actor_user_id=ctx.user_id)
 
 
 def _require_chat_use(ctx: "Optional[RequestContext]") -> None:
@@ -591,10 +723,12 @@ def _current_db_identity():
 def _authorized_model_codes() -> Optional[set]:
     """The ``model.use`` model-code set the current identity may select.
 
-    Returns ``None`` when unrestricted (legacy mode, platform all, or no DB
-    identity) so the session picker keeps the whole catalog. Otherwise returns
-    the set of model codes granted across the identity's roles, derived from
-    the catalog ``resource_id`` (``provider:{pid}:{code}``) trailing segment.
+    Returns ``None`` when unrestricted (legacy mode, platform all, or legacy
+    mode with no identity) so the session picker keeps the whole catalog.
+    Otherwise returns the set of model codes granted across the identity's roles,
+    derived from the catalog ``resource_id`` (``provider:{pid}:{code}``) trailing
+    segment. In ``database`` mode a missing identity or a lookup error yields an
+    empty set (fail closed) rather than widening to the whole catalog.
     Recomputed per call — never cached — so a grant change is reflected on the
     next render.
     """
@@ -602,14 +736,16 @@ def _authorized_model_codes() -> Optional[set]:
 
     ident = current_identity()
     if not ident.user_id or not ident.tenant_id:
-        return None
+        # Legacy mode has no per-user grants: unrestricted. Database mode with no
+        # resolved identity must fail closed instead of widening to the catalog.
+        return set() if _is_database_identity() else None
     try:
         from auth.service import get_identity_service
         svc = get_identity_service()
         ids = svc.resource_ids_for(ident.user_id, ident.tenant_id, "model", "use",
                                    permission="model.use")
     except Exception:
-        return None
+        return set() if _is_database_identity() else None
     if ids is None:
         return None  # platform all / unrestricted
     codes: set = set()
@@ -810,21 +946,14 @@ def _require_session_owner(ctx: "Optional[RequestContext]", session_id: str,
             raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
                                 json.dumps({"status": "error", "message": "forbidden"}))
     else:
-        # No agent selected in database mode: allowed only if the tenant's
-        # *bound default* agent can be unambiguously resolved (task 3.8). The
-        # tenant's configured default wins; otherwise a single bound agent is
-        # accepted (a tenant with one agent has an implicit default). Any other
-        # case is ambiguous and is rejected rather than falling back to the
-        # global default agent.
-        from auth.service import get_identity_service
-        svc = get_identity_service()
-        tenant_default = svc.tenant_default_agent_id(ctx.tenant_id)
-        if tenant_default:
+        # No agent selected in database mode: the tenant's *bound default* is
+        # used (task 3.8), so a tenant that owns several Agents is no longer
+        # blocked just because it never picked one. The global default is never
+        # borrowed — it may belong to another tenant.
+        if _resolve_tenant_default_agent(ctx):
             return
-        ids = svc.tenant_agent_ids(ctx.tenant_id)
-        if len(ids) != 1:
-            raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
-                                json.dumps({"status": "error", "message": "default agent ambiguous"}))
+        raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
+                            json.dumps({"status": "error", "message": "default agent ambiguous"}))
 
 
 def _require_owned_session(ctx: "Optional[RequestContext]", session_id: str,
@@ -879,14 +1008,14 @@ def _require_tenant_agent_binding(ctx: "Optional[RequestContext]", agent_id: Opt
             raise web.HTTPError("404 Not Found", {"Content-Type": "application/json"},
                                 json.dumps({"status": "error", "message": "agent not found"}))
         return agent_id
-    tenant_default = svc.tenant_default_agent_id(ctx.tenant_id)
-    if tenant_default:
-        return tenant_default
-    ids = svc.tenant_agent_ids(ctx.tenant_id)
-    if len(ids) != 1:
-        raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
-                            json.dumps({"status": "error", "message": "default agent ambiguous"}))
-    return ids[0]
+    # An Agent-less request is anchored to the tenant's default Agent, which
+    # always resolves when the tenant has any; only an Agent-less tenant is
+    # refused, so entering a conversation never requires picking one.
+    resolved = _resolve_tenant_default_agent(ctx)
+    if resolved:
+        return resolved
+    raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
+                        json.dumps({"status": "error", "message": "default agent ambiguous"}))
 
 
 def _require_private_owner(ctx: "Optional[RequestContext]", agent_id: str) -> None:
@@ -1350,9 +1479,11 @@ _WEB_URLS = (
     '/api/platform/users/([^/]+)/password', 'PlatformUserPasswordHandler',
     '/api/platform/users/([^/]+)/external-identities', 'PlatformUserExternalIdentitiesHandler',
     '/api/platform/users/([^/]+)/external-identities/([^/]+)', 'PlatformUserExternalIdentityHandler',
+    '/api/platform/external-identity-attempts', 'PlatformExternalIdentityAttemptsHandler',
     '/api/platform/users/([^/]+)', 'PlatformUsersHandler',
     '/api/platform/tenants', 'PlatformTenantsHandler',
     '/api/platform/tenants/([^/]+)/admins', 'PlatformTenantAdminsHandler',
+    '/api/platform/tenants/([^/]+)/agents', 'PlatformTenantAgentsHandler',
     '/api/platform/tenants/([^/]+)/roles', 'PlatformTenantRolesHandler',
     '/api/platform/tenants/([^/]+)/roles/([^/]+)', 'PlatformTenantRoleHandler',
     '/api/platform/tenants/([^/]+)/authorization/catalog', 'PlatformTenantAuthorizationCatalogHandler',
@@ -1360,7 +1491,10 @@ _WEB_URLS = (
     '/api/platform/tenants/([^/]+)', 'PlatformTenantHandler',
     '/api/tenant', 'TenantInfoHandler',
     '/api/tenant/members', 'TenantMembersHandler',
+    '/api/tenant/members/([^/]+)/external-identities', 'TenantMemberExternalIdentitiesHandler',
+    '/api/tenant/members/([^/]+)/external-identities/([^/]+)', 'TenantMemberExternalIdentityHandler',
     '/api/tenant/members/([^/]+)', 'TenantMemberHandler',
+    '/api/tenant/external-identity-attempts', 'ExternalIdentityAttemptsHandler',
     '/api/tenant/roles/([^/]+)', 'TenantRoleHandler',
     '/api/tenant/roles', 'TenantRolesHandler',
     '/api/tenant/authorization/catalog', 'TenantAuthorizationCatalogHandler',
@@ -1369,6 +1503,9 @@ _WEB_URLS = (
     '/api/tenant/departments/([^/]+)', 'TenantDepartmentHandler',
     '/api/identity/audit', 'IdentityAuditHandler',
     '/api/identity/administered-tenants', 'IdentityAdministeredTenantsHandler',
+    '/api/tenant/channels', 'TenantChannelsHandler',
+    '/api/tenant/channels/([^/]+)/active', 'TenantChannelActiveHandler',
+    '/api/tenant/channels/([^/]+)', 'TenantChannelHandler',
     '/api/admin/overview', 'AdminOverviewHandler',
     '/message', 'MessageHandler',
     '/upload', 'UploadHandler',
@@ -1798,11 +1935,13 @@ class WebChannel(ChatChannel):
                     "result": result_str,
                     "execution_time": round(exec_time, 2)
                 }
-                # Carry the permission-refusal marker so the UI can offer a
-                # one-click "switch permission" hint rather than a generic error.
+                # Carry the permission-refusal marker so the UI can explain why
+                # the call was refused. Only a legacy mode refusal carries the
+                # mode; database-mode role/isolation refusals carry the kind.
                 if data.get("permission_denied"):
                     payload["permission_denied"] = True
                     payload["permission_mode"] = data.get("permission_mode")
+                    payload["permission_denial_kind"] = data.get("permission_denial_kind")
                 # A tool that wrote its outcome for a person sends that
                 # instead. It gets a far larger budget than `result`: this is
                 # the report itself, not a trace of how it was produced.
@@ -2968,6 +3107,27 @@ def _is_database_identity() -> bool:
     return str(conf().get("identity_mode", "legacy") or "legacy") == "database"
 
 
+def _permission_mode_projection() -> dict:
+    """The global default-permission setting as the console should render it.
+
+    A legacy install sets its own default and may edit it. In database mode the
+    session permission mode is not what gates execution — the caller's role
+    grants are — so the setting is shown read-only as an explanation, never as a
+    knob that changes what a tenant user may run.
+    """
+    projection = {
+        "agent_permission_mode": permission_global_mode(),
+        "permission_modes": list(PERMISSION_MODES),
+    }
+    if _is_database_identity():
+        projection["permission_mode_source"] = "role"
+        projection["permission_mode_editable"] = False
+    else:
+        projection["permission_mode_source"] = "config"
+        projection["permission_mode_editable"] = True
+    return projection
+
+
 # Console navigation presentation switch. Allowed values: "classic" | "split".
 _NAVIGATION_MODES = ("classic", "split")
 
@@ -3511,8 +3671,13 @@ class ChatHandler:
         cache_bust = str(int(time.time()))
         # Every first-party asset the page pulls in, so an upgraded console is
         # never left running against a browser-cached copy of the old scripts.
+        # identity-admin.js carries the tabbed editors: if it is missed here a
+        # browser can keep rendering the previous (per-tab save) editor even
+        # though the server already ships the unified-save one.
         for asset in ('js/console.js', 'js/workspace.js', 'js/doc-editor.js',
-                      'js/appearance.js', 'css/console.css', 'css/appearance.css'):
+                      'js/appearance.js', 'js/scenes/index.js',
+                      'js/identity-admin.js', 'js/todos.js',
+                      'css/console.css', 'css/appearance.css'):
             html = html.replace(f'assets/{asset}', f'assets/{asset}?v={cache_bust}')
         # Inject the backend-resolved default language for first-load fallback.
         html = html.replace("{{COW_DEFAULT_LANG}}", i18n.get_language())
@@ -3782,8 +3947,8 @@ class ConfigHandler:
                 "self_evolution_enabled": get_evolution_config().enabled,
                 "subagent_enabled": SubagentSettings.from_config().enabled,
                 # Default permission mode for sessions that have not pinned one.
-                "agent_permission_mode": permission_global_mode(),
-                "permission_modes": list(PERMISSION_MODES),
+                # In database mode this is read-only (roles own execution).
+                **_permission_mode_projection(),
                 "api_bases": api_bases,
                 "api_keys": api_keys_masked,
                 "providers": providers,
@@ -3817,6 +3982,10 @@ class ConfigHandler:
                     nested.setdefault(section, {})[leaf] = bool(value)
                     continue
                 if key not in self.EDITABLE_KEYS:
+                    continue
+                if key == "agent_permission_mode" and _is_database_identity():
+                    # database mode gates execution on role grants, not this
+                    # setting; refuse to persist a change that has no effect.
                     continue
                 if key in ("agent_max_context_tokens", "agent_max_context_turns", "agent_max_steps"):
                     value = int(value)
@@ -6238,7 +6407,17 @@ class ModelsHandler:
 
 
 class ChannelsHandler:
-    """API for managing external channel configurations (feishu, dingtalk, etc)."""
+    """API for managing external channel configurations (feishu, dingtalk, etc).
+
+    This is the *instance-level* (global) configuration, owned by the platform
+    admin control plane. In database mode ``_require_platform_console`` resolves
+    the session and rejects a non-platform-admin: the HTTP-method policy
+    processor classifies the route ``platform`` but deliberately does not
+    duplicate handler authorization, so without this guard opening the route
+    would let any authenticated member read or repoint the global channel
+    credentials. A tenant admin configures its own channels through
+    ``/api/tenant/channels`` instead.
+    """
 
     CHANNEL_DEFS = OrderedDict([
         ("weixin", {
@@ -6476,7 +6655,7 @@ class ChannelsHandler:
         return out
 
     def GET(self):
-        _require_auth()
+        _require_platform_console()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from common import i18n
@@ -6550,7 +6729,7 @@ class ChannelsHandler:
             return json.dumps({"status": "error", "message": str(e)})
 
     def POST(self):
-        _require_auth()
+        _require_platform_console()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             body = json.loads(web.data())
@@ -7087,22 +7266,45 @@ class WeixinQrHandler:
         return json.dumps({"status": "success", "qr_status": qr_status})
 
 
+def _register_owner_scope() -> Tuple[str, str]:
+    """拥有本次注册会话的 ``(user_id, tenant_id)``。
+
+    database 模式下绑定到已验证的调用者及其选中的租户；legacy 模式是单用户
+    部署，任何通过认证的调用者都是同一所有者。
+    """
+    if not _is_database_identity():
+        return ("", "")
+    from channel.web.auth_handlers import _require_context
+    ctx = _require_context(require_tenant=True)
+    return (ctx.user_id, ctx.tenant_id or "")
+
+
 class FeishuRegisterHandler:
     """飞书智能体应用一键创建（OAuth 设备授权流，基于 lark.register_app SDK）。
 
-    GET  /api/feishu/register   → 启动注册：调用 SDK 生成二维码 URL，立即返回；
+    GET  /api/feishu/register   → 为当前发起者启动一次注册，返回不透明句柄与二维码；
                                    后台线程继续轮询飞书侧直到用户扫码授权。
-    POST /api/feishu/register   → 轮询当前会话状态（downloading / pending / done /
-                                   error / expired）。桌面版首次启用时要先下载飞书
-                                   SDK 包，此时二维码尚不存在，改由轮询补发。
+    POST /api/feishu/register   → 携带句柄轮询该会话状态（downloading / pending /
+                                   done / error / expired）。桌面版首次启用时要先下载
+                                   飞书 SDK 包，此时二维码尚不存在，改由轮询补发。
                                    注册成功后不直接写 config，由前端再调
-                                   /api/channels {action:'connect'} 走标准启用流程。
+                                   /api/tenant/channels 走标准启用流程。
+
+    会话按发起者绑定：句柄不透明，读取一律限定在 ``(user_id, tenant_id)`` 之内，
+    因此同一部署里的其他身份既拿不到凭据，也无法探测该会话是否存在。同一身份
+    再次发起会替换自己的上一个会话（避免两个 SDK 线程轮询同一次注册），但不会
+    影响他人正在进行的会话。
     """
 
-    # 进程内单例状态（{url, expire_in, status, app_id, app_secret, error, thread}）。
-    # 简单的本地自部署场景下不需要 session 隔离。
-    _state = {}
+    #: handle -> 会话记录（{handle, owner_user_id, owner_tenant_id, status,
+    #: created_at, cancel_event, url, expire_in, qr_image, app_id, app_secret,
+    #: error}）。凭据在交付一次后即从记录中移除。
+    _sessions: Dict[str, dict] = {}
     _lock = threading.Lock()
+    #: 超过此时长的会话被回收；SDK 自身二维码有效期为 600s。
+    _SESSION_TTL = 900.0
+    #: GET 等待 SDK 产出二维码的上限；超时由前端转轮询。
+    _QR_WAIT_SECONDS = 10.0
 
     @staticmethod
     def _qr_to_data_uri(data: str) -> str:
@@ -7110,20 +7312,152 @@ class FeishuRegisterHandler:
         return WeixinQrHandler._qr_to_data_uri(data)
 
     @classmethod
-    def _reset_state(cls):
+    def _reset_sessions(cls):
+        """丢弃全部会话（测试用，也用于干净停机）。"""
+        from auth.scan_authorization import _reset as _reset_scan_grants
+
         with cls._lock:
-            cls._state = {}
+            for session in cls._sessions.values():
+                cancel = session.get("cancel_event")
+                if cancel is not None:
+                    cancel.set()
+            cls._sessions = {}
+        # The grants are minted from these sessions and are only meaningful
+        # while one exists, so dropping the sessions drops them too.
+        _reset_scan_grants()
 
     @classmethod
-    def _start_register_thread(cls):
-        """启动一次新的注册会话。如已有进行中的会话，先取消（通过 cancel_event）。"""
-        # 先取消可能存在的上一次会话，避免两个 SDK 线程并发 poll 同一个端点
+    def _purge_expired_locked(cls):
+        """回收超时会话。调用方必须已持有 ``_lock``。"""
+        now = time.time()
+        for handle, session in list(cls._sessions.items()):
+            created = float(session.get("created_at") or 0)
+            if now - created > cls._SESSION_TTL:
+                cancel = session.get("cancel_event")
+                if cancel is not None:
+                    cancel.set()
+                cls._sessions.pop(handle, None)
+
+    @classmethod
+    def _create_session(cls, owner_user_id: str, owner_tenant_id: str) -> str:
+        """为某一身份开启新会话并返回其不透明句柄。
+
+        同一身份已有的会话会被取代（取消并移除），以保证同一次注册只有一个 SDK
+        线程在轮询；其他身份的会话不受影响。
+        """
+        handle = secrets.token_urlsafe(32)
+        owner = (owner_user_id or "", owner_tenant_id or "")
         with cls._lock:
-            old_cancel = cls._state.get("cancel_event") if cls._state else None
-            if old_cancel is not None:
-                old_cancel.set()
-            cancel_event = threading.Event()
-            cls._state = {"status": "starting", "cancel_event": cancel_event}
+            cls._purge_expired_locked()
+            for existing, session in list(cls._sessions.items()):
+                if (session.get("owner_user_id"), session.get("owner_tenant_id")) == owner:
+                    previous = session.get("cancel_event")
+                    if previous is not None:
+                        previous.set()
+                    cls._sessions.pop(existing, None)
+            cls._sessions[handle] = {
+                "handle": handle,
+                "owner_user_id": owner[0],
+                "owner_tenant_id": owner[1],
+                "status": "starting",
+                "created_at": time.time(),
+                "cancel_event": threading.Event(),
+            }
+        return handle
+
+    @classmethod
+    def _session_for(cls, handle: str, owner_user_id: str, owner_tenant_id: str):
+        """仅当调用者拥有该句柄时返回会话记录，否则返回 None。
+
+        他人的句柄与不存在的句柄给出同一答案：调用者不得探测其他身份的会话。
+        """
+        if not handle:
+            return None
+        owner = (owner_user_id or "", owner_tenant_id or "")
+        with cls._lock:
+            session = cls._sessions.get(handle)
+            if session is None:
+                return None
+            if (session.get("owner_user_id"), session.get("owner_tenant_id")) != owner:
+                return None
+            return session
+
+    @classmethod
+    def _mint_scan_grant(cls, owner_user_id: str, owner_tenant_id: str) -> str:
+        """The one-time grant that lets this scan's create skip the password.
+
+        Kept here, next to the session that justifies it, so the two cannot
+        drift: the grant is bound to the same owner the session is bound to.
+        """
+        from auth.scan_authorization import mint
+
+        return mint(actor_user_id=owner_user_id, tenant_id=owner_tenant_id,
+                    channel_type="feishu")
+
+    @classmethod
+    def _set_status(cls, handle: str, status: str, **fields) -> bool:
+        """推进某会话的状态（由 SDK 工作线程调用）。
+
+        会话已被取代或回收时返回 ``False`` 且不写入，因此迟到的 SDK 回调不会
+        覆盖更新的会话。
+        """
+        with cls._lock:
+            session = cls._sessions.get(handle)
+            if session is None:
+                return False
+            session["status"] = status
+            session.update(fields)
+            return True
+
+    @classmethod
+    def _poll_payload(cls, handle: str, owner_user_id: str, owner_tenant_id: str) -> dict:
+        """某一身份的轮询应答；成功时消费凭据。
+
+        未知句柄、他人句柄与已消费的会话一律读作 ``expired``，三者不可区分。
+        """
+        owner = (owner_user_id or "", owner_tenant_id or "")
+        with cls._lock:
+            session = cls._sessions.get(handle) if handle else None
+            if session is not None and (
+                    session.get("owner_user_id"), session.get("owner_tenant_id")) != owner:
+                session = None
+            if session is None:
+                return {"status": "success", "register_status": "expired"}
+            status = session.get("status") or "idle"
+            if status == "done":
+                payload = {
+                    "status": "success",
+                    "register_status": "done",
+                    "app_id": session.get("app_id", ""),
+                    "app_secret": session.get("app_secret", ""),
+                    # The console redeems this to create the instance with no
+                    # password prompt, so the successful scan does not become a
+                    # "configured in the UI but never stored" channel.
+                    "scan_ticket": cls._mint_scan_grant(owner_user_id, owner_tenant_id),
+                }
+                # 一次性交付：凭据随即从服务端状态中移除。
+                cls._sessions.pop(handle, None)
+                return payload
+            if status in ("error", "expired", "denied"):
+                return {"status": "success", "register_status": status,
+                        "message": session.get("error", "")}
+            if status in ("starting", "idle"):
+                # 与旧行为一致：启动阶段对外表现为 pending，二维码由后续轮询补发。
+                status = "pending"
+            payload = {"status": "success", "register_status": status}
+            if session.get("url"):
+                payload["qrcode_url"] = session["url"]
+                payload["qr_image"] = session.get("qr_image", "")
+            return payload
+
+    @classmethod
+    def _start_register_thread(cls, handle: str):
+        """为 *handle* 指向的会话运行一次 SDK 注册。"""
+        with cls._lock:
+            session = cls._sessions.get(handle)
+            if session is None:
+                return
+            cancel_event = session["cancel_event"]
 
         def _worker():
             try:
@@ -7132,26 +7466,24 @@ class FeishuRegisterHandler:
                 # so the modal explains the wait instead of just spinning.
                 from channel.feishu import lark_install
                 if lark_install.needs_download():
-                    with cls._lock:
-                        cls._state["status"] = "downloading"
+                    cls._set_status(handle, "downloading")
                 lark_install.ensure(allow_install=True)
                 import lark_oapi as lark
             except ImportError as e:
-                with cls._lock:
-                    cls._state["status"] = "error"
-                    cls._state["error"] = (
-                        "飞书 SDK 不可用，请联网后重试，"
-                        "或手动执行 pip install -U 'lark-oapi>=1.5.5'（%s）" % e
-                    )
+                cls._set_status(handle, "error", error=(
+                    "飞书 SDK 不可用，请联网后重试，"
+                    "或手动执行 pip install -U 'lark-oapi>=1.5.5'（%s）" % e
+                ))
                 return
 
             def _on_qr(info):
-                # SDK 拿到二维码 URL 后立即回调；写入 state 让前端 GET 立刻能拿到
-                with cls._lock:
-                    cls._state["url"] = info.get("url", "")
-                    cls._state["expire_in"] = info.get("expire_in", 600)
-                    cls._state["qr_image"] = cls._qr_to_data_uri(info.get("url", ""))
-                    cls._state["status"] = "pending"
+                # SDK 拿到二维码 URL 后立即回调；写入会话让前端 GET 立刻能拿到
+                cls._set_status(
+                    handle, "pending",
+                    url=info.get("url", ""),
+                    expire_in=info.get("expire_in", 600),
+                    qr_image=cls._qr_to_data_uri(info.get("url", "")),
+                )
                 logger.info(f"[FeishuRegister] QR ready, expire_in={info.get('expire_in')}s")
 
             def _on_status(info):
@@ -7169,10 +7501,11 @@ class FeishuRegisterHandler:
                     source="cowagent",
                     cancel_event=cancel_event,
                 )
-                with cls._lock:
-                    cls._state["status"] = "done"
-                    cls._state["app_id"] = result.get("client_id", "")
-                    cls._state["app_secret"] = result.get("client_secret", "")
+                cls._set_status(
+                    handle, "done",
+                    app_id=result.get("client_id", ""),
+                    app_secret=result.get("client_secret", ""),
+                )
                 logger.info(f"[FeishuRegister] App created: app_id={result.get('client_id')}")
             except Exception as e:
                 err_msg = str(e)
@@ -7183,64 +7516,73 @@ class FeishuRegisterHandler:
                 elif "Denied" in err_cls:
                     status = "denied"
                 elif "abort" in err_msg.lower() or "cancel" in err_msg.lower():
-                    # 被新一轮注册抢占，保持安静
+                    # 被同一身份的新一轮注册取代，保持安静
                     return
                 else:
                     status = "error"
-                with cls._lock:
-                    # 仅当当前 state 仍属于本次 worker 时才写入，避免覆盖更新的会话
-                    if cls._state.get("cancel_event") is cancel_event:
-                        cls._state["status"] = status
-                        cls._state["error"] = err_msg
+                # 会话已被取代或回收时 _set_status 不写入，避免覆盖更新的会话
+                cls._set_status(handle, status, error=err_msg)
                 logger.warning(f"[FeishuRegister] Register failed ({err_cls}): {err_msg}")
 
         threading.Thread(target=_worker, daemon=True, name="feishu-register").start()
 
     def GET(self):
-        """启动一次新的注册会话。如果已有 pending/done 会话则覆盖。"""
+        """为当前发起者启动一次注册会话，返回句柄与二维码。"""
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
-            self._start_register_thread()
+            owner_user_id, owner_tenant_id = _register_owner_scope()
+            handle = self._create_session(owner_user_id, owner_tenant_id)
+            self._start_register_thread(handle)
             # 等待 SDK 拿到二维码 URL（最多 10s）。SDK 内部会马上回调 _on_qr。
             import time as _t
-            for _ in range(100):
-                with self._lock:
-                    if self._state.get("url") or self._state.get("status") in (
-                        "downloading", "error", "expired", "denied"
-                    ):
-                        break
+            deadline = time.time() + self._QR_WAIT_SECONDS
+            while time.time() < deadline:
+                session = self._session_for(handle, owner_user_id, owner_tenant_id)
+                if session is None or session.get("url") or session.get("status") in (
+                    "downloading", "error", "expired", "denied"
+                ):
+                    break
                 _t.sleep(0.1)
-            with self._lock:
-                if self._state.get("status") in ("error", "expired", "denied"):
-                    return json.dumps({
-                        "status": "error",
-                        "message": self._state.get("error", "register failed"),
-                    })
-                if self._state.get("status") == "downloading":
-                    # The SDK bundle is still coming down; the QR only exists
-                    # once it lands, so hand the frontend over to polling.
-                    return json.dumps({
-                        "status": "success",
-                        "register_status": "downloading",
-                    })
-                if not self._state.get("url"):
-                    return json.dumps({
-                        "status": "error",
-                        "message": "等待飞书二维码超时，请重试",
-                    })
+            session = self._session_for(handle, owner_user_id, owner_tenant_id)
+            if session is None:
+                return json.dumps({
+                    "status": "error",
+                    "message": "注册会话已失效，请重试",
+                })
+            if session.get("status") in ("error", "expired", "denied"):
+                return json.dumps({
+                    "status": "error",
+                    "handle": handle,
+                    "message": session.get("error", "register failed"),
+                })
+            if session.get("status") == "downloading":
+                # The SDK bundle is still coming down; the QR only exists
+                # once it lands, so hand the frontend over to polling.
                 return json.dumps({
                     "status": "success",
-                    "qrcode_url": self._state["url"],
-                    "qr_image": self._state.get("qr_image", ""),
-                    "expire_in": self._state.get("expire_in", 600),
+                    "handle": handle,
+                    "register_status": "downloading",
                 })
+            if not session.get("url"):
+                return json.dumps({
+                    "status": "error",
+                    "handle": handle,
+                    "message": "等待飞书二维码超时，请重试",
+                })
+            return json.dumps({
+                "status": "success",
+                "handle": handle,
+                "qrcode_url": session["url"],
+                "qr_image": session.get("qr_image", ""),
+                "expire_in": session.get("expire_in", 600),
+            })
         except Exception as e:
             logger.error(f"[WebChannel] FeishuRegister GET error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
 
     def POST(self):
-        """轮询注册结果。"""
+        """轮询当前发起者自己的注册会话。"""
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
@@ -7248,37 +7590,17 @@ class FeishuRegisterHandler:
             action = body.get("action", "poll")
             if action != "poll":
                 return json.dumps({"status": "error", "message": f"unknown action: {action}"})
-
-            with self._lock:
-                status = self._state.get("status", "idle")
-                if status == "done":
-                    payload = {
-                        "status": "success",
-                        "register_status": "done",
-                        "app_id": self._state.get("app_id", ""),
-                        "app_secret": self._state.get("app_secret", ""),
-                    }
-                    # 一次性返回凭据后清掉，避免敏感信息长期驻留内存
-                    self._state = {}
-                    return json.dumps(payload)
-                if status in ("error", "expired", "denied"):
-                    return json.dumps({
-                        "status": "success",
-                        "register_status": status,
-                        "message": self._state.get("error", ""),
-                    })
-                if status == "downloading":
-                    return json.dumps({
-                        "status": "success",
-                        "register_status": "downloading",
-                    })
-                # pending / starting：还在等用户扫码。二维码可能是在 GET 返回
-                # "downloading" 之后才生成的，带上让前端补渲染。
-                payload = {"status": "success", "register_status": "pending"}
-                if self._state.get("url"):
-                    payload["qrcode_url"] = self._state["url"]
-                    payload["qr_image"] = self._state.get("qr_image", "")
-                return json.dumps(payload)
+            handle = str(body.get("handle") or "").strip()
+            if not handle:
+                # 句柄缺失不属于归属判定，给出可操作错误而非凭空「过期」。
+                return json.dumps({
+                    "status": "error",
+                    "message": "register handle is required",
+                    "code": "missing_handle",
+                })
+            owner_user_id, owner_tenant_id = _register_owner_scope()
+            return json.dumps(
+                self._poll_payload(handle, owner_user_id, owner_tenant_id))
         except Exception as e:
             logger.error(f"[WebChannel] FeishuRegister POST error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -7306,7 +7628,7 @@ class ToolsHandler:
             from agent.tools.tool_manager import ToolManager
             from common import i18n
             with _db_scope() as ctx:
-                _require_read_permission(ctx, "tool.read")
+                _require_catalog_read(ctx, "tool.read")
                 tm = ToolManager()
                 if not tm.tool_classes:
                     tm.load_tools()
@@ -7369,11 +7691,14 @@ def _skill_service(agent_id: str = ''):
 def _filter_skill_catalog(ctx: "Optional[RequestContext]", skills: List[dict], action: str) -> List[dict]:
     """Narrow a skill list to those the caller may act on (``read``/``use``/...).
 
-    A platform admin is unrestricted. A database-mode member sees only skills
-    explicitly granted for ``action`` (a skill's ``resource_id`` must be present;
-    skills persisted before this field get one from their ``source``/``name``).
-    Legacy mode is unrestricted.
+    A platform admin is unrestricted. The built-in tenant_admin reads its own
+    tenant's whole catalog (the read-only management view); a database-mode
+    member sees only skills explicitly granted for ``action`` (a skill's
+    ``resource_id`` must be present; skills persisted before this field get one
+    from their ``source``/``name``). Legacy mode is unrestricted.
     """
+    if ctx is not None and ctx.is_tenant_admin:
+        return skills
     allowed = _resource_ids(ctx, "skill", action, permission="skill.read" if action != "read" else None)
     if allowed is None:
         return skills
@@ -7390,10 +7715,13 @@ def _filter_skill_catalog(ctx: "Optional[RequestContext]", skills: List[dict], a
 def _filter_tool_catalog(ctx: "Optional[RequestContext]", tools: List[dict], action: str) -> List[dict]:
     """Narrow a tool list to entries the caller may act on (``read``/``execute``/...).
 
-    A platform admin is unrestricted. A database-mode member sees only tools
-    explicitly granted for ``action`` via their ``resource_id``. Legacy mode is
-    unrestricted.
+    A platform admin is unrestricted. The built-in tenant_admin reads its own
+    tenant's whole catalog (the read-only management view); a database-mode
+    member sees only tools explicitly granted for ``action`` via their
+    ``resource_id``. Legacy mode is unrestricted.
     """
+    if ctx is not None and ctx.is_tenant_admin:
+        return tools
     allowed = _resource_ids(ctx, "tool", action, permission="tool.read" if action != "read" else None)
     if allowed is None:
         return tools
@@ -7411,7 +7739,7 @@ class SkillsHandler:
         try:
             from common import i18n
             with _db_scope() as ctx:
-                _require_read_permission(ctx, "skill.read")
+                _require_catalog_read(ctx, "skill.read")
                 params = web.input(agent_id='')
                 # The library page lists everything installed, unnarrowed by the
                 # Agent's selection: a skill it has not selected still has to be
@@ -7484,7 +7812,7 @@ class SkillContentHandler:
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             with _db_scope() as ctx:
-                _require_read_permission(ctx, "skill.read")
+                _require_catalog_read(ctx, "skill.read")
                 params = web.input(name='', resource_id='', agent_id='')
                 name = (getattr(params, 'name', '') or '').strip()
                 resource_id = (getattr(params, 'resource_id', '') or '').strip()
@@ -7494,7 +7822,10 @@ class SkillContentHandler:
                 # Resolve to the exact authorization object, then check the grant.
                 entry = service.resolve(resource_id=resource_id or None, name=name or None)
                 rid = resource_id or f"{entry.skill.source}:{entry.skill.name}"
-                _require_resource_action(ctx, "skill", rid, "read", "skill.read")
+                # A tenant admin browses its own tenant's skills read-only; the
+                # write path (POST) still requires ``skill.edit`` and a grant.
+                if not (ctx is not None and ctx.is_tenant_admin):
+                    _require_resource_action(ctx, "skill", rid, "read", "skill.read")
                 result = service.read_content(entry.skill.name, resource_id=rid)
             return json.dumps({"status": "success", **result}, ensure_ascii=False)
         except (ValueError, FileNotFoundError) as e:
@@ -7899,53 +8230,88 @@ def _tenant_ids_for_context(ctx: "Optional[RequestContext]") -> Optional[list]:
     return get_identity_service().tenant_agent_ids(ctx.tenant_id)
 
 
-def _tenant_default_agent_id(ctx: "Optional[RequestContext]") -> Optional[str]:
-    """Resolve the tenant-bound default Agent for ``ctx`` (task 3.8).
+def _resolve_tenant_default_agent(ctx: "Optional[RequestContext]") -> Optional[str]:
+    """The Agent an Agent-less request from ``ctx`` should be anchored to.
 
-    Returns the tenant's configured ``default_agent_id`` when set. When the
-    tenant has no configured default, fall back to its *single* bound agent (so
-    a fresh tenant still has a sensible default) — and otherwise no agent is the
-    project default. Legacy mode (``ctx is None``) has no tenant default, so
-    callers fall back to the global registry default.
+    A session must still belong to one Agent, but the user must not have to pick
+    it. The rule itself lives on the identity service
+    (:meth:`IdentityService.resolved_default_agent_id`) so every read path
+    agrees: configured default, then the tenant-shared Agents by smallest stable
+    id, then any. Read-only — it never writes a default, so a GET cannot mutate
+    and the answer never flips with binding insert order. The global
+    ``registry.default_agent_id`` is never borrowed — it may belong to another
+    tenant. Returns None only when the tenant has no Agent at all.
     """
     if ctx is None or not ctx.tenant_id:
         return None
     from auth.service import get_identity_service
-    svc = get_identity_service()
-    tenant_default = svc.tenant_default_agent_id(ctx.tenant_id)
-    if tenant_default:
-        return tenant_default
-    ids = svc.tenant_agent_ids(ctx.tenant_id)
-    return ids[0] if len(ids) == 1 else None
+    return get_identity_service().resolved_default_agent_id(ctx.tenant_id)
 
 
-def _tenant_agents_projection(ctx: "Optional[RequestContext]") -> Dict:
-    """Safe read-only agent projection for database mode.
+def _tenant_default_agent_id(ctx: "Optional[RequestContext]") -> Optional[str]:
+    """Resolve the tenant-bound default Agent for ``ctx`` (task 3.8).
 
-    Filters to the tenant-bound agents the caller may see (task 3.8) and returns
-    only non-sensitive fields (never workspace paths / credentials). Uses the
-    same whitelist as the workbench projection. ``is_default`` reflects the
-    caller's *tenant-bound* default agent (task 3.8) — never the global default —
-    so the same global Agent bound to two tenants is only marked default for the
-    tenant that actually selected it.
+    Returns the tenant's configured ``default_agent_id`` when set, then the
+    deterministic fallback from :func:`_resolve_tenant_default_agent`. Legacy
+    mode (``ctx is None``) has no tenant default, so callers fall back to the
+    global registry default.
     """
-    if ctx is None:
-        return _workbench_agents_projection()
+    return _resolve_tenant_default_agent(ctx)
+
+
+def _iter_tenant_agents(ctx: "RequestContext"):
+    """Yield the Agents a database-mode caller may read, default-first.
+
+    Each item is ``(profile, tenant_default, can_chat, unavailable_reason)``.
+    Visibility and chat readiness live here so the workbench projection (a
+    minimal whitelist) and the management projection (the editable fields) can
+    never drift apart: both read the same roster through the same gates.
+
+    ``is_default`` is the caller's *tenant-bound* default agent (task 3.8) —
+    never the global default — so the same global Agent bound to two tenants is
+    only marked default for the tenant that actually selected it.
+    """
     from agent.registry import get_agent_registry
     registry = get_agent_registry()
     visible = _tenant_ids_for_context(ctx)
     tenant_default = _tenant_default_agent_id(ctx)
-    # Fine-grained resource grant: only show agents the caller may read.
-    allowed_agent_ids = _resource_ids(ctx, "agent", "read", permission="agent.read")
-    agents = []
+    # Fine-grained resource grant: only show agents the caller may read. A tenant
+    # admin administers its own tenant's Agents, and ``visible`` already holds it
+    # to that tenant's bindings, so per-resource grants must not additionally
+    # hide an Agent the tenant itself owns.
+    if ctx.is_tenant_admin:
+        allowed_agent_ids = None
+    else:
+        allowed_agent_ids = _resource_ids(ctx, "agent", "read", permission="agent.read")
     for profile in sorted(registry.list(), key=lambda item: (item.id != tenant_default, item.id)):
         if visible is not None and profile.id not in visible:
             continue
         if not profile.enabled:
             continue
-        if allowed_agent_ids is not None and f"agent:{profile.id}" not in allowed_agent_ids:
+        if (allowed_agent_ids is not None
+                and f"agent:{profile.id}" not in allowed_agent_ids
+                and not _tenant_shared_default_agent(
+                    ctx, profile.id, "agent.read", tenant_default=tenant_default)):
             continue
-        can_chat, unavailable_reason = _workbench_chat_readiness(ctx, profile.id)
+        can_chat, unavailable_reason = _workbench_chat_readiness(
+            ctx, profile.id, tenant_default=tenant_default)
+        yield profile, tenant_default, can_chat, unavailable_reason
+
+
+def _tenant_agents_projection(ctx: "Optional[RequestContext]") -> Dict:
+    """Minimal read-only agent projection for database mode.
+
+    Filters to the tenant-bound agents the caller may see (task 3.8) and returns
+    only the fields the workbench card gallery needs (never workspace paths /
+    credentials). Uses the same whitelist as the legacy workbench projection.
+    ``is_default`` reflects the caller's *tenant-bound* default agent (task 3.8)
+    — never the global default — so the same global Agent bound to two tenants
+    is only marked default for the tenant that actually selected it.
+    """
+    if ctx is None:
+        return _workbench_agents_projection()
+    agents = []
+    for profile, tenant_default, can_chat, unavailable_reason in _iter_tenant_agents(ctx):
         agents.append({
             "id": profile.id,
             "name": profile.name,
@@ -7958,8 +8324,43 @@ def _tenant_agents_projection(ctx: "Optional[RequestContext]") -> Dict:
     return {"agents": agents}
 
 
+def _tenant_agents_admin_projection(ctx: "Optional[RequestContext]") -> Dict:
+    """Tenant-scoped management projection for the console's Agent pages.
+
+    Same visibility and readiness as :func:`_tenant_agents_projection`, but keeps
+    the editable Agent fields (``model``/``bot_type``, the digital-employee
+    profile, asset selections) that the configuration pane round-trips on save.
+    The console reads this projection, edits a field and writes the whole form
+    back, so a read that dropped ``model`` would make the next save silently
+    clear the pin back to "follow the global model".
+
+    Workspace paths are still withheld — this is a tenant-facing read, not the
+    local snapshot. ``revision`` and ``channel_instances`` are deliberately
+    absent as well: both are instance-wide, so exposing them would leak other
+    tenants' state and make one tenant's write invalidate another's revision.
+    """
+    from agent.admin import AgentAdminService
+    from agent.registry import get_agent_registry
+
+    global_default = get_agent_registry().default_agent_id
+    agents = []
+    for profile, tenant_default, can_chat, unavailable_reason in _iter_tenant_agents(ctx):
+        data = profile.to_dict()
+        data.pop("workspace", None)
+        data["is_default"] = bool(profile.id == tenant_default)
+        data["can_chat"] = can_chat
+        data["unavailable_reason"] = unavailable_reason
+        # The console renders the shared/own knowledge toggle from this.
+        data["knowledge_mode"] = AgentAdminService._knowledge_mode_of(
+            profile, global_default)
+        agents.append(data)
+    return {"agents": agents, "default_agent_id": _tenant_default_agent_id(ctx)}
+
+
 def _workbench_chat_readiness(ctx: "Optional[RequestContext]",
-                              agent_id: str) -> Tuple[bool, Optional[str]]:
+                              agent_id: str,
+                              tenant_default: Optional[str] = None,
+                              ) -> Tuple[bool, Optional[str]]:
     """Whether the caller may start a chat with ``agent_id`` right now.
 
     Returns ``(can_chat, unavailable_reason)``. ``unavailable_reason`` is a
@@ -7971,20 +8372,26 @@ def _workbench_chat_readiness(ctx: "Optional[RequestContext]",
 
     Database mode: mirrors the send-path gates exactly — the caller must be
     authorized for the functional ``chat.use`` (platform/tenant admin bypass,
-    matching ``_require_chat_use``) AND hold the ``agent.use`` resource grant
-    for this agent (platform admin all bypass, matching
+    matching ``_require_chat_use``) AND be authorized for ``agent.use`` on this
+    agent (platform admin and the tenant admin that owns it bypass, matching
     ``_require_agent_action(..., "use", "agent.use")``). A caller that only has
     ``agent.read`` sees the card with ``can_chat=False`` and a permission reason
     — never the historical ``runtime_not_enabled`` version-closure message.
     """
     if ctx is None:
         return True, None
-    # agent.use resource grant (platform admin all passes).
+    # agent.use: platform admin passes via ``check_resource_action``, and a
+    # tenant admin passes for an Agent its own tenant owns — the same rule the
+    # send path enforces, so the card never promises a chat the send would deny.
     from auth.service import get_identity_service
     svc = get_identity_service()
-    if not svc.check_resource_action(
-            ctx.user_id, ctx.tenant_id, "agent", f"agent:{agent_id}",
-            "use", permission="agent.use"):
+    allowed = (_tenant_admin_owns_agent(ctx, agent_id)
+               or _tenant_shared_default_agent(
+                   ctx, agent_id, "agent.use", tenant_default=tenant_default)
+               or svc.check_resource_action(
+                   ctx.user_id, ctx.tenant_id, "agent", f"agent:{agent_id}",
+                   "use", permission="agent.use"))
+    if not allowed:
         return False, "permission_denied"
     # Functional chat.use: platform/tenant admin bypass; members need the grant.
     if not (ctx.is_platform_admin or ctx.is_tenant_admin
@@ -8139,10 +8546,12 @@ class AgentsHandler:
                     )
                 if ctx is not None:
                     # database mode: only the caller's tenant-bound agents, and
-                    # never expose workspace paths. Fall through to the snapshot
-                    # path only in legacy mode.
+                    # never expose workspace paths. The management read keeps the
+                    # editable fields the console's Agent pages round-trip on
+                    # save; the workbench's minimal read is served above. Fall
+                    # through to the snapshot path only in legacy mode.
                     return json.dumps(
-                        {"status": "success", **_tenant_agents_projection(ctx)},
+                        {"status": "success", **_tenant_agents_admin_projection(ctx)},
                         ensure_ascii=False,
                     )
             return json.dumps(
@@ -8166,12 +8575,25 @@ class AgentsHandler:
 
                 if action == "create":
                     _require_agent_create(ctx)
+                    # A tenant's Agent is tenant-scoped at birth: it gets a
+                    # workspace inside the tenant's own root and a binding to the
+                    # tenant, or the creating tenant could never see it. An
+                    # explicit workspace from the client still wins.
+                    workspace = body.get("workspace") or None
+                    if ctx is not None and ctx.tenant_id and not workspace:
+                        from agent.registry import _AGENT_ID_RE
+                        if not _AGENT_ID_RE.fullmatch(agent_id):
+                            return json.dumps({
+                                "status": "error",
+                                "message": f"invalid agent id: {agent_id!r}"
+                            })
+                        workspace = _tenant_agent_workspace(ctx, agent_id)
                     result = service.create_agent(
-                        agent_id=body.get("id", ""),
+                        agent_id=agent_id,
                         name=body.get("name", ""),
                         # Blank means "put it where a new one goes", which is what
                         # the console sends: it asks for a name, not a path.
-                        workspace=body.get("workspace") or None,
+                        workspace=workspace,
                         clone_from=body.get("clone_from") or None,
                         avatar=body.get("avatar") or None,
                         description=body.get("description") or None,
@@ -8190,6 +8612,9 @@ class AgentsHandler:
                         tools_allowlist=body.get("tools_allowlist"),
                         tools_denylist=body.get("tools_denylist"),
                     )
+                    if ctx is not None and ctx.tenant_id:
+                        _adopt_created_agent_for_tenant(
+                            ctx, (result or {}).get("id") or agent_id)
                 elif action == "update":
                     _require_agent_action(ctx, agent_id, "edit", "agent.edit")
                     updates = {
@@ -8996,6 +9421,7 @@ def _session_settings_state(session_id: str, agent_id: Optional[str]) -> dict:
 
     catalog = _session_model_catalog()
     allowed = _authorized_model_codes()
+    selection_required = False
     if allowed is not None:
         # Restrict the offered models to the caller's model.use grant set. Keep
         # the provider groups but drop models the caller may not select, so the
@@ -9009,27 +9435,50 @@ def _session_settings_state(session_id: str, agent_id: Optional[str]) -> dict:
             kept["models"] = models
             filtered.append(kept)
         catalog = filtered
+        # An inherited default (session pin / Agent / role / global) that is not
+        # in the grant set must not be reported as the effective model: the
+        # runtime gate would reject it. Surface "choose one" instead. A role
+        # default is stored as a full ``provider:{pid}:{code}`` resource id, so
+        # compare on the trailing code.
+        candidate = str(effective_model or "")
+        candidate_code = candidate.rsplit(":", 1)[-1] if candidate else ""
+        if not allowed or (candidate and candidate_code not in allowed):
+            effective_model, effective_provider, source = "", "", "unset"
+            selection_required = True
 
     return {
         "model": {
             "model": effective_model,
             "provider": effective_provider or global_provider,
             "source": source,
+            "selection_required": selection_required,
             "global": {"model": global_model, "provider": global_provider},
             "agent": agent_default,
             "role_default": role_default,
             "role_default_state": role_default_state,
             "providers": catalog,
         },
-        "permission": {
-            "mode": (
-                permission_normalize_mode(prefs["permission"], global_permission)
-                if prefs.get("permission") else global_permission
-            ),
-            "source": "session" if prefs.get("permission") else "global",
-            "global": global_permission,
-            "modes": list(PERMISSION_MODES),
-        },
+        "permission": (
+            {
+                # database mode: execution is owned by the caller's role grants
+                # (tool.execute + resource grant) and tenant isolation, not a
+                # session-level mode. Offer nothing to pin and say so.
+                "mode": global_permission,
+                "source": "role",
+                "global": global_permission,
+                "modes": [],
+            }
+            if _is_database_identity() else
+            {
+                "mode": (
+                    permission_normalize_mode(prefs["permission"], global_permission)
+                    if prefs.get("permission") else global_permission
+                ),
+                "source": "session" if prefs.get("permission") else "global",
+                "global": global_permission,
+                "modes": list(PERMISSION_MODES),
+            }
+        ),
         "team": _session_team_state(prefs, agent_id),
     }
 
@@ -9081,9 +9530,12 @@ class SessionSettingsHandler:
             if not session_id:
                 return json.dumps({"status": "error", "message": "session_id required"})
             params = web.input(agent='', agent_id='')
-            state = _session_settings_state(
-                session_id, params.agent or params.agent_id or None
-            )
+            # Apply the DB scope so the model projection sees the caller's
+            # model.use grants. Legacy mode is a no-op.
+            with _db_scope():
+                state = _session_settings_state(
+                    session_id, params.agent or params.agent_id or None
+                )
             return json.dumps({"status": "success", **state}, ensure_ascii=False)
         except Exception as e:
             logger.error(f"[WebChannel] Session settings read error: {e}")
@@ -9106,63 +9558,71 @@ class SessionSettingsHandler:
             body = json.loads(web.data() or b"{}")
             agent_id = body.get("agent") or body.get("agent_id")
 
-            updates = {}
-            if "permission" in body:
-                mode = body.get("permission")
-                updates["permission"] = (
-                    permission_normalize_mode(mode) if mode else None
-                )
-            if "model" in body or "provider" in body:
-                model = (body.get("model") or "").strip() or None
-                provider = (body.get("provider") or "").strip() or None
-                # Fine-grained model authorization: an explicit session model
-                # must be within the caller's model.use grant set (platform all
-                # or legacy mode pass). An out-of-scope explicit choice is
-                # rejected here rather than silently rerouted at the call site.
-                if model:
-                    with _db_scope() as ctx:
+            # One DB scope for the whole mutation: ``set_prefs`` resolves the
+            # tenant's shared root and the echoed state projects the caller's
+            # ``model.use`` grants, so both need the request identity active.
+            # Running them outside the scope writes the pin to the default
+            # agent's workspace and echoes an empty, unselectable state.
+            with _db_scope() as ctx:
+                updates = {}
+                # database mode owns execution through the caller's role grants,
+                # so a session permission override is not accepted (storing one
+                # that does nothing would be a dead, misleading knob).
+                if "permission" in body and not _is_database_identity():
+                    mode = body.get("permission")
+                    updates["permission"] = (
+                        permission_normalize_mode(mode) if mode else None
+                    )
+                if "model" in body or "provider" in body:
+                    model = (body.get("model") or "").strip() or None
+                    provider = (body.get("provider") or "").strip() or None
+                    # Fine-grained model authorization: an explicit session model
+                    # must be within the caller's model.use grant set (platform all
+                    # or legacy mode pass). An out-of-scope explicit choice is
+                    # rejected here rather than silently rerouted at the call site.
+                    if model:
                         _require_model_use(ctx, model)
-                # Clearing the model clears its provider too: a pinned provider
-                # with no model would route the global model to the wrong vendor.
-                updates["model"] = model
-                updates["provider"] = provider if model else None
-            if "members" in body:
-                raw = body.get("members")
-                if raw is None:
-                    updates["members"] = None
-                elif isinstance(raw, list):
-                    updates["members"] = [
-                        str(item).strip() for item in raw if str(item).strip()
-                    ]
-                else:
+                    # Clearing the model clears its provider too: a pinned provider
+                    # with no model would route the global model to the wrong vendor.
+                    updates["model"] = model
+                    updates["provider"] = provider if model else None
+                if "members" in body:
+                    raw = body.get("members")
+                    if raw is None:
+                        updates["members"] = None
+                    elif isinstance(raw, list):
+                        updates["members"] = [
+                            str(item).strip() for item in raw if str(item).strip()
+                        ]
+                    else:
+                        return json.dumps({
+                            "status": "error",
+                            "message": "members must be a list of agent ids",
+                        })
+
+                if not updates:
                     return json.dumps({
                         "status": "error",
-                        "message": "members must be a list of agent ids",
+                        "message": "permission, model, provider or members required",
                     })
 
-            if not updates:
-                return json.dumps({
-                    "status": "error",
-                    "message": "permission, model, provider or members required",
-                })
+                session_prefs.set_prefs(session_id, agent_id, **updates)
 
-            session_prefs.set_prefs(session_id, agent_id, **updates)
+                # Retarget the live agent so the change lands on the next message
+                # without waiting for a fresh get_agent.
+                try:
+                    from bridge.bridge import Bridge
+                    ab = Bridge().get_agent_bridge()
+                    agent = ab.get_cached_agent(session_id, agent_id)
+                    if agent is not None:
+                        ab.apply_session_prefs(agent, session_id, agent_id)
+                except Exception as e:
+                    logger.debug(f"[WebChannel] session prefs apply-to-agent skipped: {e}")
 
-            # Retarget the live agent so the change lands on the next message
-            # without waiting for a fresh get_agent.
-            try:
-                from bridge.bridge import Bridge
-                ab = Bridge().get_agent_bridge()
-                agent = ab.get_cached_agent(session_id, agent_id)
-                if agent is not None:
-                    ab.apply_session_prefs(agent, session_id, agent_id)
-            except Exception as e:
-                logger.debug(f"[WebChannel] session prefs apply-to-agent skipped: {e}")
-
-            logger.info(
-                f"[WebChannel] Session settings updated: sid={session_id}, {updates}"
-            )
-            state = _session_settings_state(session_id, agent_id)
+                logger.info(
+                    f"[WebChannel] Session settings updated: sid={session_id}, {updates}"
+                )
+                state = _session_settings_state(session_id, agent_id)
             return json.dumps({"status": "success", **state}, ensure_ascii=False)
         except Exception as e:
             logger.error(f"[WebChannel] Session settings update error: {e}")

@@ -59,7 +59,7 @@ function setup(fetchImpl = async () => response([agent('B')])) {
         resetWorkspaceToAgentRoot: () => events.push(['workspace-root']),
         requestAnimationFrame: fn => fn(), multiAgentMode: () => true,
         currentTeamIds: () => [], conversationHasMessages: () => false,
-        _renderPermissionChip: () => {}, _renderModelChip: () => {}, _wsSelUpdateLabel: () => {},
+        _renderModelChip: () => {}, _wsSelUpdateLabel: () => {},
         showConfirmDialog: options => events.push(['notice', options.message]),
     };
     ctx.findAgent = id => ctx.agentCatalog.find(a => a.id === id);
@@ -69,7 +69,7 @@ function setup(fetchImpl = async () => response([agent('B')])) {
     vm.runInContext(section('let _agentStartInFlight =', 'function conversationHasMessages'), ctx);
     vm.runInContext(section('function renderComposerIdentity()', 'function toggleComposerAgentMenu'), ctx);
     vm.runInContext(section('function pickComposerAgent(', 'function inviteTeamMember('), ctx);
-    vm.runInContext(section('async function refreshSessionSettings()', 'function _renderPermissionChip'), ctx);
+    vm.runInContext(section('async function refreshSessionSettings()', 'function _renderModelChip'), ctx);
     vm.runInContext(section('async function refreshWorkspaceSelector()', '// Sync the selector button'), ctx);
     vm.runInContext(`let _sessCfg = null; let _wsSelState = {};
         this.state = () => ({agents: agentWorkbench, loading: agentWorkbenchLoading,

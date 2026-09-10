@@ -24,10 +24,31 @@ class ToolResult:
         return ToolResult("error", result)
 
 
-# Keep these focused unit tests independent of optional runtime tool packages.
-_base_tool_stub = types.ModuleType("agent.tools.base_tool")
-_base_tool_stub.ToolResult = ToolResult
-sys.modules.setdefault("agent.tools.base_tool", _base_tool_stub)
+_STUB_KEY = "agent.tools.base_tool"
+_saved_base_tool = None
+
+
+def setUpModule():
+    """Stub ``agent.tools.base_tool`` only for the duration of this module.
+
+    The executor imports ``ToolResult`` lazily, so a stub keeps these focused
+    unit tests independent of optional runtime tool packages. Installing it for
+    the whole session (the old ``sys.modules.setdefault`` at import time) leaked
+    a fake module with no ``__file__`` into every later test, making
+    ``from agent.tools.base_tool import BaseTool`` fail as "unknown location".
+    """
+    global _saved_base_tool
+    if _STUB_KEY in sys.modules:
+        return
+    stub = types.ModuleType(_STUB_KEY)
+    stub.ToolResult = ToolResult
+    _saved_base_tool = stub
+    sys.modules[_STUB_KEY] = stub
+
+
+def tearDownModule():
+    if _saved_base_tool is not None and sys.modules.get(_STUB_KEY) is _saved_base_tool:
+        del sys.modules[_STUB_KEY]
 
 
 class _FileTool:

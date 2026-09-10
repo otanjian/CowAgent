@@ -23,6 +23,7 @@ from agent.protocol.message_utils import (
 from agent.tools.base_tool import BaseTool, ToolResult, is_tool_available, renders_own_cards
 from common.log import logger
 from common.i18n import t as _t
+from common.runtime_identity import current_user_id
 
 # Optional: repair malformed JSON args from non-strict providers (e.g. unescaped quotes in long content).
 try:
@@ -1538,7 +1539,7 @@ class AgentStreamExecutor:
 
                 # Flush memory before trimming to preserve context that will be lost
                 if is_context_overflow and self.agent.memory_manager:
-                    user_id = getattr(self.agent, '_current_user_id', None)
+                    user_id = current_user_id()
                     self.agent.memory_manager.flush_memory(
                         messages=self.messages, user_id=user_id,
                         reason="overflow", max_messages=0
@@ -1827,17 +1828,22 @@ class AgentStreamExecutor:
                 "tool_name": tool_name,
                 "arguments": arguments,
             })
-            # Flag this as a permission refusal (not an ordinary tool error) and
-            # carry the mode that refused, so the UI can render an actionable
-            # "switch permission" hint instead of a generic failure.
-            try:
-                denied_mode = self.agent.effective_permission_mode()
-            except Exception:
-                denied_mode = None
+            # Flag this as a permission refusal (not an ordinary tool error).
+            # Only a legacy mode refusal carries the mode: a role/isolation/quota
+            # refusal in database mode must not blame a session mode the user
+            # cannot (and should not) change from the conversation.
+            denial_kind = getattr(self, "_last_denial_kind", None)
+            denied_mode = None
+            if denial_kind == "mode":
+                try:
+                    denied_mode = self.agent.effective_permission_mode()
+                except Exception:
+                    denied_mode = None
             self._emit_event("tool_execution_end", {
                 "tool_call_id": tool_id,
                 "tool_name": tool_name,
                 "permission_denied": True,
+                "permission_denial_kind": denial_kind,
                 "permission_mode": denied_mode,
                 **result,
             })
@@ -1993,39 +1999,51 @@ class AgentStreamExecutor:
         agent = self.agent
         if agent is None:
             return None
+        # Which gate refused this call, for the UI hint. Reset per call so a
+        # stale kind can never describe a later, different refusal.
+        self._last_denial_kind = None
         try:
-            from agent.permission.isolation import isolation_decision
+            from agent.permission.isolation import database_mode, isolation_decision
 
             # Tenant execution isolation (open-database-runtime 6.x): in a
             # tenant-member run arbitrary-code and file tools are confined to
             # the tenant roots regardless of the legacy permission mode. This
-            # runs before the mode check so full-access cannot cross tenants.
+            # runs before every other check so nothing can cross tenants.
             isolation = isolation_decision(
                 tool_name, arguments, cwd=agent.effective_cwd()
             )
             if not isolation.allowed:
+                self._last_denial_kind = "isolation"
                 return isolation.reason
 
-            from agent.permission import FULL_ACCESS, check_tool_call
+            # The legacy permission mode is a single-tenant control. In
+            # database mode execution is governed by the caller's role grants
+            # (``tool.execute`` + resource grant, below) plus isolation, so
+            # applying the mode here would refuse tools the role allows and
+            # point the user at a switch that cannot fix it.
+            if not database_mode():
+                from agent.permission import FULL_ACCESS, check_tool_call
 
-            mode = agent.effective_permission_mode()
-            if mode != FULL_ACCESS:
-                decision = check_tool_call(
-                    mode,
-                    tool_name,
-                    arguments,
-                    cwd=agent.effective_cwd(),
-                    write_roots=agent.write_roots(),
-                )
-                if not decision.allowed:
-                    return decision.reason
+                mode = agent.effective_permission_mode()
+                if mode != FULL_ACCESS:
+                    decision = check_tool_call(
+                        mode,
+                        tool_name,
+                        arguments,
+                        cwd=agent.effective_cwd(),
+                        write_roots=agent.write_roots(),
+                    )
+                    if not decision.allowed:
+                        self._last_denial_kind = "mode"
+                        return decision.reason
 
             # Fine-grained resource authorization: in database mode the tool
-            # must also be granted for ``tool.execute`` to the current identity.
+            # must be granted for ``tool.execute`` to the current identity.
             # Recomputed per call (never cached) so a grant made mid-session
             # applies to the very next invocation.
             denial = self._resource_tool_denial(tool_name)
             if denial:
+                self._last_denial_kind = "role"
                 return denial
 
             # Tool-call quota (open-database-runtime 9.x): tenant/user hard
@@ -2035,6 +2053,8 @@ class AgentStreamExecutor:
             # otherwise-authorized call silently stops running); over-limit is
             # a hard denial with a bilingual reason.
             quota_denial = self._quota_tool_denial(tool_name)
+            if quota_denial:
+                self._last_denial_kind = "quota"
             return quota_denial
         except Exception as e:
             logger.warning(f"[Permission] Check skipped for {tool_name}: {e}")
@@ -2069,7 +2089,14 @@ class AgentStreamExecutor:
         """Return a denial reason when tool.execution is not authorized.
 
         Unrestricted (legacy mode / platform all / no identity) returns None.
+        A *self-authorized* tool is exempt: it resolves the caller's identity
+        and refuses on its own (personal todo, scheduler act only on the
+        caller's own data), so the coarse ``tool.execute`` grant is not also
+        required. Every other tool still needs the grant.
         """
+        tool = self.tools.get(tool_name) if isinstance(self.tools, dict) else None
+        if getattr(tool, "self_authorized", False):
+            return None
         from common.runtime_identity import current_identity
         ident = current_identity()
         if not ident.user_id or not ident.tenant_id:
@@ -2335,7 +2362,7 @@ class AgentStreamExecutor:
                     for turn in discarded_turns:
                         discarded_messages.extend(turn["messages"])
                     if discarded_messages:
-                        user_id = getattr(self.agent, "_current_user_id", None)
+                        user_id = current_user_id()
                         cb = self._build_context_summary_callback(discarded_turns, kept_turns)
                         self.agent.memory_manager.flush_memory(
                             messages=discarded_messages, user_id=user_id,
@@ -2454,7 +2481,7 @@ class AgentStreamExecutor:
                 for turn in discarded_turns:
                     discarded_messages.extend(turn["messages"])
                 if discarded_messages:
-                    user_id = getattr(self.agent, '_current_user_id', None)
+                    user_id = current_user_id()
                     cb = self._build_context_summary_callback(discarded_turns, turns)
                     self.agent.memory_manager.flush_memory(
                         messages=discarded_messages, user_id=user_id,
@@ -2559,7 +2586,7 @@ class AgentStreamExecutor:
             for turn in discarded_turns:
                 discarded_messages.extend(turn["messages"])
             if discarded_messages:
-                user_id = getattr(self.agent, '_current_user_id', None)
+                user_id = current_user_id()
                 cb = self._build_context_summary_callback(discarded_turns, kept_turns)
                 self.agent.memory_manager.flush_memory(
                     messages=discarded_messages, user_id=user_id,

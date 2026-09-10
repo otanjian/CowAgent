@@ -133,11 +133,13 @@ export interface MessageStep {
   display?: string
   /** Work done inside this step, for a tool that drives sub agents. */
   substeps?: SubStep[]
-  /** Set when the tool was refused by the session's permission mode, so the UI
-   * can render an actionable "adjust permissions" hint rather than a plain error. */
+  /** Set when the tool was refused by the permission gate. The UI shows an
+   * explanatory hint with no action; execution is owned by role grants. */
   permission_denied?: boolean
-  /** The mode that refused the call (read-only / workspace-write / full-access). */
+  /** The mode that refused the call (legacy installs only). */
   permission_mode?: string
+  /** Why it was refused: "mode" | "role" | "isolation" | "quota". */
+  permission_denial_kind?: string
 }
 
 /** Local UI message model (superset of backend history message). */
@@ -324,10 +326,12 @@ export interface StreamEvent {
   display?: string
   execution_time?: number
   has_tool_calls?: boolean
-  /** `tool_end`: true when the call was refused by the session permission mode. */
+  /** `tool_end`: true when the call was refused by the permission gate. */
   permission_denied?: boolean
-  /** `tool_end`: the mode that refused the call. */
+  /** `tool_end`: the mode that refused the call (legacy installs only). */
   permission_mode?: string
+  /** `tool_end`: why the call was refused: "mode" | "role" | "isolation" | "quota". */
+  permission_denial_kind?: string
   /** `subagent_step` event fields: which step of which card, and how it went. */
   card_id?: string
   step_id?: string
@@ -417,8 +421,11 @@ export interface SessionSettingsState {
   }
   permission: {
     mode: 'read-only' | 'workspace-write' | 'full-access'
-    source: 'session' | 'global'
+    // "role" means the value is informational: execution is decided by the
+    // caller's role resource grants, not by a switch in the conversation.
+    source: 'session' | 'global' | 'role'
     global: string
+    /** Modes a conversation may choose; empty when roles own execution. */
     modes: string[]
   }
   /** Who else is on this conversation (multi-Agent backends only). */
@@ -503,6 +510,10 @@ export interface ConfigData {
   /** Global default permission for sessions that have not picked one. */
   agent_permission_mode?: string
   permission_modes?: string[]
+  /** "config" (legacy install, editable) | "role" (database mode, read-only). */
+  permission_mode_source?: string
+  /** False when role resource grants own execution and this setting is read-only. */
+  permission_mode_editable?: boolean
   enable_thinking?: boolean
   reasoning_effort?: string
   reasoning_effort_by_model?: Record<string, string>

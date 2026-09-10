@@ -30,6 +30,13 @@ def _identity_db_path() -> str:
     return os.path.join(get_data_root(), "identity.db")
 
 
+def _registered_agent_ids() -> list:
+    """Every Agent in the registry, enabled or not (migration sees them all)."""
+    ensure_sys_path()
+    from agent.registry import get_agent_registry
+    return [p.id for p in get_agent_registry().list(include_disabled=True)]
+
+
 def _bootstrap(**kwargs) -> None:
     from auth.service import IdentityService, IdentityServiceError
 
@@ -63,6 +70,13 @@ def register(tenant_code, admin_username):
     the owner of existing owner-less conversations/runs to that admin. Idempotent:
     re-running does not duplicate bindings or overwrite later ownership splits.
     No content is moved or copied.
+
+    The private owner is deliberately kept for the *non-default* Agents: before
+    tenancy existed the content belonged to that one admin, so preserving the
+    old visibility is the conservative migration. The tenant's **default** Agent
+    is then shared (``private_owner_user_id`` cleared) — otherwise every other
+    member would be locked out of the Agent a conversation resolves to when the
+    user picks none (task 5b.9).
     """
     ensure_sys_path()
     from auth.service import IdentityService, IdentityServiceError
@@ -85,7 +99,7 @@ def register(tenant_code, admin_username):
             click.echo(click.style(
                 f"Admin account '{admin_username}' not found or disabled.", fg="red"))
             raise click.Abort()
-        if not admin.get("is_platform_admin"):
+        if not svc.is_platform_admin_user(admin["id"]):
             click.echo(click.style(
                 f"Admin account '{admin_username}' is not a platform admin.", fg="red"))
             raise click.Abort()
@@ -97,10 +111,13 @@ def register(tenant_code, admin_username):
             raise click.Abort()
         admin_id = admin["id"]
 
-        # Enumerate every registry Agent and bind to the tenant.
+        # Enumerate every registry Agent and bind to the tenant. The private
+        # owner here is deliberate, not inferred: pre-tenancy content belonged
+        # to that admin. What it must never do is leave the tenant's *default*
+        # private, which would lock every other member out — corrected below.
         from agent.registry import get_agent_registry
         registry = get_agent_registry()
-        agent_ids = [p.id for p in registry.list(include_disabled=True)]
+        agent_ids = _registered_agent_ids()
         summary = svc.register_default_tenancy(
             tenant_id=tid, private_owner_user_id=admin_id, agent_ids=agent_ids)
 
@@ -115,13 +132,97 @@ def register(tenant_code, admin_username):
             except Exception as e:
                 click.echo(click.style(f"  skipped {agent_id}: {e}", fg="yellow"))
 
+        # Close the loop: if the Agent this tenant resolves as its default is
+        # one of the private ones just registered, share it. Members can then
+        # chat without picking an Agent, while their sessions stay private to
+        # their owner (a different dimension from the Agent's binding).
+        shared = svc.ensure_shared_default_agents()
+
         click.echo(click.style(
             f"Registered {summary['bound']} agent(s) (already bound: "
             f"{summary['already_registered']}); backfilled owner on "
             f"{backfilled} conversation(s).", fg="green"))
+        if shared["updated"]:
+            click.echo(click.style(
+                f"Shared {shared['updated']} tenant default Agent(s) so members "
+                f"can chat without selecting one.", fg="green"))
     except IdentityServiceError as e:
         click.echo(click.style(f"Failed: {e}", fg="red"))
         raise click.Abort()
+
+
+@management.command("share-default-agents")
+@click.option("--tenant-code", default=None,
+              help="Limit to one tenant. Defaults to every tenant.")
+@click.option("--dry-run", is_flag=True, default=False,
+              help="Report what would change without writing.")
+def share_default_agents(tenant_code, dry_run):
+    """Correct existing private defaults so the tenant default is shared.
+
+    Earlier writes made an Agent private to whoever created or registered it
+    (the initial admin, or the user who adopted it from the console). When such
+    an Agent is also the tenant's default, every other member is refused — which
+    is exactly the "conversation must pick an Agent" symptom. This is the
+    operational half of that fix; the code path no longer introduces private
+    defaults.
+
+    Idempotent, audited, and scoped: only the Agent each tenant actually
+    resolves as its default is touched, so unrelated private Agents keep their
+    owner. Run from a stopped/maintenance window and back up ``identity.db``
+    first.
+    """
+    ensure_sys_path()
+    from auth.service import IdentityService, IdentityServiceError
+
+    db_path = _identity_db_path()
+    svc = IdentityService(db_path)
+
+    try:
+        if dry_run:
+            report = _preview_shared_default_corrections(svc, tenant_code)
+            if not report:
+                click.echo("No private default Agent needs correcting.")
+                return
+            for tid, agent_id, owner in report:
+                click.echo(
+                    f"  tenant {tid}: default Agent '{agent_id}' is private to "
+                    f"{owner} -> would become tenant-shared")
+            click.echo(click.style(
+                f"{len(report)} Agent(s) would become tenant-shared. "
+                f"Re-run without --dry-run to apply.", fg="yellow"))
+            return
+
+        summary = svc.ensure_shared_default_agents()
+        for tid, agent_id in sorted(summary["resolved"].items()):
+            click.echo(f"  tenant {tid} resolves default Agent '{agent_id}'")
+        click.echo(click.style(
+            f"Updated {summary['updated']} Agent(s) to tenant-shared. "
+            f"Safe to re-run (a second run reports 0).", fg="green"))
+    except IdentityServiceError as e:
+        click.echo(click.style(f"Failed: {e}", fg="red"))
+        raise click.Abort()
+
+
+def _preview_shared_default_corrections(svc, tenant_code=None):
+    """(tenant_id, agent_id, owner) for defaults that are still private."""
+    rows = []
+    tenants = svc.list_tenants()
+    if tenant_code:
+        tenants = [t for t in tenants if t.get("code") == tenant_code]
+        if not tenants:
+            click.echo(click.style(
+                f"Tenant '{tenant_code}' does not exist.", fg="red"))
+            raise click.Abort()
+    for tenant in tenants:
+        tenant_id = tenant["id"]
+        target = (svc.tenant_default_agent_id(tenant_id)
+                  or svc.resolved_default_agent_id(tenant_id))
+        if not target:
+            continue
+        binding = svc.get_agent_binding(target)
+        if binding and binding.get("private_owner_user_id") is not None:
+            rows.append((tenant_id, target, binding["private_owner_user_id"]))
+    return rows
 
 
 @management.command("bootstrap")

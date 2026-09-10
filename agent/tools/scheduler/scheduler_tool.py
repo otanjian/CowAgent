@@ -19,6 +19,11 @@ class SchedulerTool(BaseTool):
     """
     
     name: str = "scheduler"
+    # A scheduled task is created for the caller's own conversation (the
+    # receiver is taken from the current context, never from the model) and its
+    # owner is revalidated at fire time, so it does not also need a per-tool
+    # tool.execute grant.
+    self_authorized: bool = True
     description: str = (
         "创建、查询和管理定时任务（提醒、周期性任务等）。\n\n"
         "⚠️ 重要：仅当需要「定时/提醒/每天/每周/X分钟后/X点」等延迟或周期执行时才使用此工具。"

@@ -322,6 +322,24 @@ def test_document_editor_is_loaded_before_its_users():
     assert "js/doc-editor.js" in _read("channel/web/web_channel.py")
 
 
+def test_console_scripts_are_served_cache_busted():
+    """Every first-party asset the page pulls in gets a version stamp at serve
+    time. An asset left off that list keeps running from the browser cache,
+    which is how a previous per-tab-save identity editor can outlive the
+    upgrade that replaced it with the unified-save one."""
+    from channel.web import web_channel
+
+    with patch("web.header"):
+        html = web_channel.ChatHandler().GET()
+
+    for asset in ("js/console.js", "js/identity-admin.js", "js/todos.js",
+                  "js/scenes/index.js", "css/console.css"):
+        assert f'assets/{asset}?v=' in html, f"{asset} is not version-stamped"
+        # No unversioned reference may survive, or the browser reloads the
+        # cached copy through that one instead.
+        assert f'assets/{asset}"' not in html, f"{asset} still served unversioned"
+
+
 def test_document_editor_contract():
     editor = _web("static/js/doc-editor.js")
 

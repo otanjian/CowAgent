@@ -22,8 +22,9 @@ import sqlite3
 import threading
 from typing import Any, Callable, List, Sequence
 
-#: Ordered list of schema migrations. Appending a migration and bumping
-#: ``__schema_version__`` (the final entry) is how the store evolves.
+#: Ordered list of schema migrations. Appending a migration to this list is
+#: how the store evolves; ``migration_versions()`` derives the version ids
+#: from its length.
 _migrations: List[Callable[[sqlite3.Connection], None]] = []
 
 
@@ -69,9 +70,6 @@ def refuse_legacy_after_migration(identity_mode: str, db_path: str) -> bool:
     if mode == "database":
         return False
     return has_migration_signature(db_path)
-
-
-__schema_version__ = 3
 
 
 def _migration_1(con: sqlite3.Connection) -> None:
@@ -405,6 +403,203 @@ def _migration_5(con: sqlite3.Connection) -> None:
 
 
 _migrations.append(_migration_5)
+
+
+def _migration_6(con: sqlite3.Connection) -> None:
+    """Platform-scoped built-in role (platform admin as a role binding).
+
+    Converts the instance-wide platform qualification from the raw
+    ``users.is_platform_admin`` flag into a platform-scoped built-in role
+    binding. The flag is kept as a *derived mirror* (single-writer is the
+    service's ``_set_platform_role``); the binding is the sole source of truth.
+
+    * ``platform_roles`` — instance-wide roles with no tenant/owner. The
+      ``platform_admin`` built-in is seeded once (idempotent).
+    * ``user_platform_roles`` — account -> platform role bindings, keyed by
+      (user_id, platform_role_id) so the backfill is idempotent.
+
+    Existing platform admins (``is_platform_admin=1``) are backfilled a
+    ``platform_admin`` binding; the mirror column is already consistent so no
+    extra write is needed there.
+    """
+    con.executescript(
+        """
+        CREATE TABLE platform_roles (
+            id               TEXT PRIMARY KEY,
+            code             TEXT NOT NULL,
+            name             TEXT NOT NULL,
+            builtin          INTEGER NOT NULL DEFAULT 0,
+            permissions_json TEXT NOT NULL,
+            version          INTEGER NOT NULL DEFAULT 1,
+            created_at       INTEGER NOT NULL DEFAULT (unixepoch()),
+            updated_at       INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+        CREATE UNIQUE INDEX idx_platform_roles_code ON platform_roles(code);
+
+        CREATE TABLE user_platform_roles (
+            user_id          TEXT NOT NULL REFERENCES users(id),
+            platform_role_id TEXT NOT NULL REFERENCES platform_roles(id),
+            created_at       INTEGER NOT NULL DEFAULT (unixepoch()),
+            PRIMARY KEY (user_id, platform_role_id)
+        );
+        """
+    )
+    # Idempotent seed of the built-in platform_admin role. Fixed id + code make
+    # a migration replay a no-op.
+    con.execute(
+        "INSERT OR IGNORE INTO platform_roles(id, code, name, builtin, permissions_json, version)"
+        " VALUES (?, ?, ?, 1, ?, 1)",
+        ("platform_admin", "platform_admin", "平台管理员", "[]"),
+    )
+    # Idempotent backfill: bind every flagged platform admin to the built-in
+    # role. The mirror column already equals 1 for these rows, so binding and
+    # mirror are consistent without further writes.
+    con.execute(
+        "INSERT OR IGNORE INTO user_platform_roles(user_id, platform_role_id)"
+        " SELECT u.id, r.id FROM users u"
+        " JOIN platform_roles r ON r.code = 'platform_admin'"
+        " WHERE u.is_platform_admin = 1"
+    )
+
+
+_migrations.append(_migration_6)
+
+
+def _migration_7(con: sqlite3.Connection) -> None:
+    """Tenant-owned channel instances (change tenant-owned-message-channels).
+
+    Gives channel configuration a tenant dimension inside the identity domain
+    instead of the shared ``team.json`` roster: a tenant administrator owns
+    instances scoped to their own tenant, and each instance binds one encrypted
+    credential bundle in ``credentials`` (``resource_kind='channel'``).
+
+    ``(tenant_id, display_name)`` is the uniqueness pair, enforced as a
+    **partial** unique index over enabled rows only — the display name
+    identifies an instance to its tenant's operators, while the same channel
+    *type* may legitimately repeat (e.g. two Feishu bots in one tenant), and a
+    disabled instance must not hold its name hostage against a replacement.
+    ``version`` backs optimistic concurrency for edits; ``active`` is the
+    enable/disable switch so disabling is the rollback path. Audit columns
+    mirror the other mutable stores. No backfill: ``team.json`` and existing
+    ``credentials`` rows are untouched.
+    """
+    con.executescript(
+        """
+        CREATE TABLE tenant_channel_instances (
+            id            TEXT PRIMARY KEY NOT NULL,
+            tenant_id     TEXT NOT NULL REFERENCES tenants(id),
+            channel_type  TEXT NOT NULL,
+            display_name  TEXT NOT NULL,
+            agent_id      TEXT NOT NULL DEFAULT '',
+            active        INTEGER NOT NULL DEFAULT 1,
+            version       INTEGER NOT NULL DEFAULT 1,
+            created_by    TEXT NOT NULL,
+            created_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+            updated_at    INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+        CREATE UNIQUE INDEX idx_tenant_channel_instances_name
+            ON tenant_channel_instances(tenant_id, display_name) WHERE active = 1;
+        CREATE INDEX idx_tenant_channel_instances_tenant_active
+            ON tenant_channel_instances(tenant_id, active);
+        """
+    )
+
+
+_migrations.append(_migration_7)
+
+
+def _migration_8(con: sqlite3.Connection) -> None:
+    """Clone provenance for agent bindings (change copy-default-tenant-agents).
+
+    Copying an agent from the default tenant into another tenant creates a new
+    agent id, so a repeated copy cannot recognise its own previous work from the
+    id alone. Recording the *source* agent id on the binding makes the copy
+    idempotent without depending on any naming convention: "has this tenant
+    already received a clone of source agent X?" becomes a lookup.
+
+    ``cloned_from_agent_id`` is nullable because an ordinary bind has no source
+    agent, and the uniqueness it needs is **partial**: at most one clone of a
+    given source per tenant (but the same source may be cloned into many
+    tenants), while any number of plain (NULL) bindings may coexist.
+    """
+    con.executescript(
+        """
+        ALTER TABLE agent_bindings ADD COLUMN cloned_from_agent_id TEXT;
+        CREATE UNIQUE INDEX idx_agent_bindings_clone_source
+            ON agent_bindings(tenant_id, cloned_from_agent_id)
+            WHERE cloned_from_agent_id IS NOT NULL;
+        """
+    )
+
+
+_migrations.append(_migration_8)
+
+
+def _migration_9(con: sqlite3.Connection) -> None:
+    """Inbound authors seen but not yet bound to an account.
+
+    Nobody knows another person's IM ``open_id``, so an administrator asked to
+    "bind this member" has nothing to type. Recording each denied inbound turns
+    that into a list to pick from.
+
+    The row carries the **tenant and channel instance that delivered the
+    message**, not just the identity triple. An attempt has no user yet — that
+    is the whole point — so the delivering instance is the only thing that can
+    say which tenant's administrator should be shown it. Attempts delivered by a
+    non-tenant (legacy/platform) channel therefore carry an empty tenant and are
+    visible only to platform administrators.
+
+    ``(provider, issuer, subject)`` is unique: a chatty author would otherwise
+    fill the list with their own retries. ``attempts`` counts the denials so the
+    interface can show "tried 3 times" without storing three rows.
+    """
+    con.executescript(
+        """
+        CREATE TABLE external_identity_attempts (
+            provider      TEXT NOT NULL,
+            issuer        TEXT NOT NULL DEFAULT '',
+            subject       TEXT NOT NULL,
+            tenant_id     TEXT NOT NULL DEFAULT '',
+            channel_type  TEXT NOT NULL DEFAULT '',
+            instance_id   TEXT NOT NULL DEFAULT '',
+            attempts      INTEGER NOT NULL DEFAULT 1,
+            first_seen_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            last_seen_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+            PRIMARY KEY (provider, issuer, subject)
+        );
+        CREATE INDEX idx_external_identity_attempts_tenant
+            ON external_identity_attempts(tenant_id, last_seen_at);
+        """
+    )
+
+
+_migrations.append(_migration_9)
+
+
+def _migration_10(con: sqlite3.Connection) -> None:
+    """The evidence an administrator needs to tell *who* an attempt is.
+
+    An identity triple is not an answer to "who messaged the bot?" — nobody
+    knows their members' ``open_id`` values by heart, which is exactly why the
+    binding screen exists. The sender's display name and a preview of what they
+    actually said are what make the pending list actionable; ``is_group`` says
+    whether the author spoke in a group, where one ``open_id`` is a single voice
+    among many and a preview reads differently.
+
+    All three are best-effort. A channel that cannot name the sender, or a
+    message whose content is a local file path rather than text, records an
+    empty/neutral value and the attempt is still offered for binding.
+    """
+    con.executescript(
+        """
+        ALTER TABLE external_identity_attempts ADD COLUMN sender_name TEXT NOT NULL DEFAULT '';
+        ALTER TABLE external_identity_attempts ADD COLUMN message_preview TEXT NOT NULL DEFAULT '';
+        ALTER TABLE external_identity_attempts ADD COLUMN is_group INTEGER NOT NULL DEFAULT 0;
+        """
+    )
+
+
+_migrations.append(_migration_10)
 
 
 class IdentityStoreError(RuntimeError):

@@ -937,6 +937,7 @@ class AgentBridge:
             )
             self._apply_scene_context(agent, session_id)
             self._apply_employee_context(agent)
+            self._apply_user_persona_context(agent, session_id)
             return agent
 
     def _apply_session_project(self, agent, session_id: str, agent_id: str) -> None:
@@ -1013,6 +1014,58 @@ class AgentBridge:
         suffix = "\n".join(blocks).strip()
         if not suffix:
             return
+        existing = getattr(agent, "extra_system_suffix", None) or ""
+        agent.extra_system_suffix = f"{existing}\n\n{suffix}".strip() if existing else suffix
+
+    def _apply_user_persona_context(self, agent, session_id: Optional[str]) -> None:
+        """Append the *end user's* personal persona, last of the three layers.
+
+        Order is deliberate and stable: scene establishes the working context,
+        the employee profile makes this Agent who it is, and the personal
+        segment is how this person wants to be talked to. Appended after the
+        others so it can refine them without replacing either.
+
+        Injection is guarded on ownership (design D3): the result of
+        ``get_agent()`` is cached per ``(agent_id, session_id)``, so a shared or
+        team session would otherwise carry whichever member happened to build it
+        last. A session owned by someone else therefore gets no personal
+        segment, and a session with no owner yet (a brand-new conversation) is
+        assumed to be the caller's, since that is who is about to write it.
+
+        The profile is read per build, so an edit applies on the next turn; no
+        file exists -> no segment (never an empty one).
+        """
+        from common.runtime_identity import current_user_id
+        uid = current_user_id()
+        if not uid or not session_id:
+            return
+        try:
+            from agent.memory import get_conversation_store
+            store = get_conversation_store(getattr(agent, "workspace_dir", None))
+            owner = store.get_session_owner(session_id)
+            if owner is not None and owner != uid:
+                # Someone else's (or a shared) session: the persona must not
+                # leak in, and must not be decided by the last visitor.
+                return
+        except Exception as e:
+            # Without a provable owner we cannot safely personalise the prompt,
+            # so we skip the segment rather than risk a cross-user leak.
+            logger.debug(f"[AgentBridge] user persona ownership check failed: {e}")
+            return
+
+        try:
+            from common import state_dir
+            persona = state_dir.persona_file()
+            if not persona.exists():
+                return
+            text = persona.read_text(encoding="utf-8").strip()
+        except Exception as e:
+            logger.debug(f"[AgentBridge] user persona read failed: {e}")
+            return
+        if not text:
+            return
+
+        suffix = f"## 🪞 该用户的个人偏好\n{text}"
         existing = getattr(agent, "extra_system_suffix", None) or ""
         agent.extra_system_suffix = f"{existing}\n\n{suffix}".strip() if existing else suffix
 

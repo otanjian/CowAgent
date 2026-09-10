@@ -426,10 +426,16 @@ class AgentInitializer:
             memory_manager = MemoryManager(memory_config, embedding_provider=embedding_provider)
             self._sync_memory(memory_manager, session_id)
 
+            # The user dimension comes from the verified identity, never from a
+            # tool argument: whoever could pass a user_id could aim a write (or
+            # a read) at someone else's private memory. None keeps legacy.
+            from common.runtime_identity import current_user_id
+            user_id = current_user_id()
+
             memory_tools = [
-                MemorySearchTool(memory_manager),
+                MemorySearchTool(memory_manager, user_id=user_id),
                 MemoryGetTool(memory_manager),
-                MemoryAddTool(memory_manager)
+                MemoryAddTool(memory_manager, user_id=user_id)
             ]
             
             if session_id is None:
@@ -939,6 +945,13 @@ class AgentInitializer:
             for agent_id, session_id, agent in self.agent_bridge.iter_agent_instances()
         ]
 
+        # Resolve the owner each pass writes for. This thread carries no runtime
+        # identity, so the user is taken from what was captured on the request
+        # path (verified identity), never from a caller argument. No captured
+        # user means the historical shared pass, unchanged.
+        def _owner_of(agent) -> Optional[str]:
+            return getattr(agent, "_evo_user_id", None) or None
+
         if not agents:
             return
 
@@ -950,14 +963,21 @@ class AgentInitializer:
             try:
                 if not agent.memory_manager:
                     continue
+                # The pass writes to the owner's personal memory, so the owner is
+                # resolved alongside the flush manager, at the same moment. Keyed
+                # by owner too: one user's dailies must not be distilled into
+                # another's MEMORY.md, and shared dailies stay a separate pass.
                 dream_candidates.setdefault(
-                    agent.agent_id, agent.memory_manager.flush_manager
+                    (agent.agent_id, _owner_of(agent)),
+                    (agent.memory_manager.flush_manager, _owner_of(agent)),
                 )
                 with agent.messages_lock:
                     messages = list(agent.messages)
                 if not messages:
                     continue
-                result = agent.memory_manager.flush_manager.create_daily_summary(messages)
+                result = agent.memory_manager.flush_manager.create_daily_summary(
+                    messages, user_id=_owner_of(agent)
+                )
                 if result:
                     flushed += 1
                     t = agent.memory_manager.flush_manager._last_flush_thread
@@ -974,13 +994,16 @@ class AgentInitializer:
             t.join(timeout=60)
 
         # Phase 2: Deep Dream — distill daily memories → MEMORY.md + dream diary
-        for agent_id, dream_candidate in dream_candidates.items():
+        for (agent_id, owner_id), (dream_candidate, _owner) in dream_candidates.items():
             try:
-                result = dream_candidate.deep_dream()
+                result = dream_candidate.deep_dream(user_id=owner_id)
                 if result:
                     logger.info(
                         f"[DeepDream] Memory distillation completed for "
-                        f"agent={agent_id}"
+                        f"agent={agent_id} user={owner_id or 'shared'}"
                     )
             except Exception as e:
-                logger.warning(f"[DeepDream] Failed for agent={agent_id}: {e}")
+                logger.warning(
+                    f"[DeepDream] Failed for agent={agent_id} "
+                    f"user={owner_id or 'shared'}: {e}"
+                )

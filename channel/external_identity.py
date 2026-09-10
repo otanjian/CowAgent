@@ -32,6 +32,7 @@ TENANT_UNBOUND = "external_agent_not_tenant_bound"
 PASSWORD_CHANGE_REQUIRED = "external_password_change_required"
 PERMISSION_DENIED = "external_permission_denied"
 UNSUPPORTED_CHANNEL = "external_channel_unsupported"
+AGENT_UNAVAILABLE = "external_agent_unavailable"
 
 
 def is_database_mode() -> bool:
@@ -72,11 +73,39 @@ def deny_notice(reason: str) -> str:
             "该消息渠道在数据库模式下尚未开放，请联系管理员。",
             "This channel is not open in database mode yet. Contact an administrator.",
         ),
+        AGENT_UNAVAILABLE: (
+            "该组织尚未配置可用的智能体，请联系管理员。",
+            "No Agent is available for this organization yet. Contact an administrator.",
+        ),
     }.get(reason) or (
         "消息无法处理，请联系管理员。",
         "Message could not be processed. Contact an administrator.",
     )
     return f"{zh}\n{en}"
+
+
+def instance_tenant_id(context: dict) -> str:
+    """The owning tenant of the channel instance that carried this message.
+
+    Read from the instance row in the identity store, never from a context
+    field: the stamp on the context is for observability only and could be
+    stale or forged, and authorization must not follow it. Returns ``""`` when
+    the message carries no instance id, when the id is unknown (e.g. a platform
+    roster instance that is not tenant-owned), or when the store cannot be
+    read — in all of those cases the caller keeps the previous behavior of
+    anchoring on the routed Agent's binding.
+    """
+    instance_id = str((context or {}).get("instance_id") or "").strip()
+    if not instance_id:
+        return ""
+    try:
+        from auth.service import get_identity_service
+
+        row = get_identity_service().get_tenant_channel_instance_row(instance_id)
+    except Exception as error:  # noqa: BLE001 - never let a lookup failure grant access
+        logger.warning("[external_identity] instance lookup failed id=%s: %s", instance_id, error)
+        return ""
+    return str((row or {}).get("tenant_id") or "").strip()
 
 
 def stamp_external_identity(context: dict, *, provider: str, issuer: str,
@@ -95,7 +124,95 @@ def stamp_external_identity(context: dict, *, provider: str, issuer: str,
     return context
 
 
-def resolve_actor_for_context(context: dict, agent_id: Optional[str]):
+# What a refused message may contribute to the administrator's pending list.
+# Kept small so a chatty author cannot fill the store by pasting a wall of text.
+_PREVIEW_LIMIT = 200
+
+# A non-text message stores its payload path (or key) in ``content``. Showing
+# that to an administrator would leak a server filesystem path and identify
+# nothing, so such messages are summarised by kind instead.
+_CONTENT_KIND_LABELS = {
+    "VOICE": "[语音]",
+    "IMAGE": "[图片]",
+    "FILE": "[文件]",
+    "VIDEO": "[视频]",
+    "SHARING": "[分享]",
+    "JOIN_GROUP": "[入群]",
+    "EXIT_GROUP": "[退群]",
+    "PATPAT": "[拍一拍]",
+    "ACCEPT_FRIEND": "[同意好友]",
+    "FUNCTION": "[函数调用]",
+}
+
+
+def attempt_evidence(context: dict) -> dict:
+    """Best-effort "who said what" for a denied inbound, for the binding list.
+
+    Read from the standard ``ChatMessage`` fields so every channel that fills
+    them in gets the same console experience without a per-provider code path.
+    Everything here is cosmetic: the caller is already refusing the message, so
+    each field degrades **independently** — a channel that cannot name its
+    sender still contributes the preview, and vice versa.
+    """
+    evidence = {"sender_name": "", "message_preview": "", "is_group": False}
+    msg = context.get("msg")
+    if msg is None:
+        return evidence
+
+    try:
+        nickname = (getattr(msg, "actual_user_nickname", "")
+                    or getattr(msg, "from_user_nickname", "") or "")
+        if not nickname:
+            # Optional channel hook: a provider that only knows the author's
+            # opaque id (Feishu's open_id) can resolve a display name here. It is
+            # asked lazily — only for a message that is being refused — so the
+            # cost is never paid on the normal path, and a channel without the
+            # hook (or a lookup that fails) simply contributes no name.
+            resolver = getattr(msg, "resolve_sender_name", None)
+            if callable(resolver):
+                nickname = resolver() or ""
+        evidence["sender_name"] = str(nickname).strip()[:_PREVIEW_LIMIT]
+    except Exception:  # noqa: BLE001 - a name is a courtesy, never a gate
+        logger.info("[external_identity] could not name the sender", exc_info=True)
+
+    try:
+        ctype = getattr(msg, "ctype", None)
+        type_name = getattr(ctype, "name", "")
+        if type_name and type_name != "TEXT":
+            text = _CONTENT_KIND_LABELS.get(type_name, "")
+        else:
+            text = ""
+            # Prefer the author's own words: ``content_with_quote`` wraps the
+            # quoted parent message around them (Feishu does), which is noise
+            # when the point is to recognise the sender.
+            for reader in ("content", "content_with_quote"):
+                value = getattr(msg, reader, None)
+                if callable(value):
+                    value = value()
+                if value:
+                    text = str(value)
+                    break
+        # Collapse newlines: the preview is rendered as one line in a list row.
+        text = " ".join(str(text).split())
+        evidence["message_preview"] = text[:_PREVIEW_LIMIT]
+    except Exception:  # noqa: BLE001 - a preview is a courtesy, never a gate
+        logger.info("[external_identity] could not read the message preview",
+                    exc_info=True)
+
+    try:
+        # ``is_group`` is authoritative on the message; ``isgroup`` on the
+        # context is the composed-context alias used by the group whitelist.
+        is_group = getattr(msg, "is_group", None)
+        if is_group is None:
+            is_group = context.get("isgroup", False)
+        evidence["is_group"] = bool(is_group)
+    except Exception:  # noqa: BLE001
+        pass
+    return evidence
+
+
+def resolve_actor_for_context(context: dict, agent_id: Optional[str],
+                              instance_tenant_id: str = ""):
     """Resolve a DB-mode inbound context to its tenant member ``RequestContext``.
 
     Returns ``(ctx, None)`` on success and ``(None, reason_code)`` on a deny.
@@ -103,6 +220,13 @@ def resolve_actor_for_context(context: dict, agent_id: Optional[str]):
     channel-routed Agent (its binding fixes the tenant the member must belong
     to). Only call this when ``is_database_mode()`` and the context carries a
     stamped ``external_identity``.
+
+    ``instance_tenant_id`` is the owning tenant of the channel instance that
+    delivered the message, resolved from the store by the caller. When present
+    it wins over the routed Agent's binding: an instance belongs to exactly one
+    tenant, and a routing fallback (or a forged ``bound_agent_id``) must not be
+    able to move the conversation — and therefore the member's identity — into
+    a different organization.
     """
     from auth.service import get_identity_service
 
@@ -121,11 +245,14 @@ def resolve_actor_for_context(context: dict, agent_id: Optional[str]):
     if not user:
         return None, UNBOUND
 
-    # The Agent's binding fixes the tenant the member must execute in.
-    binding = svc.get_agent_binding(agent_id) if agent_id else None
-    if not binding:
-        return None, TENANT_UNBOUND
-    tenant_id = binding["tenant_id"]
+    # The tenant anchor: the instance's owner when known, else the routed
+    # Agent's binding (legacy behavior for platform/legacy channels).
+    tenant_id = str(instance_tenant_id or "").strip()
+    if not tenant_id:
+        binding = svc.get_agent_binding(agent_id) if agent_id else None
+        if not binding:
+            return None, TENANT_UNBOUND
+        tenant_id = binding["tenant_id"]
 
     try:
         from auth.runtime import IdentityContextError, member_context

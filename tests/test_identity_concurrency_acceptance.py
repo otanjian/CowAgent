@@ -193,9 +193,12 @@ class LastAdminConcurrencyTests(unittest.TestCase):
 
         # Invariant: the repository must never end with zero usable platform
         # admins. Every surviving platform admin must have completed its
-        # forced password change (no restricted-only admin remains).
+        # forced password change (no restricted-only admin remains). Usability
+        # is judged by the platform-role binding (the source of truth), not the
+        # mirror column.
         remaining = [u for u in self.svc.list_platform_users()
-                     if u["is_platform_admin"] and not u["must_change_password"]]
+                     if self.svc.is_platform_admin_user(u["id"])
+                     and not u["must_change_password"]]
         self.assertGreaterEqual(len(remaining), 1,
                                 "never leave zero completed platform admins")
 

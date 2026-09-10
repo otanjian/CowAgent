@@ -200,7 +200,19 @@ TENANT_ADMIN_DEFAULT_PERMISSIONS: Tuple[str, ...] = (
 TENANT_ADMIN_CODE = "tenant_admin"
 MEMBER_CODE = "member"
 
-#: Built-in role display definitions, keyed by code.
+#: Platform-scoped built-in role code. Distinct from the tenant-scoped
+#: ``tenant_admin``/``member``: it carries the *instance-wide* platform
+#: qualification and is never a tenant role nor a permissions-catalog id.
+PLATFORM_ADMIN_CODE = "platform_admin"
+
+#: Explicit default permission set for the built-in ``platform_admin`` role.
+#: This is structural documentation ONLY — the platform ``all`` authorization
+#: is derived from the platform qualification (``authorization_mode == "all"``),
+#: never from this set. Intentionally empty so no future catalogue expansion
+#: silently widens a provisioned platform role.
+PLATFORM_ADMIN_DEFAULT_PERMISSIONS: Tuple[str, ...] = ()
+
+#: Built-in role display definitions, keyed by code (tenant-scoped only).
 BUILTIN_ROLES: Dict[str, str] = {
     TENANT_ADMIN_CODE: "租户管理员",
     MEMBER_CODE: "成员",

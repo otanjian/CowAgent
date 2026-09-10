@@ -339,6 +339,108 @@ class AgentAdminService:
             raise AgentAdminError(f"{field} must be a list of strings")
         return [x.strip() for x in value if x.strip()]
 
+    def _build_profile(
+        self,
+        agent_id: str,
+        name: str,
+        workspace: str,
+        *,
+        description: str = None,
+        avatar: str = None,
+        enabled: bool = True,
+        model: str = None,
+        bot_type: str = None,
+        skills: Optional[Iterable[str]] = None,
+        knowledge: Optional[Iterable[str]] = None,
+        position: str = None,
+        category: str = None,
+        tags: Optional[Iterable[str]] = None,
+        greeting: str = None,
+        persona_summary: str = None,
+        scene_id: str = None,
+        knowledge_ids: Optional[Iterable[str]] = None,
+        sops: Optional[Iterable[str]] = None,
+        tools_allowlist: Optional[Iterable[str]] = None,
+        tools_denylist: Optional[Iterable[str]] = None,
+    ) -> AgentProfile:
+        """Normalise the console's raw field values into an ``AgentProfile``.
+
+        Shared by "create" and "clone" so both paths apply exactly the same
+        coercion rules — notably that ``None`` means "all shared assets" while
+        an empty sequence is a deliberate "none", and that a blank string is the
+        same as not configured.
+        """
+        return AgentProfile(
+            id=agent_id,
+            name=name,
+            workspace=workspace,
+            enabled=bool(enabled),
+            description=(description or "").strip() or None,
+            model=(model or "").strip() or None,
+            bot_type=(bot_type or "").strip() or None,
+            avatar=(avatar or None),
+            skills=(
+                None if skills is None else tuple(self._asset_list(list(skills), "skills"))
+            ),
+            knowledge=(
+                None
+                if knowledge is None
+                else tuple(self._asset_list(list(knowledge), "knowledge"))
+            ),
+            position=(position or "").strip() or None,
+            category=(category or "").strip() or None,
+            tags=tuple(self._asset_list(list(tags), "tags")) if tags is not None else (),
+            greeting=(greeting or "").strip() or None,
+            persona_summary=(persona_summary or "").strip() or None,
+            scene_id=(scene_id or "").strip() or None,
+            knowledge_ids=(
+                None
+                if knowledge_ids is None
+                else tuple(self._asset_list(list(knowledge_ids), "knowledge_ids"))
+            ),
+            sops=tuple(self._asset_list(list(sops), "sops")) if sops is not None else (),
+            tools_allowlist=(
+                None
+                if tools_allowlist is None
+                else tuple(self._asset_list(list(tools_allowlist), "tools_allowlist"))
+            ),
+            tools_denylist=(
+                tuple(self._asset_list(list(tools_denylist), "tools_denylist"))
+                if tools_denylist is not None
+                else ()
+            ),
+        )
+
+    def _materialise_workspace(
+        self,
+        registry: AgentRegistry,
+        workspace: str,
+        destination: Path,
+        *,
+        source: Optional[Path] = None,
+        name: str = "",
+        knowledge_mode: str = None,
+    ) -> None:
+        """Scaffold a new Agent's workspace, optionally from a persona source.
+
+        The single definition of "what a brand-new Agent's directory contains":
+        the workspace scaffold, the persona core files when a source is given,
+        the operator profile, the seeded name and — only for an Agent that opts
+        out of the shared knowledge base — its own empty knowledge directory.
+        """
+        self._bootstrap_workspace(workspace)
+        if source is not None:
+            self._clone_persona(source, destination)
+        # USER.md describes the operator, not the persona, so it belongs to
+        # whoever runs the instance: seed every new Agent with the default's
+        # copy (unless a chosen template already supplied one), so the operator
+        # profile carries over rather than starting blank.
+        self._seed_user_profile(registry, destination, cloned=source is not None)
+        if name:
+            self._seed_name(workspace, name)
+        if knowledge_mode == "own":
+            self._make_own_knowledge(destination)
+
     def create_agent(
         self,
         agent_id: str,
@@ -402,54 +504,139 @@ class AgentAdminService:
 
             created_destination = not destination.exists()
             try:
-                self._bootstrap_workspace(workspace)
-                if source is not None:
-                    self._clone_persona(source, destination)
-                # USER.md describes the operator, not the persona, so it belongs
-                # to whoever runs the instance: seed every new Agent with the
-                # default's copy (unless a chosen template already supplied one),
-                # so the operator profile carries over rather than starting blank.
-                self._seed_user_profile(registry, destination, cloned=source is not None)
-                self._seed_name(workspace, name)
-                if knowledge_mode == "own":
-                    self._make_own_knowledge(destination)
+                self._materialise_workspace(
+                    registry, workspace, destination,
+                    source=source, name=name, knowledge_mode=knowledge_mode)
+                profile = self._build_profile(
+                    agent_id,
+                    name,
+                    workspace,
+                    description=description,
+                    avatar=avatar,
+                    skills=skills,
+                    knowledge=knowledge,
+                    position=position,
+                    category=category,
+                    tags=tags,
+                    greeting=greeting,
+                    persona_summary=persona_summary,
+                    scene_id=scene_id,
+                    knowledge_ids=knowledge_ids,
+                    sops=sops,
+                    tools_allowlist=tools_allowlist,
+                    tools_denylist=tools_denylist,
+                )
+                registry.upsert(profile)
+                profiles = self._explicit_profiles(settings, self._registry(settings))
+                profiles.append(profile.to_dict())
+                candidate = dict(settings)
+                candidate["agents"] = profiles
+                candidate["default_agent_id"] = registry.default_agent_id
+                self._registry(candidate)
+                self._commit(
+                    {
+                        "agents": profiles,
+                        "default_agent_id": registry.default_agent_id,
+                    },
+                    revision,
+                )
+            except Exception:
+                if created_destination and destination.exists():
+                    shutil.rmtree(destination, ignore_errors=True)
+                raise
+            return profile.to_dict()
 
-                profile = AgentProfile(
-                    id=agent_id,
-                    name=name,
-                    workspace=workspace,
-                    description=(description or "").strip() or None,
-                    avatar=(avatar or None),
-                    skills=(
-                        None if skills is None else tuple(self._asset_list(list(skills), "skills"))
-                    ),
-                    knowledge=(
-                        None
-                        if knowledge is None
-                        else tuple(self._asset_list(list(knowledge), "knowledge"))
-                    ),
-                    position=(position or "").strip() or None,
-                    category=(category or "").strip() or None,
-                    tags=tuple(self._asset_list(list(tags), "tags")) if tags is not None else (),
-                    greeting=(greeting or "").strip() or None,
-                    persona_summary=(persona_summary or "").strip() or None,
-                    scene_id=(scene_id or "").strip() or None,
-                    knowledge_ids=(
-                        None
-                        if knowledge_ids is None
-                        else tuple(self._asset_list(list(knowledge_ids), "knowledge_ids"))
-                    ),
-                    sops=tuple(self._asset_list(list(sops), "sops")) if sops is not None else (),
-                    tools_allowlist=(
-                        None
-                        if tools_allowlist is None
-                        else tuple(self._asset_list(list(tools_allowlist), "tools_allowlist"))
-                    ),
-                    tools_denylist=(
-                        tuple(self._asset_list(list(tools_denylist), "tools_denylist"))
-                        if tools_denylist is not None
-                        else ()
-                    ),
+    def clone_agent(
+        self,
+        source_agent_id: str,
+        agent_id: str,
+        name: str = None,
+        workspace: str = None,
+        revision: str = None,
+    ) -> Dict:
+        """Create a new Agent that mirrors an existing one, 1:1 but for identity.
+
+        Unlike ``create_agent(clone_from=...)`` — which builds a *fresh* Agent
+        whose persona happens to come from a template — this copies an Agent that
+        already exists in the roster, carrying its persona files and every
+        configurable attribute (description, avatar, model/bot_type, skills and
+        knowledge selection, digital-employee fields, tool allow/deny lists, and
+        the enabled state) over unchanged. Only the identity differs: a new
+        ``agent_id`` and its own workspace.
+
+        It never copies runtime state: memory, sessions, credentials and the
+        source's own skill/knowledge *entity* files stay behind. Knowledge
+        *mode* is replicated instead — a source that opts out of the shared
+        knowledge base gets its own (empty) base, resolved under the clone's
+        identity and therefore the clone's tenant.
+
+        The source may be disabled: the copy flow is how an operator seeds a
+        tenant with agents that are kept parked in the source tenant.
+
+        A failure after the workspace was created removes it again, so a caller
+        can treat "raised" as "nothing happened" without inspecting the disk.
+        """
+        with self._lock:
+            settings = self._load()
+            registry = self._registry(settings)
+            try:
+                registry.get(agent_id, require_enabled=False)
+            except KeyError:
+                pass
+            else:
+                raise AgentAdminError(f"agent '{agent_id}' already exists")
+
+            try:
+                source_profile = registry.get(source_agent_id, require_enabled=False)
+            except KeyError:
+                raise AgentAdminError(f"source agent '{source_agent_id}' does not exist")
+            source = source_profile.workspace_path
+            if not source.is_dir():
+                raise AgentAdminError(
+                    f"source workspace for '{source_agent_id}' does not exist"
+                )
+
+            # Keep the source's display name (design Open Question): a clone is
+            # the same Agent in another tenant, so a tenant suffix would be
+            # noise. The id carries the uniqueness, not the name.
+            name = (name or source_profile.name or source_agent_id).strip()
+            sanctioned = self._instance_root(settings) / "agents" / agent_id
+            workspace = (
+                self._normalise_workspace(workspace) if workspace else str(sanctioned)
+            )
+            destination = Path(workspace)
+            self._reject_overlapping_workspace(destination, registry, sanctioned)
+
+            if destination.exists() and any(destination.iterdir()):
+                raise AgentAdminError("workspace must be empty for a new agent")
+
+            knowledge_mode = self._knowledge_mode_of(source_profile, registry.default_agent_id)
+            created_destination = not destination.exists()
+            try:
+                self._materialise_workspace(
+                    registry, workspace, destination,
+                    source=source, name=name, knowledge_mode=knowledge_mode)
+                profile = self._build_profile(
+                    agent_id,
+                    name,
+                    workspace,
+                    description=source_profile.description,
+                    avatar=source_profile.avatar,
+                    enabled=source_profile.enabled,
+                    model=source_profile.model,
+                    bot_type=source_profile.bot_type,
+                    skills=source_profile.skills,
+                    knowledge=source_profile.knowledge,
+                    position=source_profile.position,
+                    category=source_profile.category,
+                    tags=source_profile.tags,
+                    greeting=source_profile.greeting,
+                    persona_summary=source_profile.persona_summary,
+                    scene_id=source_profile.scene_id,
+                    knowledge_ids=source_profile.knowledge_ids,
+                    sops=source_profile.sops,
+                    tools_allowlist=source_profile.tools_allowlist,
+                    tools_denylist=source_profile.tools_denylist,
                 )
                 registry.upsert(profile)
                 profiles = self._explicit_profiles(settings, self._registry(settings))

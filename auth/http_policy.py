@@ -76,6 +76,9 @@ ROUTE_POLICY: Dict[str, Dict[str, dict]] = {
     "/api/platform/users/([^/]+)/external-identities/([^/]+)": {
         "DELETE": {"policy": "platform", "comment": "delete an external identity binding"},
     },
+    "/api/platform/external-identity-attempts": {
+        "GET": {"policy": "platform", "comment": "unbound inbound authors (all tenants)"},
+    },
     "/api/platform/users/([^/]+)": {
         # PATCH is the only supported method (enable/disable / admin flag).
         # A GET detail is not part of the platform account contract; leaving it
@@ -88,7 +91,18 @@ ROUTE_POLICY: Dict[str, Dict[str, dict]] = {
         "POST": {"policy": "platform", "comment": "create tenant"},
     },
     "/api/platform/tenants/([^/]+)/admins": {
+        # GET reads the tenant's current valid tenant_admin members; the editor
+        # shows them read-only when the management tab opens. POST binds an
+        # existing account or creates a new one. Both are platform-domain.
+        "GET": {"policy": "platform", "comment": "read current tenant admins"},
         "POST": {"policy": "platform", "comment": "configure tenant admin"},
+    },
+    "/api/platform/tenants/([^/]+)/agents": {
+        # GET reads the target tenant's bound agents plus the copyable candidates
+        # from the resolved source tenant; POST copies a checked selection in as
+        # independent agents. Both are platform-domain.
+        "GET": {"policy": "platform", "comment": "list tenant agents and copy candidates"},
+        "POST": {"policy": "platform", "comment": "copy agents into the tenant"},
     },
     "/api/platform/tenants/([^/]+)": {
         "GET": {"policy": "platform", "comment": "tenant detail"},
@@ -100,6 +114,21 @@ ROUTE_POLICY: Dict[str, Dict[str, dict]] = {
     "/api/tenant/members": {
         "GET": {"policy": "tenant", "permission": "tenant.members.read", "comment": "list members"},
         "POST": {"policy": "tenant", "comment": "create/bind member (tenant_admin)"},
+    },
+    "/api/tenant/members/([^/]+)/external-identities": {
+        # The tenant-administrator surface for IM identity binding. A tenant
+        # admin knows which member owns which IM account, so they maintain it;
+        # the service layer confines them to their own memberships (the member
+        # id is resolved inside the acting tenant).
+        "GET": {"policy": "tenant", "permission": "tenant.members.read",
+                "comment": "list a member's external identity bindings"},
+        "POST": {"policy": "tenant", "comment": "bind external identity to a member"},
+    },
+    "/api/tenant/members/([^/]+)/external-identities/([^/]+)": {
+        "DELETE": {"policy": "tenant", "comment": "delete a member's external identity binding"},
+    },
+    "/api/tenant/external-identity-attempts": {
+        "GET": {"policy": "tenant", "comment": "unbound inbound authors for this tenant"},
     },
     "/api/tenant/members/([^/]+)": {
         "POST": {"policy": "tenant", "comment": "update member (tenant_admin)"},
@@ -186,9 +215,32 @@ ROUTE_POLICY: Dict[str, Dict[str, dict]] = {
                 "POST": {"policy": "platform", "comment": "platform config save"}},
     "/api/models": {"GET": {"policy": "platform", "comment": "models (platform admin)"},
                     "POST": {"policy": "platform", "comment": "models save (platform admin)"}},
-    "/api/channels": {"GET": {"policy": "closed", "comment": "channels (deferred)"}},
+    "/api/channels": {"GET": {"policy": "platform", "comment": "instance-level channels (platform admin)"},
+                      "POST": {"policy": "platform", "comment": "instance-level channels save/connect"}},
+    # --- current tenant's own channel instances ---
+    # The tenant names no tenant in the URL: the handler binds both the instance
+    # and its credential to ctx.tenant_id, so one tenant cannot address another's.
+    "/api/tenant/channels": {
+        "GET": {"policy": "tenant", "comment": "list this tenant's channel instances (tenant_admin)"},
+        "POST": {"policy": "tenant", "comment": "create this tenant's channel instance (tenant_admin)"},
+    },
+    "/api/tenant/channels/([^/]+)": {
+        "POST": {"policy": "tenant", "comment": "edit this tenant's channel instance (tenant_admin)"},
+    },
+    "/api/tenant/channels/([^/]+)/active": {
+        "POST": {"policy": "tenant", "comment": "enable/disable this tenant's channel instance (tenant_admin)"},
+    },
     "/api/weixin/qrlogin": {"GET": {"policy": "closed", "comment": "weixin qr (deferred)"}},
-    "/api/feishu/register": {"POST": {"policy": "closed", "comment": "feishu register (deferred)"}},
+    # Feishu one-click app creation. The handler owns the authorization: it
+    # binds the register session to the verified caller (user + selected
+    # tenant), so another identity can neither read the app credentials nor
+    # probe whether a session exists. Both methods are declared: GET starts a
+    # session and POST polls it. Leaving GET unregistered used to reject the
+    # start call with 405 before the handler ever ran.
+    "/api/feishu/register": {
+        "GET": {"policy": "personal", "comment": "start a feishu register session"},
+        "POST": {"policy": "personal", "comment": "poll the caller's own register session"},
+    },
     "/api/tools": {"GET": {"policy": "tenant", "comment": "tools"}},
     "/api/skills": {"GET": {"policy": "tenant", "comment": "skills"},
                     "POST": {"policy": "tenant", "comment": "skills toggle"}},
@@ -206,9 +258,18 @@ ROUTE_POLICY: Dict[str, Dict[str, dict]] = {
     "/api/todos/(.*)/events": {"GET": {"policy": "tenant", "comment": "todo events"}},
     "/api/todos/(.*)/source": {"GET": {"policy": "tenant", "comment": "todo source"}},
     "/api/todos/(.*)": {"GET": {"policy": "tenant", "comment": "todo detail"}},
-    "/api/agents": {"GET": {"policy": "tenant", "comment": "agents"}},
-    "/api/agents/([^/]+)/avatar": {"GET": {"policy": "tenant", "comment": "agent avatar"}},
-    "/api/agents/([^/]+)/files/([^/]+)": {"GET": {"policy": "tenant", "comment": "agent core file"}},
+    "/api/agents": {
+        "GET": {"policy": "tenant", "comment": "agents"},
+        "POST": {"policy": "tenant", "comment": "agent create/update/archive/delete/team-bind"},
+    },
+    "/api/agents/([^/]+)/avatar": {
+        "GET": {"policy": "tenant", "comment": "agent avatar"},
+        "POST": {"policy": "tenant", "comment": "agent avatar upload"},
+    },
+    "/api/agents/([^/]+)/files/([^/]+)": {
+        "GET": {"policy": "tenant", "comment": "agent core file"},
+        "PUT": {"policy": "tenant", "comment": "agent core file save"},
+    },
     "/api/sessions": {"GET": {"policy": "tenant", "comment": "sessions"}},
     "/api/sessions/(.*)/generate_title": {"POST": {"policy": "tenant", "comment": "session title"}},
     "/api/prompt/optimize": {"POST": {"policy": "tenant", "comment": "prompt optimize"}},
@@ -217,7 +278,11 @@ ROUTE_POLICY: Dict[str, Dict[str, dict]] = {
         "GET": {"policy": "tenant", "comment": "session settings (read effective model/permission)"},
         "POST": {"policy": "tenant", "comment": "session settings"},
     },
-    "/api/sessions/(.*)": {"GET": {"policy": "tenant", "comment": "session detail"}},
+    "/api/sessions/(.*)": {
+        "GET": {"policy": "tenant", "comment": "session detail"},
+        "PUT": {"policy": "tenant", "comment": "session rename / pin"},
+        "DELETE": {"policy": "tenant", "comment": "delete session"},
+    },
     "/api/history": {"GET": {"policy": "tenant", "comment": "history"}},
     "/api/messages/delete": {"POST": {"policy": "tenant", "comment": "delete message"}},
     "/api/logs/download": {"GET": {"policy": "tenant", "comment": "logs download"}},

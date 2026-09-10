@@ -224,5 +224,66 @@ class LegacyRefusalAfterDrillTests(unittest.TestCase):
         self.assertTrue(has_migration_signature(path))
 
 
+class PlatformRoleBindingTests(unittest.TestCase):
+    """The version-6 migration seeds the platform role and binds existing admins.
+
+    Lock the new source-of-truth: the platform qualification lives on a
+    ``platform_admin`` role binding, and ``users.is_platform_admin`` is only a
+    derived mirror that must stay consistent with it.
+    """
+
+    def _bindings(self, path, user_id):
+        con = sqlite3.connect(path)
+        con.row_factory = sqlite3.Row
+        try:
+            rows = con.execute(
+                "SELECT r.code FROM user_platform_roles upr"
+                " JOIN platform_roles r ON r.id = upr.platform_role_id"
+                " WHERE upr.user_id = ?", (user_id,)).fetchall()
+            return {r["code"] for r in rows}
+        finally:
+            con.close()
+
+    def test_bootstrap_admin_binding_and_mirror_consistent(self):
+        path = _db()
+        svc = IdentityService(path)
+        root, _ = _seed(svc)
+        self.assertEqual(root["is_platform_admin"], 1)
+        self.assertEqual(self._bindings(path, root["id"]), {"platform_admin"})
+
+    def test_existing_platform_admin_is_backfilled(self):
+        # Simulate a store that predates the role binding: apply migrations
+        # 1..5, insert a platform-admin user (mirror=1), then reopen so version
+        # 6 backfills the binding and keeps the mirror consistent.
+        from auth.store import _migrations
+        path = _db()
+        con = sqlite3.connect(path)
+        con.row_factory = sqlite3.Row
+        con.execute("PRAGMA foreign_keys = ON")
+        con.execute(
+            "CREATE TABLE schema_migrations("
+            " version INTEGER NOT NULL,"
+            " applied_at INTEGER NOT NULL DEFAULT (unixepoch()))")
+        for i in range(5):
+            _migrations[i](con)
+        con.execute(
+            "INSERT INTO users(id, username, display_name, password_hash,"
+            " active, is_platform_admin, must_change_password, version)"
+            " VALUES ('u_legacy', 'legacy', 'Legacy', 'x', 1, 1, 0, 1)")
+        con.execute(
+            "INSERT INTO schema_migrations(version) VALUES (1),(2),(3),(4),(5)")
+        con.commit()
+        con.close()
+
+        IdentityService(path)
+        self.assertEqual(self._bindings(path, "u_legacy"), {"platform_admin"})
+        con = sqlite3.connect(path)
+        con.row_factory = sqlite3.Row
+        row = con.execute(
+            "SELECT is_platform_admin FROM users WHERE id='u_legacy'").fetchone()
+        con.close()
+        self.assertEqual(row["is_platform_admin"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -50,6 +50,9 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
                 "/api/platform/users/([^/]+)", "PlatformUsersHandler",
                 "/api/platform/tenants", "PlatformTenantsHandler",
                 "/api/platform/tenants/([^/]+)", "PlatformTenantHandler",
+                "/api/platform/tenants/([^/]+)/admins", "PlatformTenantAdminsHandler",
+                "/api/platform/tenants/([^/]+)/resources", "PlatformTenantResourcesHandler",
+                "/api/tenant", "TenantInfoHandler",
                 "/api/tenant/members", "TenantMembersHandler",
                 "/api/tenant/members/([^/]+)", "TenantMemberHandler",
                 "/api/tenant/roles", "TenantRolesHandler",
@@ -547,6 +550,118 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
                              data=payload, token=token)
         self.assertEqual(self._json(resp)["code"], "conflict")
 
+    # --- tenant profile: name + active in one save ------------------------
+    def _bare_tenant(self, code="beta"):
+        """A member-less tenant: safe to disable, impossible to enable."""
+        return self.svc.create_tenant(
+            actor_user_id=self.root["id"], code=code, name=code.title(),
+            shared_root="/s/" + code, recent_password="Str0ngAdminPass")
+
+    def test_tenant_profile_updates_name_and_active_together(self):
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        tid = self._bare_tenant()["id"]
+        payload = json.dumps({
+            "operation": "profile", "name": "Beta Renamed", "active": False,
+            "expected_version": 1, "recent_password": "Str0ngAdminPass"})
+        resp = self._request(f"/api/platform/tenants/{tid}", method="POST",
+                             data=payload, token=token)
+        data = self._json(resp)
+        self.assertEqual(data["status"], "success")
+        self.assertEqual(data["tenant"]["name"], "Beta Renamed")
+        self.assertEqual(data["tenant"]["active"], False)
+        self.assertEqual(data["tenant"]["version"], 2)
+        # The enabled flag really landed in the row, not just the response.
+        self.assertEqual(dict(self.svc.get_tenant(tid))["active"], 0)
+
+    def test_tenant_profile_conflict_opcode_on_version_mismatch(self):
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        tid = self._bare_tenant()["id"]
+        payload = json.dumps({
+            "operation": "profile", "name": "Beta Renamed", "active": False,
+            "expected_version": 99, "recent_password": "Str0ngAdminPass"})
+        resp = self._request(f"/api/platform/tenants/{tid}", method="POST",
+                             data=payload, token=token)
+        self.assertEqual(self._json(resp)["code"], "conflict")
+        self.assertEqual(dict(self.svc.get_tenant(tid))["name"], "Beta")
+
+    def test_tenant_profile_enable_without_admin_is_rejected(self):
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        tid = self._bare_tenant()["id"]
+        self.svc.set_tenant_status(self.root["id"], tid, False, 1, "Str0ngAdminPass")
+        payload = json.dumps({
+            "operation": "profile", "name": "Beta Renamed", "active": True,
+            "expected_version": 2, "recent_password": "Str0ngAdminPass"})
+        resp = self._request(f"/api/platform/tenants/{tid}", method="POST",
+                             data=payload, token=token)
+        self.assertEqual(self._json(resp)["code"], "no_admin")
+        # The rejected enable must not leave the rename behind.
+        self.assertEqual(dict(self.svc.get_tenant(tid))["name"], "Beta")
+
+    def test_tenant_status_operation_disables_without_renaming(self):
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        tid = self._bare_tenant()["id"]
+        payload = json.dumps({
+            "operation": "status", "active": False,
+            "expected_version": 1, "recent_password": "Str0ngAdminPass"})
+        resp = self._request(f"/api/platform/tenants/{tid}", method="POST",
+                             data=payload, token=token)
+        data = self._json(resp)
+        self.assertEqual(data["status"], "success")
+        after = dict(self.svc.get_tenant(tid))
+        self.assertEqual(after["active"], 0)
+        self.assertEqual(after["name"], "Beta")
+
+    def test_tenant_unknown_operation_is_rejected(self):
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        tid = self._bare_tenant()["id"]
+        payload = json.dumps({
+            "operation": "nonsense", "name": "Beta Renamed", "active": False,
+            "expected_version": 1, "recent_password": "Str0ngAdminPass"})
+        resp = self._request(f"/api/platform/tenants/{tid}", method="POST",
+                             data=payload, token=token)
+        # web.HTTPError carries the status as a string on the test path.
+        self.assertEqual(str(resp.status), "400")
+        self.assertEqual(self._json(resp)["code"], "invalid_request")
+        self.assertEqual(dict(self.svc.get_tenant(tid))["name"], "Beta")
+
+    # --- tenant space: read-only projection -------------------------------
+    def test_platform_tenant_read_exposes_read_only_space(self):
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        resp = self._request(f"/api/platform/tenants/{self.tid}", method="GET",
+                             token=token)
+        data = self._json(resp)
+        space = data["tenant"]["space"]
+        # Logical identifier only - never the host directory.
+        self.assertEqual(space["id"], "acme")
+        self.assertIn(space["status"], ("ready", "unavailable"))
+        self.assertEqual(space["isolation"], "dedicated-root")
+        raw = resp.data.decode("utf-8")
+        self.assertNotIn("shared_root", raw)
+        self.assertNotIn("/s/acme", raw)
+
+    def test_tenant_space_reports_ready_for_an_existing_root(self):
+        root_dir = os.path.realpath(tempfile.mkdtemp())
+        created = self.svc.create_tenant(
+            actor_user_id=self.root["id"], code="spacey", name="Spacey",
+            shared_root=root_dir, recent_password="Str0ngAdminPass")
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        resp = self._request(f"/api/platform/tenants/{created['id']}",
+                             method="GET", token=token)
+        data = self._json(resp)
+        self.assertEqual(data["tenant"]["space"]["status"], "ready")
+        self.assertNotIn(root_dir, resp.data.decode("utf-8"))
+
+    def test_member_tenant_read_has_no_space_or_host_path(self):
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        resp = self._request("/api/tenant", method="GET", token=token,
+                             tenant=self.tid)
+        data = self._json(resp)
+        # The member-facing read must not gain the platform-only projection.
+        self.assertNotIn("space", data["tenant"])
+        raw = resp.data.decode("utf-8")
+        self.assertNotIn("shared_root", raw)
+        self.assertNotIn("/s/acme", raw)
+
     # --- tenant create derives controlled shared_root (task 4.4) ----------
     def test_tenant_create_derives_shared_root_when_omitted(self):
         token = self.svc.login("root", "Str0ngAdminPass").token
@@ -577,12 +692,6 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
         self.assertNotIn("shared_root", data["tenant"])
 
     def test_tenant_create_missing_deployment_root_fails_cleanly(self):
-        token = self.svc.login("root", "Str0ngAdminPass").token
-        payload = json.dumps({
-            "code": "noroot", "name": "NoRoot",
-            "admin_username": "nroot", "admin_display": "NRoot",
-            "admin_password": "Str0ngPass8",
-        })
         # Unit-level: with no resolvable deployment base, create_tenant must raise
         # a config_error (503) rather than persisting an unusable root.
         with patch("auth.service._deployment_shared_base", lambda svc=None: None), \
@@ -594,6 +703,205 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
                     admin_password="Str0ngPass8", recent_password="Str0ngAdminPass")
             self.assertEqual(getattr(cm.exception, "code", None), "config_error")
             self.assertEqual(getattr(cm.exception, "status", None), 503)
+
+    # --- tenant create no longer provisions an admin ----------------------
+    def test_tenant_create_without_admin_fields(self):
+        """The form posts only code/name/recent_password: the tenant is created
+        without any admin account, membership or temporary password."""
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        deploy_base = os.path.realpath(tempfile.mkdtemp())
+        payload = json.dumps({
+            "code": "bare", "name": "Bare",
+            "recent_password": "Str0ngAdminPass",
+        })
+        with patch("auth.service._deployment_shared_base", lambda svc=None: deploy_base):
+            resp = self._request("/api/platform/tenants", method="POST",
+                                 data=payload, token=token)
+        data = self._json(resp)
+        self.assertEqual(data["status"], "success")
+        self.assertNotIn("admin_username", data["tenant"])
+        self.assertNotIn("admin_password", data["tenant"])
+        self.assertNotIn("temporary_password", json.dumps(data))
+        tid = data["tenant"]["id"]
+        self.assertEqual(self.svc._count_valid_tenant_admins(tid), 0)
+        self.assertEqual(self.svc.list_members(tid)["total"], 0)
+
+    def test_tenant_create_ignores_stale_admin_fields(self):
+        """A cached frontend still sending admin_* must not mint an account
+        with a client-chosen username/password."""
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        deploy_base = os.path.realpath(tempfile.mkdtemp())
+        payload = json.dumps({
+            "code": "stale", "name": "Stale",
+            "admin_username": "attacker", "admin_display": "Attacker",
+            "admin_password": "Str0ngPass9",
+            "recent_password": "Str0ngAdminPass",
+        })
+        with patch("auth.service._deployment_shared_base", lambda svc=None: deploy_base):
+            resp = self._request("/api/platform/tenants", method="POST",
+                                 data=payload, token=token)
+        self.assertEqual(self._json(resp)["status"], "success")
+        tid = next(t["id"] for t in self.svc.list_tenants() if t["code"] == "stale")
+        self.assertEqual(self.svc._count_valid_tenant_admins(tid), 0)
+        usernames = {u["username"] for u in self.svc.list_platform_users()}
+        self.assertNotIn("attacker", usernames)
+
+    def test_tenant_create_without_admin_requires_recent_password(self):
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        deploy_base = os.path.realpath(tempfile.mkdtemp())
+        payload = json.dumps({
+            "code": "noauth", "name": "NoAuth",
+            "recent_password": "WrongPassword",
+        })
+        with patch("auth.service._deployment_shared_base", lambda svc=None: deploy_base):
+            resp = self._request("/api/platform/tenants", method="POST",
+                                 data=payload, token=token)
+        self.assertEqual(self._json(resp)["code"], "invalid_old")
+        self.assertFalse(any(t["code"] == "noauth" for t in self.svc.list_tenants()))
+
+    def test_bare_tenant_binds_existing_admin_after_create(self):
+        """End-to-end indirection: create bare, then bind an existing account."""
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        deploy_base = os.path.realpath(tempfile.mkdtemp())
+        payload = json.dumps({
+            "code": "thenbind", "name": "ThenBind",
+            "recent_password": "Str0ngAdminPass",
+        })
+        with patch("auth.service._deployment_shared_base", lambda svc=None: deploy_base):
+            resp = self._request("/api/platform/tenants", method="POST",
+                                 data=payload, token=token)
+        tid = self._json(resp)["tenant"]["id"]
+        self.assertEqual(self.svc._count_valid_tenant_admins(tid), 0)
+        self.svc.set_tenant_admin(
+            actor_user_id=self.root["id"], tenant_id=tid, user_id=self.root["id"],
+            display_name="Root", recent_password="Str0ngAdminPass")
+        self.assertEqual(self.svc._count_valid_tenant_admins(tid), 1)
+
+    # --- tenant admin account creation (mode dispatch) --------------------
+
+    def _post_admin(self, tid, body, token=None):
+        token = token or self.svc.login("root", "Str0ngAdminPass").token
+        return self._request(f"/api/platform/tenants/{tid}/admins", method="POST",
+                             data=json.dumps(body), token=token)
+
+    def _usernames(self):
+        return {u["username"] for u in self.svc.list_platform_users()}
+
+    def test_admins_existing_mode_binds_without_creating_account(self):
+        tid = self._bare_tenant()["id"]
+        before = self._usernames()
+        resp = self._post_admin(tid, {
+            "user_id": self.root["id"], "display_name": "Root",
+            "recent_password": "Str0ngAdminPass"})
+        self.assertEqual(self._json(resp)["status"], "success")
+        self.assertTrue(self.svc.get_membership(self.root["id"], tid)["active"])
+        self.assertEqual(self._usernames(), before)
+
+    def test_admins_mode_defaults_to_existing(self):
+        # Omitting "mode" must keep the historical behaviour for cached clients.
+        tid = self._bare_tenant()["id"]
+        resp = self._post_admin(tid, {
+            "user_id": self.root["id"],
+            "recent_password": "Str0ngAdminPass"})
+        self.assertEqual(self._json(resp)["status"], "success")
+        self.assertTrue(self.svc.get_membership(self.root["id"], tid)["active"])
+
+    def test_admins_new_mode_creates_account_and_binds_admin(self):
+        tid = self._bare_tenant()["id"]
+        resp = self._post_admin(tid, {
+            "mode": "new", "username": "fresh", "display_name": "Fresh",
+            "temporary_password": "Str0ngPassTmp",
+            "recent_password": "Str0ngAdminPass"})
+        self.assertEqual(self._json(resp)["status"], "success")
+        self.assertIn("fresh", self._usernames())
+        user = [u for u in self.svc.list_platform_users() if u["username"] == "fresh"][0]
+        self.assertTrue(self.svc.get_membership(user["id"], tid)["active"])
+
+    def test_admins_new_mode_does_not_echo_password(self):
+        tid = self._bare_tenant()["id"]
+        resp = self._post_admin(tid, {
+            "mode": "new", "username": "quiet", "display_name": "Quiet",
+            "temporary_password": "Str0ngPassTmp",
+            "recent_password": "Str0ngAdminPass"})
+        raw = resp.data.decode("utf-8")
+        self.assertNotIn("Str0ngPassTmp", raw)
+        self.assertNotIn("temporary_password", raw)
+        self.assertNotIn("password_hash", raw)
+
+    def test_admins_unknown_mode_is_rejected_not_silently_downgraded(self):
+        tid = self._bare_tenant()["id"]
+        resp = self._post_admin(tid, {
+            "mode": "bogus", "user_id": self.root["id"],
+            "recent_password": "Str0ngAdminPass"})
+        self.assertEqual(str(resp.status), "400")
+        self.assertEqual(self._json(resp)["code"], "invalid_request")
+        self.assertIsNone(self.svc.get_membership(self.root["id"], tid))
+
+    def test_admins_new_mode_requires_all_fields(self):
+        tid = self._bare_tenant()["id"]
+        resp = self._post_admin(tid, {
+            "mode": "new", "username": "", "display_name": "",
+            "temporary_password": "", "recent_password": "Str0ngAdminPass"})
+        self.assertEqual(str(resp.status), "400")
+        self.assertEqual(self._json(resp)["code"], "invalid_request")
+        self.assertFalse(any(u["username"] == "" for u in self.svc.list_platform_users()))
+
+    def test_admins_new_mode_duplicate_username_is_conflict(self):
+        tid = self._bare_tenant()["id"]
+        resp = self._post_admin(tid, {
+            "mode": "new", "username": "root", "display_name": "Clash",
+            "temporary_password": "Str0ngPassTmp",
+            "recent_password": "Str0ngAdminPass"})
+        self.assertEqual(str(resp.status), "409")
+        self.assertEqual(self._json(resp)["code"], "conflict")
+
+    # --- reading the current tenant admin (read-only) ---------------------
+
+    def _get_admins(self, tid, token):
+        return self._request(f"/api/platform/tenants/{tid}/admins", method="GET", token=token)
+
+    def test_admins_get_returns_current_admin_readonly(self):
+        tid = self._bare_tenant()["id"]
+        self.svc.set_tenant_admin(
+            actor_user_id=self.root["id"], tenant_id=tid, user_id=self.root["id"],
+            display_name="Root Ops", recent_password="Str0ngAdminPass")
+        token = self.svc.login("root", "Str0ngAdminPass").token
+
+        resp = self._get_admins(tid, token)
+        data = self._json(resp)
+        self.assertEqual(data["status"], "success")
+        self.assertEqual([a["user_id"] for a in data["items"]], [self.root["id"]])
+        self.assertEqual(data["items"][0]["display_name"], "Root Ops")
+        raw = resp.data.decode("utf-8")
+        self.assertNotIn("password", raw)
+        self.assertNotIn("hash", raw)
+
+    def test_admins_get_empty_for_tenant_without_admin(self):
+        tid = self._bare_tenant()["id"]
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        self.assertEqual(self._json(self._get_admins(tid, token))["items"], [])
+
+    def test_admins_get_unknown_tenant_is_404(self):
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        resp = self._get_admins("tnt_missing", token)
+        self.assertEqual(str(resp.status), "404")
+        self.assertEqual(self._json(resp)["code"], "not_found")
+
+    def test_admins_get_requires_platform_admin(self):
+        tid = self._bare_tenant()["id"]
+        self.svc.create_member(
+            actor_user_id=self.root["id"], tenant_id=tid, operation="create-new",
+            username="alice", display_name="Alice", temporary_password="Str0ngPassTmp",
+            roles=["member"], department_id=None)
+        # Clear the forced-password gate: a restricted session is rejected at
+        # context resolution (403) for an unrelated reason, which would make this
+        # test pass even if the platform-admin guard were missing.
+        self.svc._store.execute(
+            "UPDATE users SET must_change_password=0 WHERE username='alice'")
+        token = self.svc.login("alice", "Str0ngPassTmp").token
+        resp = self._get_admins(tid, token)
+        self.assertEqual(str(resp.status), "403")
+        self.assertEqual(self._json(resp)["code"], "forbidden")
 
     # --- member filters (task 4.5) ----------------------------------------
     def test_members_status_and_role_filters(self):
@@ -728,6 +1036,168 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
     def test_member_without_skill_grant_is_rejected(self):
         resp = self._request_tools_skills("/api/skills", self._member_ctx())
         self.assertEqual(resp.status, "403 Forbidden", resp.data[:200])
+
+
+    # --- the tenant editor's three-step save sequence ----------------------
+    #
+    # The batch spans three endpoints in three transactions, so the contract is
+    # the *ordering and version threading*, not atomicity: bind an admin, replace
+    # both grant kinds in one PUT, then write the profile using the version the
+    # PUT left behind. Kept as tests rather than a throwaway script so the
+    # sequence stays protected. (These live in the shared class on purpose --
+    # subclassing it would re-run the entire suite.)
+
+    PW = "Str0ngAdminPass"
+
+    def _token(self):
+        return self.svc.login("root", self.PW).token
+
+    def _create_tenant(self):
+        resp = self._request("/api/platform/tenants", method="POST",
+                             data=json.dumps({"code": "beta", "name": "Beta",
+                                              "recent_password": self.PW}),
+                             token=self._token())
+        self.assertEqual(resp.status, "200 OK", resp.data[:300])
+        return self._json(resp)["tenant"]["id"]
+
+    def _audit_actions(self):
+        with self.svc._tx() as con:
+            rows = con.execute("SELECT action FROM audit_events ORDER BY id").fetchall()
+        return [r["action"] for r in rows]
+
+    def test_admin_then_grants_then_profile_commits_in_order(self):
+        tid = self._create_tenant()
+        v0 = self.svc.get_tenant(tid)["version"]
+
+        # Step 1: create and bind the tenant admin. This must happen before the
+        # tenant is enabled, because enabling requires a valid admin.
+        resp = self._post_admin(tid, {
+            "mode": "new", "username": "beta-admin", "display_name": "Beta Admin",
+            "temporary_password": "Temp0raryPass!", "recent_password": self.PW,
+        })
+        self.assertEqual(resp.status, "200 OK", resp.data[:300])
+        self.assertNotIn("Temp0raryPass!", resp.data.decode("utf-8"))
+        self.assertEqual(self.svc.get_tenant(tid)["version"], v0,
+                         "binding an admin must not consume a tenant version")
+
+        # Step 2: both grant kinds in a single wholesale PUT.
+        v1 = self.svc.get_tenant(tid)["version"]
+        grants = [
+            {"resource_kind": "model", "resource_id": "provider:deepseek:deepseek-v4-flash",
+             "action": "read"},
+            {"resource_kind": "tool", "resource_id": "builtin:web-search", "action": "execute"},
+        ]
+        resp = self._request(f"/api/platform/tenants/{tid}/resources", method="PUT",
+                             data=json.dumps({"grants": grants, "expected_version": v1}),
+                             token=self._token())
+        self.assertEqual(resp.status, "200 OK", resp.data[:300])
+        v2 = self.svc.get_tenant(tid)["version"]
+        self.assertEqual(v2, v1 + 1, "the grant step bumps the version exactly once")
+
+        # Step 3: the profile write threads the version step 2 produced.
+        resp = self._request(f"/api/platform/tenants/{tid}", method="POST",
+                             data=json.dumps({"operation": "profile", "name": "Beta Renamed",
+                                              "active": True, "expected_version": v2,
+                                              "recent_password": self.PW}),
+                             token=self._token())
+        self.assertEqual(resp.status, "200 OK", resp.data[:300])
+        tenant = self._json(resp)["tenant"]
+        self.assertEqual(tenant["name"], "Beta Renamed")
+        self.assertTrue(tenant["active"])
+        self.assertEqual(tenant["version"], v2 + 1,
+                         "the profile step bumps the version exactly once")
+
+        # The order is what made "appoint an admin and enable" possible at all.
+        with self.svc._tx() as con:
+            admins = self.svc._count_valid_tenant_admins(tid, con)
+        self.assertGreaterEqual(admins, 1)
+
+        actions = self._audit_actions()
+        self.assertIn("tenant.create_admin", actions)
+        self.assertIn("tenant.resource_grants.set", actions)
+        self.assertIn("tenant.set_profile", actions)
+
+    def _bind_admin(self, tid, username="beta-admin"):
+        resp = self._post_admin(tid, {
+            "mode": "new", "username": username, "display_name": "Beta Admin",
+            "temporary_password": "Temp0raryPass!", "recent_password": self.PW,
+        })
+        self.assertEqual(resp.status, "200 OK", resp.data[:300])
+        return resp
+
+    def test_creating_without_an_admin_leaves_a_tenant_no_profile_write_can_enable(self):
+        """Documents a pre-existing inconsistency this change does NOT fix.
+
+        Creating a tenant defaults it to enabled, but nothing forces an admin to
+        exist. Meanwhile *any* profile write carrying ``active=True`` -- even to
+        a tenant that is already enabled -- is refused until a valid admin is
+        bound. The practical consequence is that the operator must appoint the
+        admin before the name/enabled save can go through, which is exactly why
+        the editor's batch runs the admin step first.
+
+        Live data already contains tenants in this state (see evidence.md), so
+        the behaviour is recorded here rather than silently assumed away.
+        """
+        tid = self._create_tenant()
+        self.assertTrue(self.svc.get_tenant(tid)["active"], "creation defaults to enabled")
+        with self.svc._tx() as con:
+            self.assertEqual(self.svc._count_valid_tenant_admins(tid, con), 0,
+                             "no admin exists, yet the tenant is enabled")
+
+        v0 = self.svc.get_tenant(tid)["version"]
+        resp = self._request(f"/api/platform/tenants/{tid}", method="POST",
+                             data=json.dumps({"operation": "profile", "name": "Renamed",
+                                              "active": True, "expected_version": v0,
+                                              "recent_password": self.PW}),
+                             token=self._token())
+        self.assertEqual(str(resp.status), "409")
+        self.assertEqual(self._json(resp)["code"], "no_admin")
+
+        # Binding the admin unblocks the identical write, at the same version.
+        self._bind_admin(tid)
+        self.assertEqual(self.svc.get_tenant(tid)["version"], v0,
+                         "still the same version: binding an admin is not a tenant write")
+        resp = self._request(f"/api/platform/tenants/{tid}", method="POST",
+                             data=json.dumps({"operation": "profile", "name": "Renamed",
+                                              "active": True, "expected_version": v0,
+                                              "recent_password": self.PW}),
+                             token=self._token())
+        self.assertEqual(resp.status, "200 OK", resp.data[:300])
+        self.assertEqual(self.svc.get_tenant(tid)["name"], "Renamed")
+
+    def test_replaying_a_consumed_version_is_refused_and_changes_nothing(self):
+        # A retry that reuses an already-consumed version must fail loudly
+        # rather than silently overwrite; this is the 409 the UI surfaces.
+        tid = self._create_tenant()
+        self._bind_admin(tid, username="replay-admin")
+        v0 = self.svc.get_tenant(tid)["version"]
+        first = {"operation": "profile", "name": "First", "active": True,
+                 "expected_version": v0, "recent_password": self.PW}
+        resp = self._request(f"/api/platform/tenants/{tid}", method="POST",
+                             data=json.dumps(first), token=self._token())
+        self.assertEqual(resp.status, "200 OK", resp.data[:300])
+
+        replay = dict(first, name="Second")
+        resp = self._request(f"/api/platform/tenants/{tid}", method="POST",
+                             data=json.dumps(replay), token=self._token())
+        self.assertEqual(str(resp.status), "409")
+        self.assertEqual(self.svc.get_tenant(tid)["name"], "First",
+                         "the refused replay changed nothing")
+
+    def test_a_wrong_current_password_is_refused_without_writing(self):
+        # The save-time prompt retries in place on exactly this signal.
+        tid = self._create_tenant()
+        before = self.svc.get_tenant(tid)["version"]
+        resp = self._request(f"/api/platform/tenants/{tid}", method="POST",
+                             data=json.dumps({"operation": "profile", "name": "Nope",
+                                              "active": True, "expected_version": before,
+                                              "recent_password": "not-the-password"}),
+                             token=self._token())
+        self.assertEqual(str(resp.status), "401")
+        self.assertEqual(self._json(resp)["code"], "invalid_old")
+        after = self.svc.get_tenant(tid)
+        self.assertEqual(after["version"], before, "a refused save does not bump the version")
+        self.assertEqual(after["name"], "Beta", "a refused save does not rename")
 
 
 if __name__ == "__main__":

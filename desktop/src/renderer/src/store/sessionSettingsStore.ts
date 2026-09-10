@@ -5,11 +5,11 @@ import { sessionOwner } from './sessionStore'
 import type { SessionSettingsState } from '../types'
 
 /**
- * Per-session model + permission overrides, mirroring the web console's
- * `_sessCfg`. Both fall back to the global config when unset; the composer chips
- * read `cfg` to render the effective model/permission and their menus.
+ * Per-session model + team overrides, mirroring the web console's `_sessCfg`.
+ * Both fall back to the global config when unset; the composer chips read `cfg`
+ * to render the effective model and its menu.
  */
-export type ComposerMenu = 'workspace' | 'permission' | 'model' | null
+export type ComposerMenu = 'workspace' | 'model' | null
 
 interface SessionSettingsStore {
   /** Settings for the currently loaded session, or null before the first fetch. */
@@ -21,16 +21,15 @@ interface SessionSettingsStore {
   /** Last apply failure, shown inline in the open menu; cleared on the next
    *  attempt or when a menu opens. */
   error: string | null
-  /** Which composer menu is open. Shared so the three chips exclude each other,
-   *  and so a permission-denied hint can open the permission menu. */
+  /** Which composer menu is open. Shared so the chips exclude each other. */
   openMenu: ComposerMenu
 
   /** Fetch (and cache) settings for a session. Safe to call repeatedly. */
   refresh: (sessionId: string) => Promise<void>
-  /** Apply a model / permission / team change, then repaint from the server echo. */
+  /** Apply a model / team change, then repaint from the server echo. */
   apply: (
     sessionId: string,
-    body: { provider?: string | null; model?: string | null; permission?: string | null; members?: string[] | null }
+    body: { provider?: string | null; model?: string | null; members?: string[] | null }
   ) => Promise<boolean>
   /** Invite a teammate into the conversation (group chat). */
   addMember: (sessionId: string, agentId: string) => Promise<boolean>

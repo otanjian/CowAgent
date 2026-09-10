@@ -27,6 +27,8 @@ Sessions now carry their own permission mode, which works together with workspac
 - **Default mode**: pick a default permission mode, and new sessions start with it.
 - **Actionable denials**: when a tool call is blocked, the hint is clickable so you can adjust the permission on the spot.
 
+> Later change: in multi-tenant (database) installations execution is now decided by the caller's **role resource authorization**, so the in-conversation permission switch was removed and the global default is read-only there. Single-tenant installs keep the global default. See [Architecture](/intro/architecture#session-settings).
+
 <img src="https://cdn.jsdelivr.net/gh/zhayujie/cowagent-assets@main/screenshots/en/web-console-access-mode.png" width="600" />
 
 ## 🖥 Desktop Client

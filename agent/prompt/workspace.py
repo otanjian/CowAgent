@@ -169,8 +169,42 @@ def load_context_files(workspace_dir: str, files_to_load: Optional[List[str]] = 
             
         except Exception as e:
             logger.warning(f"[Workspace] Failed to load {filename}: {e}")
-    
+
+    context_files.extend(_load_personal_context_file())
+
     return context_files
+
+
+def _load_personal_context_file() -> List[ContextFile]:
+    """The current user's personal long-term memory, when there is a user.
+
+    Personal memory lives in the user domain, beside the Agents, so it is not
+    reachable by the workspace-relative loop above. It is additive: the Agent's
+    own shared MEMORY.md still loads, and this one is labelled so the model can
+    tell "what the Agent knows" from "what this person is like". With no user in
+    scope (legacy, machine-initiated runs) nothing is added and behaviour is
+    exactly as before.
+    """
+    try:
+        from common.runtime_identity import current_user_id
+        from common import state_dir
+        uid = current_user_id()
+        if not uid:
+            return []
+        personal = state_dir.memory_file()
+        if not personal.exists():
+            return []
+        content = personal.read_text(encoding="utf-8").strip()
+        if not content or _is_template_placeholder(content):
+            return []
+        content = _truncate_memory_content(content)
+        logger.debug("[Workspace] Loaded personal context file for the current user")
+        return [ContextFile(path=f"users/{uid}/{DEFAULT_MEMORY_FILENAME}",
+                            content=content)]
+    except Exception as e:
+        # Personal memory is an enhancement; it must never break prompt building.
+        logger.warning(f"[Workspace] Failed to load personal memory: {e}")
+        return []
 
 
 def _create_template_if_missing(filepath: str, template_content: str):
