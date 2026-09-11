@@ -602,6 +602,162 @@ def _migration_10(con: sqlite3.Connection) -> None:
 _migrations.append(_migration_10)
 
 
+def _migration_11(con: sqlite3.Connection) -> None:
+    """Tenant-consistent RBAC, grant and quota rows (tasks 7.5 + 7.7).
+
+    The application layer has always validated that a role belongs to the
+    membership's tenant, and that a quota row names a real tenant. That is a
+    convention, not a constraint: a bug (or a hand-written ``INSERT``) could
+    write a cross-tenant ``membership_roles`` edge and nothing at the database
+    layer would object. This migration makes the invariant structural:
+
+    * ``roles`` and ``memberships`` gain a ``UNIQUE(tenant_id, id)`` index so
+      they can be a composite foreign-key parent;
+    * ``membership_roles`` gains ``tenant_id`` and is rebuilt with
+      ``FOREIGN KEY(tenant_id, membership_id) REFERENCES memberships(tenant_id, id)``
+      and ``FOREIGN KEY(tenant_id, role_id) REFERENCES roles(tenant_id, id)``:
+      a row whose role and membership disagree on the tenant is now impossible
+      to store, whichever code path tries;
+    * ``role_resource_grants`` gains ``tenant_id`` with
+      ``FOREIGN KEY(tenant_id, role_id) REFERENCES roles(tenant_id, id)``, so a
+      grant can never point at another tenant's role;
+    * ``quota_limits`` / ``quota_usage`` gain
+      ``FOREIGN KEY(tenant_id) REFERENCES tenants(id)``, so a limit or a usage
+      bucket can never exist for a tenant that does not.
+
+    Existing rows are *derived*, never invented, exactly as the conversation
+    store's tenancy backfill does (task 6.8): ``tenant_id`` comes from the
+    parent row. An edge whose parent disagrees is dropped rather than
+    re-attributed, because it is precisely the corruption this migration
+    exists to prevent. ``PRAGMA foreign_key_check`` on the rebuilt tables is
+    the post-condition, so a database that somehow ends up inconsistent fails
+    the migration instead of booting with the invariant silently broken.
+    """
+    # Composite parents first: a foreign key needs its parent's unique index to
+    # exist before the child table that references it is created.
+    con.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_roles_tenant_id ON roles(tenant_id, id)"
+    )
+    con.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_memberships_tenant_id"
+        " ON memberships(tenant_id, id)"
+    )
+
+    def rebuild(table: str, create_sql: str, copy_sql: str, indexes: Sequence[str]) -> None:
+        """Swap ``table`` for ``create_sql``, deriving rows with ``copy_sql``."""
+        legacy = f"{table}_pre_tenant"
+        con.execute(f"ALTER TABLE {table} RENAME TO {legacy}")
+        con.execute(create_sql)
+        con.execute(copy_sql.replace("{legacy}", legacy))
+        con.execute(f"DROP TABLE {legacy}")
+        for statement in indexes:
+            con.execute(statement)
+
+    rebuild(
+        "membership_roles",
+        """
+        CREATE TABLE membership_roles (
+            tenant_id     TEXT NOT NULL,
+            membership_id TEXT NOT NULL,
+            role_id       TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, membership_id, role_id),
+            FOREIGN KEY (tenant_id, membership_id) REFERENCES memberships(tenant_id, id),
+            FOREIGN KEY (tenant_id, role_id) REFERENCES roles(tenant_id, id)
+        )
+        """,
+        """
+        INSERT INTO membership_roles(tenant_id, membership_id, role_id)
+        SELECT m.tenant_id, edge.membership_id, edge.role_id
+          FROM {legacy} edge
+          JOIN memberships m ON m.id = edge.membership_id
+          JOIN roles r ON r.id = edge.role_id AND r.tenant_id = m.tenant_id
+        """,
+        [],
+    )
+
+    rebuild(
+        "role_resource_grants",
+        """
+        CREATE TABLE role_resource_grants (
+            id            TEXT PRIMARY KEY,
+            tenant_id     TEXT NOT NULL,
+            role_id       TEXT NOT NULL,
+            resource_kind TEXT NOT NULL,
+            resource_id   TEXT NOT NULL,
+            action        TEXT NOT NULL,
+            created_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+            UNIQUE (role_id, resource_kind, resource_id, action),
+            FOREIGN KEY (tenant_id, role_id) REFERENCES roles(tenant_id, id)
+        )
+        """,
+        """
+        INSERT INTO role_resource_grants(
+            id, tenant_id, role_id, resource_kind, resource_id, action, created_at)
+        SELECT g.id, r.tenant_id, g.role_id, g.resource_kind, g.resource_id,
+               g.action, g.created_at
+          FROM {legacy} g
+          JOIN roles r ON r.id = g.role_id
+        """,
+        ["CREATE INDEX idx_role_resource_grants_role ON role_resource_grants(role_id)"],
+    )
+
+    # Quota is the other side of the same rule (task 7.7): a metric bucket is
+    # only meaningful for a tenant that exists, so a leftover row for a tenant
+    # deleted by hand can no longer make a meter answer for a stranger.
+    rebuild(
+        "quota_limits",
+        """
+        CREATE TABLE quota_limits (
+            tenant_id  TEXT NOT NULL REFERENCES tenants(id),
+            user_id    TEXT NOT NULL DEFAULT '',
+            metric     TEXT NOT NULL,
+            hard_limit INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (tenant_id, user_id, metric)
+        )
+        """,
+        """
+        INSERT INTO quota_limits(tenant_id, user_id, metric, hard_limit)
+        SELECT q.tenant_id, q.user_id, q.metric, q.hard_limit
+          FROM {legacy} q
+          JOIN tenants t ON t.id = q.tenant_id
+        """,
+        [],
+    )
+
+    rebuild(
+        "quota_usage",
+        """
+        CREATE TABLE quota_usage (
+            tenant_id    TEXT NOT NULL REFERENCES tenants(id),
+            user_id      TEXT NOT NULL DEFAULT '',
+            metric       TEXT NOT NULL,
+            window_start INTEGER NOT NULL,
+            used         INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (tenant_id, user_id, metric, window_start)
+        )
+        """,
+        """
+        INSERT INTO quota_usage(tenant_id, user_id, metric, window_start, used)
+        SELECT q.tenant_id, q.user_id, q.metric, q.window_start, q.used
+          FROM {legacy} q
+          JOIN tenants t ON t.id = q.tenant_id
+        """,
+        [],
+    )
+
+    for table in ("membership_roles", "role_resource_grants",
+                  "quota_limits", "quota_usage"):
+        violations = con.execute(f"PRAGMA foreign_key_check({table})").fetchall()
+        if violations:
+            raise sqlite3.IntegrityError(
+                f"{table} still holds {len(violations)} cross-tenant row(s)"
+                " after migration; refusing to leave the invariant broken"
+            )
+
+
+_migrations.append(_migration_11)
+
+
 class IdentityStoreError(RuntimeError):
     """Raised when the identity store cannot be opened or migrated."""
 

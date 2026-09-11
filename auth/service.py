@@ -320,6 +320,56 @@ class IdentityService:
 
     # --- bootstrap (task 2.2) ---------------------------------------------
 
+    def _seed_tenant_defaults(self, con, *, tenant_id: str,
+                              membership_id: Optional[str] = None) -> Dict[str, str]:
+        """Create a tenant's built-in roles, root department and admin binding.
+
+        Extracted (task 7.8) because tenant creation and tenant import both need
+        "what a new tenant starts with", and a second copy is exactly how the two
+        drift apart: one path gains a permission or a column and the other keeps
+        the old shape until someone notices. Both callers now delegate here, so
+        the admin/member role definitions have a single owner.
+
+        ``membership_id`` is optional: an imported tenant whose admin account is
+        created separately still gets its roles and root node, and the binding is
+        added wherever a membership exists. The tenant id is passed into the
+        binding because ``membership_roles`` carries the tenant and its composite
+        foreign key refuses a row whose tenant disagrees with the membership's
+        (task 7.5).
+
+        Returns the new ids for callers that want them.
+        """
+        role_admin_id = self._new_id("role")
+        role_member_id = self._new_id("role")
+        dept_root_id = self._new_id("dept")
+        con.execute(
+            "INSERT INTO roles(id, tenant_id, code, name, builtin, permissions_json, version)"
+            " VALUES (?,?,?,?,1,?,1)",
+            (role_admin_id, tenant_id, TENANT_ADMIN_CODE, BUILTIN_ROLES[TENANT_ADMIN_CODE],
+             json.dumps(list(PERMISSION_CATALOG))),
+        )
+        con.execute(
+            "INSERT INTO roles(id, tenant_id, code, name, builtin, permissions_json, version)"
+            " VALUES (?,?,?,?,1,?,1)",
+            (role_member_id, tenant_id, MEMBER_CODE, BUILTIN_ROLES[MEMBER_CODE],
+             json.dumps(["tenant.info.read", "agent.read", "history.read",
+                         "knowledge.read", "memory.read", "todo.read", "todo.write"])),
+        )
+        if membership_id:
+            con.execute(
+                "INSERT INTO membership_roles(tenant_id, membership_id, role_id)"
+                " VALUES (?,?,?)",
+                (tenant_id, membership_id, role_admin_id),
+            )
+        # virtual organization root
+        con.execute(
+            "INSERT INTO departments(id, tenant_id, parent_id, code, name, sort_order, active, version)"
+            " VALUES (?,?,NULL,'__root__','组织根',0,1,1)",
+            (dept_root_id, tenant_id),
+        )
+        return {"role_admin_id": role_admin_id, "role_member_id": role_member_id,
+                "dept_root_id": dept_root_id}
+
     def bootstrap(
         self,
         *,
@@ -360,11 +410,8 @@ class IdentityService:
             return existing
 
         tenant_id = self._new_id("tnt")
-        role_admin_id = self._new_id("role")
-        role_member_id = self._new_id("role")
         user_id = self._new_id("usr")
         membership_id = self._new_id("mem")
-        dept_root_id = self._new_id("dept")
         # Compute the expensive admin-hash OUTSIDE the write lock (task 2.6).
         admin_hash = hash_password(admin_password, min_length=_pw_min_length)
 
@@ -395,30 +442,10 @@ class IdentityService:
                 " VALUES (?,?,?,?,1,1)",
                 (membership_id, tenant_id, user_id, admin_display),
             )
-            # built-in roles
-            con.execute(
-                "INSERT INTO roles(id, tenant_id, code, name, builtin, permissions_json, version)"
-                " VALUES (?,?,?,?,1,?,1)",
-                (role_admin_id, tenant_id, TENANT_ADMIN_CODE, BUILTIN_ROLES[TENANT_ADMIN_CODE],
-                 json.dumps(list(PERMISSION_CATALOG))),
-            )
-            con.execute(
-                "INSERT INTO roles(id, tenant_id, code, name, builtin, permissions_json, version)"
-                " VALUES (?,?,?,?,1,?,1)",
-                (role_member_id, tenant_id, MEMBER_CODE, BUILTIN_ROLES[MEMBER_CODE],
-                 json.dumps(["tenant.info.read", "agent.read", "history.read",
-                             "knowledge.read", "memory.read", "todo.read", "todo.write"])),
-            )
-            con.execute(
-                "INSERT INTO membership_roles(membership_id, role_id) VALUES (?,?)",
-                (membership_id, role_admin_id),
-            )
-            # virtual organization root
-            con.execute(
-                "INSERT INTO departments(id, tenant_id, parent_id, code, name, sort_order, active, version)"
-                " VALUES (?,?,NULL,'__root__','组织根',0,1,1)",
-                (dept_root_id, tenant_id),
-            )
+            # Built-in roles, root department and the admin binding live in one
+            # place (task 7.8) so tenant creation and import cannot drift.
+            self._seed_tenant_defaults(
+                con, tenant_id=tenant_id, membership_id=membership_id)
             # audit
             self._audit_in_tx(
                 con,
@@ -509,30 +536,72 @@ class IdentityService:
         A session must still be anchored to one Agent, but the user must not
         have to choose it. Order:
 
-        1. the tenant's configured ``default_agent_id``;
+        1. the tenant's configured ``default_agent_id``, **while it is still a
+           usable binding of this tenant**;
         2. among the tenant's bound Agents, the tenant-*shared* ones (a private
            Agent is readable only by its owner, so the shared entry must not be
            pinned to one);
-        3. failing that, every bound Agent.
+        3. failing that, every usable bound Agent.
 
         Steps 2 and 3 pick the smallest stable id, so the answer never depends
         on binding insert order. Read-only by design: a GET must not mutate the
         tenant, and writing here would put a read path under ``tenants.version``
-        conflict handling. Returns None only when the tenant holds no Agent.
+        conflict handling.
+
+        Fail-closed (task 7.2): a stale configured default is *not* returned --
+        it is logged and skipped, because returning an Agent this tenant no
+        longer owns (or one an admin disabled) would anchor a new conversation
+        to the wrong workspace. When nothing usable is left the answer is None
+        and every caller refuses with 403; the process-global
+        ``registry.default_agent_id`` is never borrowed, as it may belong to
+        another tenant.
 
         Single source of truth: the Web layer delegates here rather than
         re-deriving the rule, so all read paths agree.
         """
+        bindings = self.agents_for_tenant(tenant_id)
+        usable = [b for b in bindings if self._agent_is_usable(b["agent_id"])]
+        usable_ids = [b["agent_id"] for b in usable]
+
         configured = self.tenant_default_agent_id(tenant_id)
         if configured:
-            return configured
-        bindings = self.agents_for_tenant(tenant_id)
-        if not bindings:
+            if configured in usable_ids:
+                return configured
+            from common.log import logger
+            logger.warning(
+                "[Identity] tenant %s default_agent_id=%r is not usable"
+                " (unbound or disabled); falling back to a usable bound Agent",
+                tenant_id, configured,
+            )
+
+        if not usable:
             return None
-        shared = [b["agent_id"] for b in bindings
+        shared = [b["agent_id"] for b in usable
                   if b.get("private_owner_user_id") is None]
-        pool = shared or [b["agent_id"] for b in bindings]
+        pool = shared or usable_ids
         return sorted(pool)[0]
+
+    @staticmethod
+    def _agent_is_usable(agent_id: str) -> bool:
+        """Whether a bound Agent may be resolved to as a default.
+
+        A disabled Agent is excluded: disabling it is a deliberate act and
+        resolving to it would send new conversations to a workspace an admin
+        took out of service (tasks 7.1/7.3).
+
+        An Agent the registry does not know is *not* excluded. The binding is
+        the tenant's authorization of record and the registry is a per-config
+        roster (it can legitimately omit an Agent whose workspace is resolved
+        elsewhere), so requiring a live profile here would make a bound tenant
+        unable to chat at all. The asymmetry is deliberate: one rule refuses
+        what the roster explicitly disables, and never guesses beyond it.
+        """
+        try:
+            from agent.registry import get_agent_registry
+            profile = get_agent_registry().get(agent_id, require_enabled=False)
+        except Exception:
+            return True
+        return bool(getattr(profile, "enabled", True))
 
     def clone_of(self, tenant_id: str, source_agent_id: str) -> Optional[Dict[str, Any]]:
         """Return the binding this tenant cloned from ``source_agent_id``.
@@ -2295,9 +2364,6 @@ class IdentityService:
         _assert_new_tenant_root_clear(shared_root, self)
 
         tenant_id = self._new_id("tnt")
-        role_admin_id = self._new_id("role")
-        role_member_id = self._new_id("role")
-        dept_root_id = self._new_id("dept")
         if create_admin:
             user_id = self._new_id("usr")
             membership_id = self._new_id("mem")
@@ -2322,29 +2388,9 @@ class IdentityService:
                     " VALUES (?,?,?,?,1,1)",
                     (membership_id, tenant_id, user_id, admin_display),
                 )
-            con.execute(
-                "INSERT INTO roles(id, tenant_id, code, name, builtin, permissions_json, version)"
-                " VALUES (?,?,?,?,1,?,1)",
-                (role_admin_id, tenant_id, TENANT_ADMIN_CODE, BUILTIN_ROLES[TENANT_ADMIN_CODE],
-                 json.dumps(list(PERMISSION_CATALOG))),
-            )
-            con.execute(
-                "INSERT INTO roles(id, tenant_id, code, name, builtin, permissions_json, version)"
-                " VALUES (?,?,?,?,1,?,1)",
-                (role_member_id, tenant_id, MEMBER_CODE, BUILTIN_ROLES[MEMBER_CODE],
-                 json.dumps(["tenant.info.read", "agent.read", "history.read",
-                             "knowledge.read", "memory.read", "todo.read", "todo.write"])),
-            )
-            if create_admin:
-                con.execute(
-                    "INSERT INTO membership_roles(membership_id, role_id) VALUES (?,?)",
-                    (membership_id, role_admin_id),
-                )
-            con.execute(
-                "INSERT INTO departments(id, tenant_id, parent_id, code, name, sort_order, active, version)"
-                " VALUES (?,?,NULL,'__root__','组织根',0,1,1)",
-                (dept_root_id, tenant_id),
-            )
+            self._seed_tenant_defaults(
+                con, tenant_id=tenant_id,
+                membership_id=membership_id if create_admin else None)
             self._audit_in_tx(
                 con,
                 actor_user_id=actor_user_id,
@@ -2461,8 +2507,9 @@ class IdentityService:
         ).fetchone()["c"]
         if not bound:
             con.execute(
-                "INSERT INTO membership_roles(membership_id, role_id) VALUES (?,?)",
-                (membership_id, admin_role["id"]),
+                "INSERT INTO membership_roles(tenant_id, membership_id, role_id)"
+                " VALUES (?,?,?)",
+                (tenant_id, membership_id, admin_role["id"]),
             )
         return membership_id
 
@@ -3480,8 +3527,9 @@ class IdentityService:
                 if code not in BUILTIN_ROLES and code not in BUILTIN_ROLES:
                     pass
                 con.execute(
-                    "INSERT OR REPLACE INTO membership_roles(membership_id, role_id) VALUES (?,?)",
-                    (membership_id, role["id"]),
+                    "INSERT OR REPLACE INTO membership_roles(tenant_id, membership_id, role_id)"
+                    " VALUES (?,?,?)",
+                    (tenant_id, membership_id, role["id"]),
                 )
 
             self._audit_in_tx(
@@ -3561,8 +3609,9 @@ class IdentityService:
                     if code == TENANT_ADMIN_CODE:
                         admin_role_count += 1
                     con.execute(
-                        "INSERT OR REPLACE INTO membership_roles(membership_id, role_id) VALUES (?,?)",
-                        (member_id, role["id"]),
+                        "INSERT OR REPLACE INTO membership_roles(tenant_id, membership_id, role_id)"
+                        " VALUES (?,?,?)",
+                        (tenant_id, member_id, role["id"]),
                     )
             else:
                 # Preserve existing bindings; recompute whether this member is an
@@ -3743,11 +3792,22 @@ class IdentityService:
         return sorted({g["resource_kind"] for g in grants})
 
     def _insert_grants_tx(self, con, role_id: str, grants: List[Dict[str, str]]) -> None:
+        # The tenant is not a parameter: it is read from the role being granted,
+        # so a caller can never hand in a grant whose tenant disagrees with its
+        # role (the composite foreign key would refuse it anyway, task 7.5).
+        row = con.execute(
+            "SELECT tenant_id FROM roles WHERE id=?", (role_id,)
+        ).fetchone()
+        if row is None:
+            raise IdentityServiceError("unknown role", code="invalid_role", status=404)
+        tenant_id = row["tenant_id"]
         for g in grants:
             con.execute(
-                "INSERT INTO role_resource_grants(id, role_id, resource_kind, resource_id, action)"
-                " VALUES (?,?,?,?,?)",
-                (self._new_id("grant"), role_id, g["resource_kind"], g["resource_id"], g["action"]),
+                "INSERT INTO role_resource_grants("
+                "id, tenant_id, role_id, resource_kind, resource_id, action)"
+                " VALUES (?,?,?,?,?,?)",
+                (self._new_id("grant"), tenant_id, role_id,
+                 g["resource_kind"], g["resource_id"], g["action"]),
             )
 
     def _replace_grants_tx(self, con, role_id: str, grants: List[Dict[str, str]]) -> None:
@@ -5123,8 +5183,43 @@ class IdentityService:
         except IdentityServiceError:
             raise
         except Exception as error:
+            # Fail-closed by default (task 7.6/7.7): if the meter cannot be read
+            # or written, the honest answer is "unknown", and an unknown quota
+            # must not be treated as "within limit" — that is how a storage
+            # fault silently becomes free, unlimited usage.
+            #
+            # A deployment may explicitly opt out when the meter's availability
+            # is worth more than the guarantee (``quota_fail_open: true``), and
+            # the bypass is then loud: the relaxation is named in the log with
+            # tenant/user/metric and the amount, so it is never invisible. The
+            # audit trail cannot be used for this one, because the audit trail
+            # is part of the storage that just failed.
+            if self._quota_fail_open():
+                logger.warning(
+                    f"[quota] FAIL-OPEN (quota_fail_open=true): allowing"
+                    f" {amount} {metric} for tenant={tenant_id} user={user_id}"
+                    f" despite meter error: {error}"
+                )
+                return True
             logger.error(f"[quota] consume failed for {tenant_id}/{user_id}/{metric}: {error}")
             raise IdentityServiceError("quota meter failed", code="quota_error", status=500) from error
+
+    @staticmethod
+    def _quota_fail_open() -> bool:
+        """Whether this deployment explicitly relaxed the quota fail-closed rule.
+
+        Default is strict: an absent, unreadable or malformed setting keeps the
+        gate closed, so only a deliberate ``quota_fail_open: true`` changes the
+        answer (task 7.7).
+        """
+        try:
+            from config import conf
+            value = conf().get("quota_fail_open", False)
+        except Exception:
+            return False
+        if isinstance(value, str):
+            return value.strip().lower() in ("1", "true", "yes", "on")
+        return bool(value)
 
 
 def identity_db_path() -> str:
