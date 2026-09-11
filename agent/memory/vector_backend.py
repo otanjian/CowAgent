@@ -69,7 +69,7 @@ class SQLiteVectorBackend(VectorBackend):
     so writes intentionally do not commit here.
     """
 
-    _FILTER_COLUMNS = {"id", "user_id", "scope", "source", "path"}
+    _FILTER_COLUMNS = {"id", "user_id", "scope", "source", "path", "tenant_id"}
 
     def __init__(self, connection: sqlite3.Connection):
         self.connection = connection

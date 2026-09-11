@@ -114,6 +114,9 @@ def test_memory_storage_routes_vector_operations_through_backend(tmp_path):
             metadata={
                 "user_id": None,
                 "scope": "shared",
+                # Tenancy dimension (task 6.10): always present on the record,
+                # empty when no tenant is in scope.
+                "tenant_id": "",
                 "source": "memory",
                 "path": "memory/shared/custom.md",
                 "start_line": 1,
@@ -127,6 +130,9 @@ def test_memory_storage_routes_vector_operations_through_backend(tmp_path):
         "scopes": ["shared", "user"],
         "user_id": "current",
     }
+    # ``tenant_id`` is only added to the filter when a tenant is in scope; this
+    # unscoped call must not have narrowed the search to the empty tenant.
+    assert "tenant_id" not in backend.search_filter
     assert backend.deleted == [(None, {"path": "memory/shared/custom.md"})]
     assert results[0].path == "memory/shared/custom.md"
     assert results[0].score == 0.75

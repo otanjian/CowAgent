@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from common.log import logger
+from agent.memory import conversation_schema as schema_seam
 
 
 def normalize_session_search_query(q: Optional[str]) -> str:
@@ -36,6 +37,72 @@ def normalize_session_search_query(q: Optional[str]) -> str:
     return q
 
 
+#: The dimensions a conversation row can be scoped by. ``agent_id`` is
+#: upstream's multi-agent dimension; ``owner`` and ``tenant_id`` are this
+#: fork's tenancy dimension. The composed schema defines them
+#: (``agent/memory/conversation_schema.py``); this is how a query applies them.
+DIMENSION_COLUMNS: tuple = ("agent_id", "owner", "tenant_id")
+
+#: Dimensions whose empty value is a *value*, not "unknown". Upstream's
+#: migration adds ``agent_id TEXT NOT NULL DEFAULT ''`` precisely so a
+#: single-Agent install keeps behaving as before, which makes ``''`` the
+#: pre-multi-Agent / default domain rather than an unattributed row. A scoped
+#: read therefore also sees the empty-agent rows in its own tenant.
+#:
+#: ``tenant_id``/``owner`` are deliberately *not* in this set: their empty
+#: value means the row could not be attributed, and task 6.8 requires such a
+#: row to stay unreadable to a tenant scope instead of defaulting into one.
+LEGACY_EMPTY_DIMENSIONS: frozenset = frozenset({"agent_id"})
+
+
+def ambient_dimensions() -> Dict[str, str]:
+    """The dimension values carried by the ambient runtime identity.
+
+    Empty string means "this dimension is not in scope": legacy callers and
+    machine-initiated work carry no user/tenant, and a conversation's own Agent
+    is not exercised as a filter until multi-Agent transcripts share a session.
+    An empty value therefore skips that predicate instead of matching only the
+    empty column, which is what keeps pre-dimension rows readable.
+    """
+    from common.runtime_identity import current_identity
+
+    ident = current_identity()
+    return {
+        "agent_id": str(getattr(ident, "agent_id", "") or ""),
+        "owner": str(getattr(ident, "user_id", "") or ""),
+        "tenant_id": str(getattr(ident, "tenant_id", "") or ""),
+    }
+
+
+def dimension_clause(
+    alias: str = "",
+    values: Optional[Dict[str, str]] = None,
+    keys: tuple = DIMENSION_COLUMNS,
+) -> tuple:
+    """Build ``(sql_fragment, params)`` restricting a query to set dimensions.
+
+    Returns ``("", ())`` when no dimension is in scope, so an unscoped read
+    keeps the historical "see everything" semantics.
+    """
+    values = ambient_dimensions() if values is None else values
+    clauses: List[str] = []
+    params: List[str] = []
+    for key in keys:
+        value = values.get(key) or ""
+        if not value:
+            continue
+        if key in LEGACY_EMPTY_DIMENSIONS:
+            # ``''`` is the pre-multi-Agent/default domain (see
+            # ``LEGACY_EMPTY_DIMENSIONS``), so a scoped read includes it.
+            clauses.append(f"({alias}{key} = ? OR {alias}{key} = '')")
+        else:
+            clauses.append(f"{alias}{key} = ?")
+        params.append(value)
+    if not clauses:
+        return "", ()
+    return " AND " + " AND ".join(clauses), tuple(params)
+
+
 # ---------------------------------------------------------------------------
 # Schema
 # ---------------------------------------------------------------------------
@@ -43,43 +110,19 @@ def normalize_session_search_query(q: Optional[str]) -> str:
 # Core conversation schema. Sessions and messages are the irreplaceable part
 # of this file, so their creation must always succeed; nothing optional belongs
 # in this script.
-_DDL = """
-CREATE TABLE IF NOT EXISTS sessions (
-    session_id        TEXT    PRIMARY KEY,
-    channel_type      TEXT    NOT NULL DEFAULT '',
-    title             TEXT    NOT NULL DEFAULT '',
-    context_start_seq INTEGER NOT NULL DEFAULT 0,
-    created_at        INTEGER NOT NULL,
-    last_active       INTEGER NOT NULL,
-    msg_count         INTEGER NOT NULL DEFAULT 0,
-    pinned            INTEGER NOT NULL DEFAULT 0,
-    -- Tenancy dimension: the owning user. Empty until per-user isolation lands,
-    -- so filtering by owner is an additive query change rather than a schema one.
-    owner             TEXT    NOT NULL DEFAULT ''
-);
+#
+# The definition itself is composed, not literal: see
+# ``agent/memory/conversation_schema.py`` for the seam that lets upstream's
+# agent dimension (composite keys) and this fork's tenancy dimension (owner,
+# tenant_id) be registered independently instead of being edited into one
+# literal that every merge rewrites.
+def _core_ddl() -> str:
+    return schema_seam.build_ddl()
 
-CREATE TABLE IF NOT EXISTS messages (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id   TEXT    NOT NULL,
-    seq          INTEGER NOT NULL,
-    role         TEXT    NOT NULL,
-    content      TEXT    NOT NULL,
-    created_at   INTEGER NOT NULL,
-    extras       TEXT    NOT NULL DEFAULT '',
-    -- Tenancy dimension: the owning user, mirrored from the session.
-    owner        TEXT    NOT NULL DEFAULT '',
-    UNIQUE (session_id, seq)
-);
 
-CREATE INDEX IF NOT EXISTS idx_messages_session
-    ON messages (session_id, seq);
+def _core_schema():
+    return schema_seam.conversation_schema()
 
-CREATE INDEX IF NOT EXISTS idx_sessions_last_active
-    ON sessions (last_active);
-
-CREATE INDEX IF NOT EXISTS idx_messages_created_at
-    ON messages (created_at);
-"""
 
 # Runs are an auxiliary table in the same file. Kept out of the core script so
 # that any problem here -- a legacy table of the same name, a partial upgrade --
@@ -122,47 +165,6 @@ CREATE INDEX IF NOT EXISTS idx_runs_parent
 
 CREATE INDEX IF NOT EXISTS idx_runs_task
     ON runs (task_source, task_id);
-"""
-
-# Migration: add channel_type column to existing databases that predate it.
-_MIGRATION_ADD_CHANNEL_TYPE = """
-ALTER TABLE sessions ADD COLUMN channel_type TEXT NOT NULL DEFAULT '';
-"""
-
-_MIGRATION_ADD_TITLE = """
-ALTER TABLE sessions ADD COLUMN title TEXT NOT NULL DEFAULT '';
-"""
-
-_MIGRATION_ADD_CONTEXT_START_SEQ = """
-ALTER TABLE sessions ADD COLUMN context_start_seq INTEGER NOT NULL DEFAULT 0;
-"""
-
-# User-pinned conversations, kept at the top of the session list.
-_MIGRATION_ADD_PINNED = """
-ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
-"""
-
-# Generic JSON sidecar for per-message attachments (TTS audio URL, future use).
-# Always optional — readers must tolerate missing column / empty / invalid JSON.
-_MIGRATION_ADD_MSG_EXTRAS = """
-ALTER TABLE messages ADD COLUMN extras TEXT NOT NULL DEFAULT '';
-"""
-
-# Attribute each message to the run that produced it, so a run's trace can be
-# reconstructed and a delegated/subagent turn is distinguishable from its
-# parent's. Empty for messages written before runs were tracked.
-_MIGRATION_ADD_MSG_RUN_ID = """
-ALTER TABLE messages ADD COLUMN run_id TEXT NOT NULL DEFAULT '';
-"""
-
-# Tenancy dimension. Empty for pre-isolation rows, which then read as shared /
-# default-user content. Filtering by owner is applied at the retrieval point.
-_MIGRATION_ADD_SESSION_OWNER = """
-ALTER TABLE sessions ADD COLUMN owner TEXT NOT NULL DEFAULT '';
-"""
-
-_MIGRATION_ADD_MSG_OWNER = """
-ALTER TABLE messages ADD COLUMN owner TEXT NOT NULL DEFAULT '';
 """
 
 DEFAULT_MAX_AGE_DAYS: int = 30
@@ -496,14 +498,13 @@ class ConversationStore:
         Returns:
             Chronologically ordered list of message dicts (role, content).
         """
-        # Tenancy dimension: when the caller runs as a verified user, restore
-        # only that user's content — the same rule ``list_sessions`` applies, so
-        # a restored LLM context can never contain another user's turns. With no
-        # user in scope (legacy) the owner filter is skipped and the historical
-        # behaviour is preserved.
-        from common.runtime_identity import current_identity
-        owner_filter = current_identity().user_id or None
-
+        # Dimension scope: when the caller runs as a verified user/tenant (or as
+        # a specific Agent), restore only content in that scope — the same rule
+        # ``list_sessions`` applies, so a restored LLM context can never contain
+        # another tenant's or user's turns. A dimension that is not in scope
+        # (legacy, machine work) is not filtered, preserving the historical
+        # behaviour.
+        values = ambient_dimensions()
         with self._lock:
             conn = self._connect()
             try:
@@ -515,26 +516,16 @@ class ConversationStore:
                 ctx_start = ctx_row[0] if ctx_row else 0
 
                 columns = "seq, role, content" + (", extras" if with_authors else "")
-                if owner_filter is not None:
-                    rows = conn.execute(
-                        f"""
-                        SELECT {columns}
-                        FROM messages
-                        WHERE session_id = ? AND seq >= ? AND owner = ?
-                        ORDER BY seq DESC
-                        """,
-                        (session_id, ctx_start, owner_filter),
-                    ).fetchall()
-                else:
-                    rows = conn.execute(
-                        f"""
-                        SELECT {columns}
-                        FROM messages
-                        WHERE session_id = ? AND seq >= ?
-                        ORDER BY seq DESC
-                        """,
-                        (session_id, ctx_start),
-                    ).fetchall()
+                scope_sql, scope_params = dimension_clause(values=values)
+                rows = conn.execute(
+                    f"""
+                    SELECT {columns}
+                    FROM messages
+                    WHERE session_id = ? AND seq >= ?{scope_sql}
+                    ORDER BY seq DESC
+                    """,
+                    (session_id, ctx_start) + scope_params,
+                ).fetchall()
             finally:
                 conn.close()
 
@@ -633,12 +624,13 @@ class ConversationStore:
             from common.utils import current_agent_run_id
             run_id = current_agent_run_id() or ""
 
-        # Tenancy dimension (task 3.8 / 4.1): attribute new content to the
-        # requesting user when one is in scope, so database-mode reads can be
-        # filtered by owner. Empty in legacy mode, which keeps every legacy
-        # session visible via the owner='' filter.
-        from common.runtime_identity import current_identity
-        owner = current_identity().user_id or ""
+        # Dimension scope (task 6.6): stamp new content with every dimension the
+        # ambient identity carries, so the composed schema's columns are filled
+        # at the write and the read can filter on them. Empty values keep the
+        # legacy rows readable (see ``ambient_dimensions``).
+        dimensions = ambient_dimensions()
+        owner = dimensions["owner"]
+        scope_sql, scope_params = dimension_clause(values=dimensions)
 
         now = int(time.time())
         with self._lock:
@@ -647,8 +639,8 @@ class ConversationStore:
                 with conn:
                     if not create_if_missing:
                         exists = conn.execute(
-                            "SELECT 1 FROM sessions WHERE session_id = ?",
-                            (session_id,),
+                            f"SELECT 1 FROM sessions WHERE session_id = ?{scope_sql}",
+                            (session_id,) + scope_params,
                         ).fetchone()
                         if not exists:
                             return False
@@ -659,20 +651,24 @@ class ConversationStore:
                     conn.execute(
                         """
                         INSERT OR IGNORE INTO sessions
-                            (session_id, channel_type, owner, created_at, last_active, msg_count)
-                        VALUES (?, ?, ?, ?, ?, 0)
+                            (agent_id, session_id, channel_type, owner, tenant_id,
+                             created_at, last_active, msg_count)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 0)
                         """,
-                        (session_id, channel_type, owner, now, now),
+                        (dimensions["agent_id"], session_id, channel_type, owner,
+                         dimensions["tenant_id"], now, now),
                     )
                     conn.execute(
-                        "UPDATE sessions SET last_active = ? WHERE session_id = ?",
-                        (now, session_id),
+                        "UPDATE sessions SET last_active = ?"
+                        f" WHERE session_id = ?{scope_sql}",
+                        (now, session_id) + scope_params,
                     )
 
                     # Determine starting seq for the new batch.
                     row = conn.execute(
-                        "SELECT COALESCE(MAX(seq), -1) FROM messages WHERE session_id = ?",
-                        (session_id,),
+                        "SELECT COALESCE(MAX(seq), -1) FROM messages"
+                        f" WHERE session_id = ?{scope_sql}",
+                        (session_id,) + scope_params,
                     ).fetchone()
                     next_seq = row[0] + 1
 
@@ -687,10 +683,13 @@ class ConversationStore:
                         conn.execute(
                             """
                             INSERT OR IGNORE INTO messages
-                                (session_id, seq, role, content, created_at, extras, run_id, owner)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                (agent_id, session_id, seq, role, content, created_at,
+                                 extras, run_id, owner, tenant_id)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
-                            (session_id, next_seq, role, content, now, extras, msg_run_id, owner),
+                            (dimensions["agent_id"], session_id, next_seq, role,
+                             content, now, extras, msg_run_id, owner,
+                             dimensions["tenant_id"]),
                         )
                         next_seq += 1
 
@@ -698,17 +697,19 @@ class ConversationStore:
                         """
                         UPDATE sessions
                         SET msg_count = (
-                            SELECT COUNT(*) FROM messages WHERE session_id = ?
+                            SELECT COUNT(*) FROM messages
+                            WHERE session_id = ?{scope_sql}
                         )
-                        WHERE session_id = ?
-                        """,
-                        (session_id, session_id),
+                        WHERE session_id = ?{scope_sql}
+                        """.format(scope_sql=scope_sql),
+                        (session_id,) + scope_params + (session_id,) + scope_params,
                     )
 
                     # Auto-generate title from the first visible user message
                     cur_title = conn.execute(
-                        "SELECT title FROM sessions WHERE session_id = ?",
-                        (session_id,),
+                        "SELECT title FROM sessions"
+                        f" WHERE session_id = ?{scope_sql}",
+                        (session_id,) + scope_params,
                     ).fetchone()
                     if cur_title and not cur_title[0]:
                         for msg in messages:
@@ -718,8 +719,9 @@ class ConversationStore:
                                 if text:
                                     title = text[:50].split("\n")[0]
                                     conn.execute(
-                                        "UPDATE sessions SET title = ? WHERE session_id = ?",
-                                        (title, session_id),
+                                        "UPDATE sessions SET title = ?"
+                                        f" WHERE session_id = ?{scope_sql}",
+                                        (title, session_id) + scope_params,
                                     )
                                     break
                     return True
@@ -1415,12 +1417,18 @@ class ConversationStore:
 
                 # extras column is added by migration; tolerate older DBs that
                 # might miss it by falling back to a NULL literal.
+                # Agent/tenant are ambient (the request scope); the explicit
+                # ``user_id`` keeps its historical meaning of "this is the owner
+                # filter the UI asked for", so an unscoped internal read is not
+                # silently narrowed to the empty owner.
+                scope_sql, scope_params = dimension_clause(
+                    values=ambient_dimensions(), keys=("agent_id", "tenant_id"))
                 if user_id:
-                    msg_where = "WHERE session_id = ? AND owner = ?"
-                    msg_args = (session_id, user_id)
+                    msg_where = f"WHERE session_id = ? AND owner = ?{scope_sql}"
+                    msg_args = (session_id, user_id) + scope_params
                 else:
-                    msg_where = "WHERE session_id = ?"
-                    msg_args = (session_id,)
+                    msg_where = f"WHERE session_id = ?{scope_sql}"
+                    msg_args = (session_id,) + scope_params
                 try:
                     rows = conn.execute(
                         f"""
@@ -1525,6 +1533,12 @@ class ConversationStore:
         q = normalize_session_search_query(q)
         clauses = ["owner = ?"]
         params: List[Any] = [user_id or ""]
+        scope_sql, scope_params = dimension_clause(
+            values=ambient_dimensions(), keys=("agent_id", "tenant_id"))
+        if scope_sql:
+            # strip the leading " AND " so it joins the clause list
+            clauses.append(scope_sql[len(" AND "):])
+            params.extend(scope_params)
         if channel_type:
             clauses.append("channel_type = ?")
             params.append(channel_type)
@@ -1609,15 +1623,75 @@ class ConversationStore:
             finally:
                 conn.close()
 
+    def backfill_tenant(self, tenants_for_owner) -> Dict[str, int]:
+        """Attribute owner-known rows to a tenant, from the owner's membership.
+
+        Task 6.8. The tenant of a pre-isolation conversation is *derived* from
+        the person it belongs to, never invented:
+
+        * only rows with an empty ``tenant_id`` and a non-empty ``owner`` are
+          candidates (a row with no owner has no derivable tenant);
+        * ``tenants_for_owner(owner)`` must return exactly one tenant id, or
+          ``None``/empty when the owner has no membership or several. An
+          ambiguous answer leaves the row empty rather than picking a tenant,
+          so the row stays unreadable to every tenant scope instead of leaking
+          into an arbitrary one;
+        * idempotent: a second pass finds only the still-unattributed rows.
+
+        Returns ``{"sessions": n, "messages": n, "unresolved": n}`` where
+        ``unresolved`` counts the *owners* (not rows) that could not be mapped.
+        """
+        with self._lock:
+            conn = self._connect()
+            try:
+                with conn:
+                    owners = [
+                        r[0] for r in conn.execute(
+                            "SELECT DISTINCT owner FROM sessions"
+                            " WHERE tenant_id = '' AND owner != ''"
+                        ).fetchall()
+                    ]
+                    resolved: Dict[str, str] = {}
+                    unresolved = 0
+                    for owner in owners:
+                        tenant = tenants_for_owner(owner)
+                        if isinstance(tenant, str) and tenant:
+                            resolved[owner] = tenant
+                        else:
+                            unresolved += 1
+
+                    sessions = messages = 0
+                    for owner, tenant in resolved.items():
+                        sessions += conn.execute(
+                            "UPDATE sessions SET tenant_id = ?"
+                            " WHERE tenant_id = '' AND owner = ?",
+                            (tenant, owner),
+                        ).rowcount
+                        messages += conn.execute(
+                            "UPDATE messages SET tenant_id = ?"
+                            " WHERE tenant_id = '' AND owner = ?",
+                            (tenant, owner),
+                        ).rowcount
+                    return {
+                        "sessions": sessions,
+                        "messages": messages,
+                        "unresolved": unresolved,
+                    }
+            finally:
+                conn.close()
+
     def set_pinned(self, session_id: str, pinned: bool) -> bool:
         """Pin or unpin a session. Returns True if the session existed."""
+        scope_sql, scope_params = dimension_clause(
+            values=ambient_dimensions(), keys=("agent_id", "tenant_id"))
         with self._lock:
             conn = self._connect()
             try:
                 with conn:
                     cur = conn.execute(
-                        "UPDATE sessions SET pinned = ? WHERE session_id = ?",
-                        (1 if pinned else 0, session_id),
+                        "UPDATE sessions SET pinned = ?"
+                        f" WHERE session_id = ?{scope_sql}",
+                        (1 if pinned else 0, session_id) + scope_params,
                     )
                     return cur.rowcount > 0
             finally:
@@ -1630,18 +1704,21 @@ class ConversationStore:
         One cheap single-column scan, used to work out how many distinct project
         spaces are actually in play without paging through full session rows.
         """
+        scope_sql, scope_params = dimension_clause(
+            values=ambient_dimensions(), keys=("agent_id", "tenant_id"))
         with self._lock:
             conn = self._connect()
             try:
                 if channel_type:
                     rows = conn.execute(
-                        "SELECT session_id FROM sessions WHERE channel_type = ? AND owner = ?",
-                        (channel_type, user_id or ""),
+                        "SELECT session_id FROM sessions"
+                        f" WHERE channel_type = ? AND owner = ?{scope_sql}",
+                        (channel_type, user_id or "") + scope_params,
                     ).fetchall()
                 else:
                     rows = conn.execute(
-                        "SELECT session_id FROM sessions WHERE owner = ?",
-                        (user_id or "",),
+                        f"SELECT session_id FROM sessions WHERE owner = ?{scope_sql}",
+                        (user_id or "",) + scope_params,
                     ).fetchall()
             finally:
                 conn.close()
@@ -1701,9 +1778,14 @@ class ConversationStore:
         try:
             # Core tables first and unguarded: if these cannot be created the
             # store is genuinely unusable and the error should surface.
-            conn.executescript(_DDL)
+            # Tables, then the migration, then the indexes: a database that
+            # predates a dimension cannot have that dimension's indexes created
+            # until the migration has added its columns.
+            conn.executescript(schema_seam.build_table_ddl())
             conn.commit()
             self._migrate(conn)
+            conn.executescript(schema_seam.build_index_ddl())
+            conn.commit()
             # Runs are auxiliary. Their setup is isolated so a legacy table, a
             # half-applied upgrade or any other surprise degrades run tracking
             # instead of taking conversation history offline.
@@ -1801,80 +1883,71 @@ class ConversationStore:
         self._init_db()
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
-        """Apply incremental schema migrations on existing databases."""
-        cols = {
-            row[1]
-            for row in conn.execute("PRAGMA table_info(sessions)").fetchall()
-        }
-        if "channel_type" not in cols:
-            try:
-                conn.execute(_MIGRATION_ADD_CHANNEL_TYPE)
-                conn.commit()
-                logger.info("[ConversationStore] Migrated: added channel_type column")
-            except Exception as e:
-                logger.warning(f"[ConversationStore] Migration failed: {e}")
-        if "title" not in cols:
-            try:
-                conn.execute(_MIGRATION_ADD_TITLE)
-                conn.commit()
-                logger.info("[ConversationStore] Migrated: added title column")
-            except Exception as e:
-                logger.warning(f"[ConversationStore] Migration (title) failed: {e}")
-        if "context_start_seq" not in cols:
-            try:
-                conn.execute(_MIGRATION_ADD_CONTEXT_START_SEQ)
-                conn.commit()
-                logger.info("[ConversationStore] Migrated: added context_start_seq column")
-            except Exception as e:
-                logger.warning(f"[ConversationStore] Migration (context_start_seq) failed: {e}")
-        if "pinned" not in cols:
-            try:
-                conn.execute(_MIGRATION_ADD_PINNED)
-                conn.commit()
-                logger.info("[ConversationStore] Migrated: added pinned column")
-            except Exception as e:
-                logger.warning(f"[ConversationStore] Migration (pinned) failed: {e}")
-        if "owner" not in cols:
-            try:
-                conn.execute(_MIGRATION_ADD_SESSION_OWNER)
-                conn.commit()
-                logger.info("[ConversationStore] Migrated: added sessions.owner column")
-            except Exception as e:
-                logger.warning(f"[ConversationStore] Migration (sessions.owner) failed: {e}")
+        """Apply the composed schema to an existing database.
 
-        msg_cols = {
-            row[1]
-            for row in conn.execute("PRAGMA table_info(messages)").fetchall()
-        }
-        if "extras" not in msg_cols:
+        Column work comes from the seam's column specs (any composed column the
+        table lacks is added with its declared DDL), and the key work is the
+        table rebuild the seam plans when a stored primary key no longer
+        matches the composed one. Keeping both derived from
+        ``conversation_schema`` is what stops an upstream merge from silently
+        re-creating the single-column key: the comparison is on the live schema,
+        not on which literal is in the file.
+        """
+        schema = _core_schema()
+        for table_name, statement in schema_seam.plan_column_migrations(conn, schema):
             try:
-                conn.execute(_MIGRATION_ADD_MSG_EXTRAS)
+                conn.execute(statement)
                 conn.commit()
-                logger.info("[ConversationStore] Migrated: added messages.extras column")
+                logger.info(
+                    f"[ConversationStore] Migrated: {statement.split(' ADD COLUMN ')[-1]}"
+                    f" on {table_name}"
+                )
             except Exception as e:
-                logger.warning(f"[ConversationStore] Migration (extras) failed: {e}")
-        if "run_id" not in msg_cols:
-            try:
-                conn.execute(_MIGRATION_ADD_MSG_RUN_ID)
-                conn.commit()
-                logger.info("[ConversationStore] Migrated: added messages.run_id column")
-            except Exception as e:
-                logger.warning(f"[ConversationStore] Migration (run_id) failed: {e}")
-        if "owner" not in msg_cols:
-            try:
-                conn.execute(_MIGRATION_ADD_MSG_OWNER)
-                conn.commit()
-                logger.info("[ConversationStore] Migrated: added messages.owner column")
-            except Exception as e:
-                logger.warning(f"[ConversationStore] Migration (messages.owner) failed: {e}")
+                logger.warning(
+                    f"[ConversationStore] Migration ({table_name}) failed: {e}"
+                )
 
-        try:
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages (created_at)"
-            )
-            conn.commit()
-        except Exception as e:
-            logger.warning(f"[ConversationStore] Migration (idx_messages_created_at) failed: {e}")
+        for table in schema.tables.values():
+            try:
+                if schema_seam.rebuild_key_constraints(conn, table):
+                    conn.commit()
+                    logger.warning(
+                        "[ConversationStore] Rebuilt %s to the composed primary key"
+                        " %s; the pre-rebuild table is kept as %s%s and can be"
+                        " restored with rollback_key_constraints()"
+                        % (table.name, table.key, table.name,
+                           schema_seam.BACKUP_SUFFIX)
+                    )
+            except Exception as e:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                logger.error(
+                    f"[ConversationStore] Key rebuild for {table.name} failed: {e}"
+                )
+
+    def rollback_key_constraints(self) -> bool:
+        """Restore the pre-rebuild tables (documented rollback for task 6.5).
+
+        Returns True when at least one table was restored. Rows written after
+        the rebuild are not carried back: this is a restore-point rollback.
+        """
+        schema = _core_schema()
+        restored = False
+        with self._lock:
+            conn = self._raw_connect()
+            try:
+                with conn:
+                    for table in schema.tables.values():
+                        restored = (
+                            schema_seam.rollback_key_constraints(conn, table)
+                            or restored
+                        )
+            finally:
+                conn.close()
+        self._schema_identity = self._db_identity()
+        return restored
 
     def _connect(self) -> sqlite3.Connection:
         with self._lock:
@@ -1911,6 +1984,16 @@ def _resolve_store_path(workspace_root=None) -> Path:
     from common.utils import expand_path
     workspace = Path(expand_path(str(workspace_root))).resolve()
     return MemoryConfig(workspace_root=str(workspace)).get_db_path().resolve()
+
+
+def conversation_store_path(workspace_root=None) -> Path:
+    """The SQLite file a workspace's conversations live in (task 6.11).
+
+    Public so a migration can ask whether a workspace *has* a store before
+    opening one: opening creates the file, and a backfill must not manufacture
+    an empty database for every workspace that never had a conversation.
+    """
+    return _resolve_store_path(workspace_root)
 
 
 def get_conversation_store(workspace_root=None) -> ConversationStore:

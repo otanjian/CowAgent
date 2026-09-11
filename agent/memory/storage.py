@@ -94,6 +94,9 @@ class MemoryChunk:
     embedding: Optional[List[float]]
     hash: str
     metadata: Optional[Dict[str, Any]] = None
+    #: Tenancy dimension (task 6.10). Stamped from the ambient identity at save
+    #: time when the caller left it empty, and used to filter every retrieval.
+    tenant_id: str = ""
 
 
 @dataclass
@@ -106,6 +109,22 @@ class SearchResult:
     snippet: str
     source: str
     user_id: Optional[str] = None
+
+
+def ambient_tenant() -> str:
+    """The tenant the current work belongs to, "" when none is in scope.
+
+    Mirrors ``conversation_store.ambient_dimensions``: an empty value means the
+    dimension is not in play (legacy single-instance mode, machine work), and
+    an empty dimension is never used as a filter. Reads must pair this with the
+    same "empty means unscoped" rule so unattributed rows stay readable by
+    unscoped callers and invisible to tenant-scoped ones.
+    """
+    try:
+        from common.runtime_identity import current_identity
+        return str(getattr(current_identity(), "tenant_id", "") or "")
+    except Exception:
+        return ""
 
 
 class MemoryStorage:
@@ -306,9 +325,25 @@ class MemoryStorage:
                 embedding TEXT,
                 hash TEXT NOT NULL,
                 metadata TEXT,
+                tenant_id TEXT NOT NULL DEFAULT '',
                 created_at INTEGER DEFAULT (strftime('%s', 'now')),
                 updated_at INTEGER DEFAULT (strftime('%s', 'now'))
             )
+        """)
+
+        # Tenancy dimension (task 6.10): an index created before this fork has
+        # no ``tenant_id``. Adding it with a DEFAULT keeps every historical row
+        # readable by an unscoped search; a tenant-scoped search cannot see it
+        # until it is attributed, which is the same rule the conversation store
+        # applies to unattributed rows (task 6.8).
+        chunk_cols = {r[1] for r in self.conn.execute("PRAGMA table_info(chunks)")}
+        if "tenant_id" not in chunk_cols:
+            self.conn.execute(
+                "ALTER TABLE chunks ADD COLUMN tenant_id TEXT NOT NULL DEFAULT ''"
+            )
+        self.conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_chunks_tenant
+            ON chunks(tenant_id)
         """)
         
         # Create indexes
@@ -604,8 +639,8 @@ class MemoryStorage:
             _SQL = """
                 INSERT INTO chunks
                 (id, user_id, scope, source, path, start_line, end_line,
-                 text, embedding, hash, metadata, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+                 text, embedding, hash, metadata, tenant_id, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
                 ON CONFLICT(id) DO UPDATE SET
                     user_id     = excluded.user_id,
                     scope       = excluded.scope,
@@ -617,26 +652,31 @@ class MemoryStorage:
                     embedding   = excluded.embedding,
                     hash        = excluded.hash,
                     metadata    = excluded.metadata,
+                    tenant_id   = excluded.tenant_id,
                     updated_at  = strftime('%s', 'now')
             """
         else:
             _SQL = """
                 INSERT OR REPLACE INTO chunks
                 (id, user_id, scope, source, path, start_line, end_line,
-                 text, embedding, hash, metadata, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+                 text, embedding, hash, metadata, tenant_id, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
             """
+        tenant_id = chunk.tenant_id or ambient_tenant()
         params = (
             chunk.id, chunk.user_id, chunk.scope, chunk.source, chunk.path,
             chunk.start_line, chunk.end_line, chunk.text,
             None,
             chunk.hash,
             json.dumps(chunk.metadata) if chunk.metadata else None,
+            tenant_id,
         )
         with self._lock:
             try:
                 self.conn.execute(_SQL, params)
-                self.vector_backend.upsert([self._to_vector_record(chunk)])
+                self.vector_backend.upsert(
+                    [self._to_vector_record(chunk, tenant_id)]
+                )
                 self.conn.commit()
             except Exception:
                 self.conn.rollback()
@@ -651,8 +691,8 @@ class MemoryStorage:
             _SQL = """
                 INSERT INTO chunks
                 (id, user_id, scope, source, path, start_line, end_line,
-                 text, embedding, hash, metadata, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+                 text, embedding, hash, metadata, tenant_id, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
                 ON CONFLICT(id) DO UPDATE SET
                     user_id     = excluded.user_id,
                     scope       = excluded.scope,
@@ -664,15 +704,17 @@ class MemoryStorage:
                     embedding   = excluded.embedding,
                     hash        = excluded.hash,
                     metadata    = excluded.metadata,
+                    tenant_id   = excluded.tenant_id,
                     updated_at  = strftime('%s', 'now')
             """
         else:
             _SQL = """
                 INSERT OR REPLACE INTO chunks
                 (id, user_id, scope, source, path, start_line, end_line,
-                 text, embedding, hash, metadata, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
+                 text, embedding, hash, metadata, tenant_id, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'))
             """
+        ambient = ambient_tenant()
         params_list = [
             (
                 c.id, c.user_id, c.scope, c.source, c.path,
@@ -680,6 +722,7 @@ class MemoryStorage:
                 None,
                 c.hash,
                 json.dumps(c.metadata) if c.metadata else None,
+                c.tenant_id or ambient,
             )
             for c in chunks
         ]
@@ -687,7 +730,8 @@ class MemoryStorage:
             try:
                 self.conn.executemany(_SQL, params_list)
                 self.vector_backend.upsert([
-                    self._to_vector_record(chunk) for chunk in chunks
+                    self._to_vector_record(chunk, chunk.tenant_id or ambient)
+                    for chunk in chunks
                 ])
                 self.conn.commit()
             except Exception:
@@ -720,6 +764,11 @@ class MemoryStorage:
         metadata_filter = {"scopes": scopes}
         if user_id:
             metadata_filter["user_id"] = user_id
+        ambient = ambient_tenant()
+        if ambient:
+            # Task 6.10: the vector backend filters on metadata, so the tenant
+            # has to travel with the record (see ``_to_vector_record``).
+            metadata_filter["tenant_id"] = ambient
         matches = self.vector_backend.search(
             query_embedding,
             limit=limit,
@@ -793,7 +842,8 @@ class MemoryStorage:
     
     @staticmethod
     def _scope_filter(
-        user_id: Optional[str], scopes: List[str], prefix: str = ""
+        user_id: Optional[str], scopes: List[str], prefix: str = "",
+        tenant_id: Optional[str] = None,
     ) -> tuple:
         """The ONLY place a retrieval WHERE clause may be built (task 5.2).
 
@@ -804,12 +854,21 @@ class MemoryStorage:
         is a cross-user leak, and there is no review that reliably catches a
         missing ``AND`` among three near-identical SQL strings.
 
+        The tenancy dimension (task 6.10) is added here for the same reason:
+        ``tenant_id`` defaults to the ambient identity, and an unscoped caller
+        (no tenant in the request) is not filtered at all, matching the
+        conversation store's rule that an unattributed row is readable by an
+        unscoped read and invisible to a tenant-scoped one.
+
         Returns ``(sql_fragment, params)``, the fragment starting with ``AND``
         so it drops into an existing ``WHERE``. ``prefix`` is the table alias
         used by the joined FTS queries (``"chunks."``); empty for plain SELECTs.
         """
         col = f"{prefix}scope" if prefix else "scope"
         ucol = f"{prefix}user_id" if prefix else "user_id"
+        tcol = f"{prefix}tenant_id" if prefix else "tenant_id"
+        if tenant_id is None:
+            tenant_id = ambient_tenant()
         placeholders = ",".join("?" * len(scopes))
         params: List[Any] = list(scopes)
         fragment = f"AND {col} IN ({placeholders})"
@@ -817,6 +876,9 @@ class MemoryStorage:
             # "shared" is visible to everyone; a user row only to its owner.
             fragment += f"\n                AND ({col} = 'shared' OR {ucol} = ?)"
             params.append(user_id)
+        if tenant_id:
+            fragment += f"\n                AND {tcol} = ?"
+            params.append(tenant_id)
         return fragment, params
 
     def _search_fts5(
@@ -1020,13 +1082,14 @@ class MemoryStorage:
     # Helper methods
 
     @staticmethod
-    def _to_vector_record(chunk: MemoryChunk) -> VectorRecord:
+    def _to_vector_record(chunk: MemoryChunk, tenant_id: str = "") -> VectorRecord:
         return VectorRecord(
             id=chunk.id,
             embedding=chunk.embedding,
             metadata={
                 "user_id": chunk.user_id,
                 "scope": chunk.scope,
+                "tenant_id": tenant_id or chunk.tenant_id or "",
                 "source": chunk.source,
                 "path": chunk.path,
                 "start_line": chunk.start_line,
