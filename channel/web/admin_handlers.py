@@ -33,6 +33,7 @@ from channel.web.auth_handlers import (
     _error,
     _require_context,
     _service_error,
+    require_management_write as _require_management_write,
 )
 
 
@@ -170,6 +171,7 @@ class PlatformUsersHandler:
         server-side (never persisted) before the write is committed.
         """
         _guard_database()
+        _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
         try:
@@ -202,6 +204,7 @@ class PlatformUserPasswordHandler:
 
     def POST(self, user_id: str):
         _guard_database()
+        _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
         try:
@@ -250,6 +253,7 @@ class PlatformUserExternalIdentitiesHandler:
 
     def POST(self, user_id: str):
         _guard_database()
+        _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
         try:
@@ -275,6 +279,7 @@ class PlatformUserExternalIdentityHandler:
 
     def DELETE(self, user_id: str, binding_id: str):
         _guard_database()
+        _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
         svc = _get_service()
@@ -316,6 +321,7 @@ class TenantMemberExternalIdentitiesHandler:
 
     def POST(self, member_id: str):
         _guard_database()
+        _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
         try:
@@ -342,6 +348,7 @@ class TenantMemberExternalIdentityHandler:
 
     def DELETE(self, member_id: str, binding_id: str):
         _guard_database()
+        _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
         svc = _get_service()
@@ -408,6 +415,7 @@ class PlatformTenantsHandler:
 
     def POST(self):
         _guard_database()
+        _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
         try:
@@ -462,6 +470,7 @@ class PlatformTenantHandler:
 
     def POST(self, tenant_id: str):
         _guard_database()
+        _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
         try:
@@ -524,6 +533,7 @@ class PlatformTenantAdminsHandler:
 
     def POST(self, tenant_id: str):
         _guard_database()
+        _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
         try:
@@ -615,6 +625,7 @@ class PlatformTenantAgentsHandler:
 
     def POST(self, tenant_id: str):
         _guard_database()
+        _require_management_write()
         ctx = _require_context()
         if not ctx.is_platform_admin:
             self._deny(ctx, tenant_id, "not a platform administrator")
@@ -700,6 +711,7 @@ class TenantMembersHandler:
 
     def POST(self):
         _guard_database()
+        _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
         try:
@@ -729,6 +741,7 @@ class TenantMemberHandler:
 
     def POST(self, member_id: str):
         _guard_database()
+        _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
         try:
@@ -768,6 +781,7 @@ class TenantRolesHandler:
 
     def POST(self):
         _guard_database()
+        _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
         try:
@@ -793,6 +807,7 @@ class TenantRolesHandler:
 class TenantRoleHandler:
     def POST(self, role_id: str):
         _guard_database()
+        _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
         try:
@@ -819,6 +834,7 @@ class TenantRoleHandler:
 
     def DELETE(self, role_id: str):
         _guard_database()
+        _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
         svc = _get_service()
@@ -852,6 +868,7 @@ class TenantDepartmentsHandler:
 
     def POST(self):
         _guard_database()
+        _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
         try:
@@ -876,6 +893,7 @@ class TenantDepartmentsHandler:
 class TenantDepartmentHandler:
     def DELETE(self, dept_id: str):
         _guard_database()
+        _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
         svc = _get_service()
@@ -888,6 +906,7 @@ class TenantDepartmentHandler:
 
     def PUT(self, dept_id: str):
         _guard_database()
+        _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
         try:
@@ -982,6 +1001,7 @@ class TenantChannelsHandler:
 
     def POST(self):
         _guard_database()
+        _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
         try:
@@ -1011,6 +1031,7 @@ class TenantChannelHandler:
 
     def POST(self, instance_id: str):
         _guard_database()
+        _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
         try:
@@ -1046,6 +1067,7 @@ class TenantChannelActiveHandler:
 
     def POST(self, instance_id: str):
         _guard_database()
+        _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
         try:
@@ -1113,6 +1135,8 @@ class IdentityAdministeredTenantsHandler:
     authenticated account holds an active ``tenant_admin`` role. Optional
     ``user_id`` query param also reports that target user's membership status
     within each *administered* tenant (for the member-edit tenant checkboxes).
+    The target is scoped too: a ``user_id`` outside the actor's tenants is
+    refused (403), so the parameter cannot be used to probe arbitrary accounts.
     A platform admin is NOT broadened to all tenants here — the candidate set is
     the actor's own tenant_admin tenants, consistent with ``account-administration``.
     """
@@ -1122,7 +1146,10 @@ class IdentityAdministeredTenantsHandler:
         ctx = _require_context()
         svc = _get_service()
         user_id = web.input(user_id="").user_id or None
-        items = svc.administered_tenants(ctx.user_id, target_user_id=user_id)
+        try:
+            items = svc.administered_tenants(ctx.user_id, target_user_id=user_id)
+        except IdentityServiceError as e:
+            return _service_error(e)
         return _json({"status": "success", "items": items})
 
 
@@ -1148,6 +1175,7 @@ class PlatformTenantRolesHandler:
 
     def POST(self, tenant_id: str):
         _guard_database()
+        _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
         try:
@@ -1180,6 +1208,7 @@ class PlatformTenantRoleHandler:
 
     def POST(self, tenant_id: str, role_id: str):
         _guard_database()
+        _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
         try:
@@ -1204,6 +1233,7 @@ class PlatformTenantRoleHandler:
 
     def DELETE(self, tenant_id: str, role_id: str):
         _guard_database()
+        _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
         svc = _get_service()
@@ -1314,6 +1344,7 @@ class PlatformTenantResourcesHandler:
 
     def PUT(self, tenant_id: str):
         _guard_database()
+        _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
         try:

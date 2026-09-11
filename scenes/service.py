@@ -12,8 +12,8 @@ from common.log import logger
 
 from scenes import config as scenes_config
 
-# session_id -> 激活后的场景上下文（子场景已合并父元数据）
-_session_scenes: Dict[str, Dict] = {}
+# (tenant_id, session_id) -> 激活后的场景上下文（子场景已合并父元数据）
+_session_scenes: Dict[Tuple[str, str], Dict] = {}
 _session_scenes_lock = threading.RLock()
 
 
@@ -91,19 +91,36 @@ def find_scene(scene_id: str) -> Tuple[Optional[Dict], bool]:
 # ---------------------------------------------------------------------------
 # 会话上下文
 # ---------------------------------------------------------------------------
-def set_scene_context(session_id: str, scene: Dict) -> None:
+def _scene_scope(tenant_id: Optional[str] = None) -> str:
+    """场景上下文所属的租户命名空间。
+
+    ``_session_scenes`` 是进程级内存表且以 ``session_id`` 为键，而
+    ``session_id`` 由客户端生成：若不带租户命名空间，A 租户可以为 B 租户的
+    会话标识激活场景，从而把 A 的场景提示词/技能注入 B 的会话。命名空间取
+    请求的运行时身份租户；legacy/单实例模式没有租户，行为与之前一致。
+    """
+    if tenant_id is not None:
+        return tenant_id or ""
+    from common.runtime_identity import current_identity
+    return current_identity().tenant_id or ""
+
+
+def set_scene_context(session_id: str, scene: Dict,
+                      tenant_id: Optional[str] = None) -> None:
     with _session_scenes_lock:
-        _session_scenes[session_id] = scene
+        _session_scenes[(_scene_scope(tenant_id), session_id)] = scene
 
 
-def get_scene_context(session_id: str) -> Optional[Dict]:
+def get_scene_context(session_id: str,
+                      tenant_id: Optional[str] = None) -> Optional[Dict]:
     with _session_scenes_lock:
-        return _session_scenes.get(session_id)
+        return _session_scenes.get((_scene_scope(tenant_id), session_id))
 
 
-def clear_scene_context(session_id: str) -> Optional[Dict]:
+def clear_scene_context(session_id: str,
+                        tenant_id: Optional[str] = None) -> Optional[Dict]:
     with _session_scenes_lock:
-        return _session_scenes.pop(session_id, None)
+        return _session_scenes.pop((_scene_scope(tenant_id), session_id), None)
 
 
 def clear_all_scene_context() -> None:

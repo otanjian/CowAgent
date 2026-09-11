@@ -99,6 +99,10 @@ class TenantAgentCopyHttpTests(unittest.TestCase):
         headers = {"Content-Type": "application/json"}
         if token:
             headers["Cookie"] = "cow_session=%s" % token
+            # Management writes are origin/CSRF-checked: a cookie write must
+            # present a same-origin pair (Host + matching Origin).
+            headers["Host"] = "test"
+            headers["Origin"] = "http://test"
         kwargs["headers"] = headers
         settings = {"identity_mode": "database", "identity_db_path": self.db,
                     "agent_workspace": self.instance}

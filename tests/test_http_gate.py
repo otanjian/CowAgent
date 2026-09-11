@@ -124,7 +124,7 @@ class GateDecisionTests(unittest.TestCase):
             self.assertTrue(require_tenant, "a tenant route must resolve a tenant")
             raise IdentityContextError("tenant selection required", "missing_tenant", 400)
 
-        result, events = _run_gate("/api/logs", "GET", resolve=resolve)
+        result, events = _run_gate("/api/tenant/permissions", "GET", resolve=resolve)
         self.assertEqual(_status_and_code(result), (400, "missing_tenant"))
         self.assertNotIn("handler", events)
 
@@ -132,7 +132,7 @@ class GateDecisionTests(unittest.TestCase):
         def resolve(require_tenant):
             raise IdentityContextError("forbidden", "forbidden", 403)
 
-        result, events = _run_gate("/api/logs", "GET", resolve=resolve)
+        result, events = _run_gate("/api/tenant/permissions", "GET", resolve=resolve)
         self.assertEqual(_status_and_code(result), (403, "forbidden"))
         self.assertNotIn("handler", events)
 
@@ -177,7 +177,7 @@ class GateDecisionTests(unittest.TestCase):
         self.assertEqual(result, "HANDLER-RAN")
 
     def test_route_without_a_declared_permission_needs_no_permission(self):
-        result, events = _run_gate("/api/logs", "GET",
+        result, events = _run_gate("/api/tenant/permissions", "GET",
                                    resolve=lambda rt: _ctx(permissions=()))
         self.assertEqual(result, "HANDLER-RAN")
 
@@ -191,7 +191,7 @@ class GateContextCacheTests(unittest.TestCase):
             seen["cached"] = cached_gate_context(True)
             return "OK"
 
-        web.ctx.path = "/api/logs"
+        web.ctx.path = "/api/tenant/permissions"
         web.ctx.method = "GET"
         web.ctx.headers = []
         web.ctx.env = {"REQUEST_METHOD": "GET"}
@@ -240,7 +240,7 @@ class GateScopeTests(unittest.TestCase):
         self.assertNotIn("handler", events)
 
     def test_legacy_mode_is_a_no_op(self):
-        result, events = _run_gate("/api/logs", "GET", db_mode=False, resolve=None)
+        result, events = _run_gate("/api/tenant/permissions", "GET", db_mode=False, resolve=None)
         self.assertEqual(result, "HANDLER-RAN")
         self.assertEqual(events, ["handler"])
 
@@ -278,7 +278,7 @@ class GateStagedRolloutTests(unittest.TestCase):
         def resolve(require_tenant):
             raise RuntimeError("identity store unreachable")
 
-        result, events = _run_gate("/api/logs", "GET", resolve=resolve)
+        result, events = _run_gate("/api/tenant/permissions", "GET", resolve=resolve)
         self.assertEqual(result, "HANDLER-RAN")
         self.assertIn("handler", events)
 
@@ -287,7 +287,7 @@ class GateStagedRolloutTests(unittest.TestCase):
             raise RuntimeError("identity store unreachable")
 
         settings = {"identity_mode": "database", "http_policy_gate_fail_closed": True}
-        result, events = _run_gate("/api/logs", "GET", resolve=resolve, settings=settings)
+        result, events = _run_gate("/api/tenant/permissions", "GET", resolve=resolve, settings=settings)
         self.assertEqual(_status_and_code(result), (503, "identity_unavailable"))
         self.assertNotIn("handler", events)
 
@@ -297,7 +297,7 @@ class GateStagedRolloutTests(unittest.TestCase):
             raise IdentityContextError("forbidden", "forbidden", 403)
 
         settings = {"identity_mode": "database"}  # fail-closed knob intentionally absent
-        result, events = _run_gate("/api/logs", "GET", resolve=resolve, settings=settings)
+        result, events = _run_gate("/api/tenant/permissions", "GET", resolve=resolve, settings=settings)
         self.assertEqual(_status_and_code(result), (403, "forbidden"))
         self.assertNotIn("handler", events)
 
@@ -331,17 +331,17 @@ class GateIntegrationTests(unittest.TestCase):
         return app.request(path, method=method, headers=merged)
 
     def test_tenant_route_without_selection_is_rejected_before_the_handler(self):
-        """``/api/logs`` only calls ``_require_auth()``: without a tenant
-        selection the gate must refuse, not stream tenant-scoped logs."""
+        """``/api/tenant/permissions`` only calls ``_require_auth()``: without a
+        tenant selection the gate must refuse, not serve the tenant catalog."""
         self._patch_db()
-        resp = self._request("/api/logs",
+        resp = self._request("/api/tenant/permissions",
                              headers={"Cookie": f"cow_session={self.token}"})
         self.assertEqual(resp.status, "400 Bad Request")
         self.assertIn(b"missing_tenant", resp.data)
 
     def test_tenant_route_with_selection_but_no_session_is_401(self):
         self._patch_db()
-        resp = self._request("/api/logs", headers={"X-Tenant-ID": self.tid})
+        resp = self._request("/api/tenant/permissions", headers={"X-Tenant-ID": self.tid})
         self.assertEqual(resp.status, "401 Unauthorized")
 
     def test_tenant_route_with_a_valid_context_reaches_the_handler(self):

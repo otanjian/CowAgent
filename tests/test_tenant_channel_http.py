@@ -108,6 +108,10 @@ class _ChannelHttpFixture(unittest.TestCase):
         headers = {"Content-Type": "application/json"}
         if token:
             headers["Cookie"] = f"cow_session={token}"
+            # Management writes are origin/CSRF-checked: a cookie write must
+            # present a same-origin pair (Host + matching Origin).
+            headers["Host"] = "test"
+            headers["Origin"] = "http://test"
         if tenant:
             headers["X-Tenant-ID"] = tenant
         kwargs["headers"] = headers
@@ -166,6 +170,8 @@ class DatabaseModeGateTests(_ChannelHttpFixture):
             data = None
         headers["Cookie"] = f"cow_session={self.token_a}"
         headers["X-Tenant-ID"] = self.ta
+        headers["Host"] = "test"
+        headers["Origin"] = "http://test"
         kwargs = {"method": method, "headers": headers}
         if data is not None:
             kwargs["data"] = data

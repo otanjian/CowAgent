@@ -120,6 +120,10 @@ class _Fixture(unittest.TestCase):
         headers = {"Content-Type": "application/json"}
         if token:
             headers["Cookie"] = f"cow_session={token}"
+            # Management writes are origin/CSRF-checked: a cookie write must
+            # present a same-origin pair (Host + matching Origin).
+            headers["Host"] = "test"
+            headers["Origin"] = "http://test"
         if tenant:
             headers["X-Tenant-ID"] = tenant
         kwargs["headers"] = headers

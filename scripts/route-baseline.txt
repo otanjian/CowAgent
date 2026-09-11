@@ -161,11 +161,18 @@
 # --- RESOLVED in change fork-decoupling-and-tenant-hardening (group 2/4) ---
 # The five gaps above are now registered in channel/web/route_registry.py with
 # these verified policies (not defaults). See evidence.md for rationale.
+# The three scenes routes gained the functional permission they execute under
+# (task 4.9: the scene console is the chat consumer surface, so chat.use).
 /admin	GET	tenant	-
 /api/identity/administered-tenants	GET	personal	-
-/api/scenes	GET	tenant	-
-/api/scenes/activate	POST	tenant	-
-/api/scenes/workbench/import	POST	tenant	-
+/api/scenes	GET	tenant	chat.use
+/api/scenes/activate	POST	tenant	chat.use
+/api/scenes/workbench/import	POST	tenant	chat.use
+# The log surfaces read the *process-global* run.log (every tenant's activity),
+# so they are platform control-plane data, not tenant data (task 4.11). They are
+# re-policy'd from tenant to platform rather than left readable by any member.
+/api/logs	GET	platform	-
+/api/logs/download	GET	platform	-
 
 # --- Also discovered by the three-leg coverage invariant (leg 3) ---
 # Implemented by the handler and documented, but previously unregistered

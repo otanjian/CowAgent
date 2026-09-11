@@ -123,7 +123,7 @@ class RegistryDerivationTests(unittest.TestCase):
         self.assertTrue(entry.get("tenant_from_resource"))
 
     def test_a_plain_tenant_route_does_not_claim_the_exemption(self):
-        entry = derive_route_policy()["/api/logs"]["GET"]
+        entry = derive_route_policy()["/api/sessions"]["GET"]
         self.assertEqual(entry["policy"], "tenant")
         self.assertFalse(entry.get("tenant_from_resource", False))
 

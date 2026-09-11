@@ -347,14 +347,20 @@ def _require_platform_console():
     this call is what actually resolves the session and rejects a non-admin
     (401 unauthorised, 400 missing tenant, 403 forbidden) — it is independent
     of the frontend.
+
+    Returns the resolved platform context in database mode (``None`` in legacy
+    mode, where there is no identity to bind) so a caller that also needs the
+    actor for an audit event does not resolve it twice — the gate's context
+    cache makes the second read cheap, but it is still one read.
     """
     if _is_database_identity():
         from channel.web.auth_handlers import _require_context
         from channel.web.admin_handlers import _require_platform_admin
         ctx = _require_context()
         _require_platform_admin(ctx)
-        return
+        return ctx
     _require_auth()
+    return None
 
 
 # Localized text for /cancel system replies. Web is the only channel that
@@ -8316,6 +8322,43 @@ def _workbench_chat_readiness(ctx: "Optional[RequestContext]",
     return True, None
 
 
+def _audit_instance_roster_write(ctx, channel_type: str, result) -> None:
+    """Audit a platform-level channel binding change (task 4.7).
+
+    The instance roster lives in ``team.json``, so unlike the tenant-scoped
+    writes it has no identity transaction to piggy-back on. Record the action in
+    the identity audit trail explicitly so a platform admin rebinding the shared
+    routing table is attributable.
+
+    Best effort on purpose: the roster write has already happened and is live,
+    so a broken audit sink must not turn a successful bind into a 500 that
+    invites the operator to retry (and blind-rebind). Legacy mode has no
+    identity database to write to (``ctx`` is ``None``) and is skipped.
+    """
+    if ctx is None:
+        return
+    try:
+        from auth.service import get_identity_service
+
+        get_identity_service().record_audit(
+            action="channel.instance.bind",
+            target="channel:%s" % (result.get("instance_id") or channel_type),
+            actor_user_id=ctx.user_id,
+            actor_username=ctx.username,
+            tenant_id=ctx.tenant_id,
+            redacted_changes={
+                "channel_type": channel_type,
+                "agent_id": result.get("agent_id") or "",
+                "members": list(result.get("members") or []),
+            },
+        )
+    except Exception as e:  # pragma: no cover - audit sink is best effort
+        logger.warning(
+            f"[WebChannel] Channel bind audit unavailable for "
+            f"'{channel_type}': {e}"
+        )
+
+
 def _bind_channel_instance(channel_type: str, instance_id: str = "", agent_id: str = "", members=None):
     """Point one channel instance at an Agent (and team), hot-swapping without a restart.
 
@@ -8565,7 +8608,16 @@ class AgentsHandler:
                     _require_agent_action(ctx, agent_id, "edit", "agent.edit")
                     result = service.set_knowledge_mode(agent_id, body.get("mode", ""))
                 elif action == "bind_channel_instance":
-                    _require_agent_action(ctx, agent_id, "edit", "agent.edit")
+                    # The instance roster (channel_instances[].agent_id in the
+                    # shared team.json) decides where *every* tenant's inbound IM
+                    # traffic routes, so it is platform control-plane state, not a
+                    # tenant-agent edit: a tenant-scoped ``agent.edit`` over its
+                    # own Agent must not be able to rewrite it. The tenant's own
+                    # channels live in the identity database and are managed
+                    # through /api/tenant/channels. Legacy mode keeps the shared
+                    # console password (no tenant dimension exists to contain).
+                    platform_ctx = _require_platform_console()
+                    _require_agent_action(platform_ctx or ctx, agent_id, "edit", "agent.edit")
                     # members: list => set team; omitted/None => leave team untouched
                     raw_members = body.get("members", None)
                     members = raw_members if isinstance(raw_members, list) else None
@@ -8575,6 +8627,8 @@ class AgentsHandler:
                         agent_id=agent_id,
                         members=members,
                     )
+                    _audit_instance_roster_write(
+                        platform_ctx, body.get("channel_type", ""), result)
                 else:
                     return json.dumps({
                         "status": "error", "message": f"unknown action: {action}"
@@ -8603,6 +8657,12 @@ class AgentsHandler:
                     {"status": "success", "result": result, "revision": revision_after},
                     ensure_ascii=False,
                 )
+        except web.HTTPError:
+            # A guard's structured refusal (403/404/409… with its machine-readable
+            # ``code``) must reach the client as-is. The generic branch below
+            # stringifies it to ``"403"`` and drops the code, which turns an
+            # authorization refusal into an opaque handler error.
+            raise
         except Exception as e:
             from agent.admin import StaleRosterError
             code = None
@@ -9767,9 +9827,41 @@ class MessageDeleteHandler:
             return json.dumps({"status": "error", "message": str(e)})
 
 
+#: ``key = value`` forms whose value must never reach a log consumer. ``run.log``
+#: is the process-global log, so it carries whatever every handler logged —
+#: including request bodies and headers that may hold a vendor token or a
+#: session cookie. The key is kept so a line stays diagnosable.
+_LOG_SECRET_RE = re.compile(
+    r"(?i)\b(password|passwd|secret|token|api[_-]?key|apikey|authorization|"
+    r"access[_-]?key|refresh[_-]?token|cookie|credential|client[_-]?secret|"
+    r"session[_-]?id)\b(\s*[:=]\s*)"
+    r"(\"[^\"]*\"|'[^']*'|(?:bearer|basic|token|apikey)\s+[^\s,;]+|[^\s,;]+)"
+)
+
+
+def _redact_log_line(line: str) -> str:
+    """Mask credential-looking values in one log line (task 4.11).
+
+    The console log view is a debugging aid, not an excuse to hand out
+    credentials: the obvious ``key: value`` / ``key=value`` forms are replaced
+    with ``key=***``. Deliberately conservative — it masks the value of a small
+    set of well-known secret names rather than trying to detect entropy, so a
+    normal log line is left byte-identical.
+    """
+    return _LOG_SECRET_RE.sub(lambda m: "%s%s***" % (m.group(1), m.group(2)), line)
+
+
+def _redact_log_text(text: str) -> str:
+    return "\n".join(_redact_log_line(line) for line in text.split("\n"))
+
+
 class LogsHandler:
     def GET(self):
-        _require_auth()
+        # ``run.log`` is the process-global log and mixes every tenant's
+        # activity (plus whatever secrets a handler happened to log), so it is
+        # platform control-plane data: in database mode only a platform admin
+        # may read it. Legacy mode keeps the shared console password.
+        _require_platform_console()
         web.header('Content-Type', 'text/event-stream; charset=utf-8')
         web.header('Cache-Control', 'no-cache')
         web.header('X-Accel-Buffering', 'no')
@@ -9786,7 +9878,7 @@ class LogsHandler:
                 with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
                     lines = f.readlines()
                 tail_lines = lines[-200:]
-                chunk = ''.join(tail_lines)
+                chunk = _redact_log_text(''.join(tail_lines))
                 payload = json.dumps({"type": "init", "content": chunk}, ensure_ascii=False)
                 yield f"data: {payload}\n\n".encode('utf-8')
             except Exception as e:
@@ -9801,7 +9893,9 @@ class LogsHandler:
                     while time.time() < deadline:
                         line = f.readline()
                         if line:
-                            payload = json.dumps({"type": "line", "content": line}, ensure_ascii=False)
+                            payload = json.dumps({"type": "line",
+                                                  "content": _redact_log_line(line)},
+                                                 ensure_ascii=False)
                             yield f"data: {payload}\n\n".encode('utf-8')
                         else:
                             yield b": keepalive\n\n"
@@ -9818,18 +9912,21 @@ class LogsDownloadHandler:
     """Serve the full run.log as a file download for offline troubleshooting.
 
     The /api/logs stream only replays the last 200 lines; this returns the whole
-    file so users can attach it to a bug report.
+    file so users can attach it to a bug report. Like the stream, ``run.log`` is
+    process-global data (every tenant's activity), so this is a platform-admin
+    surface in database mode; the response is redacted line by line.
     """
 
     def GET(self):
-        _require_auth()
+        _require_platform_console()
         log_path = os.path.join(get_data_root(), "run.log")
         if not os.path.isfile(log_path):
             raise web.notfound()
 
         try:
-            with open(log_path, 'rb') as f:
-                data = f.read()
+            with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
+                text = _redact_log_text(f.read())
+            data = text.encode('utf-8')
         except Exception as e:
             logger.error(f"[WebChannel] Log download error: {e}")
             raise web.internalerror()

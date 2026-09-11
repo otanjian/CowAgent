@@ -984,6 +984,70 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
         self.assertEqual(items["beta"]["member"], False)
         self.assertIn("member_version", items["acme"])
 
+    def test_a_target_outside_the_administered_tenants_is_refused(self):
+        """The ``user_id`` param is not an oracle over arbitrary accounts.
+
+        ``root2`` administers beta only; ``alice`` belongs to acme only. Reading
+        alice's membership state would tell a beta administrator about an account
+        its tenant has no relationship with, so it must be refused rather than
+        answered with ``member: false`` for beta and silence for acme.
+        """
+        self._make_admin_in_beta()
+        alice = self.svc.create_member(
+            actor_user_id=self.root["id"], tenant_id=self.tid, operation="create-new",
+            username="alice", display_name="Alice", temporary_password="Str0ngPassTmp",
+            roles=["member"])
+        self.svc.change_password(
+            self.svc.login("root2", "Str0ngAdminPass2").token,
+            "Str0ngAdminPass2", "Str0ngPass2New")
+        beta_admin_token = self.svc.login("root2", "Str0ngPass2New").token
+
+        resp = self._request(
+            "/api/identity/administered-tenants?user_id=" + alice["user_id"],
+            method="GET", token=beta_admin_token)
+
+        self.assertTrue(str(resp.status).startswith("403"), (resp.status, resp.data))
+        self.assertEqual(self._json(resp)["code"], "forbidden")
+        self.assertNotIn(b"member_id", resp.data)
+        self.assertNotIn(b"items", resp.data)
+
+    def test_an_unknown_target_is_refused_the_same_way(self):
+        """A non-existent id must not be distinguishable from an out-of-scope one."""
+        self._make_admin_in_beta()
+        self.svc.change_password(
+            self.svc.login("root2", "Str0ngAdminPass2").token,
+            "Str0ngAdminPass2", "Str0ngPass2New")
+        beta_admin_token = self.svc.login("root2", "Str0ngPass2New").token
+
+        resp = self._request(
+            "/api/identity/administered-tenants?user_id=usr_does_not_exist",
+            method="GET", token=beta_admin_token)
+
+        self.assertTrue(str(resp.status).startswith("403"), (resp.status, resp.data))
+        self.assertEqual(self._json(resp)["code"], "forbidden")
+
+    def test_a_target_shared_with_the_administered_tenant_is_allowed(self):
+        """The control for the refusal: the same call succeeds for a member of beta."""
+        beta_tid, _gamma_tid = self._make_admin_in_beta()
+        bob = self.svc.create_member(
+            actor_user_id=self.root["id"], tenant_id=beta_tid, operation="create-new",
+            username="bob", display_name="Bob", temporary_password="Str0ngPassTmp",
+            roles=["member"])
+        self.svc.change_password(
+            self.svc.login("root2", "Str0ngAdminPass2").token,
+            "Str0ngAdminPass2", "Str0ngPass2New")
+        beta_admin_token = self.svc.login("root2", "Str0ngPass2New").token
+
+        resp = self._request(
+            "/api/identity/administered-tenants?user_id=" + bob["user_id"],
+            method="GET", token=beta_admin_token)
+
+        self.assertEqual(resp.status, "200 OK", resp.data)
+        items = {t["code"]: t for t in self._json(resp)["items"]}
+        self.assertEqual(list(items), ["beta"])
+        self.assertEqual(items["beta"]["member"], True)
+        self.assertEqual(items["beta"]["member_id"], bob["membership_id"])
+
     # --- tools/skills console read gating (platform admin vs member) ------
 
     def _platform_admin_ctx(self):

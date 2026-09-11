@@ -3,8 +3,10 @@
 ``POST /api/scenes/workbench/import``
 
 将工作台子场景导入文件（base64 或纯文本）保存到该请求对应 Agent 的
-工作区临时目录（```<workspace>/tmp/scenes/``），供后续 Agent 读取。复用
-``channel.web.web_channel._require_auth()`` 鉴权；v1 不做场景级权限拒绝。
+工作区临时目录（```<workspace>/tmp/scenes/``），供后续 Agent 读取。处理器在
+请求作用域内运行：database 模式要求已选择租户并持有 ``chat.use``，写操作另经
+统一的来源/CSRF 校验；工作区根目录在工作区内解析，因此只会落到本租户的共享
+根目录，绝不回落到全局默认 Agent 的工作区。
 """
 import base64
 import json
@@ -22,6 +24,25 @@ def _auth():
     from channel.web.web_channel import _require_auth
 
     _require_auth()
+
+
+def _db_scope():
+    """请求作用域（legacy 模式为空操作），惰性导入避免循环依赖。"""
+    from channel.web.web_channel import _db_scope as scope
+
+    return scope()
+
+
+def _require_chat_use(ctx):
+    from channel.web.web_channel import _require_chat_use as guard
+
+    return guard(ctx)
+
+
+def _require_management_write():
+    from channel.web.auth_handlers import require_management_write
+
+    return require_management_write()
 
 
 def _safe_filename(name: str) -> str:
@@ -60,6 +81,7 @@ class SceneWorkbenchImportHandler:
     """
     def POST(self):
         _auth()
+        _require_management_write()
         web.header("Content-Type", "application/json; charset=utf-8")
         try:
             body = json.loads(web.data() or b"{}")
@@ -109,17 +131,23 @@ class SceneWorkbenchImportHandler:
                 {"status": "error", "message": "empty content"}, ensure_ascii=False
             )
 
-        # 落盘到工作区临时目录 scenes/。
+        # 落盘到工作区临时目录 scenes/。整个解析+写入在请求作用域内进行：
+        # 工作区由租户的共享根目录决定（database 模式下缺租户即 403），因此
+        # 不会写入全局默认 Agent 的工作区。
         try:
-            root = _resolve_workspace_root()
-            scenes_tmp = os.path.join(root, "tmp", "scenes")
-            os.makedirs(scenes_tmp, exist_ok=True)
-            safe_name = _safe_filename(filename)
-            if not safe_name.endswith(ext):
-                safe_name += ext
-            save_path = os.path.join(scenes_tmp, safe_name)
-            with open(save_path, "wb") as f:
-                f.write(data)
+            with _db_scope() as ctx:
+                _require_chat_use(ctx)
+                root = _resolve_workspace_root()
+                scenes_tmp = os.path.join(root, "tmp", "scenes")
+                os.makedirs(scenes_tmp, exist_ok=True)
+                safe_name = _safe_filename(filename)
+                if not safe_name.endswith(ext):
+                    safe_name += ext
+                save_path = os.path.join(scenes_tmp, safe_name)
+                with open(save_path, "wb") as f:
+                    f.write(data)
+        except web.HTTPError:
+            raise
         except Exception as e:
             return json.dumps(
                 {"status": "error", "message": f"import failed: {e}"},

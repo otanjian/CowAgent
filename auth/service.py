@@ -2144,6 +2144,28 @@ class IdentityService:
             "position_text": membership["position_text"] or "",
         }
 
+    def _administers_target(self, actor_user_id: str, target_user_id: str) -> bool:
+        """True when actor and target share a tenant the actor administers.
+
+        Membership status is only the business of the tenants an account belongs
+        to, so a tenant admin may probe exactly the accounts that are active
+        members of a tenant it actively administers. Without this the
+        ``target_user_id`` argument is an oracle: an administrator of *any* one
+        tenant could enumerate membership state for arbitrary account ids (and
+        distinguish "not a member" from "no such account").
+        """
+        rows = self._store.execute(
+            "SELECT 1 FROM memberships tgt"
+            " JOIN memberships act ON act.tenant_id=tgt.tenant_id"
+            "  AND act.user_id=? AND act.active=1"
+            " JOIN membership_roles mr ON mr.membership_id=act.id"
+            " JOIN roles r ON r.id=mr.role_id AND r.code=?"
+            " JOIN tenants t ON t.id=tgt.tenant_id AND t.active=1"
+            " WHERE tgt.user_id=? AND tgt.active=1 LIMIT 1",
+            (actor_user_id, TENANT_ADMIN_CODE, target_user_id),
+        )
+        return bool(rows)
+
     def administered_tenants(
         self,
         actor_user_id: str,
@@ -2158,7 +2180,17 @@ class IdentityService:
         entry also reports that user's membership status within the *administered*
         tenant only (never other tenants), so a tenant admin can render the
         member's current tenant checkboxes without leaking other-tenant relations.
+
+        A target the actor does not administer (see ``_administers_target``) is
+        refused with 403 instead of answered, so the parameter cannot be used to
+        probe accounts outside the actor's tenants. The actor may always probe
+        itself.
         """
+        if target_user_id and target_user_id != actor_user_id \
+                and not self._administers_target(actor_user_id, target_user_id):
+            raise IdentityServiceError(
+                "target user is not a member of an administered tenant",
+                code="forbidden", status=403)
         rows = self._store.execute(
             "SELECT DISTINCT t.id, t.code, t.name FROM tenants t"
             " JOIN memberships m ON m.tenant_id=t.id AND m.active=1"
@@ -3902,6 +3934,37 @@ class IdentityService:
         return {"id": dept_id, "deleted": True}
 
     # --- audit query (task 2.6) -------------------------------------------
+
+    def record_audit(
+        self,
+        *,
+        action: str,
+        target: str,
+        actor_user_id: Optional[str] = None,
+        actor_username: Optional[str] = None,
+        tenant_id: Optional[str] = None,
+        target_tenant_id: Optional[str] = None,
+        redacted_changes: Optional[Dict[str, Any]] = None,
+        result: str = "success",
+    ) -> Dict[str, Any]:
+        """Record one audit event outside an identity transaction.
+
+        Most audited writes happen next to the row they change and commit with
+        it (``_audit_in_tx``). A few actions change state that does *not* live in
+        the identity database -- the instance channel roster is written to
+        ``team.json`` -- yet still belong in the same trail. This is the public
+        seam for those: same sanitisation, same table, no transaction.
+        """
+        return self._audit.record(
+            actor_user_id=actor_user_id,
+            actor_username=actor_username,
+            tenant_id=tenant_id,
+            target_tenant_id=target_tenant_id,
+            action=action,
+            target=target,
+            redacted_changes=redacted_changes or {},
+            result=result,
+        )
 
     def list_audit(self, tenant_id: Optional[str], actor_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Query audit per tenant, or platform-wide when no tenant & no actor."""

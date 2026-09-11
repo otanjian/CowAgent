@@ -92,6 +92,11 @@ class TodoWebHandlerTests(unittest.TestCase):
 
     def _patch_auth(self, enabled=True, password_set=True):
         patches = [
+            # Pin the mode: the legacy path is what these tests are about, and
+            # reading it from the ambient config makes the outcome depend on
+            # whether an earlier test file happened to leave ``identity_mode``
+            # at "database" (this developer machine's ``config.json``).
+            patch("channel.web.todo_handlers._identity_mode", return_value="legacy"),
             patch("channel.web.todo_handlers._is_password_enabled", return_value=password_set),
         ]
         for p in patches:

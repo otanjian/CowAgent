@@ -4,9 +4,11 @@
 非法、空内容、workbench 元数据剔除连接凭据。
 """
 import base64
+import contextlib
 import json
 
 import pytest
+from types import SimpleNamespace
 from unittest import mock
 
 from scenes import api_workbench
@@ -80,18 +82,48 @@ def _scene_with_import(scene_id="report_upload_parse"):
             "erp_config": {"enabled": True, "systems": ["kingdee", "sap"]}}
 
 
+def _handler_patches(payload, tmp_path=None, find_scene=None):
+    """Common patches for driving the import handler directly.
+
+    The handler now runs inside the request scope and funnels its write through
+    the unified management-write gate (group 4). A unit test of the handler's
+    business logic stubs those two seams out and pins the workspace root, so it
+    never needs a live ``web.ctx`` or an identity database; the scope/permission
+    and CSRF behaviour itself is covered by ``test_scenes_tenant_scope.py``.
+    """
+    @contextlib.contextmanager
+    def fake_scope():
+        yield SimpleNamespace(tenant_id="tnt_test",
+                              permissions={"chat.use"})
+
+    patchers = [
+        mock.patch("channel.web.web_channel._require_auth"),
+        mock.patch("scenes.api_workbench._require_management_write"),
+        mock.patch("scenes.api_workbench._db_scope", fake_scope),
+        mock.patch("scenes.api_workbench._require_chat_use"),
+        mock.patch("channel.web.web_channel.web.header"),
+        mock.patch("channel.web.web_channel.web.data",
+                   return_value=json.dumps(payload).encode()),
+        mock.patch("scenes.service.find_scene", side_effect=find_scene),
+    ]
+    if tmp_path is not None:
+        patchers.append(mock.patch("scenes.api_workbench._resolve_workspace_root",
+                                   return_value=str(tmp_path)))
+    return patchers
+
+
 def _call_import(payload, tmp_path, scene=None):
     def fake_find_scene(sid, *a, **k):
         return (_scene_with_import() if scene is None else scene), False
 
-    with mock.patch("channel.web.web_channel._require_auth"), \
-         mock.patch("channel.web.web_channel.web.header"), \
-         mock.patch("channel.web.web_channel.web.data",
-                    return_value=json.dumps(payload).encode()), \
-         mock.patch("channel.web.web_channel._get_workspace_root",
-                    return_value=str(tmp_path)), \
-         mock.patch("scenes.service.find_scene", side_effect=fake_find_scene):
+    patchers = _handler_patches(payload, tmp_path, fake_find_scene)
+    for p in patchers:
+        p.start()
+    try:
         return json.loads(api_workbench.SceneWorkbenchImportHandler().POST())
+    finally:
+        for p in reversed(patchers):
+            p.stop()
 
 
 def test_import_success_text(tmp_path):
@@ -126,14 +158,15 @@ def test_import_rejects_missing_params(tmp_path):
 def test_import_rejects_unknown_scene(tmp_path):
     def fake_find_scene(sid, *a, **k):
         return None, False
-    with mock.patch("channel.web.web_channel._require_auth"), \
-         mock.patch("channel.web.web_channel.web.header"), \
-         mock.patch("channel.web.web_channel.web.data",
-                    return_value=json.dumps(
-                        {"scene_id": "nope", "filename": "a.csv",
-                         "content": "x"}).encode()), \
-         mock.patch("scenes.service.find_scene", side_effect=fake_find_scene):
+    payload = {"scene_id": "nope", "filename": "a.csv", "content": "x"}
+    patchers = _handler_patches(payload, find_scene=fake_find_scene)
+    for p in patchers:
+        p.start()
+    try:
         out = json.loads(api_workbench.SceneWorkbenchImportHandler().POST())
+    finally:
+        for p in reversed(patchers):
+            p.stop()
     assert out["status"] == "error"
     assert "not found" in out["message"]
 

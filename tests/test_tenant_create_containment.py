@@ -62,8 +62,12 @@ class TenantCreateContainmentTests(unittest.TestCase):
     def test_create_without_base_rejected_when_workspace_is_default_root(self):
         """No configured base and workspace == default root: refuse to derive
         a nested root (503 config_error), persist nothing."""
-        with self.assertRaises(IdentityServiceError) as cm:
-            self._create("e2e-target")
+        # Force the "no controlled base" condition regardless of ambient state:
+        # another test may have left COW_TENANT_BASE behind, which would make
+        # this test silently exercise the configured-base path instead.
+        with patch.dict(os.environ, {"COW_TENANT_BASE": ""}, clear=False):
+            with self.assertRaises(IdentityServiceError) as cm:
+                self._create("e2e-target")
         self.assertEqual(cm.exception.code, "config_error")
         self.assertEqual(cm.exception.status, 503)
         self.assertNotIn("e2e-target", self._tenant_codes())

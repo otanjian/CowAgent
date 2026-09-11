@@ -196,6 +196,26 @@ def _csrf_ok() -> bool:
     return _origin_ok()
 
 
+def require_management_write() -> None:
+    """Unified origin/CSRF gate for state-changing management requests.
+
+    Every platform-console, tenant-console and scene write funnels through this
+    one helper -- ``channel/web/admin_handlers.py``, the console write branches
+    and ``scenes/api*.py`` -- instead of each surface re-deriving the rule (or,
+    as ``channel/web/todo_handlers.py`` does, carrying its own legacy copy). The
+    rule: a cookie-authenticated write must present an Origin/Referer matching the
+    request host; a bearer-authenticated write (the desktop client, whose
+    ``file://`` origin can never match) is exempt only when the bearer really
+    authenticates.
+    """
+    if not _csrf_ok():
+        raise web.HTTPError(
+            "403 Forbidden",
+            {"Content-Type": "application/json; charset=utf-8"},
+            json.dumps({"status": "error", "message": "invalid request origin",
+                        "code": "csrf_failed"}))
+
+
 def _identity_unavailable() -> str:
     """Stable 503 payload when the identity store itself is unusable."""
     return _error("identity store unavailable", 503, "identity_db_unavailable")
