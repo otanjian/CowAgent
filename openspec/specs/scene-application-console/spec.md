@@ -1,0 +1,45 @@
+# scene-application-console Specification
+
+## Purpose
+TBD - created by archiving change port-scene-applications. Update Purpose after archive.
+## Requirements
+### Requirement: 场景中心侧栏入口与导航
+
+系统 SHALL 在侧栏「工作台」分组的「知识库」菜单之后、「管理控制台」之前提供「场景应用」入口，纳入既有 `VIEW_META` 与 `navigateTo` 导航。点击进入场景中心视图。侧栏项在窄屏下与现有工作台成员一致折叠，选中态、键盘可达、主题与三语文案保持既有约定；未启用时按现有「功能尚未开放」处理而非静默无操作。
+
+#### Scenario: 从侧栏进入场景中心
+- **WHEN** 用户点击侧栏「场景应用」菜单
+- **THEN** 视图切换到场景中心，面包屑显示「工作台」分组与「场景应用」页名，且侧栏项带选中态
+
+#### Scenario: 直接地址或收藏访问场景中心
+- **WHEN** 用户通过直接地址进入场景中心目标
+- **THEN** 与侧栏入口一致加载场景中心，不静默跳转到其他视图
+
+### Requirement: 场景中心分类与卡片展示
+
+系统 SHALL 从 `GET /api/scenes` 读取场景数据并按分类分组展示。每个分类 SHALL 有页签，每个分类下 SHALL 展示对应场景卡片。卡片 SHALL 显示场景名称、描述、分类标签与图标，用分类颜色渲染。分类为空时 SHALL 显示空态与返回可用页面指引。场景数据缓存 SHALL 在场景中心加载时复用，避免重复请求。
+
+#### Scenario: 加载场景数据成功
+- **WHEN** `GET /api/scenes` 返回成功且含分类与场景
+- **THEN** 渲染分类页签与场景卡片，默认选中第一个分类，卡片含名称/描述/分类标签/图标
+
+#### Scenario: 当前分类无场景
+- **WHEN** 选中分类没有可展示场景
+- **THEN** 显示空态并隐藏卡片网格，不显示空白占位
+
+### Requirement: 场景选择器与激活交互
+
+系统 SHALL 支持场景选择器通过 `/场景` 命令触发（与场景中心卡片共用同一分发逻辑）。激活场景 SHALL 创建新会话并向 `POST /api/scenes/activate` 提交 `scene_id` 与 `session_id`。激活成功后 SHALL 在对话中注入场景 greeting，并切换为场景上下文；失败 SHALL 显示失败/网络错误提示，不改变现有会话。
+
+#### Scenario: 通过场景中心卡片激活
+- **WHEN** 用户点击某场景卡片且该场景不启用工作台
+- **THEN** 创建新会话、调用 activate 接口、成功后注入场景 greeting 并进入该场景对话
+
+#### Scenario: 通过 `/场景` 命令激活
+- **WHEN** 用户在消息输入框输入 `/场景` 并选择匹配场景
+- **THEN** 按与卡片一致的分发逻辑激活场景，Enter 确认、Esc 关闭，选择器为空时提示无匹配场景
+
+#### Scenario: 激活失败或网络错误
+- **WHEN** activate 返回失败或网络异常
+- **THEN** 显示失败/网络错误提示，不创建场景上下文，不破坏当前会话
+

@@ -1,0 +1,23 @@
+schema: spec-driven
+
+context: |
+  RongAI 企业化改造，以 `openspec/specs/` 既有规范与 `doc/多租户与权限架构分析.html` 等审计/设计材料为需求基线。
+  RongAI 是唯一运行时主线；OneAgent 仅作参考，不复制运行时配置、凭据、客户数据或整文件覆盖。
+  保留 Web/Desktop/Channel、Agent Registry/Bridge、业务 sessions、现有 ExecutionRun 与 scheduler 兼容接口。
+  AuthSession 与业务 session 分离；授权每次解析，机器主体不伪造 Membership；多租户任意代码默认禁用直到执行隔离验收。
+  内部审计（audit-log）、凭据管理（credential-management）、单动作审批（action-approval）与硬配额（resource-quota）是按切片验收的真实前置，不能等待整份消费者 change 完成。
+  需求以 `openspec/specs/` 的规范为权威来源；新增或变更行为必须落在对应 capability 的 spec 中，跨阶段 tasks 必须显式标记前置及启用门槛；产物完成不等于实现完成。
+  历史 change（含 archive）中引用的 PRD 编号仅作存档记录，不作为现行需求基线；需要新增需求时以 spec 承载。
+  文档正文使用中文；OpenSpec 模板标题与 SHALL/MUST、WHEN/THEN 保留规范格式。
+
+rules:
+  proposal:
+    - 以既有 `openspec/specs/` 规范为依据；区分新建规范与既有产品代码，列明数据唯一归属和跨 change 依赖。
+  specs:
+    - 每项 requirement 使用 SHALL 或 MUST，至少一个四级 Scenario 标题及 WHEN/THEN 场景。
+    - 正常流程及关键权限、并发、故障、兼容/迁移边界均应可验收；不复制其他责任域的规范。
+  design:
+    - 说明当前代码接入点、方案与取舍、分阶段门槛、迁移/恢复和未决实施参数；不得宣称未经测试的能力已实现。
+  tasks:
+    - 使用未勾选的编号任务，按能力与阶段分组；覆盖实现、测试、迁移、文档和 feature flag 验收。
+    - 在开始下一阶段前检查依赖切片证据，不将接口占位或模拟实现当作生产门槛通过。

@@ -1,0 +1,545 @@
+{
+  "type": "real localhost HTTP, production routing and SQLite, no mocks",
+  "records": [
+    {
+      "mode": "database",
+      "case": "initial check without cookie",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": false,
+        "identity_mode": "database"
+      }
+    },
+    {
+      "mode": "database",
+      "case": "admin login; cow_session cookie True",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "identity_mode": "database",
+        "must_change_password": false,
+        "user": {
+          "username": "accept_admin",
+          "display_name": "验收管理员",
+          "is_platform_admin": true
+        },
+        "tenants": "omitted temporary fixture ids",
+        "tenants_count": 1
+      }
+    },
+    {
+      "mode": "database",
+      "case": "admin cookie check without tenant header",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": true,
+        "identity_mode": "database",
+        "user": {
+          "username": "accept_admin",
+          "display_name": "验收管理员",
+          "is_platform_admin": true
+        }
+      }
+    },
+    {
+      "mode": "database",
+      "case": "admin invalid tenant header demonstrates why self check omits tenant header",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": false,
+        "identity_mode": "database"
+      }
+    },
+    {
+      "mode": "database",
+      "case": "admin logout",
+      "http_status": 200,
+      "response": {
+        "status": "success"
+      }
+    },
+    {
+      "mode": "database",
+      "case": "admin check after cookie logout",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": false,
+        "identity_mode": "database"
+      }
+    },
+    {
+      "mode": "database",
+      "case": "admin revoked token check",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": false,
+        "identity_mode": "database"
+      }
+    },
+    {
+      "mode": "database",
+      "case": "zero login; cow_session cookie True",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "identity_mode": "database",
+        "must_change_password": false,
+        "user": {
+          "username": "accept_zero",
+          "display_name": "零租户验收用户",
+          "is_platform_admin": false
+        },
+        "tenants": "omitted temporary fixture ids",
+        "tenants_count": 0
+      }
+    },
+    {
+      "mode": "database",
+      "case": "zero cookie check without tenant header",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": true,
+        "identity_mode": "database",
+        "user": {
+          "username": "accept_zero",
+          "display_name": "零租户验收用户",
+          "is_platform_admin": false
+        }
+      }
+    },
+    {
+      "mode": "database",
+      "case": "zero invalid tenant header demonstrates why self check omits tenant header",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": false,
+        "identity_mode": "database"
+      }
+    },
+    {
+      "mode": "database",
+      "case": "zero logout",
+      "http_status": 200,
+      "response": {
+        "status": "success"
+      }
+    },
+    {
+      "mode": "database",
+      "case": "zero check after cookie logout",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": false,
+        "identity_mode": "database"
+      }
+    },
+    {
+      "mode": "database",
+      "case": "zero revoked token check",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": false,
+        "identity_mode": "database"
+      }
+    },
+    {
+      "mode": "database",
+      "case": "single login; cow_session cookie True",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "identity_mode": "database",
+        "must_change_password": false,
+        "user": {
+          "username": "accept_single",
+          "display_name": "单租户 <script>alert(\"x\")</script> & 长姓名验收用户 ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+          "is_platform_admin": false
+        },
+        "tenants": "omitted temporary fixture ids",
+        "tenants_count": 1
+      }
+    },
+    {
+      "mode": "database",
+      "case": "single cookie check without tenant header",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": true,
+        "identity_mode": "database",
+        "user": {
+          "username": "accept_single",
+          "display_name": "单租户 <script>alert(\"x\")</script> & 长姓名验收用户 ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+          "is_platform_admin": false
+        }
+      }
+    },
+    {
+      "mode": "database",
+      "case": "single invalid tenant header demonstrates why self check omits tenant header",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": false,
+        "identity_mode": "database"
+      }
+    },
+    {
+      "mode": "database",
+      "case": "single logout",
+      "http_status": 200,
+      "response": {
+        "status": "success"
+      }
+    },
+    {
+      "mode": "database",
+      "case": "single check after cookie logout",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": false,
+        "identity_mode": "database"
+      }
+    },
+    {
+      "mode": "database",
+      "case": "single revoked token check",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": false,
+        "identity_mode": "database"
+      }
+    },
+    {
+      "mode": "database",
+      "case": "multi login; cow_session cookie True",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "identity_mode": "database",
+        "must_change_password": false,
+        "user": {
+          "username": "accept_multi",
+          "display_name": "多租户验收用户",
+          "is_platform_admin": false
+        },
+        "tenants": "omitted temporary fixture ids",
+        "tenants_count": 2
+      }
+    },
+    {
+      "mode": "database",
+      "case": "multi cookie check without tenant header",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": true,
+        "identity_mode": "database",
+        "user": {
+          "username": "accept_multi",
+          "display_name": "多租户验收用户",
+          "is_platform_admin": false
+        }
+      }
+    },
+    {
+      "mode": "database",
+      "case": "multi invalid tenant header demonstrates why self check omits tenant header",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": false,
+        "identity_mode": "database"
+      }
+    },
+    {
+      "mode": "database",
+      "case": "multi logout",
+      "http_status": 200,
+      "response": {
+        "status": "success"
+      }
+    },
+    {
+      "mode": "database",
+      "case": "multi check after cookie logout",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": false,
+        "identity_mode": "database"
+      }
+    },
+    {
+      "mode": "database",
+      "case": "multi revoked token check",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": false,
+        "identity_mode": "database"
+      }
+    },
+    {
+      "mode": "database",
+      "case": "production branding public response",
+      "http_status": 200,
+      "response": {
+        "enabled": true,
+        "revision": 0,
+        "brand_name": "容大AI",
+        "logo_description": "控制台",
+        "logo_url": "/assets/rongda-ai-mark.svg",
+        "favicon_url": "/assets/favicon.ico"
+      }
+    },
+    {
+      "mode": "database",
+      "case": "production version response",
+      "http_status": 200,
+      "response": {
+        "version": "2.1.7"
+      }
+    },
+    {
+      "mode": "database",
+      "case": "production ChatHandler reads working-tree chat.html",
+      "http_status": 200,
+      "html_length": 200803
+    },
+    {
+      "mode": "legacy-password",
+      "case": "initial check without cookie",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": false
+      }
+    },
+    {
+      "mode": "legacy-password",
+      "case": "password login; cow_auth_token cookie set",
+      "http_status": 200,
+      "response": {
+        "status": "success"
+      }
+    },
+    {
+      "mode": "legacy-password",
+      "case": "cookie check",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": true
+      }
+    },
+    {
+      "mode": "legacy-password",
+      "case": "logout",
+      "http_status": 200,
+      "response": {
+        "status": "success"
+      }
+    },
+    {
+      "mode": "legacy-password",
+      "case": "check after cookie logout",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": false
+      }
+    },
+    {
+      "mode": "legacy-password",
+      "case": "production branding public response",
+      "http_status": 200,
+      "response": {
+        "enabled": true,
+        "revision": 0,
+        "brand_name": "容大AI",
+        "logo_description": "控制台",
+        "logo_url": "/assets/rongda-ai-mark.svg",
+        "favicon_url": "/assets/favicon.ico"
+      }
+    },
+    {
+      "mode": "legacy-password",
+      "case": "production version response",
+      "http_status": 200,
+      "response": {
+        "version": "2.1.7"
+      }
+    },
+    {
+      "mode": "legacy-password",
+      "case": "production ChatHandler reads working-tree chat.html",
+      "http_status": 200,
+      "html_length": 200803
+    },
+    {
+      "mode": "legacy-open",
+      "case": "initial check without cookie",
+      "http_status": 200,
+      "response": {
+        "status": "success",
+        "auth_required": false
+      }
+    },
+    {
+      "mode": "legacy-open",
+      "case": "production branding public response",
+      "http_status": 200,
+      "response": {
+        "enabled": true,
+        "revision": 0,
+        "brand_name": "容大AI",
+        "logo_description": "控制台",
+        "logo_url": "/assets/rongda-ai-mark.svg",
+        "favicon_url": "/assets/favicon.ico"
+      }
+    },
+    {
+      "mode": "legacy-open",
+      "case": "production version response",
+      "http_status": 200,
+      "response": {
+        "version": "2.1.7"
+      }
+    },
+    {
+      "mode": "legacy-open",
+      "case": "production ChatHandler reads working-tree chat.html",
+      "http_status": 200,
+      "html_length": 200803
+    }
+  ],
+  "password_toggle": [
+    {
+      "case": "initial open",
+      "response": {
+        "status": "success",
+        "auth_required": false
+      }
+    },
+    {
+      "case": "enable password via production ConfigHandler",
+      "status": "success"
+    },
+    {
+      "case": "enabled mode requires login",
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": false
+      }
+    },
+    {
+      "case": "login after enable",
+      "status": "success"
+    },
+    {
+      "case": "password mode authenticated",
+      "response": {
+        "status": "success",
+        "auth_required": true,
+        "authenticated": true
+      }
+    },
+    {
+      "case": "disable password via production ConfigHandler",
+      "status": "success"
+    },
+    {
+      "case": "disabled mode explicit open response",
+      "response": {
+        "status": "success",
+        "auth_required": false
+      }
+    }
+  ],
+  "real_401_and_existing_route_limitations": [
+    {
+      "case": "legacy password login",
+      "status": "success"
+    },
+    {
+      "case": "legacy real logout clears Cookie",
+      "http_status": 200,
+      "response": {
+        "status": "success"
+      }
+    },
+    {
+      "case": "legacy protected readonly GET after real logout",
+      "http_status": 401,
+      "response": {
+        "status": "error",
+        "message": "Unauthorized"
+      }
+    },
+    {
+      "case": "database no session /api/platform/tenants",
+      "http_status": 500,
+      "response": "non-JSON WSGI error"
+    },
+    {
+      "case": "database no session /api/tenant",
+      "http_status": 500,
+      "response": "non-JSON WSGI error"
+    },
+    {
+      "case": "database no session /api/branding",
+      "http_status": 500,
+      "response": "non-JSON WSGI error"
+    },
+    {
+      "case": "database no session /api/agents",
+      "http_status": 200,
+      "response": {
+        "status": "error",
+        "message": "unauthorized"
+      }
+    },
+    {
+      "case": "database no session /api/todos",
+      "http_status": 200,
+      "response": {
+        "status": "error",
+        "code": "unauthorized",
+        "message": "database 模式需要登录及租户选择"
+      }
+    }
+  ]
+}

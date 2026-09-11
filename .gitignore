@@ -112,9 +112,19 @@ README*.md
 # Keeping it in its own labelled section means an upstream merge that adds
 # ignore rules above can never silently overwrite (or be overwritten by) this
 # one: on conflict, keep both sections with this one intact (task 9.6).
+#
+# This section is kept even when it is empty, because its value is the stable
+# boundary rather than any particular rule. It most recently held `/openspec/`,
+# which was removed when the OpenSpec specs, changes and archive were moved into
+# version control: they are the authoritative requirement baseline (see
+# .cursor/rules/openspec-spec-authority.mdc), so leaving them out meant a fresh
+# clone could not read its own specs and `scripts/check_change_deltas.py` had
+# nothing to check.
 # =============================================================================
 
-# OpenSpec change specs: local design/workflow scratch produced during
-# propose/apply cycles. Not part of the shipped repository — never commit.
-/openspec/
+# The bare `config.yaml` rule above is upstream's, for its runtime config at the
+# repo root; being unanchored it also matches at depth and would silently drop
+# OpenSpec's own config -- which is *source*, because it carries this fork's spec
+# rules and context. Re-include it explicitly.
+!openspec/config.yaml
 

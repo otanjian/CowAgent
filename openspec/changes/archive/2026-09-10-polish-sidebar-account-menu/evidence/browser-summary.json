@@ -1,0 +1,516 @@
+{
+  "recordedAt": "2026-09-09T02:06:07.034Z",
+  "phase": "菜单视觉调整完成、最终单行按钮调整之前；此摘要不代表最终40px入口重跑全部矩阵",
+  "fixtureOnly": true,
+  "visual": {
+    "source": "/tmp/cow-account-appearance-check/results.json",
+    "testPassed": false,
+    "visualCombinations": 18,
+    "pageErrors": [],
+    "unexpectedRoutes": [],
+    "contrastFailures": [],
+    "geometryFailuresExcludingHomepageCardCount": 0,
+    "knownFailure": {
+      "expectedHomepageCardCount": 3,
+      "actualHomepageCardCounts": [
+        6
+      ],
+      "baselineHomepageCardCount": 6
+    },
+    "combinations": [
+      {
+        "width": 1440,
+        "height": 900,
+        "palette": "business",
+        "mode": "light",
+        "geometry": {
+          "documentWidth": 1440,
+          "viewport": 1440,
+          "dialogWidth": 558,
+          "dialogClientWidth": 558,
+          "dialogRect": {
+            "left": 440,
+            "right": 1000,
+            "top": 168.53125,
+            "bottom": 731.46875
+          },
+          "resetVisible": true,
+          "closeVisible": true,
+          "cardCount": 6,
+          "topHeaderHeight": 64,
+          "headerCount": 1,
+          "agentInsideHeader": true
+        },
+        "contrastSampleCount": 22,
+        "accountVersionContrast": [
+          6.14985091319382
+        ]
+      },
+      {
+        "width": 1440,
+        "height": 900,
+        "palette": "business",
+        "mode": "dark",
+        "geometry": {
+          "documentWidth": 1440,
+          "viewport": 1440,
+          "dialogWidth": 558,
+          "dialogClientWidth": 558,
+          "dialogRect": {
+            "left": 440,
+            "right": 1000,
+            "top": 168.53125,
+            "bottom": 731.46875
+          },
+          "resetVisible": true,
+          "closeVisible": true,
+          "cardCount": 6,
+          "topHeaderHeight": 64,
+          "headerCount": 1,
+          "agentInsideHeader": true
+        },
+        "contrastSampleCount": 22,
+        "accountVersionContrast": [
+          7.561216993745792
+        ]
+      },
+      {
+        "width": 1440,
+        "height": 900,
+        "palette": "slate",
+        "mode": "light",
+        "geometry": {
+          "documentWidth": 1440,
+          "viewport": 1440,
+          "dialogWidth": 558,
+          "dialogClientWidth": 558,
+          "dialogRect": {
+            "left": 440,
+            "right": 1000,
+            "top": 168.53125,
+            "bottom": 731.46875
+          },
+          "resetVisible": true,
+          "closeVisible": true,
+          "cardCount": 6,
+          "topHeaderHeight": 64,
+          "headerCount": 1,
+          "agentInsideHeader": true
+        },
+        "contrastSampleCount": 22,
+        "accountVersionContrast": [
+          7.29446139193585
+        ]
+      },
+      {
+        "width": 1440,
+        "height": 900,
+        "palette": "slate",
+        "mode": "dark",
+        "geometry": {
+          "documentWidth": 1440,
+          "viewport": 1440,
+          "dialogWidth": 558,
+          "dialogClientWidth": 558,
+          "dialogRect": {
+            "left": 440,
+            "right": 1000,
+            "top": 168.53125,
+            "bottom": 731.46875
+          },
+          "resetVisible": true,
+          "closeVisible": true,
+          "cardCount": 6,
+          "topHeaderHeight": 64,
+          "headerCount": 1,
+          "agentInsideHeader": true
+        },
+        "contrastSampleCount": 22,
+        "accountVersionContrast": [
+          7.29446139193585
+        ]
+      },
+      {
+        "width": 1440,
+        "height": 900,
+        "palette": "classic",
+        "mode": "light",
+        "geometry": {
+          "documentWidth": 1440,
+          "viewport": 1440,
+          "dialogWidth": 558,
+          "dialogClientWidth": 558,
+          "dialogRect": {
+            "left": 440,
+            "right": 1000,
+            "top": 168.53125,
+            "bottom": 731.46875
+          },
+          "resetVisible": true,
+          "closeVisible": true,
+          "cardCount": 6,
+          "topHeaderHeight": 64,
+          "headerCount": 1,
+          "agentInsideHeader": true
+        },
+        "contrastSampleCount": 22,
+        "accountVersionContrast": [
+          6.664948550616927
+        ]
+      },
+      {
+        "width": 1440,
+        "height": 900,
+        "palette": "classic",
+        "mode": "dark",
+        "geometry": {
+          "documentWidth": 1440,
+          "viewport": 1440,
+          "dialogWidth": 558,
+          "dialogClientWidth": 558,
+          "dialogRect": {
+            "left": 440,
+            "right": 1000,
+            "top": 168.53125,
+            "bottom": 731.46875
+          },
+          "resetVisible": true,
+          "closeVisible": true,
+          "cardCount": 6,
+          "topHeaderHeight": 64,
+          "headerCount": 1,
+          "agentInsideHeader": true
+        },
+        "contrastSampleCount": 22,
+        "accountVersionContrast": [
+          6.664948550616927
+        ]
+      },
+      {
+        "width": 1280,
+        "height": 720,
+        "palette": "business",
+        "mode": "light",
+        "geometry": {
+          "documentWidth": 1280,
+          "viewport": 1280,
+          "dialogWidth": 558,
+          "dialogClientWidth": 558,
+          "dialogRect": {
+            "left": 360,
+            "right": 920,
+            "top": 78.53125,
+            "bottom": 641.46875
+          },
+          "resetVisible": true,
+          "closeVisible": true,
+          "cardCount": 6,
+          "topHeaderHeight": 64,
+          "headerCount": 1,
+          "agentInsideHeader": true
+        },
+        "contrastSampleCount": 21,
+        "accountVersionContrast": []
+      },
+      {
+        "width": 1280,
+        "height": 720,
+        "palette": "business",
+        "mode": "dark",
+        "geometry": {
+          "documentWidth": 1280,
+          "viewport": 1280,
+          "dialogWidth": 558,
+          "dialogClientWidth": 558,
+          "dialogRect": {
+            "left": 360,
+            "right": 920,
+            "top": 78.53125,
+            "bottom": 641.46875
+          },
+          "resetVisible": true,
+          "closeVisible": true,
+          "cardCount": 6,
+          "topHeaderHeight": 64,
+          "headerCount": 1,
+          "agentInsideHeader": true
+        },
+        "contrastSampleCount": 21,
+        "accountVersionContrast": []
+      },
+      {
+        "width": 1280,
+        "height": 720,
+        "palette": "slate",
+        "mode": "light",
+        "geometry": {
+          "documentWidth": 1280,
+          "viewport": 1280,
+          "dialogWidth": 558,
+          "dialogClientWidth": 558,
+          "dialogRect": {
+            "left": 360,
+            "right": 920,
+            "top": 78.53125,
+            "bottom": 641.46875
+          },
+          "resetVisible": true,
+          "closeVisible": true,
+          "cardCount": 6,
+          "topHeaderHeight": 64,
+          "headerCount": 1,
+          "agentInsideHeader": true
+        },
+        "contrastSampleCount": 21,
+        "accountVersionContrast": []
+      },
+      {
+        "width": 1280,
+        "height": 720,
+        "palette": "slate",
+        "mode": "dark",
+        "geometry": {
+          "documentWidth": 1280,
+          "viewport": 1280,
+          "dialogWidth": 558,
+          "dialogClientWidth": 558,
+          "dialogRect": {
+            "left": 360,
+            "right": 920,
+            "top": 78.53125,
+            "bottom": 641.46875
+          },
+          "resetVisible": true,
+          "closeVisible": true,
+          "cardCount": 6,
+          "topHeaderHeight": 64,
+          "headerCount": 1,
+          "agentInsideHeader": true
+        },
+        "contrastSampleCount": 21,
+        "accountVersionContrast": []
+      },
+      {
+        "width": 1280,
+        "height": 720,
+        "palette": "classic",
+        "mode": "light",
+        "geometry": {
+          "documentWidth": 1280,
+          "viewport": 1280,
+          "dialogWidth": 558,
+          "dialogClientWidth": 558,
+          "dialogRect": {
+            "left": 360,
+            "right": 920,
+            "top": 78.53125,
+            "bottom": 641.46875
+          },
+          "resetVisible": true,
+          "closeVisible": true,
+          "cardCount": 6,
+          "topHeaderHeight": 64,
+          "headerCount": 1,
+          "agentInsideHeader": true
+        },
+        "contrastSampleCount": 21,
+        "accountVersionContrast": []
+      },
+      {
+        "width": 1280,
+        "height": 720,
+        "palette": "classic",
+        "mode": "dark",
+        "geometry": {
+          "documentWidth": 1280,
+          "viewport": 1280,
+          "dialogWidth": 558,
+          "dialogClientWidth": 558,
+          "dialogRect": {
+            "left": 360,
+            "right": 920,
+            "top": 78.53125,
+            "bottom": 641.46875
+          },
+          "resetVisible": true,
+          "closeVisible": true,
+          "cardCount": 6,
+          "topHeaderHeight": 64,
+          "headerCount": 1,
+          "agentInsideHeader": true
+        },
+        "contrastSampleCount": 21,
+        "accountVersionContrast": []
+      },
+      {
+        "width": 375,
+        "height": 812,
+        "palette": "business",
+        "mode": "light",
+        "geometry": {
+          "documentWidth": 375,
+          "viewport": 375,
+          "dialogWidth": 341,
+          "dialogClientWidth": 341,
+          "dialogRect": {
+            "left": 16,
+            "right": 359,
+            "top": 27.5625,
+            "bottom": 784.4375
+          },
+          "resetVisible": true,
+          "closeVisible": true,
+          "cardCount": 6,
+          "topHeaderHeight": 64,
+          "headerCount": 1,
+          "agentInsideHeader": true
+        },
+        "contrastSampleCount": 21,
+        "accountVersionContrast": []
+      },
+      {
+        "width": 375,
+        "height": 812,
+        "palette": "business",
+        "mode": "dark",
+        "geometry": {
+          "documentWidth": 375,
+          "viewport": 375,
+          "dialogWidth": 341,
+          "dialogClientWidth": 341,
+          "dialogRect": {
+            "left": 16,
+            "right": 359,
+            "top": 27.5625,
+            "bottom": 784.4375
+          },
+          "resetVisible": true,
+          "closeVisible": true,
+          "cardCount": 6,
+          "topHeaderHeight": 64,
+          "headerCount": 1,
+          "agentInsideHeader": true
+        },
+        "contrastSampleCount": 21,
+        "accountVersionContrast": []
+      },
+      {
+        "width": 375,
+        "height": 812,
+        "palette": "slate",
+        "mode": "light",
+        "geometry": {
+          "documentWidth": 375,
+          "viewport": 375,
+          "dialogWidth": 341,
+          "dialogClientWidth": 341,
+          "dialogRect": {
+            "left": 16,
+            "right": 359,
+            "top": 27.5625,
+            "bottom": 784.4375
+          },
+          "resetVisible": true,
+          "closeVisible": true,
+          "cardCount": 6,
+          "topHeaderHeight": 64,
+          "headerCount": 1,
+          "agentInsideHeader": true
+        },
+        "contrastSampleCount": 21,
+        "accountVersionContrast": []
+      },
+      {
+        "width": 375,
+        "height": 812,
+        "palette": "slate",
+        "mode": "dark",
+        "geometry": {
+          "documentWidth": 375,
+          "viewport": 375,
+          "dialogWidth": 341,
+          "dialogClientWidth": 341,
+          "dialogRect": {
+            "left": 16,
+            "right": 359,
+            "top": 27.5625,
+            "bottom": 784.4375
+          },
+          "resetVisible": true,
+          "closeVisible": true,
+          "cardCount": 6,
+          "topHeaderHeight": 64,
+          "headerCount": 1,
+          "agentInsideHeader": true
+        },
+        "contrastSampleCount": 21,
+        "accountVersionContrast": []
+      },
+      {
+        "width": 375,
+        "height": 812,
+        "palette": "classic",
+        "mode": "light",
+        "geometry": {
+          "documentWidth": 375,
+          "viewport": 375,
+          "dialogWidth": 341,
+          "dialogClientWidth": 341,
+          "dialogRect": {
+            "left": 16,
+            "right": 359,
+            "top": 27.5625,
+            "bottom": 784.4375
+          },
+          "resetVisible": true,
+          "closeVisible": true,
+          "cardCount": 6,
+          "topHeaderHeight": 64,
+          "headerCount": 1,
+          "agentInsideHeader": true
+        },
+        "contrastSampleCount": 21,
+        "accountVersionContrast": []
+      },
+      {
+        "width": 375,
+        "height": 812,
+        "palette": "classic",
+        "mode": "dark",
+        "geometry": {
+          "documentWidth": 375,
+          "viewport": 375,
+          "dialogWidth": 341,
+          "dialogClientWidth": 341,
+          "dialogRect": {
+            "left": 16,
+            "right": 359,
+            "top": 27.5625,
+            "bottom": 784.4375
+          },
+          "resetVisible": true,
+          "closeVisible": true,
+          "cardCount": 6,
+          "topHeaderHeight": 64,
+          "headerCount": 1,
+          "agentInsideHeader": true
+        },
+        "contrastSampleCount": 21,
+        "accountVersionContrast": []
+      }
+    ]
+  },
+  "interaction": {
+    "source": "/tmp/cow-account-interaction-check/results.json",
+    "scenarios": [
+      {
+        "name": "one preferences dialog serves both entries with local language, keyboard and all close actions",
+        "passed": true,
+        "durationMs": 2498
+      }
+    ],
+    "pageErrors": [],
+    "unexpectedRoutes": [],
+    "error": null
+  }
+}

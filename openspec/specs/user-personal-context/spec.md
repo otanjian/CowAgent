@@ -1,0 +1,93 @@
+# user-personal-context Specification
+
+## Purpose
+TBD - created by archiving change personal-conversation-and-memory. Update Purpose after archive.
+## Requirements
+### Requirement: 个人人设按用户注入
+
+系统 SHALL 为每个用户提供位于用户域（`user_root()`）的个人人设档案，并在该用户的会话构建时将其注入模型上下文。注入 SHALL 与既有场景上下文、员工上下文共存且顺序稳定；MUST NOT 新建智能体、roster 条目或工作区，MUST NOT 覆写智能体级人设文件。
+
+#### Scenario: 用户会话获得个人人设
+- **WHEN** 某用户在其有权使用的智能体下发起或继续一个属于该用户的会话
+- **THEN** 模型上下文包含该用户的个人人设段，且场景段与员工段仍然存在，顺序为场景、员工、个人
+
+#### Scenario: 无个人人设档案
+- **WHEN** 用户尚无个人人设档案
+- **THEN** 会话正常构建，不注入个人段，不创建空档案，也不因缺少档案拒绝会话
+
+#### Scenario: 人设隔离
+- **WHEN** 另一用户在同一智能体下发起会话
+- **THEN** 该会话不包含前一个用户的个人人设段
+
+#### Scenario: 共享或团队会话
+- **WHEN** 会话不属于单个用户（共享/团队会话）
+- **THEN** 不注入任一用户的个人人设段，不出现由最后访问者决定的个人段
+
+### Requirement: 个人长期记忆按用户归属
+
+`scope=user` 的记忆 SHALL 绑定到当前请求主体对应的用户，其记忆文件 SHALL 存放于用户域（`user_root()`），MUST NOT 写入智能体工作区。单个用户在某智能体下写入的个人记忆 MUST NOT 对其它用户可见。
+
+#### Scenario: 写入个人记忆
+- **WHEN** 智能体以 `scope=user` 保存内容，且当前运行时身份带有已验证的 `user_id`
+- **THEN** 内容写入该 `user_id` 的用户域记忆文件，并可按同一标识检索
+
+#### Scenario: 他人不可见
+- **WHEN** 用户 B 检索个人记忆，而该内容由用户 A 以 `scope=user` 写入
+- **THEN** 结果不包含该内容，且不因同租户、同部门或同智能体而放行
+
+#### Scenario: 共享记忆仍可见
+- **WHEN** 任意有权用户检索，而内容以 `scope=shared` 写入
+- **THEN** 该内容可被检索到，不受个人边界影响
+
+### Requirement: 个人记忆跨智能体一致可见
+
+同一用户的个人记忆 SHALL 在其有权使用的任意智能体下可见。系统 MUST NOT 出现"切换到另一智能体后读不到本人已有个人记忆"的情况。
+
+#### Scenario: 切换智能体后仍可见
+- **WHEN** 用户先在智能体 X 下保存 `scope=user` 记忆，随后在智能体 Y 下检索
+- **THEN** 该记忆出现在 Y 的检索结果中，内容与归属一致
+
+#### Scenario: 索引覆盖用户域
+- **WHEN** 智能体同步其记忆索引
+- **THEN** 用户域中的个人记忆文件被纳入索引并标注正确的 `user_id` 与 `scope=user`，MUST NOT 因文件位于工作区之外而跳过或报错
+
+### Requirement: 个人记忆的读写边界与检索入口唯一
+
+个人记忆的读取 SHALL 在执行读操作前校验当前身份对目标用户的边界；MUST NOT 通过构造路径读取他人的个人记忆。检索过滤条件 SHALL 只在单一入口构造，新增读取路径 MUST 复用该入口。
+
+#### Scenario: 按路径读取他人个人记忆
+- **WHEN** 用户请求读取 `memory/users/<other_user>/...` 下的记忆文件
+- **THEN** 系统拒绝该读取，不返回内容
+
+#### Scenario: 读取本人个人记忆
+- **WHEN** 用户请求读取本人用户域下的个人记忆文件
+- **THEN** 返回内容，且不扩大对其它用户或其它租户的访问范围
+
+#### Scenario: 会话上下文恢复按归属过滤
+- **WHEN** 系统为某用户恢复会话的模型上下文
+- **THEN** 只加载属于该用户的会话内容，与列表读取使用同一归属口径
+
+### Requirement: 自动固化默认归个人私有域
+
+溢出 flush、每日摘要与 dream 等自动固化产物 SHALL 默认写入当前用户的个人私有域（`scope=user`），MUST NOT 默认写入共享域。共享知识仍由显式 `scope=shared` 或智能体自身维护的记忆文件承担。
+
+#### Scenario: 溢出固化归属
+- **WHEN** 会话上下文溢出触发自动固化，且存在已验证的 `user_id`
+- **THEN** 产物以该 `user_id` 的 `scope=user` 写入，其它用户检索不到
+
+#### Scenario: 每日摘要归属
+- **WHEN** 每日摘要任务为一个有 `user_id` 的会话生成结果
+- **THEN** 结果写入该用户的个人域，MUST NOT 覆盖或混入共享的每日/主记忆文件
+
+### Requirement: 无用户身份时保持既有行为
+
+当运行时身份没有 `user_id`（legacy 或单实例）时，系统 SHALL 保持本次变更前的行为：用户域坍缩到原智能体状态根，记忆读写与检索语义与变更前一致，MUST NOT 引入迁移、开关或新增拒绝路径。
+
+#### Scenario: legacy 会话
+- **WHEN** 实例以无 `user_id` 的身份运行并读写记忆
+- **THEN** 路径与可见范围与变更前一致，既有会话与记忆无需迁移即可继续读取
+
+#### Scenario: 无 user_id 的 user 作用域
+- **WHEN** `scope=user` 但当前身份无 `user_id`
+- **THEN** 按既有语义处理，不伪造 `user_id`，也不泄漏到其它用户标识
+
