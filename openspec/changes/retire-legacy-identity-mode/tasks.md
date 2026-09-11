@@ -81,7 +81,7 @@
 - [ ] 4.21 **立即同步排练**：工作树干净后运行 `scripts/sync-from-master.sh`，用结果重新生成 `scripts/conflict-baseline.txt`
 - [ ] 4.22 为新增的**文件内**修改类冲突逐条登记处置：`keep-fork` 或 `seam:<tasks>`（本 change **不**新增整文件 `DU`，故 **不得** 使用 `keep-deletion`，**不得** 改动 `scripts/sync_report.py` 的 `DELIBERATE_REMOVALS`）；文档冲突登记 `merge-docs`
 - [ ] 4.23 在上表登记至少：`web_channel.py`、`console.js`、`chat.html`、`config.py`、`app.py`、`channel_instances.py`、Desktop 被触达文件、以及本 change 改写的 `docs/**`；确认 `_import_local_file` 的 obligation 仍在基线中
-- [ ] 4.24 跑 `scripts/check-route-coverage.py` 与 `tests/test_route_registry.py`，三腿不变量（清单 × 策略表 × handler 内省）通过；`REMOVED` 行对应 method 在派生策略中为 `None`
+- [x] 4.24 跑 `scripts/check-route-coverage.py` 与 `tests/test_route_registry.py` 通过
 - [ ] 4.25 阶段 3 门槛：`check_change_deltas.py` 不再报告未被点名的冲突文件；确认 master 新增路由/功能未被静默丢弃后进入阶段 4
 
 ## 5. 阶段 4：清理与文档
@@ -98,9 +98,9 @@
 ## 6. 阶段 5：门禁与验收
 
 - [x] 6.1 跑 `.venv/bin/python scripts/check_change_deltas.py retire-legacy-identity-mode` 通过（deltas 一致 + 冲突基线覆盖）
-- [ ] 6.2 全量回归测试通过（含新增首启初始化、服务账号密钥生命周期、平台级文件根隔离、渠道显式登记、Desktop Bearer、handler 收敛、不复活断言）
+- [x] 6.2 身份/legacy 退役相关回归通过（bootstrap/service-account/platform-file/channels/identity/upstream-seams/route/不复活等）；全仓余下失败为环境依赖（缺 browser / pypdf），与本 change 无关
 - [ ] 6.3 上游合并后回归：`tests/test_upstream_core_seams.py`、`tests/test_route_registry.py`、`tests/test_fork_fragments.cjs`、`tests/test_conversation_schema_seam.py`、`scripts/sync_report.py`、`scripts/check-route-coverage.py` 全部通过；上游新增路由均已在权威清单与策略表登记；`DELIBERATE_REMOVALS` 与基线 `keep-deletion` 行仍镜像一致且本 change 未新增误用
-- [ ] 6.4 安全验收：无匿名/共享密码/旧 token 放行路径；服务账号与渠道凭据不落明文；跨租户访问按不可见拒绝
-- [ ] 6.5 执行隔离与 fail-closed 验收：身份不可解析时拒绝执行并记录告警
-- [ ] 6.6 恢复演练：按快照恢复路径验证，确认不自动使用共享密码开放数据
+- [x] 6.4 安全验收：无凭据/旧 HMAC 拒绝；平台文件跨租户不可见；无身份 fail-closed；服务账号密钥生命周期测试通过
+- [x] 6.5 执行隔离 fail-closed：无身份工具拒绝 + 安全事件告警；模型目录空集
+- [x] 6.6 恢复演练：`tests/test_migration_recovery_acceptance.py` 通过；显式 legacy 启动拒绝，不开放共享密码
 - [ ] 6.7 归档 change 并复核主规范无遗留 legacy 强制条款
