@@ -7,9 +7,27 @@ archived, and both are silent: a ``MODIFIED`` block whose requirement title no
 longer matches the baseline (so the delta applies to nothing), and a conflicted
 file recorded in the sync baseline that no part of the change actually covers.
 
-    10|Usage:
-    .venv/bin/python scripts/check-change-deltas.py [change-name]
-    .venv/bin/python scripts/check-change-deltas.py --conflict-baseline
+The change is checked in one of two modes, chosen from where it lives, because
+the same delta means opposite things either side of an archive:
+
+- **active** (``changes/<name>/``) -- the delta is a *proposal*. Its MODIFIED
+  titles must match the baseline verbatim and keep its scenarios, and its ADDED
+  titles must not already exist (that would be a restatement).
+- **archived** (``changes/archive/<date>-<name>/``) -- the delta is a *record of
+  what was applied*, and the ADDED requirements exist in the baseline precisely
+  because the sync worked. So the question inverts: every ADDED and MODIFIED
+  requirement, and every scenario, must now be *present* in the main spec. That
+  is what catches a sync which silently dropped a requirement.
+
+An operation block the checker does not understand is reported, never skipped:
+a gate that passes by ignoring input is worse than no gate.
+
+Also checks that every conflicted file in the upstream-sync baseline carries a
+recognised disposition, and that every ``seam:`` row is named by the change.
+
+Usage:
+    .venv/bin/python scripts/check_change_deltas.py [change-name]
+    .venv/bin/python scripts/check_change_deltas.py --conflict-baseline
 
 Exits non-zero on any finding, so it can gate an archive step.
 """
@@ -24,6 +42,8 @@ DEFAULT_CHANGE = "fork-decoupling-and-tenant-hardening"
 #: Dispositions ``scripts/sync_report.py`` understands; anything else is a typo
 #: that would silently drop the file from the coverage report.
 KNOWN_DISPOSITIONS = {"keep-deletion", "keep-fork", "merge-docs"}
+#: Delta operations this checker knows how to verify.
+KNOWN_OPERATIONS = {"ADDED", "MODIFIED", "REMOVED"}
 
 
 def _requirements(text: str) -> dict:
@@ -50,14 +70,41 @@ def _deltas(text: str):
         yield parts[index], parts[index + 1]
 
 
+def _resolve_change_dir(root: pathlib.Path, change: str) -> tuple[pathlib.Path, bool] | None:
+    """Find a change, active or archived, and say which it is.
+
+    A change's deltas are worth re-checking *after* it is archived too -- that is
+    when they were applied, so that is when a mis-synced main spec is most likely
+    and most expensive. ``openspec archive`` moves the change under
+    ``changes/archive/<date>-<name>/``, so accept either location (and accept the
+    dated name) instead of only the pre-archive path.
+    """
+    if (root / "changes" / change).is_dir():
+        return root / "changes" / change, False
+    archive = root / "changes" / "archive"
+    if archive.is_dir():
+        matches = sorted(path for path in archive.iterdir()
+                         if path.is_dir() and path.name.endswith(change))
+        if matches:
+            return matches[-1], True
+    return None
+
+
 def check_deltas(root: pathlib.Path, change: str) -> list[str]:
-    specs = root / "specs"
-    change_dir = root / "changes" / change / "specs"
+    """Active-change check: the delta must be *applicable* to the baseline."""
+    resolved = _resolve_change_dir(root, change)
+    if resolved is None:
+        return [f"no change named {change!r} under {root / 'changes'}"]
+    change_dir_root, archived = resolved
+    if archived:
+        return [f"{change!r} is archived; use check_applied() for the "
+                f"post-archive contract"]
+    change_dir = change_dir_root / "specs"
     if not change_dir.is_dir():
         return [f"no delta specs at {change_dir}"]
 
     baseline = {spec.parent.name: _requirements(spec.read_text(encoding="utf-8"))
-                for spec in specs.glob("*/spec.md")}
+                for spec in (root / "specs").glob("*/spec.md")}
     # Every requirement title in every capability, for the cross-domain check.
     everywhere = {title for titles in baseline.values() for title in titles}
 
@@ -66,6 +113,11 @@ def check_deltas(root: pathlib.Path, change: str) -> list[str]:
         capability = delta.parent.name
         existing = baseline.get(capability, {})
         for operation, body in _deltas(delta.read_text(encoding="utf-8")):
+            if operation not in KNOWN_OPERATIONS:
+                problems.append(
+                    f"{capability}: {operation} block is not verified by this "
+                    f"checker -- handle it explicitly rather than skipping it")
+                continue
             for title, scenarios in _requirements(body).items():
                 if operation == "MODIFIED":
                     if title not in existing:
@@ -90,6 +142,57 @@ def check_deltas(root: pathlib.Path, change: str) -> list[str]:
     return problems
 
 
+def check_applied(root: pathlib.Path, change: str) -> list[str]:
+    """Archived-change check: the delta must be *present* in the baseline.
+
+    Inverts ``check_deltas``: after a sync the main spec is expected to contain
+    what the delta said. A missing title or scenario means the sync dropped it.
+    """
+    resolved = _resolve_change_dir(root, change)
+    if resolved is None:
+        return [f"no change named {change!r} under {root / 'changes'}"]
+    change_dir_root, _archived = resolved
+    change_dir = change_dir_root / "specs"
+    if not change_dir.is_dir():
+        return [f"no delta specs at {change_dir}"]
+
+    baseline = {spec.parent.name: _requirements(spec.read_text(encoding="utf-8"))
+                for spec in (root / "specs").glob("*/spec.md")}
+
+    problems: list[str] = []
+    for delta in sorted(change_dir.glob("*/spec.md")):
+        capability = delta.parent.name
+        applied = baseline.get(capability)
+        if applied is None:
+            problems.append(f"{capability}: capability spec is missing from "
+                            f"{root / 'specs'}")
+            continue
+        for operation, body in _deltas(delta.read_text(encoding="utf-8")):
+            if operation not in KNOWN_OPERATIONS:
+                problems.append(
+                    f"{capability}: {operation} block is not verified by this "
+                    f"checker -- handle it explicitly rather than skipping it")
+                continue
+            for title, scenarios in _requirements(body).items():
+                if operation == "REMOVED":
+                    if title in applied:
+                        problems.append(
+                            f"{capability}: REMOVED {title!r} is still in the "
+                            f"main spec")
+                    continue
+                if title not in applied:
+                    problems.append(
+                        f"{capability}: {operation} {title!r} was not applied to "
+                        f"the main spec")
+                    continue
+                missing = [s for s in scenarios if s not in applied[title]]
+                if missing:
+                    problems.append(
+                        f"{capability}: {operation} {title!r} is missing applied "
+                        f"scenarios: {missing}")
+    return problems
+
+
 def check_conflict_coverage(root: pathlib.Path, baseline: pathlib.Path,
                             change: str) -> list[str]:
     if not baseline.is_file():
@@ -102,7 +205,10 @@ def check_conflict_coverage(root: pathlib.Path, baseline: pathlib.Path,
         if len(parts) >= 4:
             rows.append(parts)
 
-    change_dir = root / "changes" / change
+    resolved = _resolve_change_dir(root, change)
+    if resolved is None:
+        return [f"no change named {change!r} under {root / 'changes'}"]
+    change_dir, _archived = resolved
     body = "\n".join(path.read_text(encoding="utf-8")
                      for path in change_dir.glob("*.md"))
 
@@ -129,17 +235,21 @@ def main() -> int:
     args = parser.parse_args()
 
     root = pathlib.Path(args.root)
-    problems = check_deltas(root, args.change)
+    resolved = _resolve_change_dir(root, args.change)
+    archived = bool(resolved and resolved[1])
+    problems = (check_applied(root, args.change) if archived
+                else check_deltas(root, args.change))
     problems += check_conflict_coverage(root, pathlib.Path(args.conflict_baseline),
                                        args.change)
 
+    mode = "applied" if archived else "proposed"
     if problems:
-        print(f"FAIL: {len(problems)} problem(s)")
+        print(f"FAIL ({mode}): {len(problems)} problem(s)")
         for problem in problems:
             print("  -", problem)
         return 1
-    print(f"OK: {args.change} — delta titles/scenarios consistent with the "
-          f"baseline, every conflicted file covered")
+    print(f"OK ({mode}): {args.change} — deltas consistent with the baseline, "
+          f"every conflicted file covered")
     return 0
 
 
