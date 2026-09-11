@@ -281,8 +281,12 @@ class HttpPolicyTests(unittest.TestCase):
         completeness gate (405) before any handler runs.
         """
         self._patch_db()
+        # ``POST /api/weixin/qrlogin`` is now registered (the handler implements
+        # the documented QR status poll) and answers 503 as a closed consumer in
+        # database mode. ``DELETE`` is not implemented by any of these handlers,
+        # so it must still be rejected by the completeness gate.
         for path, method in (("/api/feishu/register", "DELETE"),
-                             ("/api/weixin/qrlogin", "POST")):
+                             ("/api/weixin/qrlogin", "DELETE")):
             resp = self._request(path, method=method)
             self.assertEqual(resp.status, "405 Method Not Allowed", (path, method))
 

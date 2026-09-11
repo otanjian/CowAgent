@@ -92,12 +92,17 @@ def test_web_manual_run_rejects_unavailable_scheduler():
 
 def test_manual_run_is_exposed_by_explicit_web_and_desktop_controls():
     root = Path(__file__).parents[1]
-    web_source = (root / "channel/web/web_channel.py").read_text(encoding="utf-8")
     web_console = (root / "channel/web/static/js/console.js").read_text(encoding="utf-8")
     desktop_client = (root / "desktop/src/renderer/src/api/client.ts").read_text(encoding="utf-8")
     desktop_page = (root / "desktop/src/renderer/src/pages/TasksPage.tsx").read_text(encoding="utf-8")
 
-    assert "'/api/scheduler/run', 'SchedulerRunHandler'" in web_source
+    # The URL table is derived from the single route registry (change group 2):
+    # assert the binding rather than a source literal.
+    from channel.web import web_channel
+
+    urls = list(web_channel._WEB_URLS)
+    assert "/api/scheduler/run" in urls
+    assert urls[urls.index("/api/scheduler/run") + 1] == "SchedulerRunHandler"
     assert "function runTaskNow(task, button)" in web_console
     assert "fetch('/api/scheduler/run'" in web_console
     web_run = web_console[web_console.index("function runTaskNow(task, button)"):]

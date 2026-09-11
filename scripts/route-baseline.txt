@@ -157,3 +157,22 @@
 /api/scenes	?	UNREGISTERED	-
 /api/scenes/activate	?	UNREGISTERED	-
 /api/scenes/workbench/import	?	UNREGISTERED	-
+
+# --- RESOLVED in change fork-decoupling-and-tenant-hardening (group 2/4) ---
+# The five gaps above are now registered in channel/web/route_registry.py with
+# these verified policies (not defaults). See evidence.md for rationale.
+/admin	GET	tenant	-
+/api/identity/administered-tenants	GET	personal	-
+/api/scenes	GET	tenant	-
+/api/scenes/activate	POST	tenant	-
+/api/scenes/workbench/import	POST	tenant	-
+
+# --- Also discovered by the three-leg coverage invariant (leg 3) ---
+# Implemented by the handler and documented, but previously unregistered
+# (the completeness gate answered 405):
+/api/weixin/qrlogin	POST	closed	-
+/api/todos	POST	tenant	-
+/api/todos/(.*)	PATCH	tenant	-
+# Declared in ROUTE_POLICY but NOT implemented by any handler (dead entry; the
+# gate let the request through and web.py answered 405):
+/api/sessions/(.*)	GET	REMOVED	-

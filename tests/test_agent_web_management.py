@@ -9,10 +9,21 @@ def _read(relative):
 
 
 def test_web_backend_exposes_agent_and_core_file_routes():
+    # The URL table is derived from the single route registry (change group 2),
+    # so assert the *binding* instead of grepping a source literal -- this also
+    # proves the pattern actually reaches its handler.
+    from channel.web import web_channel
+
+    urls = list(web_channel._WEB_URLS)
+    for pattern, handler in (
+        ("/api/agents", "AgentsHandler"),
+        ("/api/agents/([^/]+)/files/([^/]+)", "AgentCoreFileHandler"),
+        ("/api/agents/([^/]+)/avatar", "AgentAvatarHandler"),
+    ):
+        assert pattern in urls, pattern
+        assert urls[urls.index(pattern) + 1] == handler, pattern
+
     source = _read("channel/web/web_channel.py")
-    assert "'/api/agents', 'AgentsHandler'" in source
-    assert "'/api/agents/([^/]+)/files/([^/]+)', 'AgentCoreFileHandler'" in source
-    assert "'/api/agents/([^/]+)/avatar', 'AgentAvatarHandler'" in source
     assert "class AgentsHandler:" in source
     assert "class AgentCoreFileHandler:" in source
     assert "scope" in source and "_list_sessions_across_agents" in source
