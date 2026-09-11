@@ -1,0 +1,57 @@
+<p>通义千问（DashScope / 百炼）是国内覆盖最完整的厂商之一，文本、图像理解、图像生成、语音识别、语音合成与向量能力均可用一份 <code>dashscope_api_key</code> 启用。</p>
+<p>通过 Web 控制台的「模型管理」页面可一站式配置以下全部能力，无需手动改配置文件。</p>
+<h2 id="文本对话">文本对话</h2>
+<pre><code>{
+  &quot;model&quot;: &quot;qwen3.8-flash&quot;,
+  &quot;dashscope_api_key&quot;: &quot;YOUR_API_KEY&quot;
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>说明</th></tr></thead><tbody><tr><td><code>model</code></td><td>可填 <code>qwen3.8-flash</code>（推荐，1M 上下文 / 128K 最大输出，多模态）、<code>qwen3.8-max</code>、<code>qwen3.7-plus</code>、<code>qwen3.7-max</code>、<code>qwen3.6-plus</code>、<code>qwen3.5-plus</code>、<code>qwen3-max</code>、<code>qwen-max</code>、<code>qwen-plus</code>、<code>qwen-turbo</code>、<code>qwq-plus</code> 等</td></tr><tr><td><code>dashscope_api_key</code></td><td>在 百炼控制台 创建，参考 官方文档</td></tr></tbody></table>
+<h2 id="图像理解">图像理解</h2>
+<p>配置 <code>dashscope_api_key</code> 后 Agent 的 Vision 工具会自动调用千问的视觉模型识别图像。<code>qwen3.8-flash</code> / <code>qwen3.7-plus</code> / <code>qwen3.6-plus</code> / <code>qwen3.5-plus</code> / <code>qwen3-max</code> 等模型本身就是多模态；若主模型是纯文本（如 <code>qwen-turbo</code>），会自动回落到 <code>qwen-vl-max</code>。</p>
+<p>如需手动指定 Vision 模型：</p>
+<pre><code>{
+  &quot;tools&quot;: {
+    &quot;vision&quot;: {
+      &quot;model&quot;: &quot;qwen3.8-flash&quot;
+    }
+  }
+}
+</code></pre>
+<p>支持模型：<code>qwen3.8-flash</code>、<code>qwen3.7-plus</code>、<code>qwen3.6-plus</code>、<code>qwen3.5-plus</code>、<code>qwen3-max</code>。</p>
+<h2 id="图像生成">图像生成</h2>
+<pre><code>{
+  &quot;skills&quot;: {
+    &quot;image-generation&quot;: {
+      &quot;model&quot;: &quot;qwen-image-2.0&quot;
+    }
+  }
+}
+</code></pre>
+<p>可选模型：<code>qwen-image-2.0</code>、<code>qwen-image-2.0-pro</code>。</p>
+<h2 id="语音识别">语音识别</h2>
+<pre><code>{
+  &quot;voice_to_text&quot;: &quot;dashscope&quot;,
+  &quot;voice_to_text_model&quot;: &quot;qwen3-asr-flash&quot;
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>说明</th></tr></thead><tbody><tr><td><code>voice_to_text</code></td><td>设为 <code>dashscope</code> 启用通义千问 ASR</td></tr><tr><td><code>voice_to_text_model</code></td><td>可选，默认 <code>qwen3-asr-flash</code></td></tr></tbody></table>
+<p>凭证自动复用 <code>dashscope_api_key</code>。单段音频建议小于 10MB、时长不超过 300 秒。</p>
+<h2 id="语音合成">语音合成</h2>
+<pre><code>{
+  &quot;text_to_voice&quot;: &quot;dashscope&quot;,
+  &quot;text_to_voice_model&quot;: &quot;qwen3-tts-flash&quot;,
+  &quot;tts_voice_id&quot;: &quot;Cherry&quot;
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>说明</th></tr></thead><tbody><tr><td><code>text_to_voice_model</code></td><td>可选，默认 <code>qwen3-tts-flash</code>，覆盖普通话、方言与主流外语</td></tr><tr><td><code>tts_voice_id</code></td><td>音色 ID，详见下方常用列表</td></tr></tbody></table>
+<p>常用音色示例：</p>
+<table><thead><tr><th>音色 ID</th><th>说明</th></tr></thead><tbody><tr><td><code>Cherry</code></td><td>芊悦 · 阳光女声</td></tr><tr><td><code>Serena</code></td><td>苏瑶 · 温柔女声</td></tr><tr><td><code>Ethan</code></td><td>晨煦 · 阳光男声</td></tr><tr><td><code>Chelsie</code></td><td>千雪 · 二次元少女</td></tr><tr><td><code>Dylan</code></td><td>北京话 · 晓东</td></tr><tr><td><code>Rocky</code></td><td>粤语 · 阿强</td></tr><tr><td><code>Sunny</code></td><td>四川话 · 晴儿</td></tr></tbody></table>
+<p>完整音色（普通话 / 各地方言 / 双语等）可在 Web 控制台的「模型管理 → 语音合成」下拉框中可视化选择。</p>
+<h2 id="向量">向量</h2>
+<pre><code>{
+  &quot;embedding_provider&quot;: &quot;dashscope&quot;,
+  &quot;embedding_model&quot;: &quot;text-embedding-v4&quot;
+}
+</code></pre>
+<p>默认模型 <code>text-embedding-v4</code>。修改 embedding 后需执行 <code>/memory rebuild-index</code> 命令重建索引。</p>

@@ -1,0 +1,32 @@
+<p>MiniMax 支持文本对话、图像理解、图像生成与语音合成，一份 <code>minimax_api_key</code> 即可启用全部能力。</p>
+<p>通过 Web 控制台的「模型管理」页面可一站式配置以下全部能力，无需手动改配置文件。</p>
+<h2 id="文本对话">文本对话</h2>
+<pre><code>{
+  &quot;model&quot;: &quot;MiniMax-M3&quot;,
+  &quot;minimax_api_key&quot;: &quot;YOUR_API_KEY&quot;
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>说明</th></tr></thead><tbody><tr><td><code>model</code></td><td>可填 <code>MiniMax-M3</code>、<code>MiniMax-M2.7</code>、<code>MiniMax-M2.7-highspeed</code> 等</td></tr><tr><td><code>minimax_api_key</code></td><td>在 MiniMax 控制台 创建</td></tr></tbody></table>
+<h2 id="图像理解">图像理解</h2>
+<p>MiniMax 的 M2.x 系列 chat 模型本身不支持视觉，视觉调用统一路由到 <code>MiniMax-Text-01</code>。配置 <code>minimax_api_key</code> 后 Agent 的 Vision 工具会自动使用该模型，无需在配置文件中显式指定。</p>
+<h2 id="图像生成">图像生成</h2>
+<pre><code>{
+  &quot;skills&quot;: {
+    &quot;image-generation&quot;: {
+      &quot;model&quot;: &quot;image-01&quot;
+    }
+  }
+}
+</code></pre>
+<p>可选模型：<code>image-01</code>。</p>
+<h2 id="语音合成">语音合成</h2>
+<pre><code>{
+  &quot;text_to_voice&quot;: &quot;minimax&quot;,
+  &quot;text_to_voice_model&quot;: &quot;speech-2.8-hd&quot;,
+  &quot;tts_voice_id&quot;: &quot;female-shaonv&quot;
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>说明</th></tr></thead><tbody><tr><td><code>text_to_voice_model</code></td><td><code>speech-2.8-hd</code>（情绪渲染、自然听感）、<code>speech-2.8-turbo</code>（极速）、<code>speech-2.6-hd</code>、<code>speech-2.6-turbo</code></td></tr><tr><td><code>tts_voice_id</code></td><td>音色 ID，支持中文 / 粤语 / 英 / 日 / 韩，共 70+ 种</td></tr></tbody></table>
+<p>常用音色示例：</p>
+<table><thead><tr><th>音色 ID</th><th>说明</th></tr></thead><tbody><tr><td><code>female-shaonv</code></td><td>中文 · 少女（女）</td></tr><tr><td><code>female-yujie</code></td><td>中文 · 御姐（女）</td></tr><tr><td><code>female-tianmei</code></td><td>中文 · 甜美女性（女）</td></tr><tr><td><code>male-qn-jingying</code></td><td>中文 · 精英青年（男）</td></tr><tr><td><code>male-qn-badao</code></td><td>中文 · 霸道青年（男）</td></tr><tr><td><code>Cantonese_GentleLady</code></td><td>粤语 · 温柔女声</td></tr><tr><td><code>English_Graceful_Lady</code></td><td>英文 · Graceful Lady</td></tr></tbody></table>
+<p>完整音色（中文 / 粤语 / 英 / 日 / 韩共 70+ 种）可参考 系统音色列表，也可在 Web 控制台的「模型管理 → 语音合成」下拉框中可视化选择。</p>

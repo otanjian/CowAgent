@@ -1,0 +1,54 @@
+<p>通过一份 <code>linkai_api_key</code> 即可访问 OpenAI、Claude、Gemini、DeepSeek、MiniMax、Qwen、Kimi、豆包 等主流厂商的全部能力。</p>
+<p>通过 Web 控制台的「模型管理」页面可一站式配置以下全部能力，无需手动改配置文件。</p>
+<h2 id="文本对话">文本对话</h2>
+<pre><code>{
+  &quot;use_linkai&quot;: true,
+  &quot;linkai_api_key&quot;: &quot;YOUR_API_KEY&quot;
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>说明</th></tr></thead><tbody><tr><td><code>use_linkai</code></td><td>设为 <code>true</code> 启用</td></tr><tr><td><code>linkai_api_key</code></td><td>在 控制台 创建</td></tr><tr><td><code>model</code></td><td>可填写 模型列表 中任意编码</td></tr></tbody></table>
+<p>前往 模型服务 了解更多。</p>
+<h2 id="图像理解">图像理解</h2>
+<p>配置完成后 Agent 的 Vision 工具会自动调用网关上的多模态模型，无需额外配置。如需手动指定 Vision 模型：</p>
+<pre><code>{
+  &quot;tools&quot;: {
+    &quot;vision&quot;: {
+      &quot;model&quot;: &quot;gpt-5.4-mini&quot;
+    }
+  }
+}
+</code></pre>
+<p>可选模型：<code>gpt-4.1-mini</code>、<code>gpt-5.4-mini</code>、<code>qwen3.8-flash</code>、<code>qwen3.7-plus</code>、<code>doubao-seed-2-1-pro-260628</code>、<code>kimi-k2.6</code>、<code>claude-sonnet-5</code>、<code>claude-fable-5-1</code>、<code>claude-fable-5</code>、<code>gemini-3.1-flash-lite-preview</code> 等。</p>
+<h2 id="图像生成">图像生成</h2>
+<pre><code>{
+  &quot;skills&quot;: {
+    &quot;image-generation&quot;: {
+      &quot;model&quot;: &quot;gpt-image-2&quot;
+    }
+  }
+}
+</code></pre>
+<table><thead><tr><th>模型 ID</th><th>别名</th></tr></thead><tbody><tr><td><code>gpt-image-2</code></td><td>OpenAI</td></tr><tr><td><code>gemini-3.1-flash-image-preview</code></td><td>Nano Banana 2</td></tr><tr><td><code>gemini-3-pro-image-preview</code></td><td>Nano Banana Pro</td></tr><tr><td><code>seedream-5.0-lite</code></td><td>字节豆包 Seedream</td></tr></tbody></table>
+<h2 id="语音识别">语音识别</h2>
+<pre><code>{
+  &quot;voice_to_text&quot;: &quot;linkai&quot;
+}
+</code></pre>
+<p>ASR 固定使用 Whisper，凭证自动复用 <code>linkai_api_key</code>。</p>
+<h2 id="语音合成">语音合成</h2>
+<p>语音合成网关下支持多个底层 TTS 引擎，按 <code>text_to_voice_model</code> 选择引擎，音色随引擎切换。</p>
+<pre><code>{
+  &quot;text_to_voice&quot;: &quot;linkai&quot;,
+  &quot;text_to_voice_model&quot;: &quot;doubao&quot;,
+  &quot;tts_voice_id&quot;: &quot;BV001_streaming&quot;
+}
+</code></pre>
+<table><thead><tr><th><code>text_to_voice_model</code></th><th>引擎说明</th></tr></thead><tbody><tr><td><code>tts-1</code></td><td>OpenAI · 多语种通用（音色 <code>alloy</code> / <code>nova</code> / <code>echo</code> 等）</td></tr><tr><td><code>doubao</code></td><td>字节豆包 · 中文音色丰富</td></tr><tr><td><code>baidu</code></td><td>百度 · 中文主播音色</td></tr></tbody></table>
+<p>不同引擎对应的音色不同，建议在 Web 控制台「模型管理 → 语音合成」中可视化选择。</p>
+<h2 id="向量">向量</h2>
+<pre><code>{
+  &quot;embedding_provider&quot;: &quot;linkai&quot;,
+  &quot;embedding_model&quot;: &quot;text-embedding-3-small&quot;
+}
+</code></pre>
+<p>默认模型 <code>text-embedding-3-small</code>（OpenAI 兼容）。修改 embedding 后需执行 <code>/memory rebuild-index</code> 命令重建索引。</p>

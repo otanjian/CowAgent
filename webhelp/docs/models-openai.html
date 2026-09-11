@@ -1,0 +1,55 @@
+<p>OpenAI 是覆盖最完整的厂商，可同时承担文本对话、视觉理解、图像生成、语音识别（ASR）、语音合成（TTS）和向量（Embedding）能力。一份 <code>open_ai_api_key</code> 即可让 Agent 用到全部能力。</p>
+<p>通过 Web 控制台的「模型管理」页面可一站式配置以下全部能力，无需手动改配置文件。</p>
+<h2 id="文本对话">文本对话</h2>
+<pre><code>{
+  &quot;model&quot;: &quot;gpt-5.6-luna&quot;,
+  &quot;open_ai_api_key&quot;: &quot;YOUR_API_KEY&quot;,
+  &quot;open_ai_api_base&quot;: &quot;https://api.openai.com/v1&quot;
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>说明</th></tr></thead><tbody><tr><td><code>model</code></td><td>与 OpenAI 接口的 model 参数 一致，支持 <code>gpt-5.6-luna</code>、<code>gpt-6-astra</code>、<code>gpt-5.6-terra</code>、<code>gpt-5.6-sol</code>、<code>gpt-5.5</code>、<code>gpt-5.4</code>、<code>gpt-5.4-mini</code>、<code>gpt-5.4-nano</code>、<code>gpt-5</code> 系列、<code>gpt-4.1</code> 等；Agent 模式默认 <code>gpt-5.6-luna</code>，<code>gpt-6-astra</code> 为最强旗舰（智能最高、成本较高，工具调用走 Responses 接口），追求性价比可改为 <code>gpt-5.4</code></td></tr><tr><td><code>open_ai_api_key</code></td><td>在 OpenAI 平台 创建</td></tr><tr><td><code>open_ai_api_base</code></td><td>可选，修改可接入第三方代理</td></tr><tr><td><code>bot_type</code></td><td>使用 OpenAI 官方模型时无需填写；通过兼容协议接入厂商模型时需设为 <code>openai</code></td></tr></tbody></table>
+<h2 id="图像理解">图像理解</h2>
+<p><code>gpt-5.5</code>、<code>gpt-5.4</code>、<code>gpt-4o</code>、<code>gpt-4.1</code> 等 OpenAI 模型均原生支持视觉，配置 <code>open_ai_api_key</code> 后 Agent 的 Vision 工具会自动使用主模型识别图像。若主模型不支持视觉或希望显式指定，可在配置文件中配置：</p>
+<pre><code>{
+  &quot;tools&quot;: {
+    &quot;vision&quot;: {
+      &quot;model&quot;: &quot;gpt-5.4-mini&quot;
+    }
+  }
+}
+</code></pre>
+<p>支持的 Vision 模型：<code>gpt-5.5</code>、<code>gpt-5.4</code>、<code>gpt-5.4-mini</code>、<code>gpt-5.4-nano</code>、<code>gpt-5</code>、<code>gpt-4.1</code>、<code>gpt-4.1-mini</code>、<code>gpt-4o</code>。</p>
+<h2 id="图像生成">图像生成</h2>
+<p>在配置文件中指定图像生成模型，Agent 调用图像生成技能时会自动路由到 OpenAI：</p>
+<pre><code>{
+  &quot;skills&quot;: {
+    &quot;image-generation&quot;: {
+      &quot;model&quot;: &quot;gpt-image-2&quot;
+    }
+  }
+}
+</code></pre>
+<p>支持的图像生成模型：<code>gpt-image-2</code>、<code>gpt-image-1</code>。</p>
+<h2 id="语音识别">语音识别</h2>
+<pre><code>{
+  &quot;voice_to_text&quot;: &quot;openai&quot;,
+  &quot;voice_to_text_model&quot;: &quot;gpt-4o-mini-transcribe&quot;
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>说明</th></tr></thead><tbody><tr><td><code>voice_to_text</code></td><td>设为 <code>openai</code> 启用 OpenAI 语音识别</td></tr><tr><td><code>voice_to_text_model</code></td><td>可选，默认 <code>gpt-4o-mini-transcribe</code>；也可填 <code>gpt-4o-transcribe</code>、<code>whisper-1</code></td></tr></tbody></table>
+<p>凭证自动复用 <code>open_ai_api_key</code>。</p>
+<h2 id="语音合成">语音合成</h2>
+<pre><code>{
+  &quot;text_to_voice&quot;: &quot;openai&quot;,
+  &quot;text_to_voice_model&quot;: &quot;tts-1&quot;,
+  &quot;tts_voice_id&quot;: &quot;alloy&quot;
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>说明</th></tr></thead><tbody><tr><td><code>text_to_voice_model</code></td><td><code>tts-1</code>、<code>tts-1-hd</code>、<code>gpt-4o-mini-tts</code></td></tr><tr><td><code>tts_voice_id</code></td><td>音色：<code>alloy</code>、<code>echo</code>、<code>fable</code>、<code>onyx</code>、<code>nova</code>、<code>shimmer</code>、<code>ash</code>、<code>ballad</code>、<code>coral</code>、<code>sage</code>、<code>verse</code></td></tr></tbody></table>
+<h2 id="向量">向量</h2>
+<pre><code>{
+  &quot;embedding_provider&quot;: &quot;openai&quot;,
+  &quot;embedding_model&quot;: &quot;text-embedding-3-small&quot;
+}
+</code></pre>
+<p>可选模型：<code>text-embedding-3-small</code>、<code>text-embedding-3-large</code>、<code>text-embedding-ada-002</code>。修改 embedding 后需执行 <code>/memory rebuild-index</code> 命令重建索引。</p>

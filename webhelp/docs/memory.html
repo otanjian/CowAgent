@@ -1,0 +1,33 @@
+<p>长期记忆保存在工作空间文件中，跨会话持久存在。Agent 在对话中通过检索工具按需加载历史记忆，也会在上下文裁剪时自动将对话摘要写入长期记忆。</p>
+<img src="assets/img/docs/memory-ebd4e345.jpeg" alt="Memory Architecture" loading="lazy" />
+<h2 id="记忆类型">记忆类型</h2>
+<h3 id="核心记忆（memory-md）">核心记忆（MEMORY.md）</h3>
+<p>存储在 <code>~/cow/MEMORY.md</code> 中，包含用户的长期偏好、重要决策、关键事实等不会随时间淡化的信息。Agent 可通过工具读写此文件来维护长期知识。</p>
+<h3 id="日级记忆（memory/yyyy-mm-dd-md）">日级记忆（memory/YYYY-MM-DD.md）</h3>
+<p>存储在 <code>~/cow/memory/</code> 目录下，按日期命名（如 <code>2026-03-08.md</code>），记录每天的对话摘要和关键事件。仅在首次写入时创建，避免生成空文件。</p>
+<h3 id="梦境日记（memory/dreams/yyyy-mm-dd-md）">梦境日记（memory/dreams/YYYY-MM-DD.md）</h3>
+<p>Deep Dream（记忆蒸馏）过程的副产物，记录每次整理的发现、去重合并操作和新洞察。存储在 <code>~/cow/memory/dreams/</code> 目录下，按日期命名。</p>
+<h2 id="自动写入">自动写入</h2>
+<p>Agent 通过以下机制自动将对话内容持久化为长期记忆：</p>
+<ul>
+<li><strong>上下文裁剪时</strong> — 当对话轮次或 token 超出配置上限时，裁剪最早一半的上下文，使用 LLM 将被裁剪的内容总结为关键信息写入当天记忆文件，并将摘要异步注入到保留的上下文中，帮助模型保持对话连贯性</li>
+<li><strong>每日定时总结</strong> — 每天 23:55 自动触发一次全量总结，防止低活跃日无记忆留存（内容无变化时自动跳过）</li>
+<li><a href="doc.php?p=memory-deep-dream">梦境蒸馏（Deep Dream）</a> — 每日总结完成后自动执行，将天级记忆蒸馏合并到 MEMORY.md，并生成梦境日记</li>
+<li><strong>API 上下文溢出时</strong> — 当模型 API 返回上下文溢出错误时，紧急保存当前对话摘要</li>
+</ul>
+<p>所有记忆写入均在后台异步执行（LLM 总结 + 文件写入），不阻塞正常对话回复。</p>
+<h2 id="记忆检索">记忆检索</h2>
+<p>记忆系统支持混合检索模式：</p>
+<ul>
+<li><strong>关键词检索</strong> — 基于 FTS5 全文索引匹配历史记忆，支持 BM25 排序</li>
+<li><strong>向量检索</strong> — 基于 embedding 语义相似度搜索，即使表述不同也能找到相关记忆</li>
+</ul>
+<p>Agent 会在对话中根据需要自动触发记忆检索，将相关历史信息纳入上下文。检索结果按混合评分排序（默认向量权重 0.7、关键词权重 0.3），日级记忆会随时间衰减（半衰期 30 天），核心记忆不衰减。</p>
+<h2 id="相关文件">相关文件</h2>
+<p>工作空间（默认 <code>~/cow</code>）中与记忆相关的文件：</p>
+<table><thead><tr><th>文件</th><th>说明</th></tr></thead><tbody><tr><td><code>AGENT.md</code></td><td>Agent 的人格和行为设定</td></tr><tr><td><code>USER.md</code></td><td>用户身份信息和偏好</td></tr><tr><td><code>RULE.md</code></td><td>自定义规则和约束</td></tr><tr><td><code>MEMORY.md</code></td><td>核心记忆（长期）</td></tr><tr><td><code>memory/YYYY-MM-DD.md</code></td><td>日级记忆（按需创建）</td></tr><tr><td><code>memory/dreams/YYYY-MM-DD.md</code></td><td>梦境日记（Deep Dream 自动生成）</td></tr></tbody></table>
+<h2 id="web-控制台">Web 控制台</h2>
+<p>在 Web 控制台的记忆管理页面中，可浏览记忆文件和梦境日记，支持通过 Tab 切换查看：</p>
+<img src="assets/img/docs/memory-e51c2593.png" loading="lazy" />
+<h2 id="相关配置">相关配置</h2>
+<table><thead><tr><th>参数</th><th>说明</th><th>默认值</th></tr></thead><tbody><tr><td><code>agent_workspace</code></td><td>工作空间路径，记忆文件存储在此目录下</td><td><code>~/cow</code></td></tr><tr><td><code>agent_max_context_tokens</code></td><td>最大上下文 token 数，超出时裁剪并总结写入记忆</td><td><code>50000</code></td></tr><tr><td><code>agent_max_context_turns</code></td><td>最大上下文轮次，超出时裁剪并总结写入记忆</td><td><code>20</code></td></tr></tbody></table>

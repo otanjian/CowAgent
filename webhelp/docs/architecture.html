@@ -1,0 +1,70 @@
+<p>CowAgent 是一个开箱即用的超级 AI 助理，也是一个完整的 Agent harness 框架，具备复杂任务规划、长期记忆、技能扩展、自主进化和多智能体协作等能力。</p>
+<h2 id="系统架构">系统架构</h2>
+<p>CowAgent 的整体架构由以下核心模块组成：</p>
+<img src="assets/img/docs/architecture-bea0e9a8.jpg" alt="CowAgent Architecture" loading="lazy" />
+<table><thead><tr><th>模块</th><th>说明</th></tr></thead><tbody><tr><td><strong>Plan</strong></td><td>理解用户意图，将复杂任务分解为多步骤计划，循环调用工具直到完成目标</td></tr><tr><td><strong>Memory</strong></td><td>自动将重要信息持久化为核心记忆和日级记忆，支持关键词和向量混合检索，跨会话保持上下文连续性</td></tr><tr><td><strong>Knowledge</strong></td><td>以主题维度组织结构化知识，Agent 自主整理有价值信息为 Markdown 页面，维护索引和交叉引用，构建持续增长的知识网络</td></tr><tr><td><strong>Evolution</strong></td><td>对话空闲后在隔离环境中自动复盘，优化技能、处理未完成事项、补全记忆与知识，让 Agent 在使用中持续成长</td></tr><tr><td><strong>Multi-agent</strong></td><td>多个 Agent 组成团队，各有独立职责、模型与工作空间，支持群聊协作、任务委派与子 Agent，通道可绑定单个 Agent 或整个团队对外服务</td></tr><tr><td><strong>Tools</strong></td><td>Agent 访问操作系统资源的核心能力，内置文件读写、终端执行、浏览器操作、定时调度、记忆检索、联网搜索等 10+ 种工具</td></tr><tr><td><strong>Skills</strong></td><td>加载和管理 Skills，支持从 Skill Hub、GitHub 等一键安装，或通过对话创建自定义技能</td></tr><tr><td><strong>Models</strong></td><td>模型层，统一接入 OpenAI、Claude、Gemini、DeepSeek、MiniMax、GLM、Qwen 等国内外主流大语言模型</td></tr><tr><td><strong>Channels</strong></td><td>消息通道层，负责接收和发送消息，支持 Web 控制台、微信、飞书、钉钉、企微、公众号等，统一消息协议</td></tr><tr><td><strong>CLI</strong></td><td>命令行系统，提供终端命令（<code>cow</code>）和对话命令（<code>/</code>），支持进程管理、技能安装、配置修改、知识库管理等操作</td></tr></tbody></table>
+<h2 id="agent-模式">Agent 模式</h2>
+<p>启用 Agent 模式后，CowAgent 会以自主智能体的方式运行，核心工作流如下：</p>
+<ol>
+<li><strong>接收消息</strong> — 通过通道接收用户输入</li>
+<li><strong>理解意图</strong> — 分析任务需求和上下文</li>
+<li><strong>规划任务</strong> — 将复杂任务分解为多个步骤</li>
+<li><strong>调用工具</strong> — 选择合适的工具执行每个步骤</li>
+<li><strong>记忆与知识更新</strong> — 将重要信息存入长期记忆，将结构化知识整理至知识库</li>
+<li><strong>返回结果</strong> — 将执行结果发送回用户</li>
+</ol>
+<h2 id="workspace">工作空间</h2>
+<h3 id="system-workspace">系统工作空间</h3>
+<p>Agent 的系统工作空间默认位于 <code>~/cow</code> 目录，用于存储系统提示词、记忆文件、技能文件等：</p>
+<pre><code>~/cow/
+├── SYSTEM.md          # Agent system prompt
+├── USER.md            # User profile
+├── MEMORY.md          # Core memory
+├── memory/            # Long-term memory storage
+│   └── YYYY-MM-DD.md  # Daily memory
+├── knowledge/         # Personal knowledge base
+│   ├── index.md       # Knowledge index
+│   └── &lt;category&gt;/    # Topic-based pages
+├── skills/            # Custom skills
+│   ├── skill-1/
+│   └── skill-2/
+└── agents/            # Multi-agent team
+    ├── team.json      # Team roster &amp; channel bindings
+    └── &lt;agent-id&gt;/    # Non-default agent&#039;s own workspace
+</code></pre>
+<p>秘钥文件单独存储在 <code>~/.cow</code> 目录（出于安全考虑）：</p>
+<pre><code>~/.cow/
+└── .env               # Secret keys for skills
+</code></pre>
+<h3 id="project-workspace">项目工作空间</h3>
+<p>除默认工作空间外，可为每个会话单独绑定一个<strong>项目目录</strong>，Agent 的文件读写与命令执行都在该目录下进行，从而实现多项目隔离；记忆、技能等仍统一存放在默认工作空间。当使用了多个项目时，Web/桌面端的历史会话会自动按项目分组管理。</p>
+<h3 id="multi-agent-workspace">多智能体工作空间</h3>
+<p>组建 <a href="doc.php?p=multiagent">Agent 团队</a> 后，每个 Agent 都拥有一套完整的工作空间。默认 Agent 沿用实例根目录 <code>~/cow</code>，其他成员则各自落在 <code>~/cow/agents/&lt;agent-id&gt;/</code> 下，从而在存储上区分「系统共享」「按成员隔离」「可选共享」三类：</p>
+<ul>
+<li><strong>系统共享</strong>：秘钥文件（<code>~/.cow/.env</code>）和团队配置（<code>~/cow/agents/team.json</code>）由整个实例共用。</li>
+<li><strong>按成员隔离</strong>：每个 Agent 的核心文件（<code>SYSTEM.md</code>、<code>USER.md</code>、<code>AGENT.md</code>、<code>RULE.md</code>）、记忆（<code>MEMORY.md</code>、<code>memory/</code>）和产出文件都在各自工作空间内，成员之间互不可见。</li>
+<li><strong>可选共享</strong>：技能与知识库既可与团队共用同一套，也可为某个成员配置专属的，两种模式随时切换。</li>
+</ul>
+<blockquote>
+<p>子 Agent 是主 Agent 临时创建的执行单元，与主 Agent 共享同一工作空间，不拥有独立记忆；团队成员则是常驻的正式 Agent，工作空间与记忆完全独立。详见 <a href="doc.php?p=multi-agent-subagent">子 Agent</a>。</p>
+</blockquote>
+<h3 id="session-settings">会话级模型与权限</h3>
+<p>工作空间、模型、权限均可<strong>按会话独立设置</strong>，未设置时跟随全局默认：</p>
+<ul>
+<li><strong>模型</strong>：不同会话可切换不同模型，便于按任务选型。</li>
+<li><strong>权限</strong>：控制 Agent 可操作的范围，分为 <strong>只读</strong>、<strong>工作区可写</strong>、<strong>全部可访问</strong> 三档。可在配置中设置全局默认权限（<code>agent_permission_mode</code>），新会话默认沿用，再按需单独调整。权限用于降低误操作风险；如需强隔离，建议在容器中运行。</li>
+</ul>
+<h2 id="核心配置">核心配置</h2>
+<p>在 <code>config.json</code> 中配置 Agent 模式的核心参数：</p>
+<pre><code>{
+  &quot;agent&quot;: true,
+  &quot;agent_workspace&quot;: &quot;~/cow&quot;,
+  &quot;agent_max_context_tokens&quot;: 40000,
+  &quot;agent_max_context_turns&quot;: 30,
+  &quot;agent_max_steps&quot;: 15,
+  &quot;agent_permission_mode&quot;: &quot;workspace-write&quot;,
+  &quot;enable_thinking&quot;: false,
+  &quot;cow_lang&quot;: &quot;auto&quot;
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>说明</th><th>默认值</th></tr></thead><tbody><tr><td><code>agent</code></td><td>是否启用 Agent 模式</td><td><code>true</code></td></tr><tr><td><code>agent_workspace</code></td><td>系统工作空间路径</td><td><code>~/cow</code></td></tr><tr><td><code>agent_max_context_tokens</code></td><td>最大上下文 token 数</td><td><code>50000</code></td></tr><tr><td><code>agent_max_context_turns</code></td><td>最大上下文记忆轮次</td><td><code>20</code></td></tr><tr><td><code>agent_max_steps</code></td><td>单次任务最大决策步数</td><td><code>20</code></td></tr><tr><td><code>agent_permission_mode</code></td><td>全局默认权限，新会话沿用：<code>read-only</code> / <code>workspace-write</code> / <code>full-access</code></td><td><code>full-access</code></td></tr><tr><td><code>enable_thinking</code></td><td>是否启用深度思考模式</td><td><code>false</code></td></tr><tr><td><code>knowledge</code></td><td>是否启用个人知识库</td><td><code>true</code></td></tr><tr><td><code>self_evolution_enabled</code></td><td>是否启用自主进化</td><td><code>false</code></td></tr><tr><td><code>cow_lang</code></td><td>界面、命令文案、系统提示词等的语言，<code>auto</code> 自动检测，可设为 <code>zh</code> / <code>en</code></td><td><code>auto</code></td></tr></tbody></table>

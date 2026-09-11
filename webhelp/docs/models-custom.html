@@ -1,0 +1,35 @@
+<p>适用于通过 OpenAI 兼容协议接入的模型服务，例如：</p>
+<ul>
+<li><strong>第三方 API 代理</strong>：通过统一的 API 地址调用多种模型</li>
+<li><strong>本地模型</strong>：使用 Ollama、vLLM 等工具在本地部署的模型</li>
+<li><strong>私有化部署</strong>：企业内部部署的模型服务</li>
+</ul>
+<h2 id="web-端配置">Web 端配置</h2>
+<p>推荐方式。在 Web 控制台「模型」页面点击「添加厂商」，选择「自定义」，填写名称、API Base 和 API Key 即可。支持添加多个自定义厂商，添加后在「主模型」中选择对应厂商和模型即可启用。</p>
+<img src="assets/img/docs/models-custom-a806a356.png" loading="lazy" />
+<p>本地部署工具的默认地址：</p>
+<table><thead><tr><th>工具</th><th>默认 API Base</th></tr></thead><tbody><tr><td>Ollama</td><td><code>http://localhost:11434/v1</code></td></tr><tr><td>vLLM</td><td><code>http://localhost:8000/v1</code></td></tr><tr><td>LocalAI</td><td><code>http://localhost:8080/v1</code></td></tr></tbody></table>
+<h2 id="配置文件配置">配置文件配置</h2>
+<p>也可以直接编辑 <code>config.json</code>，在 <code>custom_providers</code> 列表中定义多个厂商，并将 <code>bot_type</code> 设置为 <code>&quot;custom:&lt;id&gt;&quot;</code> 来激活其中一个：</p>
+<pre><code>{
+  &quot;bot_type&quot;: &quot;custom:3f2a9c1b&quot;,
+  &quot;custom_providers&quot;: [
+    {
+      &quot;id&quot;: &quot;3f2a9c1b&quot;,
+      &quot;name&quot;: &quot;厂商A&quot;,
+      &quot;api_key&quot;: &quot;YOUR_API_KEY_A&quot;,
+      &quot;api_base&quot;: &quot;https://api.a.com/v1&quot;,
+      &quot;model&quot;: &quot;deepseek-v3&quot;
+    },
+    {
+      &quot;id&quot;: &quot;a1b2c3d4&quot;,
+      &quot;name&quot;: &quot;厂商B&quot;,
+      &quot;api_key&quot;: &quot;YOUR_API_KEY_B&quot;,
+      &quot;api_base&quot;: &quot;https://api.b.com/v1&quot;,
+      &quot;model&quot;: &quot;qwen3-max&quot;
+    }
+  ]
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>说明</th></tr></thead><tbody><tr><td><code>custom_providers</code></td><td>自定义厂商列表，每项包含 <code>id</code>、<code>name</code>、<code>api_base</code>、<code>api_key</code>（可选）、<code>model</code>（可选）</td></tr><tr><td><code>bot_type</code></td><td>设置为 <code>&quot;custom:&lt;id&gt;&quot;</code> 激活对应厂商</td></tr><tr><td><code>id</code></td><td>厂商唯一标识（8 位十六进制），在 Web 端添加时自动生成，手动配置时填写任意不重复的标识即可</td></tr><tr><td><code>name</code></td><td>展示名称，可随意修改</td></tr><tr><td><code>model</code></td><td>该厂商使用的模型，激活时生效</td></tr></tbody></table>
+<p>历史的单厂商配置（<code>bot_type</code> 为 <code>&quot;custom&quot;</code>，配合 <code>custom_api_key</code> / <code>custom_api_base</code>）仍然兼容，无需改动即可继续使用。</p>

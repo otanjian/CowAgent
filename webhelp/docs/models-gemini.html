@@ -1,0 +1,30 @@
+<p>Google Gemini 支持文本对话、图像理解和图像生成（Nano Banana 系列），一个 <code>gemini_api_key</code> 即可启用全部能力。</p>
+<p>通过 Web 控制台的「模型管理」页面可一站式配置以下全部能力，无需手动改配置文件。</p>
+<h2 id="文本对话">文本对话</h2>
+<pre><code>{
+  &quot;model&quot;: &quot;gemini-3.8-flash&quot;,
+  &quot;gemini_api_key&quot;: &quot;YOUR_API_KEY&quot;
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>说明</th></tr></thead><tbody><tr><td><code>model</code></td><td>推荐 <code>gemini-3.8-flash</code>，亦支持 <code>gemini-3.7-flash</code>、<code>gemini-3.6-flash</code>、<code>gemini-3.5-flash</code>、<code>gemini-3.1-pro-preview</code>、<code>gemini-3.1-flash-lite-preview</code>、<code>gemini-3-flash-preview</code>、<code>gemini-3-pro-preview</code> 等，参考 官方文档</td></tr><tr><td><code>gemini_api_key</code></td><td>在 Google AI Studio 创建</td></tr><tr><td><code>gemini_api_base</code></td><td>可选，默认为 <code>https://generativelanguage.googleapis.com</code>，可改为第三方代理</td></tr></tbody></table>
+<h2 id="图像理解">图像理解</h2>
+<p>Gemini 全系列模型均原生支持视觉，配置 <code>gemini_api_key</code> 后 Agent 的 Vision 工具会自动使用主模型识别图像，无需额外配置。</p>
+<p>如需手动指定 Vision 模型：</p>
+<pre><code>{
+  &quot;tools&quot;: {
+    &quot;vision&quot;: {
+      &quot;model&quot;: &quot;gemini-3.1-flash-lite-preview&quot;
+    }
+  }
+}
+</code></pre>
+<h2 id="图像生成">图像生成</h2>
+<pre><code>{
+  &quot;skills&quot;: {
+    &quot;image-generation&quot;: {
+      &quot;model&quot;: &quot;gemini-3.1-flash-image-preview&quot;
+    }
+  }
+}
+</code></pre>
+<table><thead><tr><th>模型 ID</th><th>别名</th></tr></thead><tbody><tr><td><code>gemini-3.1-flash-image-preview</code></td><td>Nano Banana 2</td></tr><tr><td><code>gemini-3-pro-image-preview</code></td><td>Nano Banana Pro</td></tr><tr><td><code>gemini-2.5-flash-image</code></td><td>Nano Banana</td></tr></tbody></table>

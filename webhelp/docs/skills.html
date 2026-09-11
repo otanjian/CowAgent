@@ -1,0 +1,43 @@
+<p>技能（Skill）为 Agent 提供无限的扩展性。每个 Skill 由说明文件（<code>SKILL.md</code>）、运行脚本（可选）、资源（可选）组成，描述如何完成特定类型的任务。</p>
+<p>Skill 与 Tool 的区别：Tool 是由代码实现的原子操作（如读写文件、执行命令），Skill 则是基于说明文件的高级工作流，可以组合调用多个 Tool 来完成复杂任务。</p>
+<h2 id="获取技能">获取技能</h2>
+<p>CowAgent 提供多种方式获取技能：</p>
+<ul>
+<li>Cow 技能广场 — 在线浏览所有可用技能，或通过 <code>/skill list --remote</code> 在对话中浏览和安装</li>
+<li><strong>GitHub</strong> — 直接从 GitHub 仓库安装，支持批量安装</li>
+<li><strong>ClawHub</strong> — 通过 <code>/skill install clawhub:名称</code> 安装 ClawHub 上的技能 (4w+个)</li>
+<li><strong>LinkA</strong> — 通过 <code>/skill install linkai:编码</code> 安装 LinkAI 上的公开资源和创建的知识库/数据库/工作流/插件等资源</li>
+<li><strong>URL</strong> — 从 zip 压缩包或 SKILL.md 链接安装</li>
+<li><strong>对话创建</strong> — 通过自然语言对话让 Agent 自动创建技能</li>
+</ul>
+<p>详细安装方式参考 <a href="doc.php?p=skills-install">安装技能</a> 和 <a href="doc.php?p=cli-skill">技能管理命令</a>。也可以通过对话 <a href="doc.php?p=skills-create">创建技能</a>，或向 Skill Hub 贡献你的技能。</p>
+<h2 id="技能加载优先级">技能加载优先级</h2>
+<ol>
+<li><strong>工作空间技能</strong>（最高）：<code>~/cow/skills/</code></li>
+<li><strong>项目内置技能</strong>（最低）：<code>skills/</code></li>
+</ol>
+<p>同名技能按优先级覆盖。</p>
+<h2 id="技能文件结构">技能文件结构</h2>
+<pre><code>skills/
+├── my-skill/
+│   ├── SKILL.md          # Skill description (frontmatter + instructions)
+│   ├── scripts/          # Execution scripts (optional)
+│   └── resources/        # Additional resources (optional)
+</code></pre>
+<h3 id="skill-md-格式">SKILL.md 格式</h3>
+<pre><code>---
+name: my-skill
+description: Brief description of the skill
+metadata:
+  emoji: 🔧
+  requires:
+    bins: [&quot;curl&quot;]
+    env: [&quot;MY_API_KEY&quot;]
+  primaryEnv: &quot;MY_API_KEY&quot;
+---
+
+# My Skill
+
+Detailed instructions...
+</code></pre>
+<table><thead><tr><th>字段</th><th>说明</th></tr></thead><tbody><tr><td><code>name</code></td><td>技能名称，需与目录名一致</td></tr><tr><td><code>description</code></td><td>技能描述，Agent 据此决定是否调用</td></tr><tr><td><code>metadata.requires.bins</code></td><td>依赖的系统命令</td></tr><tr><td><code>metadata.requires.env</code></td><td>依赖的环境变量</td></tr><tr><td><code>metadata.always</code></td><td>是否始终加载（默认 false）</td></tr></tbody></table>

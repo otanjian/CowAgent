@@ -1,0 +1,55 @@
+<p>Web 控制台是 CowAgent 的默认通道，启动后会自动运行，通过浏览器即可与 Agent 对话，并支持在线管理模型、技能、记忆、通道等配置。</p>
+<h2 id="配置">配置</h2>
+<pre><code>{
+  &quot;channel_type&quot;: &quot;web&quot;,
+  &quot;web_host&quot;: &quot;0.0.0.0&quot;,
+  &quot;web_port&quot;: 9899,
+  &quot;web_password&quot;: &quot;&quot;,
+  &quot;enable_thinking&quot;: false
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>说明</th><th>默认值</th></tr></thead><tbody><tr><td><code>channel_type</code></td><td>设为 <code>web</code></td><td><code>web</code></td></tr><tr><td><code>web_host</code></td><td>Web 服务监听地址，默认监听 <code>127.0.0.1</code>（仅本机），如需公网访问请改为 <code>0.0.0.0</code> 并设置密码</td><td><code>&quot;&quot;</code></td></tr><tr><td><code>web_port</code></td><td>Web 服务监听端口</td><td><code>9899</code></td></tr><tr><td><code>web_password</code></td><td>访问密码，留空表示不启用密码保护；监听 <code>0.0.0.0</code> 时建议设置</td><td><code>&quot;&quot;</code></td></tr><tr><td><code>web_session_expire_days</code></td><td>登录会话有效天数</td><td><code>30</code></td></tr><tr><td><code>web_file_serve_root</code></td><td>web 端可直接读取/发送的文件根目录，默认仅限用户主目录及 agent 工作空间；设为 <code>/</code> 可放开整个文件系统</td><td><code>&quot;~&quot;</code></td></tr><tr><td><code>enable_thinking</code></td><td>是否启用深度思考模式</td><td><code>false</code></td></tr></tbody></table>
+<p>配置密码后，访问控制台时需先输入密码完成登录。登录状态默认保持 30 天，期间重启服务也无需重新登录。密码也支持在控制台的「配置」页面中在线修改。</p>
+<h2 id="访问地址">访问地址</h2>
+<p>启动项目后访问：</p>
+<ul>
+<li>本地运行：<code>http://localhost:9899</code></li>
+<li>服务器运行：<code>http://&lt;server-ip&gt;:9899</code></li>
+</ul>
+<p>请确保服务器防火墙和安全组已放行对应端口。</p>
+<h2 id="功能介绍">功能介绍</h2>
+<h3 id="对话界面">对话界面</h3>
+<p>支持流式输出，可实时展示 Agent 的思考过程（Reasoning）和工具调用过程（Tool Calls），更直观地观察 Agent 的决策过程。深度思考功能可通过配置或控制台的「Agent 配置」开关控制。</p>
+<img src="assets/img/docs/channels-web-194bcecf.png" loading="lazy" />
+<h4 id="多会话管理">多会话管理</h4>
+<p>对话界面支持多会话（Session）管理，所有会话记录持久化存储在数据库中：</p>
+<ul>
+<li><strong>会话列表</strong>：点击左侧历史会话图标可展开/收起会话列表面板，支持滚动加载全部历史会话</li>
+<li><strong>AI 生成标题</strong>：新会话在首轮对话完成后，自动调用模型生成简短的会话摘要标题</li>
+<li><strong>新建会话</strong>：点击会话列表顶部的「新对话」按钮或输入区的 <code>+</code> 按钮创建新会话</li>
+<li><strong>删除会话</strong>：点击会话项的删除按钮，确认后永久删除该会话及其所有消息</li>
+<li><strong>清除上下文</strong>：点击输入区的清除按钮，在当前会话中插入一条分隔线，分隔线以上的消息仍然展示但不再作为模型的上下文输入</li>
+<li><strong>工作空间 / 模型 / 权限</strong>：在输入框下方可为当前会话单独设置项目工作空间、模型和权限；使用多个项目时，历史会话会自动按项目分组。详见 <a href="doc.php?p=architecture">项目架构 - 项目工作空间</a></li>
+</ul>
+<img src="assets/img/docs/channels-web-97fffc82.png" loading="lazy" /><p>会话按工作空间分组，可为当前会话单独设置工作空间与模型</p>
+<h4 id="权限模式">权限模式</h4>
+<p>可为当前会话设置权限模式，控制 Agent 对文件与命令的操作范围：只读（read-only）、工作空间可写（workspace-write）、完全访问（full-access）。工具调用因权限被拦截时会给出可点击的提示，便于就地调整。</p>
+<img src="assets/img/docs/channels-web-eb4e289d.png" loading="lazy" /><p>会话级权限模式：只读、工作空间可写、完全访问</p>
+<h3 id="模型管理">模型管理</h3>
+<p>支持在线管理不同模型厂商的文本、图像、语音、向量模型配置，无需手动编辑配置文件：</p>
+<img src="assets/img/docs/channels-web-4ea01ed6.png" loading="lazy" />
+<h3 id="技能管理">技能管理</h3>
+<p>支持在线查看和管理 Agent 技能（Skills）：</p>
+<img src="assets/img/docs/channels-web-bf63fd27.png" loading="lazy" />
+<h3 id="记忆管理">记忆管理</h3>
+<p>支持在线查看和管理 Agent 记忆：</p>
+<img src="assets/img/docs/channels-web-2063134e.png" loading="lazy" />
+<h3 id="通道管理">通道管理</h3>
+<p>支持在线管理接入通道，支持实时连接/断开操作：</p>
+<img src="assets/img/docs/channels-web-603736a5.png" loading="lazy" />
+<h3 id="定时任务">定时任务</h3>
+<p>支持在线查看和管理定时任务，包括一次性任务、固定间隔、Cron 表达式等多种调度方式的可视化管理：</p>
+<img src="assets/img/docs/channels-web-a2f8a47d.png" loading="lazy" />
+<h3 id="日志">日志</h3>
+<p>支持在线实时查看 Agent 运行日志，便于监控运行状态和排查问题：</p>
+<img src="assets/img/docs/channels-web-68e93d49.png" loading="lazy" />

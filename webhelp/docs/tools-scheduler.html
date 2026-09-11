@@ -1,0 +1,45 @@
+<p>创建和管理动态定时任务，支持灵活的调度方式和执行模式。</p>
+<h2 id="依赖">依赖</h2>
+<table><thead><tr><th>依赖</th><th>安装命令</th></tr></thead><tbody><tr><td><code>croniter</code> ≥ 2.0.0</td><td><code>pip install croniter&gt;=2.0.0</code></td></tr></tbody></table>
+<p>安装核心依赖时已包含：<code>pip3 install -r requirements.txt</code></p>
+<h2 id="调度方式">调度方式</h2>
+<table><thead><tr><th>方式</th><th>说明</th></tr></thead><tbody><tr><td>一次性任务</td><td>在指定时间执行一次</td></tr><tr><td>固定间隔</td><td>按固定时间间隔重复执行</td></tr><tr><td>Cron 表达式</td><td>使用 Cron 语法定义复杂调度规则</td></tr></tbody></table>
+<h2 id="执行模式">执行模式</h2>
+<ul>
+<li><strong>固定消息发送</strong>：到达触发时间时发送预设消息</li>
+<li><strong>Agent 动态任务</strong>：到达触发时间时由 Agent 智能执行任务</li>
+</ul>
+<h2 id="使用方式">使用方式</h2>
+<p>通过自然语言即可创建和管理定时任务：</p>
+<ul>
+<li>“每天早上 9 点给我发天气预报”</li>
+<li>“每隔 2 小时检查一下服务器状态”</li>
+<li>“明天下午 3 点提醒我开会”</li>
+<li>“查看所有定时任务”</li>
+</ul>
+<h2 id="测试执行已有任务">测试执行已有任务</h2>
+<p>在经过身份认证的 Web 控制台或 Desktop 应用中打开任务，点击 <strong>立即执行</strong>。确认发送后，CowAgent 会立即按任务已配置的通道和接收者执行一次。这个入口只允许用户手动触发，不会暴露给 Agent 的 scheduler tool。</p>
+<p>禁用状态的任务也可手动执行，且不会因此被启用、删除或重新调度，原有 <code>next_run_at</code> 保持不变。同一任务正在按计划执行时，不允许重复手动执行。</p>
+<img src="assets/img/docs/tools-scheduler-37aec030.png" loading="lazy" />
+<h2 id="结果进入会话上下文">结果进入会话上下文</h2>
+<p>定时任务在隔离 session 中执行（内部规划与 tool 调用不污染用户会话），但<strong>最终输出</strong>会作为一对消息回写到接收者的真实会话，用户可以直接追问”刚才那条第二点展开说说”。</p>
+<p><strong>默认策略</strong></p>
+<ul>
+<li>Agent 动态任务的输出进入上下文</li>
+<li>固定消息类任务默认不进入上下文（可通过配置打开）</li>
+<li>每个会话最多保留最近 <strong>3 对</strong> scheduler 消息，更早的自动清理；普通用户消息不受影响</li>
+</ul>
+<p><strong>配置项</strong></p>
+<table><thead><tr><th>配置项</th><th>默认值</th><th>说明</th></tr></thead><tbody><tr><td><code>scheduler_inject_to_session</code></td><td><code>true</code></td><td>总开关</td></tr><tr><td><code>scheduler_inject_max_per_session</code></td><td><code>3</code></td><td>每会话保留 scheduler 消息对数上限</td></tr><tr><td><code>scheduler_inject_send_message</code></td><td><code>false</code></td><td>是否同时注入固定消息类任务</td></tr></tbody></table>
+<pre><code>{
+  &quot;scheduler_inject_to_session&quot;: true,
+  &quot;scheduler_inject_max_per_session&quot;: 3,
+  &quot;scheduler_inject_send_message&quot;: false
+}
+</code></pre>
+<h2 id="任务执行时的上下文">任务执行时的上下文</h2>
+<p>定时任务的隔离 session 会保留最近几次执行的对话历史，便于做”对比上次”、“延续之前结论”等操作；但为了避免高频任务（如每 5 分钟监控）prompt 越积越长，会按公式自动裁剪：</p>
+<pre><code>scheduler_keep_turns = max(1, agent_max_context_turns / 5)
+</code></pre>
+<p><code>agent_max_context_turns</code> 默认为 <code>20</code>，所以定时任务每次执行默认带最近 <strong>4 轮</strong>历史。需要更长记忆可调大 <code>agent_max_context_turns</code>。</p>
+<p>群聊场景（飞书 / 企微群机器人 / 钉钉等）下用户的真实 session_id 形如 <code>user_id:group_id</code>，与 receiver 不同。创建任务时会自动记录正确的 session_id；老的 <code>tasks.json</code> 缺该字段时回落到 receiver，行为与历史版本一致。</p>

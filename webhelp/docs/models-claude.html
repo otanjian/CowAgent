@@ -1,0 +1,30 @@
+<p>Claude 由 Anthropic 提供，支持文本对话与图像理解，主流 Sonnet / Opus 模型均原生支持视觉，无需额外指定 Vision 模型。</p>
+<p>通过 Web 控制台的「模型管理」页面可一站式配置以下全部能力，无需手动改配置文件。</p>
+<h2 id="文本对话">文本对话</h2>
+<pre><code>{
+  &quot;model&quot;: &quot;claude-opus-5&quot;,
+  &quot;claude_api_key&quot;: &quot;YOUR_API_KEY&quot;
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>说明</th></tr></thead><tbody><tr><td><code>model</code></td><td>支持 <code>claude-opus-5</code>、<code>claude-sonnet-5</code>、<code>claude-fable-5-1</code>、<code>claude-fable-5</code>、<code>claude-opus-4-8</code>、<code>claude-opus-4-7</code>、<code>claude-sonnet-4-6</code>、<code>claude-opus-4-6</code>、<code>claude-sonnet-4-5</code>、<code>claude-sonnet-4-0</code>、<code>claude-3-5-sonnet-latest</code> 等，参考 官方模型</td></tr><tr><td><code>claude_api_key</code></td><td>在 Claude 控制台 创建</td></tr><tr><td><code>claude_api_base</code></td><td>可选，默认为 <code>https://api.anthropic.com/v1</code>，可改为第三方代理</td></tr></tbody></table>
+<h3 id="模型选择">模型选择</h3>
+<table><thead><tr><th>模型</th><th>适用场景</th></tr></thead><tbody><tr><td><code>claude-opus-5</code></td><td>最新旗舰，默认推荐模型，复杂推理与长链路 Agent 任务效果最佳</td></tr><tr><td><code>claude-sonnet-5</code></td><td>Claude 5 系列均衡款，推理效果与成本平衡，价格更低</td></tr><tr><td><code>claude-fable-5-1</code></td><td>Claude 5 系列的另一款旗舰模型（新版）</td></tr><tr><td><code>claude-fable-5</code></td><td>Claude 5 系列的另一款旗舰模型</td></tr><tr><td><code>claude-opus-4-8</code></td><td>上一代 Opus 旗舰</td></tr><tr><td><code>claude-opus-4-7</code></td><td>更早的 Opus 旗舰</td></tr><tr><td><code>claude-sonnet-4-6</code></td><td>性价比与速度平衡，成本更低</td></tr><tr><td><code>claude-opus-4-6</code> / <code>claude-sonnet-4-5</code> / <code>claude-sonnet-4-0</code></td><td>更早的旗舰，价格更低</td></tr></tbody></table>
+<h2 id="思考模式">思考模式</h2>
+<p>通过全局配置 <code>enable_thinking</code> 控制，也可在 web控制台 - 配置页面中切换。开启后 Web 控制台会展示思考过程：</p>
+<pre><code>{
+  &quot;enable_thinking&quot;: true,
+  &quot;reasoning_effort&quot;: &quot;high&quot;
+}
+</code></pre>
+<p><code>reasoning_effort</code> 控制思考强度（对应 Anthropic 的 <code>output_config.effort</code>），取值 <code>low</code> / <code>medium</code> / <code>high</code> / <code>xhigh</code> / <code>max</code>，具体支持范围随模型而定，仅在 <code>enable_thinking</code> 为 <code>true</code> 时生效。</p>
+<h2 id="图像理解">图像理解</h2>
+<p>配置 <code>claude_api_key</code> 后 Agent 的 Vision 工具会自动使用 Claude 主模型识别图像，无需额外配置。</p>
+<p>如需手动指定 Vision 模型，可在配置文件中显式配置：</p>
+<pre><code>{
+  &quot;tools&quot;: {
+    &quot;vision&quot;: {
+      &quot;model&quot;: &quot;claude-sonnet-5&quot;
+    }
+  }
+}
+</code></pre>

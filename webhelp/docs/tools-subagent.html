@@ -1,0 +1,51 @@
+<p><code>subagent</code> 让主 Agent 在对话过程中临时创建执行单元，把一个独立任务交给它，在自己的上下文中完成后返回结果。功能效果和使用场景见<a href="doc.php?p=multi-agent-subagent">子 Agent</a>，本页介绍工具的类型、配置与实现细节。</p>
+<h2 id="内置类型">内置类型</h2>
+<p>创建时会选择一种类型，类型决定系统提示词和可用的工具范围：</p>
+<table><thead><tr><th>类型</th><th>适用场景</th><th>工具范围</th></tr></thead><tbody><tr><td><code>general-purpose</code></td><td>既需要调查也需要操作的多步任务：搜索、阅读、执行命令、写文件</td><td>主 Agent 的全部工具（禁用工具除外）</td></tr><tr><td><code>explore</code></td><td>只读的调查：查找文件、检索代码或文档、从网上收集信息</td><td><code>read</code>、<code>ls</code>、<code>search_files</code>、<code>web_search</code>、<code>web_fetch</code>、<code>vision</code>、<code>memory_search</code>、<code>memory_get</code></td></tr></tbody></table>
+<h2 id="自定义类型">自定义类型</h2>
+<p>在工作区的 <code>subagents/</code> 目录下放置一个 <code>.md</code> 文件即可新增一种类型，格式与技能一致：</p>
+<pre><code>---
+name: research-report
+description: 针对一个主题查阅大量网络资料，返回一份带来源的简短报告。适用于需要打开很多页面、但只需要结论的场景。
+tools: web_search, web_fetch, read, write
+---
+你是一名研究助理，每次接收一个主题，返回一份报告。
+
+工作方式：
+1. 先广泛检索，再深入查看其中最有价值的两三个来源。
+2. 优先使用一手来源（官方文档、厂商定价页、原始公告），而不是转述文章。
+3. 数字、日期、价格需要用第二个来源交叉验证。
+
+报告不超过 400 字，依次包含：
+- 结论：两三句话回答问题
+- 发现：分条列出，每条末尾附来源 URL
+- 未证实：无法从一手来源确认的内容
+
+查不到的内容写&quot;未找到&quot;，不要用推测填补。
+</code></pre>
+<p>字段说明：</p>
+<table><thead><tr><th>字段</th><th>说明</th></tr></thead><tbody><tr><td><code>name</code></td><td>类型名称</td></tr><tr><td><code>description</code></td><td>主 Agent 据此选择类型，因此应说明「什么情况下使用它」，而不是「它是什么」</td></tr><tr><td><code>tools</code></td><td>可用工具，省略表示继承主 Agent 的全部工具</td></tr><tr><td>正文</td><td>子 Agent 的系统提示词，说明工作方式和返回内容</td></tr></tbody></table>
+<p>限定 <code>tools</code> 是最可靠的约束方式：只有 <code>read, ls, search_files</code> 的类型无法修改任何文件。写了 <code>tools</code> 的类型不会继承技能，需要用到技能时省略该字段，在正文中限定工作范围。</p>
+<p>工作区首次启动时会在 <code>subagents/</code> 下生成 <code>README.md</code> 和 <code>example.md.template</code>，把后者复制为 <code>.md</code> 文件即可启用。模板每轮对话重新读取，新增文件在下一条消息生效，无需重启。</p>
+<p>工具名按精确匹配，<code>tools</code> 白名单不包含 MCP 工具。需要使用 MCP 工具时请省略该字段。</p>
+<h2 id="禁用的工具">禁用的工具</h2>
+<p>以下工具对所有子 Agent 不可用：</p>
+<table><thead><tr><th>工具</th><th>原因</th></tr></thead><tbody><tr><td><code>send</code>、<code>scheduler</code></td><td>会以主 Agent 的名义向用户渠道发送消息或创建任务，超出单个任务的范围</td></tr><tr><td><code>env_config</code>、<code>evolution_undo</code></td><td>会修改 Agent 自身配置</td></tr><tr><td><code>subagent</code></td><td>避免开放全部工具的类型无限递归，实际允许的嵌套层数由 <code>max_depth</code> 控制</td></tr></tbody></table>
+<h2 id="相关配置">相关配置</h2>
+<p>子 Agent 默认开启。可在 Web 控制台与桌面端的「配置 → Agent 配置」中开关，修改后下一轮对话生效，无需重启。更细的限制在 <code>config.json</code> 中调整：</p>
+<pre><code>&quot;subagent&quot;: {
+  &quot;enabled&quot;: true,
+  &quot;max_depth&quot;: 1,
+  &quot;max_concurrent&quot;: 3,
+  &quot;timeout_seconds&quot;: 300
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>说明</th><th>默认值</th></tr></thead><tbody><tr><td><code>enabled</code></td><td>是否启用子 Agent</td><td><code>true</code></td></tr><tr><td><code>max_depth</code></td><td>嵌套层数，<code>1</code> 表示只有主 Agent 可以创建子 Agent</td><td><code>1</code></td></tr><tr><td><code>max_concurrent</code></td><td>单次最多并行的子 Agent 数量</td><td><code>3</code></td></tr><tr><td><code>timeout_seconds</code></td><td>单次调用的总时长上限，包含其中所有并行任务</td><td><code>300</code></td></tr></tbody></table>
+<h2 id="实现设计">实现设计</h2>
+<ul>
+<li><strong>上下文隔离</strong>：子 Agent 以空白消息历史启动，不加载人设文件，不接入记忆管理器。主对话中只保留一次调用记录和最终结论。</li>
+<li><strong>并行执行</strong>：单次调用中的多个任务在各自线程中执行，共享同一份时长预算；同一轮中发出的多次调用也会同时启动。</li>
+<li><strong>步数减半</strong>：子 Agent 的最大步数为主 Agent 的一半。任务范围已经明确，不需要与整场对话相同的预算；超出时会要求它对已完成的部分作出总结。</li>
+<li><strong>超时可追溯</strong>：超时的任务会被取消并标记为超时，结果数量始终与任务数一致，主 Agent 能够区分「没有查到」和「没有执行完」。</li>
+<li><strong>展示与上下文分离</strong>：返回给模型的是结构化数据，展示给用户的是排版后的报告，两者由同一份结果生成，展示内容不进入模型上下文。</li>
+</ul>

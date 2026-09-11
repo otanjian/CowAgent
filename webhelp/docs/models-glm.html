@@ -1,0 +1,26 @@
+<p>智谱 AI 支持文本对话、图像理解、语音识别（ASR）和向量（Embedding），一份 <code>zhipu_ai_api_key</code> 即可启用全部能力。</p>
+<p>通过 Web 控制台的「模型管理」页面可一站式配置以下全部能力，无需手动改配置文件。</p>
+<h2 id="文本对话">文本对话</h2>
+<pre><code>{
+  &quot;model&quot;: &quot;glm-5.3-flash&quot;,
+  &quot;zhipu_ai_api_key&quot;: &quot;YOUR_API_KEY&quot;
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>说明</th></tr></thead><tbody><tr><td><code>model</code></td><td>可填 <code>glm-5.3-flash</code>（推荐，1M 上下文 / 128K 最大输出）、<code>glm-5.3</code>、<code>glm-5.2</code>、<code>glm-5.1</code>、<code>glm-5-turbo</code>、<code>glm-5</code>、<code>glm-4.7</code>、<code>glm-4-plus</code>、<code>glm-4-flash</code>、<code>glm-4-air</code> 等，参考 模型编码</td></tr><tr><td><code>zhipu_ai_api_key</code></td><td>在 智谱 AI 控制台 创建</td></tr><tr><td><code>zhipu_ai_api_base</code></td><td>可选，默认为 <code>https://open.bigmodel.cn/api/paas/v4</code></td></tr></tbody></table>
+<h2 id="图像理解">图像理解</h2>
+<p><code>glm-5.3-flash</code> 本身即多模态，作为主模型时 Agent 的 Vision 工具会直接使用它识别图像。纯文本 chat 模型（<code>glm-5.2</code>、<code>glm-5.1</code>、<code>glm-5-turbo</code> 等）不支持视觉，此时视觉调用会自动回落到专用的 <code>glm-5v-turbo</code> 模型。配置 <code>zhipu_ai_api_key</code> 后无需额外设置。</p>
+<h2 id="语音识别">语音识别</h2>
+<pre><code>{
+  &quot;voice_to_text&quot;: &quot;zhipu&quot;,
+  &quot;voice_to_text_model&quot;: &quot;glm-asr-2512&quot;
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>说明</th></tr></thead><tbody><tr><td><code>voice_to_text</code></td><td>设为 <code>zhipu</code> 启用智谱 ASR</td></tr><tr><td><code>voice_to_text_model</code></td><td>可选，默认 <code>glm-asr-2512</code></td></tr></tbody></table>
+<p>凭证自动复用 <code>zhipu_ai_api_key</code>。语音文件建议小于 25MB，超大文件可能被服务端拒绝。</p>
+<h2 id="向量">向量</h2>
+<pre><code>{
+  &quot;embedding_provider&quot;: &quot;zhipu&quot;,
+  &quot;embedding_model&quot;: &quot;embedding-3&quot;
+}
+</code></pre>
+<p>可选模型：<code>embedding-3</code>、<code>embedding-2</code>。修改 embedding 后需执行 <code>/memory rebuild-index</code> 命令重建索引。</p>

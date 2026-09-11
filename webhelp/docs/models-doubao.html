@@ -1,0 +1,37 @@
+<p>豆包（火山方舟）支持文本对话、图像理解、图像生成（Seedream）和向量能力，一份 <code>ark_api_key</code> 即可启用全部能力。</p>
+<p>通过 Web 控制台的「模型管理」页面可一站式配置以下全部能力，无需手动改配置文件。</p>
+<h2 id="文本对话">文本对话</h2>
+<pre><code>{
+  &quot;model&quot;: &quot;doubao-seed-2-1-pro-260628&quot;,
+  &quot;ark_api_key&quot;: &quot;YOUR_API_KEY&quot;
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>说明</th></tr></thead><tbody><tr><td><code>model</code></td><td>可填 <code>doubao-seed-2-1-pro-260628</code>、<code>doubao-seed-2-1-turbo-260628</code>、<code>doubao-seed-2-0-pro-260215</code>、<code>doubao-seed-2-0-code-preview-260215</code> 等</td></tr><tr><td><code>ark_api_key</code></td><td>在 火山方舟控制台 创建</td></tr><tr><td><code>ark_base_url</code></td><td>可选，默认为 <code>https://ark.cn-beijing.volces.com/api/v3</code></td></tr></tbody></table>
+<h2 id="图像理解">图像理解</h2>
+<p>配置 <code>ark_api_key</code> 后，若主模型为豆包系列，Agent 的 Vision 工具会自动使用当前主模型识别图像，无需额外配置。</p>
+<p>如需手动指定 Vision 模型：</p>
+<pre><code>{
+  &quot;tools&quot;: {
+    &quot;vision&quot;: {
+      &quot;model&quot;: &quot;doubao-seed-2-1-pro-260628&quot;
+    }
+  }
+}
+</code></pre>
+<h2 id="图像生成">图像生成</h2>
+<pre><code>{
+  &quot;skills&quot;: {
+    &quot;image-generation&quot;: {
+      &quot;model&quot;: &quot;seedream-5.0-lite&quot;
+    }
+  }
+}
+</code></pre>
+<p>可选模型：<code>seedream-5.0-lite</code>、<code>seedream-4.5</code>。</p>
+<h2 id="向量">向量</h2>
+<pre><code>{
+  &quot;embedding_provider&quot;: &quot;doubao&quot;,
+  &quot;embedding_model&quot;: &quot;doubao-embedding-vision-251215&quot;
+}
+</code></pre>
+<p>默认模型 <code>doubao-embedding-vision-251215</code>（多模态 embedding），可在配置文件中通过 <code>embedding_dimensions</code> 指定 1024 或 2048 维。修改 embedding 后需执行 <code>/memory rebuild-index</code> 命令重建索引。</p>

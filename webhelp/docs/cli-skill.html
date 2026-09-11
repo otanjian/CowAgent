@@ -1,0 +1,100 @@
+<p>技能管理命令用于安装、查询和管理 CowAgent 的技能。在对话中使用 <code>/skill &lt;子命令&gt;</code>，在终端中使用 <code>cow skill &lt;子命令&gt;</code>。</p>
+<h2 id="list">list</h2>
+<p>列出已安装的技能及其状态。</p>
+<pre><code>/skill list
+</code></pre><pre><code>cow skill list
+</code></pre>
+<p>输出示例：</p>
+<pre><code>📦 已安装的技能 (3/4)
+
+✅ pptx
+   Use this skill any time a .pptx file is involved…
+   来源: cowhub
+
+✅ skill-creator
+   Create, install, or update skills…
+   来源: builtin
+
+⏸️ image-vision (已禁用)
+   图片理解和视觉分析
+   来源: builtin
+</code></pre>
+<p><strong>浏览技能广场</strong>（查看 Hub 上所有可安装的技能）：</p>
+<pre><code>/skill list --remote
+</code></pre><pre><code>cow skill list --remote
+</code></pre>
+<p><strong>选项：</strong></p>
+<table><thead><tr><th>选项</th><th>说明</th><th>默认值</th></tr></thead><tbody><tr><td><code>--remote</code>, <code>-r</code></td><td>浏览 Skill Hub 远程技能列表</td><td>否</td></tr><tr><td><code>--page</code></td><td>远程列表分页页码</td><td>1</td></tr></tbody></table>
+<h2 id="search">search</h2>
+<p>在技能广场中搜索技能。</p>
+<pre><code>/skill search pptx
+</code></pre><pre><code>cow skill search pptx
+</code></pre>
+<h2 id="install">install</h2>
+<p>安装技能。通过统一的 <code>install</code> 命令，可一键安装来自 <strong>Cow 技能广场、GitHub、ClawHub</strong> 以及任意 URL（zip 压缩包、SKILL.md 链接）上的技能，无需手动下载和配置。</p>
+<p><strong>从 Cow 技能广场安装（推荐）：</strong></p>
+<pre><code>/skill install pptx
+</code></pre><pre><code>cow skill install pptx
+</code></pre>
+<p><strong>从 GitHub 安装：</strong></p>
+<pre><code># 安装仓库中的所有技能（自动扫描包含 SKILL.md 的子目录）
+/skill install larksuite/cli
+
+# 指定子目录，只安装单个技能
+/skill install https://github.com/larksuite/cli/tree/main/skills/lark-im
+
+# 使用 # 指定子目录
+/skill install larksuite/cli#skills/lark-minutes
+</code></pre><pre><code># 安装仓库中的所有技能（自动扫描包含 SKILL.md 的子目录）
+cow skill install larksuite/cli
+
+# 指定子目录，只安装单个技能
+cow skill install https://github.com/larksuite/cli/tree/main/skills/lark-im
+
+# 使用 # 指定子目录
+cow skill install larksuite/cli#skills/lark-minutes
+</code></pre>
+<p>支持完整的 GitHub URL 和 <code>owner/repo</code> 简写。对于 mono-repo（一个仓库中包含多个技能），不指定子目录时会自动发现并批量安装所有技能；指定子目录时只安装该目录下的技能。</p>
+<p><strong>从 ClawHub 安装：</strong></p>
+<pre><code>/skill install clawhub:baidu-search
+</code></pre><pre><code>cow skill install clawhub:baidu-search
+</code></pre>
+<p><strong>从 URL 安装：</strong></p>
+<pre><code># 从 zip 压缩包安装（支持单个或批量）
+/skill install https://cdn.link-ai.tech/skills/pptx.zip
+
+# 从 SKILL.md 链接安装
+/skill install https://example.com/path/to/SKILL.md
+</code></pre><pre><code># 从 zip 压缩包安装（支持单个或批量）
+cow skill install https://cdn.link-ai.tech/skills/pptx.zip
+
+# 从 SKILL.md 链接安装
+cow skill install https://example.com/path/to/SKILL.md
+</code></pre>
+<p>支持从 zip / tar.gz 压缩包 URL 安装，解压后自动扫描包含 <code>SKILL.md</code> 的目录，支持单个或批量安装。也支持直接从 <code>SKILL.md</code> 文件链接安装，会自动解析技能名称和描述。</p>
+<p>安装成功后会显示技能名称、描述和来源，例如：</p>
+<pre><code>✅ baidu-search
+   百度搜索：使用百度搜索引擎检索信息…
+   来源: clawhub
+</code></pre>
+<h2 id="uninstall">uninstall</h2>
+<p>卸载已安装的技能。</p>
+<pre><code>/skill uninstall pptx
+</code></pre><pre><code>cow skill uninstall pptx
+</code></pre>
+<p>卸载操作会删除技能目录下的所有文件，此操作不可恢复。</p>
+<h2 id="enable-/-disable">enable / disable</h2>
+<p>启用或禁用技能，禁用后技能不会被 Agent 调用。</p>
+<pre><code>/skill enable pptx
+/skill disable pptx
+</code></pre><pre><code>cow skill enable pptx
+cow skill disable pptx
+</code></pre>
+<h2 id="info">info</h2>
+<p>查看已安装技能的详细信息，包括 <code>SKILL.md</code> 内容预览。</p>
+<pre><code>/skill info pptx
+</code></pre><pre><code>cow skill info pptx
+</code></pre>
+<h2 id="技能来源">技能来源</h2>
+<p>安装的技能会记录来源信息，可通过 <code>/skill list</code> 查看：</p>
+<table><thead><tr><th>来源标识</th><th>说明</th></tr></thead><tbody><tr><td><code>builtin</code></td><td>项目内置技能</td></tr><tr><td><code>cowhub</code></td><td>从 CowAgent Skill Hub 安装</td></tr><tr><td><code>github</code></td><td>从 GitHub URL 直接安装</td></tr><tr><td><code>clawhub</code></td><td>从 ClawHub 安装</td></tr><tr><td><code>url</code></td><td>从 SKILL.md URL 安装</td></tr><tr><td><code>local</code></td><td>本地创建的技能</td></tr></tbody></table>

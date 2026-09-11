@@ -1,0 +1,64 @@
+<p>小米 MiMo 是原生全模态大模型，单 <code>mimo_api_key</code> 即可同时启用文本对话、图像理解与语音合成。</p>
+<p>通过 Web 控制台的「模型管理」页面可一站式配置以下全部能力，无需手动改配置文件。</p>
+<h2 id="文本对话">文本对话</h2>
+<pre><code>{
+  &quot;model&quot;: &quot;mimo-v2.5-pro&quot;,
+  &quot;mimo_api_key&quot;: &quot;YOUR_API_KEY&quot;,
+  &quot;mimo_api_base&quot;: &quot;https://api.xiaomimimo.com/v1&quot;
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>说明</th></tr></thead><tbody><tr><td><code>model</code></td><td>默认推荐 <code>mimo-v2.5-pro</code>，也可使用 <code>mimo-v2.5</code></td></tr><tr><td><code>mimo_api_key</code></td><td>在 MiMo 开放平台 创建</td></tr><tr><td><code>mimo_api_base</code></td><td>可选，默认为 <code>https://api.xiaomimimo.com/v1</code></td></tr></tbody></table>
+<h3 id="模型选择">模型选择</h3>
+<table><thead><tr><th>模型</th><th>适用场景</th></tr></thead><tbody><tr><td><code>mimo-v2.5-pro</code></td><td>旗舰，原生全模态 + Agent 能力，最高 100 万 tokens 上下文</td></tr><tr><td><code>mimo-v2.5</code></td><td>综合版，原生全模态（文本 / 图像 / 视频 / 音频）</td></tr></tbody></table>
+<h2 id="思考模式">思考模式</h2>
+<p>MiMo V2.5 系列默认开启「思考模式」：模型在输出最终回答前会先输出 <code>reasoning_content</code>（思维链），提升复杂任务表现。</p>
+<p>通过全局配置 <code>enable_thinking</code> 控制是否展示（也可在 Web 控制台 - 配置页面切换）：</p>
+<pre><code>{
+  &quot;enable_thinking&quot;: true
+}
+</code></pre>
+<h2 id="图像理解">图像理解</h2>
+<p>配置 <code>mimo_api_key</code> 后，Agent 的 Vision 工具可以自动使用 MiMo 视觉模型：</p>
+<ul>
+<li>当主模型本身是多模态时（<code>mimo-v2.5-pro</code> / <code>mimo-v2.5</code>），直接由主模型识别图像，无需额外配置</li>
+<li>当主模型是其他厂商时，Vision 工具会根据顺序自动 fallback 到 <code>mimo-v2.5-pro</code></li>
+</ul>
+<p>如需手动指定 Vision 模型，可在配置文件中显式配置：</p>
+<pre><code>{
+  &quot;tools&quot;: {
+    &quot;vision&quot;: {
+      &quot;provider&quot;: &quot;mimo&quot;,
+      &quot;model&quot;: &quot;mimo-v2.5-pro&quot;
+    }
+  }
+}
+</code></pre>
+<h2 id="语音合成">语音合成</h2>
+<pre><code>{
+  &quot;text_to_voice&quot;: &quot;mimo&quot;,
+  &quot;text_to_voice_model&quot;: &quot;mimo-v2.5-tts&quot;,
+  &quot;tts_voice_id&quot;: &quot;冰糖&quot;
+}
+</code></pre>
+<table><thead><tr><th>参数</th><th>说明</th></tr></thead><tbody><tr><td><code>text_to_voice_model</code></td><td>当前仅支持 <code>mimo-v2.5-tts</code>（预置音色 + 唱歌模式）</td></tr><tr><td><code>tts_voice_id</code></td><td>预置音色名（中文音色直接使用中文名作为 ID）</td></tr></tbody></table>
+<h3 id="预置音色">预置音色</h3>
+<table><thead><tr><th>音色 ID</th><th>说明</th></tr></thead><tbody><tr><td><code>冰糖</code></td><td>中文 · 女声（默认）</td></tr><tr><td><code>茉莉</code></td><td>中文 · 女声</td></tr><tr><td><code>苏打</code></td><td>中文 · 男声</td></tr><tr><td><code>白桦</code></td><td>中文 · 男声</td></tr><tr><td><code>Mia</code></td><td>英文 · 女声</td></tr><tr><td><code>Chloe</code></td><td>英文 · 女声</td></tr><tr><td><code>Milo</code></td><td>英文 · 男声</td></tr><tr><td><code>Dean</code></td><td>英文 · 男声</td></tr></tbody></table>
+<p>也可在 Web 控制台的「模型管理 → 语音合成」下拉框中可视化选择。</p>
+<h3 id="风格控制">风格控制</h3>
+<p>MiMo TTS 支持在合成文本中嵌入 <strong>音频标签</strong> 来控制情绪、语调、方言、角色甚至唱歌。标签需出现在 <strong>最终被合成为语音的文本（即 Agent 回复内容）</strong> 中，整体风格标签写在开头：</p>
+<pre><code>(风格)待合成内容
+</code></pre>
+<p>支持半角 <code>()</code>、全角 <code>（）</code> 或 <code>[]</code> 三种括号。常见风格示例：</p>
+<table><thead><tr><th>类型</th><th>示例标签</th></tr></thead><tbody><tr><td>基础情绪</td><td><code>开心</code> <code>悲伤</code> <code>愤怒</code> <code>恐惧</code> <code>惊讶</code> <code>兴奋</code> <code>委屈</code> <code>平静</code> <code>冷漠</code></td></tr><tr><td>复合情绪</td><td><code>怅然</code> <code>欣慰</code> <code>无奈</code> <code>愧疚</code> <code>释然</code> <code>忐忑</code> <code>动情</code></td></tr><tr><td>整体语调</td><td><code>温柔</code> <code>高冷</code> <code>活泼</code> <code>严肃</code> <code>慵懒</code> <code>俏皮</code> <code>深沉</code> <code>干练</code> <code>凌厉</code></td></tr><tr><td>音色定位</td><td><code>磁性</code> <code>醇厚</code> <code>清亮</code> <code>空灵</code> <code>稚嫩</code> <code>苍老</code> <code>甜美</code> <code>沙哑</code></td></tr><tr><td>人设腔调</td><td><code>夹子音</code> <code>御姐音</code> <code>正太音</code> <code>大叔音</code> <code>台湾腔</code></td></tr><tr><td>方言</td><td><code>东北话</code> <code>四川话</code> <code>河南话</code> <code>粤语</code></td></tr><tr><td>角色扮演</td><td><code>孙悟空</code> <code>林黛玉</code></td></tr><tr><td>唱歌</td><td><code>唱歌</code>（等价于 <code>sing</code> / <code>singing</code>）</td></tr></tbody></table>
+<p>示例：</p>
+<ul>
+<li>(磁性)夜已经深了，城市还在呼吸。</li>
+<li>(东北话)哎呀妈呀，这天儿也忒冷了吧！</li>
+<li>(粤语)呢个真係好正啊！</li>
+<li>(唱歌)原谅我这一生不羁放纵爱自由…</li>
+</ul>
+<p>也可以在文本任意位置插入细粒度音频标签来控制呼吸、笑声、停顿等，例如：</p>
+<pre><code>（紧张，深呼吸）呼……冷静，冷静。（语速加快）自我介绍我背了五十遍了，应该没问题。
+</code></pre>
+<p>完整标签列表参见 MiMo 语音合成文档。</p>
+<p>CowAgent 在调用 TTS 时会将 Agent 的回复原文（含 <code>(...)</code> 标签）直接送入 MiMo 合成。你可以在人设 / 系统提示词里要求模型「在回复开头用 <code>(风格)</code> 标签控制语气」，即可让 IM 渠道（微信 / 飞书 / 钉钉 / 企微）的语音回复带上情绪、方言、唱歌等效果。</p>
