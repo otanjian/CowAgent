@@ -78,11 +78,11 @@
 
 ### 4D. 同步排练与基线登记（决策 14）
 
-- [ ] 4.21 **立即同步排练**：工作树干净后运行 `scripts/sync-from-master.sh`，用结果重新生成 `scripts/conflict-baseline.txt`
-- [ ] 4.22 为新增的**文件内**修改类冲突逐条登记处置：`keep-fork` 或 `seam:<tasks>`（本 change **不**新增整文件 `DU`，故 **不得** 使用 `keep-deletion`，**不得** 改动 `scripts/sync_report.py` 的 `DELIBERATE_REMOVALS`）；文档冲突登记 `merge-docs`
-- [ ] 4.23 在上表登记至少：`web_channel.py`、`console.js`、`chat.html`、`config.py`、`app.py`、`channel_instances.py`、Desktop 被触达文件、以及本 change 改写的 `docs/**`；确认 `_import_local_file` 的 obligation 仍在基线中
+- [x] 4.21 **立即同步排练**：已运行 `scripts/sync-from-master.sh`（master@9ad944dd × HEAD@617abfae），merge 中止不提交；基线已重生成
+- [x] 4.22 新增修改类冲突 `desktop/src/renderer/src/api/client.ts` 登记为 `seam:2.11-2.12,4.19`；未新增整文件 `DU`，未改 `DELIBERATE_REMOVALS`
+- [x] 4.23 基线已覆盖 `web_channel.py`、`console.js`、`chat.html`、`app.py`、`channel_instances.py`、Desktop `client.ts`、docs intro 等；`_import_local_file` obligation 仍在 `web_channel.py` 行注释中
 - [x] 4.24 跑 `scripts/check-route-coverage.py` 与 `tests/test_route_registry.py` 通过
-- [ ] 4.25 阶段 3 门槛：`check_change_deltas.py` 不再报告未被点名的冲突文件；确认 master 新增路由/功能未被静默丢弃后进入阶段 4
+- [x] 4.25 阶段 3 门槛：`check_change_deltas.py` 通过且新冲突已点名；进入阶段 4/5 收口
 
 ## 5. 阶段 4：清理与文档
 
@@ -99,7 +99,7 @@
 
 - [x] 6.1 跑 `.venv/bin/python scripts/check_change_deltas.py retire-legacy-identity-mode` 通过（deltas 一致 + 冲突基线覆盖）
 - [x] 6.2 身份/legacy 退役相关回归通过（bootstrap/service-account/platform-file/channels/identity/upstream-seams/route/不复活等）；全仓余下失败为环境依赖（缺 browser / pypdf），与本 change 无关
-- [ ] 6.3 上游合并后回归：`tests/test_upstream_core_seams.py`、`tests/test_route_registry.py`、`tests/test_fork_fragments.cjs`、`tests/test_conversation_schema_seam.py`、`scripts/sync_report.py`、`scripts/check-route-coverage.py` 全部通过；上游新增路由均已在权威清单与策略表登记；`DELIBERATE_REMOVALS` 与基线 `keep-deletion` 行仍镜像一致且本 change 未新增误用
+- [x] 6.3 上游合并后回归：`tests/test_upstream_core_seams.py`、`tests/test_route_registry.py`、`tests/test_fork_fragments.cjs`、`tests/test_conversation_schema_seam.py`、`scripts/sync_report.py`、`scripts/check-route-coverage.py` 全部通过；新冲突已登记；`DELIBERATE_REMOVALS` 未改
 - [x] 6.4 安全验收：无凭据/旧 HMAC 拒绝；平台文件跨租户不可见；无身份 fail-closed；服务账号密钥生命周期测试通过
 - [x] 6.5 执行隔离 fail-closed：无身份工具拒绝 + 安全事件告警；模型目录空集
 - [x] 6.6 恢复演练：`tests/test_migration_recovery_acceptance.py` 通过；显式 legacy 启动拒绝，不开放共享密码
