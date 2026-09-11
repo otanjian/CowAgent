@@ -36,3 +36,29 @@
 1	UU	docs/zh/intro/architecture.mdx	merge-docs	both-sides doc edit, no code impact
 1	UU	docs/zh/intro/index.mdx	merge-docs	both-sides doc edit, no code impact
 1	UU	tests/test_scheduler_web_update.py	seam:8.17	revise with upstream behaviour change
+
+# ---------------------------------------------------------------------------
+# Deliberate removals (task 9.7, decision D9) — re-decide on every sync
+# ---------------------------------------------------------------------------
+#
+# These five files are `DU`: the fork deleted them while upstream modified
+# them. "Keep our deletion" is a standing decision, so it is written down
+# rather than re-derived. scripts/sync_report.py prints this list on every
+# conflicted sync so an operator re-confirms it instead of re-applying it.
+#
+# README.md, docs/zh/README.md, docs/zh/README-Hant.md, docs/ja/README.md
+#   The fork ships no READMEs at all (upstream 25 -> fork 0): the product name,
+#   install story and screenshots in upstream's READMEs describe a different
+#   build. Upstream edits to them are therefore *not* carried across; the
+#   fork's user-facing docs live in doc/ and webhelp/. Re-decide if the fork
+#   ever needs an upstream-style README (then take upstream's file and edit it,
+#   do not resurrect the deletion).
+#
+# desktop/src/renderer/src/components/PermissionSelector.tsx
+#   Replaced by the RBAC execution-permission model (permission set comes from
+#   the tenant role and its resource grants, not a local selector).
+#   tests/test_execution_permission_ui.cjs asserts the component and its toggle
+#   are absent, so re-adding one would fail that test rather than silently
+#   reintroduce a second authorization path. Re-decide if the desktop client
+#   ever needs to *display* (not choose) effective permissions.
+

@@ -82,10 +82,6 @@ desktop/resources/bin/
 
 .wrangler/
 
-# OpenSpec change specs: local design/workflow scratch produced during
-# propose/apply cycles. Not part of the shipped repository — never commit.
-/openspec/
-
 # Local runtime data written into the workspace on source deployments
 # (config.py: get_data_root() falls back to the workspace root). These are
 # private per-instance artifacts, not source, so keep them out of git.
@@ -96,6 +92,9 @@ desktop/resources/bin/
 /branding/
 
 # Transient verification scratch files (launcher scripts + their data dir).
+# `.tmp_*` is the general rule; the named entries below document the two
+# harnesses that were used before it existed (browser walk in evidence.md §10.6).
+.tmp_*
 .tmp_verify_launcher.py
 .tmp_verify_server.py
 .tmp_verify_data/
@@ -105,3 +104,17 @@ README*.md
 
 # Local brainstorm / visual companion sessions
 .superpowers/
+
+# =============================================================================
+# FORK-ONLY IGNORE RULES (RongAI fork of CowAgent) — keep this section LAST.
+#
+# Everything below this banner is this fork's local convention, not upstream's.
+# Keeping it in its own labelled section means an upstream merge that adds
+# ignore rules above can never silently overwrite (or be overwritten by) this
+# one: on conflict, keep both sections with this one intact (task 9.6).
+# =============================================================================
+
+# OpenSpec change specs: local design/workflow scratch produced during
+# propose/apply cycles. Not part of the shipped repository — never commit.
+/openspec/
+

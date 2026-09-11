@@ -1,0 +1,18 @@
+# Keep upstream's text files mergeable; only the fork's own binary art is
+# declared binary (task 9.2).
+#
+# Why so little here: a merge strategy or a blanket `* binary` rule would
+# silently discard upstream edits, which is the opposite of what this fork
+# wants (it wants upstream changes to land and to conflict loudly when they
+# touch a seam). Marking a file `binary` only tells git not to attempt a
+# textual merge on it, so it is applied *only* to assets the fork alone owns
+# and edits as artwork. Anything else stays default.
+
+# --- fork-owned binary assets (single-side customisation) --------------------
+channel/web/static/login-bg.jpg binary
+channel/web/static/rongda-ai-mark.svg binary
+desktop/src/renderer/src/assets/rongda-ai-mark.svg binary
+docs/images/rongda-ai-logo.svg binary
+docs/images/rongda-ai-logo-dark.svg binary
+webhelp/assets/img/rongda-ai-logo.svg binary
+webhelp/assets/img/rongda-ai-logo-dark.svg binary

@@ -59,3 +59,57 @@ cow start
 
 Be respectful and constructive. We want RongAI to be a welcoming place for
 everyone.
+
+<!-- =======================================================================
+     FORK-ONLY SECTION (RongAI fork of CowAgent). Owned by this fork's
+     maintainers, not upstream; keep it at the end of the file so an upstream
+     merge that edits the sections above cannot collide with it,
+     and vice versa. Tasks 9.1/9.5.
+     ======================================================================= -->
+
+## Upstream sync (fork maintainers)
+
+This repository is a long-lived fork of CowAgent's `master`. Upstream keeps
+moving, so syncing is a routine operation, not a one-off migration.
+
+**Cadence.** Sync after every upstream release, and at least weekly. A sync is
+always reviewed by a human before it is committed: the fork carries a tenancy
+and authorization model upstream does not have, so a clean textual merge is not
+evidence that the *semantics* still line up (see
+`openspec/changes/fork-decoupling-and-tenant-hardening/` for the seams that make
+this cheap, and `scripts/conflict-baseline.txt` for the conflicts we expect).
+
+```bash
+# Rehearsal: fetches, attempts the merge, reports conflicts and baseline drift,
+# then aborts the merge. It never commits and never pushes.
+scripts/sync-from-master.sh                # defaults to origin/master
+scripts/sync-from-master.sh upstream master # or name the remote/branch
+# exit 0 -> merged cleanly: review the diff, run the tests, commit yourself
+# exit 1 -> conflicts: resolve against the seams, then commit yourself
+# exit 2 -> could not run (dirty tree, fetch or baseline failure)
+```
+
+**Rerere.** Enable git's conflict-reuse cache once per clone; recorded
+resolutions are replayed automatically on the next sync, which is what makes
+repeatedly re-resolving the same seam unnecessary:
+
+```bash
+git config --local rerere.enabled true   # per-clone; the script never edits
+git config --local rerere.autoupdate true
+```
+
+(`scripts/sync-from-master.sh` deliberately does not set this for you: a script
+that silently writes your git configuration is a surprise, not a convenience.)
+
+**Human review checklist.** After a rehearsal, before committing:
+
+1. `scripts/sync-from-master.sh` reported no *new* conflict file. A new one means
+   an upstream edit crossed a seam — fix the seam, then update
+   `scripts/conflict-baseline.txt`.
+2. Any baseline conflict that disappeared is explained (the seam worked, or
+   upstream moved). Do not silently drop a baseline entry.
+3. The five deliberate removals are re-confirmed, not re-applied blindly
+   (`scripts/conflict-baseline.txt`, "Deliberate removals").
+4. `scripts/check-route-coverage.py` and the test suite pass (see §10 of the
+   change's `evidence.md` for the exact commands).
+
