@@ -136,7 +136,7 @@ def test_todo_store_refuses_symlink_below_private_root(private_state, tmp_path, 
     link.parent.mkdir(parents=True)
     link.symlink_to(target, target_is_directory=component == "directory")
     actor = TodoActor(
-        bound=True, scope_id=tenant_id, owner_id="test-owner", is_legacy=False,
+        bound=True, scope_id=tenant_id, owner_id="test-owner",
         permissions={"todo.read", "todo.write"},
     )
     with pytest.raises(TodoUnavailable, match="存储路径不可用"):

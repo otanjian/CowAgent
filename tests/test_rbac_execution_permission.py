@@ -1,13 +1,14 @@
 # encoding:utf-8
-"""数据库模式下执行授权由角色决定，legacy 保留权限模式。
+"""Database-mode execution authorization is owned by roles.
 
-回归背景：database 多租户下工具能否执行本应由角色的 ``tool.execute`` +
-资源 grant、租户执行隔离和配额决定，但旧会话权限模式会先一步拒绝，导致按角色
-配置可用的工具仍被拦下，界面还提示"调整权限"。本用例锁定：
+Regression: under multi-tenant identity, tool execution is gated by the
+caller's ``tool.execute`` resource grant, tenant isolation, and quota — not by
+a session permission-mode knob. These tests lock:
 
-* database 模式：角色已授权即执行，不受会话 read-only 模式影响；未授权则拒绝。
-* legacy 模式：仍在运行时应用 read-only/workspace-write 模式。
-* 全局默认权限在 database 模式只读（由角色控制）。
+* role-granted tools run even when the session mode says read-only;
+* role without grant is refused;
+* the console projection keeps the global default permission read-only
+  (``permission_mode_source=role``), including when conf still pins legacy.
 """
 
 import unittest
@@ -95,25 +96,17 @@ class DatabaseModeExecutionGateTest(unittest.TestCase):
                 "write", {"path": "/tmp/x.md", "content": "x"})
         self.assertIsNotNone(denial)
 
-
-class LegacyModeExecutionGateTest(unittest.TestCase):
-    def test_read_only_still_refuses_a_write(self):
-        executor = _executor("read-only")
-        with patch("agent.permission.isolation.database_mode", return_value=False):
+    def test_missing_identity_fails_closed_even_when_mode_says_full_access(self):
+        """Session full-access must not bypass isolation without identity."""
+        executor = _executor("full-access")
+        with use_identity(RuntimeIdentity()):
             denial = executor._permission_denial(
                 "write", {"path": "/tmp/x.md", "content": "x"})
         self.assertIsNotNone(denial)
 
-    def test_full_access_allows_a_write(self):
-        executor = _executor("full-access")
-        with patch("agent.permission.isolation.database_mode", return_value=False):
-            denial = executor._permission_denial(
-                "write", {"path": "/tmp/x.md", "content": "x"})
-        self.assertIsNone(denial)
-
 
 class PermissionModeProjectionTest(unittest.TestCase):
-    """The global default permission is editable only in legacy mode."""
+    """The global default permission is never a self-service knob."""
 
     def test_database_mode_is_read_only_and_roles_own_it(self):
         from channel.web import web_channel
@@ -124,14 +117,15 @@ class PermissionModeProjectionTest(unittest.TestCase):
         self.assertFalse(projection["permission_mode_editable"])
         self.assertEqual(projection["permission_mode_source"], "role")
 
-    def test_legacy_mode_stays_editable(self):
+    def test_legacy_conf_pin_stays_role_owned(self):
+        """Explicit legacy conf must not restore editable config-source mode."""
         from channel.web import web_channel
 
         with patch.object(web_channel, "conf",
                           return_value={"identity_mode": "legacy"}):
             projection = web_channel._permission_mode_projection()
-        self.assertTrue(projection["permission_mode_editable"])
-        self.assertEqual(projection["permission_mode_source"], "config")
+        self.assertFalse(projection["permission_mode_editable"])
+        self.assertEqual(projection["permission_mode_source"], "role")
 
 
 if __name__ == "__main__":

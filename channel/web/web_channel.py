@@ -153,18 +153,6 @@ def _read_config_file_for_write() -> dict:
     return read_config_template()
 
 
-def _get_web_password() -> str:
-    # Coerce to str so non-string values in config.json (e.g. numeric password) won't break comparisons
-    pwd = conf().get("web_password", "")
-    if pwd is None:
-        return ""
-    return str(pwd)
-
-
-def _is_password_enabled():
-    return bool(_get_web_password())
-
-
 # Set once the console owns its socket. The desktop watchdog waits on this to
 # tell "still starting" apart from "wedged and never going to answer".
 SERVING = threading.Event()
@@ -219,152 +207,13 @@ def _session_expire_seconds():
     return int(conf().get("web_session_expire_days", 30)) * 86400
 
 
-def _create_auth_token():
-    """Create a stateless signed token: ``<timestamp_hex>.<hmac_hex>``."""
-    ts = format(int(time.time()), "x")
-    sig = hmac.new(
-        _get_web_password().encode(),
-        ts.encode(),
-        hashlib.sha256,
-    ).hexdigest()
-    return f"{ts}.{sig}"
-
-
-def _verify_auth_token(token):
-    """Verify a signed token is valid and not expired.
-
-    The token is derived from the password, so it survives server restarts
-    and automatically invalidates when the password changes.
-    """
-    if not token or "." not in token:
-        return False
-    ts_hex, sig = token.split(".", 1)
-    try:
-        ts = int(ts_hex, 16)
-    except ValueError:
-        return False
-    if time.time() - ts > _session_expire_seconds():
-        return False
-    expected = hmac.new(
-        _get_web_password().encode(),
-        ts_hex.encode(),
-        hashlib.sha256,
-    ).hexdigest()
-    return hmac.compare_digest(sig, expected)
-
-
-def _get_bearer_token():
-    """Extract the token from an `Authorization: Bearer <token>` header.
-
-    The desktop client renders from a file:// origin, so cross-origin cookies
-    to http://127.0.0.1 are unreliable (SameSite=Lax cookies aren't sent). It
-    therefore authenticates via this header instead; browsers keep using the
-    cookie set by /auth/login.
-    """
-    auth = web.ctx.env.get("HTTP_AUTHORIZATION", "") or ""
-    if auth.startswith("Bearer "):
-        return auth[7:].strip()
-    return ""
-
-
-def _get_query_token():
-    """Extract a token from the `token` query param.
-
-    Needed for SSE endpoints: EventSource can't set an Authorization header,
-    and file:// cookies are unreliable, so the desktop client passes the token
-    in the query string for /stream and /api/logs.
-    """
-    try:
-        return web.input(token="").token or ""
-    except Exception:
-        return ""
-
-
-def _check_auth():
-    """Return True if request is authenticated or password not enabled.
-
-    The database identity branch runs FIRST and independently of legacy auth: in
-    database mode only a valid revocable ``cow_session`` (cookie or Bearer) is
-    trusted. The shared HMAC token, an old shared password and a URL ``token``
-    query param NEVER grant a database identity — a legacy client must use the
-    database contract, not auto-degrade to shared-auth.
-    """
-    if _is_database_identity():
-        from channel.web.auth_handlers import _get_service, _session_token
-        try:
-            token = _session_token()
-            if token and _get_service().verify_session(token):
-                return True
-        except Exception:
-            return False
-        return False
-    if not _is_password_enabled():
-        return True
-    if _verify_auth_token(web.cookies().get("cow_auth_token", "")):
-        return True
-    if _verify_auth_token(_get_bearer_token()):
-        return True
-    if _verify_auth_token(_get_query_token()):
-        return True
-    return False
-
-
-def _require_auth():
-    """Raise 401 if not authenticated. Call at the top of protected handlers."""
-    if not _check_auth():
-        # Log which credential the caller offered (never the value). A rejected
-        # request is otherwise invisible in run.log, which makes client bugs —
-        # e.g. an endpoint that forgets the Authorization header — undiagnosable.
-        offered = []
-        if _is_database_identity():
-            from channel.web.auth_handlers import _select_credential
-            sel = _select_credential()
-            if sel.source:
-                offered.append(sel.source)
-        else:
-            if web.cookies().get("cow_auth_token", ""):
-                offered.append("cookie")
-            if _get_bearer_token():
-                offered.append("bearer")
-            if _get_query_token():
-                offered.append("query")
-        logger.warning(
-            "[WebChannel] 401 Unauthorized: %s %s (credentials offered: %s)",
-            web.ctx.env.get("REQUEST_METHOD", "?"),
-            web.ctx.env.get("PATH_INFO", "?"),
-            ", ".join(offered) or "none",
-        )
-        raise web.HTTPError("401 Unauthorized",
-                            {"Content-Type": "application/json; charset=utf-8"},
-                            json.dumps({"status": "error", "message": "Unauthorized"}))
-
-
 def _require_platform_console():
-    """Guard the platform-scoped config/model console.
-
-    In database identity mode these routes belong to the platform admin
-    control plane: resolve the per-request context and require
-    ``is_platform_admin``. In legacy identity mode the shared console password
-    still owns access (``_require_auth``).
-
-    The HTTP-method policy processor classifies these routes as ``platform``;
-    this call is what actually resolves the session and rejects a non-admin
-    (401 unauthorised, 400 missing tenant, 403 forbidden) — it is independent
-    of the frontend.
-
-    Returns the resolved platform context in database mode (``None`` in legacy
-    mode, where there is no identity to bind) so a caller that also needs the
-    actor for an audit event does not resolve it twice — the gate's context
-    cache makes the second read cheap, but it is still one read.
-    """
-    if _is_database_identity():
-        from channel.web.auth_handlers import _require_context
-        from channel.web.admin_handlers import _require_platform_admin
-        ctx = _require_context()
-        _require_platform_admin(ctx)
-        return ctx
-    _require_auth()
-    return None
+    """Guard the platform-scoped config/model console (platform admin only)."""
+    from channel.web.auth_handlers import _require_context
+    from channel.web.admin_handlers import _require_platform_admin
+    ctx = _require_context()
+    _require_platform_admin(ctx)
+    return ctx
 
 
 # Localized text for /cancel system replies. Web is the only channel that
@@ -416,29 +265,12 @@ def _get_upload_dir(agent_id: str = None) -> str:
 
 
 @contextmanager
-def _db_scope() -> Iterator["Optional[RequestContext]"]:
-    """Context manager yielding the database-mode request context (or None).
-
-    In database mode this resolves the session token + X-Tenant-ID into a
-    verified ``RequestContext`` and applies it to the ambient ``RuntimeIdentity``
-    (scoping state_dir / conversation stores to the request's user+tenant) for the
-    duration of the ``with`` block, restoring the previous identity on exit so a
-    pooled web.py thread never leaks one request's scope into the next.
-
-    Raises HTTP errors (401/400/403) for missing/invalid tenant selection or a
-    forced-password-change restriction.
-    """
-    if not _is_database_identity():
-        yield None
-        return
+def _db_scope() -> Iterator["RequestContext"]:
+    """Yield a verified database request context (never None)."""
     from auth.runtime import to_runtime_identity
     from channel.web.auth_handlers import _require_context
     from common.runtime_identity import use_identity
 
-    # Share the HTTP error mapping with the identity endpoints. A revoked
-    # membership or stale tenant must remain a JSON 401/403, not an uncaught
-    # IdentityContextError rendered as an HTML 500 page. Chat is tenant-scoped,
-    # so it requires an explicit, valid tenant selection.
     ctx = _require_context(require_tenant=True)
     if ctx.must_change_password:
         raise web.HTTPError(
@@ -782,16 +614,12 @@ def _web_runtime_identity_snapshot() -> dict:
         "agent_id": ident.agent_id,
         "session_id": ident.session_id,
         "web_auth_session_id": None,
-        "web_legacy_authenticated": False,
     }
-    if _is_database_identity():
-        from channel.web.auth_handlers import _get_service, _session_token
-        verified = _get_service().verify_session(_session_token())
-        if not verified or verified["user"]["id"] != ident.user_id or not ident.tenant_id:
-            raise PermissionError("Web 会话身份不可用")
-        snapshot["web_auth_session_id"] = verified["session"]["id"]
-    elif _is_password_enabled() and _check_auth():
-        snapshot["web_legacy_authenticated"] = True
+    from channel.web.auth_handlers import _get_service, _session_token
+    verified = _get_service().verify_session(_session_token())
+    if not verified or verified["user"]["id"] != ident.user_id or not ident.tenant_id:
+        raise PermissionError("Web 会话身份不可用")
+    snapshot["web_auth_session_id"] = verified["session"]["id"]
     return snapshot
 
 
@@ -1177,6 +1005,14 @@ def _decode_dir_token(token: str) -> str:
     return real
 
 
+def _platform_file_root() -> str:
+    """Platform-admin read-only browse root; defaults to data root."""
+    configured = (conf().get("platform_file_root") or "").strip()
+    if configured:
+        return os.path.realpath(os.path.expanduser(configured))
+    return os.path.realpath(get_data_root())
+
+
 def _serve_allowed_roots() -> list:
     """Roots that /api/file and /preview may read from (symlinks resolved).
 
@@ -1184,12 +1020,18 @@ def _serve_allowed_roots() -> list:
     directory a session has opened. Project dirs may live outside the serve
     root (e.g. ``/tmp/foo``), so previewing files in an opened project would
     otherwise be denied.
+
+    Database-only default is the platform file root (never ``~`` or ``/``).
     """
-    serve_root = conf().get("web_file_serve_root", "~") or "~"
-    roots = [
-        os.path.realpath(os.path.expanduser(serve_root)),
-        os.path.realpath(_get_workspace_root()),
-    ]
+    raw = conf().get("web_file_serve_root", None)
+    if raw is None or str(raw).strip() == "":
+        roots = [os.path.realpath(_platform_file_root())]
+    else:
+        roots = [os.path.realpath(os.path.expanduser(str(raw)))]
+    try:
+        roots.append(os.path.realpath(_get_workspace_root()))
+    except Exception:
+        pass
     try:
         from agent.workspace import project_store
         for rec in project_store.list_recents():
@@ -1200,9 +1042,23 @@ def _serve_allowed_roots() -> list:
 
 
 def _is_path_allowed(real_path: str) -> bool:
-    roots = _serve_allowed_roots()
-    if os.sep in roots:
-        return True
+    """True when ``real_path`` is under a database-safe browse root.
+
+    Never trusts operator home / unrestricted serve roots: even if
+    ``_serve_allowed_roots`` is widened (tests or misconfig), only the
+    platform file root, agent workspace, and opened project dirs qualify.
+    """
+    roots = [os.path.realpath(_platform_file_root())]
+    try:
+        roots.append(os.path.realpath(_get_workspace_root()))
+    except Exception:
+        pass
+    try:
+        from agent.workspace import project_store
+        for rec in project_store.list_recents():
+            roots.append(os.path.realpath(rec["path"]))
+    except Exception:
+        pass
     for root in roots:
         try:
             if os.path.commonpath([real_path, root]) == root:
@@ -2831,7 +2687,9 @@ class WebChannel(ChatChannel):
 
     def startup(self):
         configured_host = conf().get("web_host", "")
-        host = configured_host or ("0.0.0.0" if _is_password_enabled() else "127.0.0.1")
+        # Database identity is always required; default to loopback unless
+        # the operator explicitly publishes via web_host.
+        host = configured_host or "127.0.0.1"
         # The desktop app passes its chosen port via COW_WEB_PORT so its backend
         # never collides with a source-run web console (default 9899). This makes
         # the port a single source of truth owned by the Electron shell.
@@ -2886,10 +2744,9 @@ class WebChannel(ChatChannel):
             logger.info(f"[WebChannel] 🌐 Local access: http://localhost:{port}")
             if is_public_bind:
                 logger.info(f"[WebChannel] 🌍 Server access: http://YOUR_IP:{port} (replace YOUR_IP with your server IP)")
-                if not _is_password_enabled():
-                    logger.info("[WebChannel] ⚠️  Listening on 0.0.0.0 without web_password set; set an access password in config.json for public deployment")
+                logger.info("[WebChannel] 🔒 Database identity is required for all console access")
             else:
-                logger.info(f"[WebChannel] 🔒 Listening on {host} only (local access). For public access, set web_host to 0.0.0.0 and configure web_password")
+                logger.info(f"[WebChannel] 🔒 Listening on {host} only (local access). For public access, set web_host to 0.0.0.0 (database login still required)")
 
             # In desktop mode the Electron shell renders the UI, so don't pop a
             # browser window (also avoids issues when running detached/headless).
@@ -2977,8 +2834,7 @@ class RootHandler:
 
 class HealthHandler:
     # Unauthenticated liveness probe. The desktop shell polls this to know the
-    # backend is up; it must never require auth (a set web_password would
-    # otherwise make startup hang). Returns no sensitive data.
+    # backend is up; it must never require a session. Returns no sensitive data.
     def GET(self):
         web.header('Content-Type', 'application/json; charset=utf-8')
         web.header('Cache-Control', 'no-store')
@@ -3044,7 +2900,8 @@ class McpOAuthCallbackHandler:
 
 
 def _is_database_identity() -> bool:
-    return str(conf().get("identity_mode", "legacy") or "legacy") == "database"
+    """Database is the only identity mode."""
+    return True
 
 
 def _permission_mode_projection() -> dict:
@@ -3111,52 +2968,17 @@ def _guard_not_database() -> None:
 
 class AuthCheckHandler:
     def GET(self):
-        # In database identity mode, /auth/check delegates to the database
-        # session-aware handler (user-aware auth) instead of the shared-password
-        # boolean check. Legacy mode keeps its original behavior.
-        if _is_database_identity():
-            return DbAuthCheckHandler().GET()
-        web.header('Content-Type', 'application/json; charset=utf-8')
-        if not _is_password_enabled():
-            return json.dumps({"status": "success", "auth_required": False})
-        if _check_auth():
-            return json.dumps({"status": "success", "auth_required": True, "authenticated": True})
-        return json.dumps({"status": "success", "auth_required": True, "authenticated": False})
+        return DbAuthCheckHandler().GET()
 
 
 class AuthLoginHandler:
     def POST(self):
-        # Database identity mode uses per-account username/password login.
-        if _is_database_identity():
-            return DbAuthLoginHandler().POST()
-        web.header('Content-Type', 'application/json; charset=utf-8')
-        if not _is_password_enabled():
-            return json.dumps({"status": "success"})
-        try:
-            data = json.loads(web.data())
-        except Exception:
-            return json.dumps({"status": "error", "message": "Invalid request"})
-        password = str(data.get("password", "") or "")
-        expected = _get_web_password()
-        if not hmac.compare_digest(password, expected):
-            logger.warning("[WebChannel] Invalid login attempt")
-            return json.dumps({"status": "error", "message": "Wrong password"})
-        token = _create_auth_token()
-        web.setcookie("cow_auth_token", token, expires=_session_expire_seconds(),
-                       path="/", httponly=True, samesite="Lax")
-        # Also return the token in the body: the desktop client (file:// origin)
-        # can't rely on the cookie and sends it back via an Authorization header.
-        return json.dumps({"status": "success", "token": token})
+        return DbAuthLoginHandler().POST()
 
 
 class AuthLogoutHandler:
     def POST(self):
-        # Database identity mode revokes the database AuthSession.
-        if _is_database_identity():
-            return DbAuthLogoutHandler().POST()
-        web.header('Content-Type', 'application/json; charset=utf-8')
-        web.setcookie("cow_auth_token", "", expires=-1, path="/")
-        return json.dumps({"status": "success"})
+        return DbAuthLogoutHandler().POST()
 
 
 class MessageHandler:
@@ -3166,12 +2988,9 @@ class MessageHandler:
     # a logged-in DB user. The derived identity is snapshotted in post_message
     # for the worker thread.
     def POST(self):
-        _require_auth()
         web.header("Content-Type", "application/json; charset=utf-8")
         web.header("Cache-Control", "no-store")
         with _db_scope() as ctx:
-            if ctx is None:
-                return WebChannel().post_message()
             _require_chat_csrf()
             body = _chat_body()
             if not isinstance(body.get("message", ""), str):
@@ -3193,12 +3012,9 @@ class MessageHandler:
 
 class UploadHandler:
     def POST(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         web.header('Cache-Control', 'no-store')
         with _db_scope() as ctx:
-            if ctx is None:
-                return WebChannel().upload_file()
             # Database mode: an upload writes into a tenant-bound agent's upload
             # dir, so the target agent must be bound to the caller's tenant and
             # execution-authorized (attachments belong to the chat workflow).
@@ -3215,21 +3031,17 @@ class VoiceAsrHandler:
     """Receive a mic recording, persist it under uploads/ and run ASR.
     Returns {status, text, audio_url} so the UI can render a playback bubble."""
     def POST(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
 
         saved_path = None
         try:
             params = _raw_web_input()
             with _db_scope() as ctx:
-                if ctx is None:
-                    agent_id = _request_agent_id(params)
-                else:
-                    # Database mode: the mic recording lands in a tenant-bound
-                    # agent's upload dir; voice input is part of the chat flow.
-                    agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
-                    _require_private_owner(ctx, agent_id)
-                    _require_agent_action(ctx, agent_id, "use", "agent.use")
+                # Mic recording lands in a tenant-bound agent's upload dir;
+                # voice input is part of the chat flow.
+                agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
+                _require_private_owner(ctx, agent_id)
+                _require_agent_action(ctx, agent_id, "use", "agent.use")
                 file_obj = params.get("file")
                 if file_obj is None:
                     return json.dumps({"status": "error", "message": "no audio file"})
@@ -3282,7 +3094,6 @@ class VoiceTtsHandler:
     """On-demand TTS for the in-chat "read aloud" button. Returns the
     audio URL and (when session_id is given) persists it onto the message."""
     def POST(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             data = json.loads(web.data() or b"{}")
@@ -3335,19 +3146,14 @@ class VoiceTtsHandler:
 
 class UploadsHandler:
     def GET(self, file_name):
-        _require_auth()
         with _db_scope() as ctx:
             try:
                 params = web.input(agent_id='')
-                if ctx is None:
-                    upload_dir = _get_upload_dir(_request_agent_id(params))
-                else:
-                    # Database mode: the served upload must belong to a
-                    # tenant-bound agent the caller may read.
-                    agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
-                    _require_private_owner(ctx, agent_id)
-                    _require_agent_action(ctx, agent_id, "read", "agent.read")
-                    upload_dir = _get_upload_dir(agent_id)
+                # Served upload must belong to a tenant-bound agent the caller may read.
+                agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
+                _require_private_owner(ctx, agent_id)
+                _require_agent_action(ctx, agent_id, "read", "agent.read")
+                upload_dir = _get_upload_dir(agent_id)
                 full_path = os.path.normpath(os.path.join(upload_dir, file_name))
                 if not os.path.abspath(full_path).startswith(os.path.abspath(upload_dir)):
                     raise web.notfound()
@@ -3366,57 +3172,93 @@ class UploadsHandler:
 
 
 def _db_file_serve_roots(ctx) -> list:
-    """Roots a database-mode caller may serve files from.
-
-    Confined to the caller's tenant shared root and the workspaces of every
-    agent bound to that tenant. Never the operator's home / global serve root:
-    an operator-level ``web_file_serve_root`` is a legacy-mode concept and must
-    not widen a tenant's read surface.
-    """
+    """Roots a database-mode caller may serve files from."""
     from auth.service import get_identity_service
     svc = get_identity_service()
     roots = []
-    shared = svc.tenant_shared_root(ctx.tenant_id)
+    if getattr(ctx, "is_platform_admin", False):
+        roots.append(_platform_file_root())
+    shared = svc.tenant_shared_root(ctx.tenant_id) if getattr(ctx, "tenant_id", None) else None
     if shared:
         roots.append(os.path.realpath(shared))
     from agent.registry import get_agent_registry
     registry = get_agent_registry()
-    for agent_id in svc.tenant_agent_ids(ctx.tenant_id):
-        try:
-            profile = registry.get(agent_id)
-            roots.append(os.path.realpath(profile.workspace))
-        except (KeyError, ValueError):
-            continue
+    if getattr(ctx, "tenant_id", None):
+        for agent_id in svc.tenant_agent_ids(ctx.tenant_id):
+            try:
+                profile = registry.get(agent_id)
+                roots.append(os.path.realpath(profile.workspace))
+            except (KeyError, ValueError):
+                continue
     return roots
+
+
+def _authorize_db_file_path(ctx, real_path: str) -> tuple:
+    """Authorize ``real_path`` against database file roots.
+
+    Returns ``(allowed, via)`` where ``via`` is ``platform``, ``tenant``,
+    ``forbidden``, or ``not_found``. Missing tenant context raises 403.
+    Platform-root reads by a platform admin are audited as ``platform.file.read``.
+    """
+    if not getattr(ctx, "tenant_id", None):
+        raise web.HTTPError("403 Forbidden")
+
+    from auth.service import get_identity_service
+
+    svc = get_identity_service()
+    real_path = os.path.realpath(real_path)
+    platform_root = os.path.realpath(_platform_file_root())
+    try:
+        under_platform = os.path.commonpath([real_path, platform_root]) == platform_root
+    except ValueError:
+        under_platform = False
+
+    if under_platform:
+        if not getattr(ctx, "is_platform_admin", False):
+            return False, "forbidden"
+        try:
+            svc.record_audit(
+                action="platform.file.read",
+                target=real_path,
+                actor_user_id=getattr(ctx, "user_id", None),
+                actor_username=getattr(ctx, "username", None),
+                tenant_id=ctx.tenant_id,
+            )
+        except Exception as e:  # pragma: no cover - audit is best effort
+            logger.warning(f"[WebChannel] platform.file.read audit unavailable: {e}")
+        return True, "platform"
+
+    for root in _db_file_serve_roots(ctx):
+        root = os.path.realpath(root)
+        if root == platform_root:
+            continue
+        try:
+            if os.path.commonpath([real_path, root]) == root:
+                return True, "tenant"
+        except ValueError:
+            continue
+    return False, "not_found"
 
 
 class FileServeHandler:
     def GET(self):
-        _require_auth()
         with _db_scope() as ctx:
             try:
                 params = web.input(path="", agent_id="")
                 file_path = params.path
                 if not file_path or not os.path.isabs(file_path):
                     raise web.notfound()
-                # Resolve symlinks and confine access to the allowed root dirs,
-                # so this endpoint can't be abused to read arbitrary files (e.g. /etc/passwd, ~/.ssh).
-                # Defaults to the user home dir plus the agent workspace; set web_file_serve_root="/"
-                # to allow the whole filesystem.
+                # Resolve symlinks and confine access to tenant/platform roots;
+                # never fall back to operator home or the whole filesystem.
                 file_path = os.path.realpath(file_path)
-                if ctx is not None:
-                    # Database mode: restrict to the tenant's own roots and
-                    # require an agent.read grant on the named agent (if any).
-                    if params.agent_id:
-                        agent_id = _require_tenant_agent_binding(ctx, params.agent_id)
-                        _require_private_owner(ctx, agent_id)
-                        _require_agent_action(ctx, agent_id, "read", "agent.read")
-                    if not any(
-                        os.path.commonpath([file_path, root]) == root
-                        for root in _db_file_serve_roots(ctx)
-                    ):
-                        raise web.notfound()
-                elif not _is_path_allowed(file_path):
+                if params.agent_id:
+                    agent_id = _require_tenant_agent_binding(ctx, params.agent_id)
+                    _require_private_owner(ctx, agent_id)
+                    _require_agent_action(ctx, agent_id, "read", "agent.read")
+                allowed, via = _authorize_db_file_path(ctx, file_path)
+                if not allowed:
+                    if via == "forbidden":
+                        raise web.forbidden()
                     raise web.notfound()
                 if not os.path.isfile(file_path):
                     raise web.notfound()
@@ -3532,12 +3374,9 @@ class PreviewHandler:
 
 class PollHandler:
     def POST(self):
-        _require_auth()
         web.header("Content-Type", "application/json; charset=utf-8")
         web.header("Cache-Control", "no-store")
         with _db_scope() as ctx:
-            if ctx is None:
-                return WebChannel().poll_response()
             _require_chat_csrf()
             body = _chat_body()
             session_id = body.get("session_id")
@@ -3548,12 +3387,9 @@ class PollHandler:
 
 class CancelHandler:
     def POST(self):
-        _require_auth()
         web.header("Content-Type", "application/json; charset=utf-8")
         web.header("Cache-Control", "no-store")
         with _db_scope() as ctx:
-            if ctx is None:
-                return WebChannel().cancel_request()
             _require_chat_csrf()
             body, channel = _chat_body(), WebChannel()
             request_id = body.get("request_id")
@@ -3573,7 +3409,6 @@ class StreamHandler:
     def GET(self):
         # Native EventSource authenticates by cookie; its recorded request
         # supplies the tenant for fresh membership and personal-owner checks.
-        _require_auth()
         params = web.input(request_id='', after_seq='')
         request_id = params.request_id
         if not request_id:
@@ -3801,7 +3636,7 @@ class ConfigHandler:
         "ark_api_key", "minimax_api_key", "linkai_api_key", "custom_api_key", "mimo_api_key",
         "custom_providers",
         "agent_max_context_tokens", "agent_max_context_turns", "agent_max_steps",
-        "enable_thinking", "reasoning_effort", "reasoning_effort_by_model", "self_evolution_enabled", "web_password",
+        "enable_thinking", "reasoning_effort", "reasoning_effort_by_model", "self_evolution_enabled",
         "agent_permission_mode",
     }
 
@@ -3889,9 +3724,6 @@ class ConfigHandler:
             except Exception as cp_err:
                 logger.warning(f"[ConfigHandler] failed to expand custom providers: {cp_err}")
 
-            raw_pwd = str(local_config.get("web_password", "") or "")
-            masked_pwd = ("*" * len(raw_pwd)) if raw_pwd else ""
-
             result = {
                 "status": "success",
                 "use_agent": use_agent,
@@ -3916,13 +3748,7 @@ class ConfigHandler:
                 "api_bases": api_bases,
                 "api_keys": api_keys_masked,
                 "providers": providers,
-                "web_password_masked": masked_pwd,
             }
-            # The desktop app runs on the local trusted machine, so it can edit
-            # the real password in place (cursor at the end, delete to clear).
-            # Browser access only ever sees the masked value.
-            if os.environ.get("COW_DESKTOP") == "1":
-                result["web_password"] = raw_pwd
             return json.dumps(result, ensure_ascii=False)
         except Exception as e:
             logger.error(f"Error getting config: {e}")
@@ -3983,8 +3809,6 @@ class ConfigHandler:
 
             config_path = os.path.join(get_data_root(), "config.json")
             file_cfg = _read_config_file_for_write()
-            # Capture old password before updating
-            old_password = file_cfg.get("web_password", "") if "web_password" in applied else ""
             file_cfg.update(applied)
             # Merged rather than assigned: the UI sends the one switch it owns,
             # and the rest of the section is the user's to keep.
@@ -4008,26 +3832,6 @@ class ConfigHandler:
                 except Exception as lang_err:
                     logger.warning(f"[WebChannel] Failed to apply language: {lang_err}")
 
-            # Check if password was cleared: if there was a password before clearing,
-            # the service is likely bound to 0.0.0.0 (public), so warn the user.
-            password_warning = None
-            if "web_password" in applied:
-                new_password = applied["web_password"]
-                configured_host = file_cfg.get("web_host", "")
-                
-                # If password was cleared and there was a password before
-                if not new_password and old_password:
-                    # If web_host is not explicitly set, the service auto-binds based on password
-                    # With password → 0.0.0.0 (public), without password → 127.0.0.1 (local)
-                    # So clearing password when it was previously set means going from public to local
-                    if not configured_host or configured_host == "0.0.0.0":
-                        password_warning = "password_cleared_with_public_host"
-                        logger.warning(
-                            "[WebChannel] Password cleared while service is likely bound to 0.0.0.0. "
-                            "Consider restarting the service to rebind to 127.0.0.1 "
-                            "or explicitly set web_host in config to prevent unauthorized access."
-                        )
-
             # Reset Bridge so that bot routing reflects the new config.
             # Without this, Bridge keeps its cached bot instance (e.g. LinkAIBot)
             # even after the user switches bot_type / use_linkai / model in UI.
@@ -4040,7 +3844,7 @@ class ConfigHandler:
                 except Exception as reset_err:
                     logger.warning(f"[WebChannel] Failed to reset bridge: {reset_err}")
 
-            return json.dumps({"status": "success", "applied": applied, "warning": password_warning}, ensure_ascii=False)
+            return json.dumps({"status": "success", "applied": applied}, ensure_ascii=False)
         except Exception as e:
             logger.error(f"Error updating config: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -4073,38 +3877,6 @@ def _project_brand_name() -> str:
     except Exception:
         pass
     return "容大AI"
-
-
-#: Sentinel readonly_reason returned by ``_branding_write_allowed`` when the
-#: decision depends on the per-request identity context (database mode). The
-#: caller must then run ``_branding_require_platform_admin()`` to resolve the
-#: context and produce the real 401/403/allow verdict.
-_BRANDING_DATABASE_GATE = "branding_platform_admin_required"
-
-
-def _branding_write_allowed() -> Tuple[bool, str]:
-    """Return ``(allowed, readonly_reason)`` for a brand write.
-
-    A write is allowed only when:
-      - legacy mode: a Web access password is configured AND the caller is
-        authenticated, OR
-      - database mode: the resolved request context is a platform admin (the
-        per-request context gate is run by the caller --- see
-        ``_branding_require_platform_admin``).
-    The no-password (read-only) mode must NEVER open a write path, and unknown
-    identity modes fail closed until platform auth + audit land. Rejecting
-    here is a server-side check, independent of any client-side greying out.
-    """
-    mode = conf().get("identity_mode", "legacy") or "legacy"
-    if mode == "database":
-        # Static gate cannot decide; caller must run the context gate via
-        # _branding_require_platform_admin(). Fail closed as a defensive default.
-        return False, _BRANDING_DATABASE_GATE
-    if mode != "legacy":
-        return False, "branding_enterprise_unavailable"
-    if not _is_password_enabled():
-        return False, "web_console_password_required"
-    return True, ""
 
 
 def _branding_require_platform_admin() -> "RequestContext":
@@ -4144,59 +3916,10 @@ def _branding_origin_ok() -> bool:
         return False
 
 
-def _branding_auth_token() -> str:
-    """Brand management accepts header/cookie credentials, never URL tokens."""
-    token = _get_bearer_token() or web.cookies().get("cow_auth_token", "")
-    if not _is_password_enabled() or not _verify_auth_token(token):
-        raise BrandingError("unauthorized", "请重新登录", 401)
-    return token
+def _branding_require_write():
+    """Brand writes require a platform admin (database identity only)."""
+    return _branding_require_platform_admin()
 
-
-def _branding_csrf_token(token: str) -> str:
-    return hmac.new(_get_web_password().encode(),
-                    ("branding-csrf:v1:" + token).encode(), hashlib.sha256).hexdigest()
-
-
-def _branding_csrf_ok() -> bool:
-    """Return True if a cookie-authenticated write passes the CSRF gate.
-
-    Bearer-authenticated requests (desktop client) are not cookie-bound and
-    therefore not subject to the cookie-CSRF check. A same-origin cookie request
-    is accepted only when the Origin/Referer matches.
-    """
-    if _verify_auth_token(_get_bearer_token()):
-        return True
-    token = web.cookies().get("cow_auth_token", "")
-    supplied = web.ctx.env.get("HTTP_X_BRANDING_CSRF", "")
-    return (bool(supplied) and _verify_auth_token(token) and _branding_origin_ok()
-            and hmac.compare_digest(supplied, _branding_csrf_token(token)))
-
-
-def _branding_require_write() -> "Optional[RequestContext]":
-    """Authorize a brand write and return the acting context (or ``None``).
-
-    Returns the resolved platform-admin ``RequestContext`` in database mode and
-    ``None`` in legacy mode (whose console path has no identity context). The
-    caller uses the returned context to attribute the audit event.
-
-    Raises ``BrandingError`` (403) for the read-only / unknown-mode cases and
-    the 401/403 raised by ``_require_context`` / ``_require_platform_admin`` for
-    a missing session or a non-admin.
-    """
-    mode = conf().get("identity_mode", "legacy") or "legacy"
-    if mode == "database":
-        # DB-mode writes are authorized by the admin API credential rules
-        # (bearer / same-origin cookie). No legacy brand CSRF token here.
-        return _branding_require_platform_admin()
-    allowed, reason = _branding_write_allowed()
-    if not allowed:
-        message = ("企业品牌授权与审计尚未接入，暂不可修改" if reason == "branding_enterprise_unavailable"
-                   else "请先设置访问密码后再编辑品牌")
-        raise BrandingError(reason, message, 403)
-    _branding_auth_token()
-    if not _branding_csrf_ok():
-        raise BrandingError("csrf_failed", "请求校验失败，请重新读取品牌设置后重试", 403)
-    return None
 
 
 def _branding_record_audit(ctx, action: str, record: dict, *, reset: bool = False) -> None:
@@ -4231,19 +3954,8 @@ def _branding_record_audit(ctx, action: str, record: dict, *, reset: bool = Fals
 
 
 def _branding_management_payload(service, record=None, ctx=None):
-    mode = conf().get("identity_mode", "legacy") or "legacy"
-    # Database mode: the caller has already resolved+authorized the context, so
-    # the brand is manageable. Legacy mode still uses the password/CSRF flow.
-    if mode == "database":
-        allowed, reason = (ctx is not None), ""
-    else:
-        allowed, reason = _branding_write_allowed()
-    payload = service.management_payload(allowed, reason, record=record)
-    # Only legacy writes carry the password-derived brand CSRF token; in database
-    # mode writes are authorized by the admin API bearer/origin rules (so no
-    # csrf_token is issued, matching the rest of the admin API).
-    if mode != "database" and (payload.get("can_manage") or payload.get("can_reset")):
-        payload["csrf_token"] = _branding_csrf_token(_branding_auth_token())
+    allowed = ctx is not None
+    payload = service.management_payload(allowed, "", record=record)
     payload["status"] = "success"
     return payload
 
@@ -4290,11 +4002,7 @@ class BrandingManageHandler:
         web.header('Content-Type', 'application/json; charset=utf-8')
         web.header('Cache-Control', 'no-store')
         try:
-            ctx = None
-            if _is_database_identity():
-                ctx = _branding_require_platform_admin()
-            elif _is_password_enabled():
-                _branding_auth_token()
+            ctx = _branding_require_platform_admin()
             payload = _branding_management_payload(_branding_service(), ctx=ctx)
         except web.HTTPError:
             raise
@@ -7119,7 +6827,6 @@ class WeixinQrHandler:
         return None
 
     def GET(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             running_ch = self._get_running_channel()
@@ -7152,7 +6859,6 @@ class WeixinQrHandler:
             return json.dumps({"status": "error", "message": str(e)})
 
     def POST(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             body = json.loads(web.data())
@@ -7492,7 +7198,6 @@ class FeishuRegisterHandler:
 
     def GET(self):
         """为当前发起者启动一次注册会话，返回句柄与二维码。"""
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             owner_user_id, owner_tenant_id = _register_owner_scope()
@@ -7547,7 +7252,6 @@ class FeishuRegisterHandler:
 
     def POST(self):
         """轮询当前发起者自己的注册会话。"""
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             body = json.loads(web.data() or b"{}")
@@ -7586,7 +7290,6 @@ def _request_agent_id(source) -> str:
 
 class ToolsHandler:
     def GET(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from agent.tools.tool_manager import ToolManager
@@ -7698,7 +7401,6 @@ def _filter_tool_catalog(ctx: "Optional[RequestContext]", tools: List[dict], act
 
 class SkillsHandler:
     def GET(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from common import i18n
@@ -7725,7 +7427,6 @@ class SkillsHandler:
             return json.dumps({"status": "error", "message": str(e)})
 
     def POST(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             with _db_scope() as ctx:
@@ -7772,7 +7473,6 @@ class SkillContentHandler:
     """
 
     def GET(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             with _db_scope() as ctx:
@@ -7801,7 +7501,6 @@ class SkillContentHandler:
             return json.dumps({"status": "error", "message": str(e)})
 
     def POST(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from agent.workspace.service import WorkspaceConflictError
@@ -7845,7 +7544,6 @@ class SkillContentHandler:
 
 class MemoryHandler:
     def GET(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from agent.memory.service import MemoryService
@@ -7870,7 +7568,6 @@ class MemoryHandler:
 
 class MemoryContentHandler:
     def GET(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from agent.memory.service import MemoryService
@@ -7896,7 +7593,6 @@ class MemoryContentHandler:
 
 class SchedulerHandler:
     def GET(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from agent.tools.scheduler.task_store import TaskStore
@@ -7936,7 +7632,6 @@ class SchedulerHandler:
 
 class SchedulerRunHandler:
     def POST(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             body = json.loads(web.data())
@@ -7965,7 +7660,6 @@ class SchedulerRunHandler:
 
 class SchedulerToggleHandler:
     def POST(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             body = json.loads(web.data())
@@ -7987,7 +7681,6 @@ class SchedulerToggleHandler:
 
 class SchedulerUpdateHandler:
     def POST(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             body = json.loads(web.data())
@@ -8101,7 +7794,6 @@ class SchedulerUpdateHandler:
 
 class SchedulerDeleteHandler:
     def POST(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             body = json.loads(web.data())
@@ -8135,7 +7827,9 @@ def _workbench_agents_projection() -> Dict:
 
     The default Agent is computed from the snapshot and, if it is visible, is
     flagged. Read scope follows the current identity mode: in the legacy
-    deployment this keeps ``_require_auth()`` (already asserted by the caller);
+    # Database identity is always required; callers go through _db_scope /
+    # route policy rather than a shared-password helper.
+
     if the identity change lands, this must be gated by the real ``agent.read``
     permission and resource range. State is not mutated here: listing never
     changes the active Agent or any session.
@@ -8273,7 +7967,7 @@ def _tenant_agents_projection(ctx: "Optional[RequestContext]") -> Dict:
     is only marked default for the tenant that actually selected it.
     """
     if ctx is None:
-        return _workbench_agents_projection()
+        return {"agents": []}
     agents = []
     for profile, tenant_default, can_chat, unavailable_reason in _iter_tenant_agents(ctx):
         agents.append({
@@ -8343,7 +8037,7 @@ def _workbench_chat_readiness(ctx: "Optional[RequestContext]",
     — never the historical ``runtime_not_enabled`` version-closure message.
     """
     if ctx is None:
-        return True, None
+        return False, "unauthorized"
     # agent.use: platform admin passes via ``check_resource_action``, and a
     # tenant admin passes for an Agent its own tenant owns — the same rule the
     # send path enforces, so the card never promises a chat the send would deny.
@@ -8374,7 +8068,7 @@ def _audit_instance_roster_write(ctx, channel_type: str, result) -> None:
 
     Best effort on purpose: the roster write has already happened and is live,
     so a broken audit sink must not turn a successful bind into a 500 that
-    invites the operator to retry (and blind-rebind). Legacy mode has no
+    invites the operator to retry (and blind-rebind).
     identity database to write to (``ctx`` is ``None``) and is skipped.
     """
     if ctx is None:
@@ -8530,7 +8224,6 @@ def _reload_agent_runtime(service, changed_agent_ids=None) -> None:
 
 class AgentsHandler:
     def GET(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             # The workbench (use-Agents) page asks for a minimal read-only
@@ -8564,7 +8257,6 @@ class AgentsHandler:
             return json.dumps({"status": "error", "message": str(e)})
 
     def POST(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             with _db_scope() as ctx:
@@ -8656,10 +8348,10 @@ class AgentsHandler:
                     # tenant-agent edit: a tenant-scoped ``agent.edit`` over its
                     # own Agent must not be able to rewrite it. The tenant's own
                     # channels live in the identity database and are managed
-                    # through /api/tenant/channels. Legacy mode keeps the shared
-                    # console password (no tenant dimension exists to contain).
+                    # through /api/tenant/channels. Platform console owns the
+                    # shared team.json roster binding.
                     platform_ctx = _require_platform_console()
-                    _require_agent_action(platform_ctx or ctx, agent_id, "edit", "agent.edit")
+                    _require_agent_action(platform_ctx, agent_id, "edit", "agent.edit")
                     # members: list => set team; omitted/None => leave team untouched
                     raw_members = body.get("members", None)
                     members = raw_members if isinstance(raw_members, list) else None
@@ -8717,7 +8409,6 @@ class AgentsHandler:
 
 class AgentCoreFileHandler:
     def GET(self, agent_id: str, filename: str):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             with _db_scope() as ctx:
@@ -8734,7 +8425,6 @@ class AgentCoreFileHandler:
             return json.dumps({"status": "error", "message": str(e)})
 
     def PUT(self, agent_id: str, filename: str):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             body = json.loads(web.data())
@@ -8793,7 +8483,6 @@ def _avatar_path(agent_id: str) -> Optional[str]:
 
 class AgentAvatarHandler:
     def GET(self, agent_id: str):
-        _require_auth()
         with _db_scope() as ctx:
             resolved = _require_tenant_agent_binding(ctx, agent_id)
             # Seeing an avatar is a read of the Agent, not a change to it, so a
@@ -8813,7 +8502,6 @@ class AgentAvatarHandler:
         return data
 
     def POST(self, agent_id: str):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from common.state_dir import shared_root
@@ -9164,7 +8852,6 @@ def _list_sessions_across_agents(page: int, page_size: int,
 
 class SessionsHandler:
     def GET(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             with _db_scope() as ctx:
@@ -9224,7 +8911,6 @@ class SessionsHandler:
 
 class SessionDetailHandler:
     def DELETE(self, session_id: str):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         logger.info(f"[WebChannel] DELETE session request: {session_id}")
         try:
@@ -9294,7 +8980,6 @@ class SessionDetailHandler:
 
     def PUT(self, session_id: str):
         """Update a session's title and/or its pinned flag."""
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             if not session_id:
@@ -9581,7 +9266,6 @@ class SessionSettingsHandler:
     """
 
     def GET(self, session_id: str):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             if not session_id:
@@ -9605,7 +9289,6 @@ class SessionSettingsHandler:
         setting again. ``model`` and ``provider`` move together: a model without
         its provider would be routed by the global bot type.
         """
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             if not session_id:
@@ -9688,7 +9371,6 @@ class SessionSettingsHandler:
 
 class SessionTitleHandler:
     def POST(self, session_id: str):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             if not session_id:
@@ -9724,7 +9406,6 @@ class PromptOptimizeHandler:
     """Optimize a colloquial user prompt into a structured AI-ready instruction."""
 
     def POST(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             body = json.loads(web.data() or b"{}")
@@ -9748,7 +9429,6 @@ class PromptOptimizeHandler:
 
 class SessionClearContextHandler:
     def POST(self, session_id: str):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             if not session_id:
@@ -9785,7 +9465,6 @@ class SessionClearContextHandler:
 
 class HistoryHandler:
     def GET(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         web.header('Access-Control-Allow-Origin', '*')
         try:
@@ -9828,7 +9507,6 @@ class HistoryHandler:
 
 class MessageDeleteHandler:
     def POST(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         web.header('Access-Control-Allow-Origin', '*')
         try:
@@ -10069,7 +9747,6 @@ def _decorate_entry(svc, entry: dict) -> dict:
 
 class WorkspaceTreeHandler:
     def GET(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             params = web.input(path='', show_hidden='', session='', agent='')
@@ -10086,7 +9763,6 @@ class WorkspaceTreeHandler:
 
 class WorkspaceSearchHandler:
     def GET(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             params = web.input(q='', limit='30', session='', agent='')
@@ -10112,7 +9788,6 @@ class WorkspaceResolveHandler:
     """
 
     def GET(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from agent.protocol.artifact import classify_kind, is_previewable
@@ -10165,7 +9840,6 @@ class WorkspaceResolveHandler:
 
 class WorkspaceMetaHandler:
     def GET(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             params = web.input(session='', agent='')
@@ -10234,7 +9908,6 @@ class WorkspaceReadHandler:
     """
 
     def GET(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             params = web.input(path='', session='', agent='')
@@ -10265,7 +9938,6 @@ class WorkspaceWriteHandler:
     """
 
     def POST(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from agent.workspace.service import WorkspaceConflictError
@@ -10337,7 +10009,6 @@ class ProjectsHandler:
     """List the project picker state for a session (current + recents)."""
 
     def GET(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         with _db_scope() as ctx:
             try:
@@ -10355,7 +10026,6 @@ class ProjectSelectHandler:
     """Bind a session to a project directory, or clear it (project_dir=null)."""
 
     def POST(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         with _db_scope() as ctx:
             try:
@@ -10395,7 +10065,6 @@ class ProjectCreateHandler:
     """Create a new project folder under the projects root and select it."""
 
     def POST(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         with _db_scope() as ctx:
             try:
@@ -10434,7 +10103,6 @@ class ProjectOrderHandler:
     """Persist the user's chosen sidebar order of project spaces."""
 
     def POST(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         with _db_scope() as ctx:
             try:
@@ -10461,7 +10129,6 @@ class ProjectManageHandler:
     """
 
     def PUT(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         with _db_scope() as ctx:
             try:
@@ -10479,7 +10146,6 @@ class ProjectManageHandler:
                 return json.dumps({"status": "error", "message": str(e)})
 
     def DELETE(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         with _db_scope() as ctx:
             try:
@@ -10513,7 +10179,6 @@ class ProjectBrowseHandler:
 
     def GET(self):
         _guard_not_database()
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from common.utils import expand_path
@@ -10584,7 +10249,6 @@ class ProjectBrowseHandler:
 
 class KnowledgeListHandler:
     def GET(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from agent.knowledge.service import KnowledgeService
@@ -10605,7 +10269,6 @@ class KnowledgeListHandler:
 
 class KnowledgeReadHandler:
     def GET(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from pathlib import Path
@@ -10634,7 +10297,6 @@ class KnowledgeReadHandler:
 
 class KnowledgeGraphHandler:
     def GET(self):
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from agent.knowledge.service import KnowledgeService
@@ -10651,7 +10313,6 @@ class KnowledgeGraphHandler:
 class KnowledgeActionHandler:
     def POST(self):
         _guard_not_database()
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             body = json.loads(web.data() or b"{}")
@@ -10673,7 +10334,6 @@ class KnowledgeActionHandler:
 class KnowledgeImportHandler:
     def POST(self):
         _guard_not_database()
-        _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from agent.knowledge.service import KnowledgeService

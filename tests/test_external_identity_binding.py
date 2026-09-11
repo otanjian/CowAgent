@@ -150,9 +150,7 @@ class ExternalIdentityRouteTests(unittest.TestCase):
         def _fake_service():
             return self.svc
 
-        with patch.object(auth_handlers, "_is_database", lambda: True), \
-                patch.object(auth_handlers, "_get_service", _fake_service), \
-                patch.object(admin_handlers, "_is_database", lambda: True), \
+        with patch.object(auth_handlers, "_get_service", _fake_service), \
                 patch.object(admin_handlers, "_get_service", _fake_service):
             return app.request(path, **kwargs)
 

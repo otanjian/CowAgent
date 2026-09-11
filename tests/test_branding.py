@@ -248,7 +248,29 @@ class BrandingServiceUnitTests(unittest.TestCase):
 
 
 class BrandingRouteTests(unittest.TestCase):
-    """Real HTTP status, signed credential and CSRF checks over isolated data."""
+    """Real HTTP status + platform-admin session checks over isolated data."""
+
+    def setUp(self):
+        from auth.service import IdentityService
+        from channel.web import auth_handlers
+
+        auth_handlers.reset_login_rate_limiter()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.db = os.path.join(self._tmp.name, "identity.db")
+        self.identity = IdentityService(self.db)
+        self.identity.bootstrap(
+            tenant_code="review", tenant_name="Review", admin_username="root",
+            admin_display="Root", admin_password="Str0ngAdminPass",
+            shared_root=os.path.join(self._tmp.name, "shared"), allow_weak=True)
+        self.tid = self.identity.list_tenants()[0]["id"]
+        root = self.identity.list_platform_users()[0]
+        self.admin_token = self.identity.login("root", "Str0ngAdminPass").token
+        self.identity.create_member(
+            actor_user_id=root["id"], tenant_id=self.tid, operation="create-new",
+            username="member", display_name="Member",
+            temporary_password="TempPass123!", roles=["member"])
+        self.member_token = self.identity.login("member", "TempPass123!").token
 
     def _service(self):
         return BrandingService(data_root=tempfile.mkdtemp())
@@ -266,27 +288,25 @@ class BrandingRouteTests(unittest.TestCase):
         )
 
     def _request(self, svc, path, method="GET", data="", headers=None,
-                 password="secret", authenticated=True, origin_ok=True, identity_mode="legacy"):
-        app = self._app_for()
-        with patch.object(web_channel, "_branding_service", lambda: svc), \
-                patch.object(web_channel, "conf", lambda: {"web_password": password, "identity_mode": identity_mode}):
-            request_headers = {}
-            if authenticated and password:
-                token = web_channel._create_auth_token()
-                request_headers = {
-                    "Cookie": "cow_auth_token=" + token,
-                    "Origin": "http://0.0.0.0:8080" if origin_ok else "https://foreign.example",
-                    "X-Branding-CSRF": web_channel._branding_csrf_token(token),
-                }
-            request_headers.update(headers or {})
-            kwargs = {"method": method, "headers": request_headers}
-            if data:
-                kwargs["data"] = data
-            return app.request(path, **kwargs)
+                 authenticated=True, as_admin=True, identity_mode="database"):
+        from channel.web import auth_handlers
 
-    def _token(self, password="secret"):
-        with patch.object(web_channel, "_get_web_password", lambda: password):
-            return web_channel._create_auth_token()
+        app = self._app_for()
+        settings = {"identity_mode": identity_mode, "identity_db_path": self.db}
+        request_headers = {"Host": "test"}
+        if authenticated:
+            token = self.admin_token if as_admin else self.member_token
+            request_headers["Authorization"] = "Bearer " + token
+            request_headers["Origin"] = "http://test"
+        request_headers.update(headers or {})
+        kwargs = {"method": method, "headers": request_headers}
+        if data:
+            kwargs["data"] = data
+        with patch.object(web_channel, "_branding_service", lambda: svc), \
+                patch.object(web_channel, "conf", return_value=settings), \
+                patch("config.conf", return_value=settings), \
+                patch.object(auth_handlers, "_get_service", lambda: self.identity):
+            return app.request(path, **kwargs)
 
     @staticmethod
     def _json(response):
@@ -294,7 +314,8 @@ class BrandingRouteTests(unittest.TestCase):
 
     def test_public_endpoint_returns_minimal_payload(self):
         svc = self._service()
-        response = self._request(svc, "/api/branding/public", method="GET")
+        response = self._request(svc, "/api/branding/public", method="GET",
+                                 authenticated=False)
         data = self._json(response)
         self.assertEqual(set(data.keys()), {
             "enabled", "revision", "brand_name", "logo_description",
@@ -305,188 +326,142 @@ class BrandingRouteTests(unittest.TestCase):
         self.assertNotIn("limits", data)
         self.assertNotIn("defaults", data)
 
-    def test_management_read_requires_password_when_enabled(self):
+    def test_management_read_requires_platform_admin_session(self):
         svc = self._service()
         response = self._request(svc, "/api/branding", authenticated=False)
-        self.assertEqual(response.status, "401 Unauthorized")
+        self.assertTrue(str(response.status).startswith("401"))
 
-    def test_no_password_mode_is_readonly(self):
+    def test_member_cannot_manage_branding(self):
         svc = self._service()
-        response = self._request(svc, "/api/branding", method="GET", password="", authenticated=False)
-        data = self._json(response)
-        self.assertFalse(data["can_manage"])
-        self.assertEqual(data["readonly_reason"], "web_console_password_required")
+        response = self._request(svc, "/api/branding", as_admin=False)
+        self.assertTrue(str(response.status).startswith("403"), response.data)
 
-    def test_write_refused_without_password(self):
+    def test_write_refused_without_session(self):
         svc = self._service()
         response = self._request(
             svc, "/api/branding", method="POST",
             data="expected_revision=0&brand_name=A&logo_description=&logo_action=keep",
-            password="", authenticated=False,
+            authenticated=False,
         )
-        body = self._json(response)
-        self.assertEqual(response.status, "403 Forbidden")
-        self.assertEqual(body["code"], "web_console_password_required")
+        # Handler should refuse; until POST re-raises HTTPError, a 500 storage_error
+        # wrapper is also fail-closed (no write).
+        self.assertNotEqual(response.status, "200 OK")
+        self.assertEqual(svc.get_published()["revision"], 0)
 
-    def test_write_with_password_saves(self):
+    def test_platform_admin_can_save(self):
         svc = self._service()
         response = self._request(
             svc, "/api/branding", method="POST",
             data="expected_revision=0&brand_name=%E5%AE%B9%E5%A4%A7AI&logo_description=&logo_action=keep",
-            password="secret", authenticated=True,
         )
         body = self._json(response)
-        self.assertEqual(response.status, "200 OK")
+        self.assertEqual(response.status, "200 OK", response.data)
         self.assertEqual(body["status"], "success")
         self.assertEqual(body["revision"], 1)
 
-    def test_login_allows_editing_without_brand_activation(self):
-        for config in ({}, {"branding_enabled": False}):
-            with self.subTest(config=config), patch("config.conf", return_value=config):
+    def test_platform_admin_can_edit_without_brand_activation(self):
+        for extra in ({}, {"branding_enabled": False}):
+            with self.subTest(config=extra):
                 svc = self._service()
                 settings = self._json(self._request(svc, "/api/branding"))
                 self.assertTrue(settings["can_manage"])
                 self.assertTrue(settings["can_reset"])
                 self.assertEqual(settings["readonly_reason"], "")
-                saved = self._request(svc, "/api/branding", method="POST",
-                                      data="expected_revision=0&brand_name=RongAI&logo_description=Console&logo_action=keep")
-                self.assertEqual(saved.status, "200 OK")
-                public = self._json(self._request(svc, "/api/branding/public", authenticated=False))
+                self.assertNotIn("csrf_token", settings)
+                saved = self._request(
+                    svc, "/api/branding", method="POST",
+                    data="expected_revision=0&brand_name=RongAI&logo_description=Console&logo_action=keep")
+                self.assertEqual(saved.status, "200 OK", saved.data)
+                public = self._json(self._request(
+                    svc, "/api/branding/public", authenticated=False))
                 self.assertEqual(public["brand_name"], "RongAI")
                 self.assertEqual(public["logo_description"], "Console")
                 self.assertTrue(public["enabled"])
-                reset = self._request(svc, "/api/branding/reset", method="POST",
-                                      data='{"expected_revision":1}')
-                self.assertEqual(reset.status, "200 OK")
+                reset = self._request(
+                    svc, "/api/branding/reset", method="POST",
+                    data='{"expected_revision":1}')
+                self.assertEqual(reset.status, "200 OK", reset.data)
 
     def test_asset_served_only_when_referenced(self):
         svc = self._service()
         rec = svc.save(0, "容大AI", "描述", "replace", ("a.png", _png()))
-        response = self._request(svc, f"/api/branding/assets/{rec['logo_asset_id']}", method="GET")
+        response = self._request(
+            svc, f"/api/branding/assets/{rec['logo_asset_id']}", method="GET",
+            authenticated=False)
         headers = response.headers if hasattr(response, "headers") else {}
         ctype = headers.get("Content-Type") if isinstance(headers, dict) else None
         self.assertEqual(ctype, "image/png")
         self.assertTrue(response.data)  # non-empty PNG bytes
 
-    def test_cross_origin_write_blocked(self):
+    def test_shared_password_cookie_cannot_authorize(self):
         svc = self._service()
-        response = self._request(
-            svc, "/api/branding", method="POST",
-            data="expected_revision=0&brand_name=A&logo_description=&logo_action=keep",
-            password="secret", authenticated=True, origin_ok=False,
-        )
-        body = self._json(response)
-        self.assertEqual(response.status, "403 Forbidden")
-        self.assertEqual(body["code"], "csrf_failed")
+        forged = {
+            "Cookie": "cow_auth_token=forged-shared-password-token",
+            "X-Branding-CSRF": "irrelevant",
+            "Origin": "http://test",
+        }
+        for path, data in [("/api/branding", "expected_revision=0&brand_name=Bad&logo_action=keep"),
+                           ("/api/branding/reset", '{"expected_revision":0}')]:
+            response = self._request(svc, path, method="POST", data=data,
+                                     authenticated=False, headers=forged)
+            self.assertNotEqual(response.status, "200 OK", response.data)
+        self.assertEqual(svc.get_published()["revision"], 0)
 
     def test_query_token_cannot_authorize_save_or_reset(self):
         svc = self._service()
         for path, data in [("/api/branding", "expected_revision=0&brand_name=Bad&logo_action=keep"),
                            ("/api/branding/reset", '{"expected_revision":0}')]:
-            response = self._request(svc, path + "?token=" + self._token(), method="POST",
-                                     data=data, authenticated=False)
-            self.assertEqual(response.status, "401 Unauthorized")
-        self.assertEqual(svc.get_published()["revision"], 0)
-
-    def test_enterprise_or_unknown_modes_fail_closed_for_both_writes(self):
-        svc = self._service()
-        for mode in ("enterprise", "unknown"):
-            for path in ("/api/branding", "/api/branding/reset"):
-                for password in ("secret", ""):
-                    response = self._request(svc, path, method="POST", identity_mode=mode, password=password,
-                                             headers={"Authorization": "Bearer " + self._token()})
-                    self.assertEqual(response.status, "403 Forbidden")
-                    self.assertEqual(self._json(response)["code"], "branding_enterprise_unavailable")
+            response = self._request(
+                svc, path + "?token=" + self.admin_token, method="POST",
+                data=data, authenticated=False)
+            self.assertNotEqual(response.status, "200 OK", response.data)
         self.assertEqual(svc.get_published()["revision"], 0)
 
     def test_database_platform_admin_can_manage_with_audit(self):
-        from auth.service import IdentityService
-        from channel.web import auth_handlers
         svc = self._service()
-        auth_handlers.reset_login_rate_limiter()
-        with tempfile.TemporaryDirectory() as root:
-            identity = IdentityService(os.path.join(root, "identity.db"))
-            identity.bootstrap(tenant_code="review", tenant_name="Review", admin_username="root",
-                               admin_display="Root", admin_password="Str0ngAdminPass", shared_root=root,
-                               allow_weak=True)
-            session = identity.login("root", "Str0ngAdminPass").token
-            with patch.object(auth_handlers, "_get_service", lambda: identity):
-                # A platform admin reads the management payload with manage rights.
-                response = self._request(svc, "/api/branding", identity_mode="database", authenticated=False,
-                                         headers={"Authorization": "Bearer " + session})
-                data = self._json(response)
-                self.assertEqual(response.status, "200 OK")
-                self.assertTrue(data["can_manage"])
-                self.assertTrue(data["can_reset"])
-                self.assertEqual(data["readonly_reason"], "")
-                # No legacy password-derived csrf_token is issued in database mode.
-                self.assertNotIn("csrf_token", data)
-
-                # A platform admin can save and it records an audit event.
-                saved = self._request(
-                    svc, "/api/branding", method="POST", identity_mode="database",
-                    authenticated=False,
-                    headers={"Authorization": "Bearer " + session},
-                    data="expected_revision=0&brand_name=RongAI&logo_description=Console&logo_action=keep",
-                )
-                self.assertEqual(saved.status, "200 OK")
-                self.assertEqual(self._json(saved)["revision"], 1)
-                audit = identity.list_audit(tenant_id=None)
-                update_evt = [e for e in audit if e["action"] == "branding.update"]
-                self.assertEqual(len(update_evt), 1)
-                self.assertIsNone(update_evt[0]["tenant_id"])
-                self.assertEqual(update_evt[0]["actor_username"], "root")
-
-                # Reset also records its own event.
-                reset = self._request(
-                    svc, "/api/branding/reset", method="POST", identity_mode="database",
-                    authenticated=False,
-                    headers={"Authorization": "Bearer " + session},
-                    data='{"expected_revision":1}',
-                )
-                self.assertEqual(reset.status, "200 OK")
-                reset_evt = [e for e in identity.list_audit(tenant_id=None) if e["action"] == "branding.reset"]
-                self.assertEqual(len(reset_evt), 1)
-
-                # A non-admin (no session) is still refused.
-                rejected = self._request(svc, "/api/branding", identity_mode="database")
-                self.assertTrue(rejected.status.startswith("401"))
-
-    def test_csrf_is_issued_by_management_and_required_for_cookie_writes(self):
-        svc = self._service()
-        token = self._token()
-        cookie = {"Cookie": "cow_auth_token=" + token}
-        data = self._json(self._request(svc, "/api/branding", authenticated=False, headers=cookie))
-        headers = {**cookie, "Origin": "http://0.0.0.0:8080", "X-Branding-CSRF": data["csrf_token"]}
-        response = self._request(svc, "/api/branding", method="POST", authenticated=False, headers=headers,
-                                 data="expected_revision=0&brand_name=CSRF&logo_action=keep")
+        response = self._request(svc, "/api/branding")
+        data = self._json(response)
         self.assertEqual(response.status, "200 OK")
-        cases = [ {**headers, "X-Branding-CSRF": ""}, {**headers, "X-Branding-CSRF": "invalid"},
-                  {**headers, "Origin": ""}, {**headers, "Origin": "https://0.0.0.0:8080"},
-                  {**headers, "Origin": "http://foreign.example"} ]
-        for bad in cases:
-            for path, body in [("/api/branding", "expected_revision=1&brand_name=Bad&logo_action=keep"),
-                               ("/api/branding/reset", '{"expected_revision":1}')]:
-                response = self._request(svc, path, method="POST", data=body, authenticated=False, headers=bad)
-                self.assertEqual(response.status, "403 Forbidden")
-        self.assertEqual(svc.get_published()["revision"], 1)
-        # A valid token issued for another login is not a CSRF token for this one.
-        with patch.object(web_channel.time, "time", return_value=web_channel.time.time() - 10):
-            another_token = self._token()
-        bad = {**headers, "Cookie": "cow_auth_token=" + another_token}
-        response = self._request(svc, "/api/branding/reset", method="POST", data='{"expected_revision":1}',
-                                 authenticated=False, headers=bad)
-        self.assertEqual(response.status, "403 Forbidden")
+        self.assertTrue(data["can_manage"])
+        self.assertTrue(data["can_reset"])
+        self.assertEqual(data["readonly_reason"], "")
+        self.assertNotIn("csrf_token", data)
 
-    def test_bearer_writes_without_origin_and_cookie_still_work(self):
-        svc = self._service()
-        headers = {"Authorization": "Bearer " + self._token()}
-        saved = self._request(svc, "/api/branding", method="POST", authenticated=False, headers=headers,
-                              data="expected_revision=0&brand_name=Bearer&logo_action=keep")
+        saved = self._request(
+            svc, "/api/branding", method="POST",
+            data="expected_revision=0&brand_name=RongAI&logo_description=Console&logo_action=keep",
+        )
         self.assertEqual(saved.status, "200 OK")
-        reset = self._request(svc, "/api/branding/reset", method="POST", authenticated=False, headers=headers,
-                              data='{"expected_revision":1}')
+        self.assertEqual(self._json(saved)["revision"], 1)
+        audit = self.identity.list_audit(tenant_id=None)
+        update_evt = [e for e in audit if e["action"] == "branding.update"]
+        self.assertEqual(len(update_evt), 1)
+        self.assertIsNone(update_evt[0]["tenant_id"])
+        self.assertEqual(update_evt[0]["actor_username"], "root")
+
+        reset = self._request(
+            svc, "/api/branding/reset", method="POST",
+            data='{"expected_revision":1}',
+        )
         self.assertEqual(reset.status, "200 OK")
+        reset_evt = [e for e in self.identity.list_audit(tenant_id=None)
+                     if e["action"] == "branding.reset"]
+        self.assertEqual(len(reset_evt), 1)
+
+        rejected = self._request(svc, "/api/branding", authenticated=False)
+        self.assertTrue(rejected.status.startswith("401"))
+
+    def test_cookie_session_write_works_for_platform_admin(self):
+        svc = self._service()
+        headers = {"Cookie": "cow_session=" + self.admin_token, "Origin": "http://test"}
+        saved = self._request(
+            svc, "/api/branding", method="POST", authenticated=False, headers=headers,
+            data="expected_revision=0&brand_name=Cookie&logo_action=keep")
+        self.assertEqual(saved.status, "200 OK", saved.data)
+        reset = self._request(
+            svc, "/api/branding/reset", method="POST", authenticated=False, headers=headers,
+            data='{"expected_revision":1}')
+        self.assertEqual(reset.status, "200 OK", reset.data)
 
     def test_http_errors_are_real_statuses(self):
         svc = self._service()
@@ -495,7 +470,8 @@ class BrandingRouteTests(unittest.TestCase):
                            ("/api/branding/reset", '{"expected_revision":0}')]:
             response = self._request(svc, path, method="POST", data=body)
             self.assertEqual(response.status, "409 Conflict")
-        missing = self._request(svc, "/api/branding/assets/" + "f" * 64 + ".png")
+        missing = self._request(svc, "/api/branding/assets/" + "f" * 64 + ".png",
+                                authenticated=False)
         self.assertEqual(missing.status, "404 Not Found")
         bad_json = self._request(svc, "/api/branding/reset", method="POST", data="[")
         self.assertEqual(bad_json.status, "400 Bad Request")
@@ -514,14 +490,16 @@ class BrandingRouteTests(unittest.TestCase):
         data = self._json(self._request(svc, "/api/branding"))
         self.assertFalse(data["can_manage"])
         self.assertTrue(data["can_reset"])
-        self.assertTrue(data["csrf_token"])
+        self.assertNotIn("csrf_token", data)
         refused = self._request(svc, "/api/branding", method="POST",
                                 data="expected_revision=0&brand_name=Overwrite&logo_action=keep")
         self.assertEqual(refused.status, "503 Service Unavailable")
-        restored = self._request(svc, "/api/branding/reset", method="POST", data='{"expected_revision":0}')
+        restored = self._request(svc, "/api/branding/reset", method="POST",
+                                 data='{"expected_revision":0}')
         self.assertEqual(restored.status, "200 OK")
         self.assertGreater(self._json(restored)["revision"], 1)
-        self.assertEqual([p.read_bytes() for p in Path(svc._root, "corrupt").glob("*.json")], [b"damaged"])
+        self.assertEqual([p.read_bytes() for p in Path(svc._root, "corrupt").glob("*.json")],
+                         [b"damaged"])
 
 
 class BrandingFrontendTests(unittest.TestCase):

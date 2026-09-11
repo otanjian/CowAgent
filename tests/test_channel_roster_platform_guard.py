@@ -13,8 +13,7 @@ tenant boundary is supposed to be sealed against.
 The platform surface for roster writes is ``/api/channels`` (platform policy);
 a tenant's own channels live in the identity database and are managed through
 ``/api/tenant/channels``. This pins the guard for the instance-level path:
-in database mode only a platform admin may bind, the successful platform write
-is audited, and legacy mode keeps the shared console password behaviour.
+only a platform admin may bind, and the successful platform write is audited.
 """
 
 import json
@@ -73,13 +72,9 @@ class InstanceRosterPlatformGuardTests(unittest.TestCase):
         return web.application(
             ("/api/agents", "AgentsHandler"), vars(web_channel), autoreload=False)
 
-    def _request(self, payload, token=None, tenant=None, mode="database"):
-        settings = {"identity_mode": mode, "identity_db_path": self.db,
+    def _request(self, payload, token=None, tenant=None):
+        settings = {"identity_mode": "database", "identity_db_path": self.db,
                     "agent_workspace": self.instance}
-        if mode == "legacy":
-            # No password configured: the shared console is open, which is the
-            # single-instance deployment this mode exists for.
-            settings["web_password"] = ""
         headers = {"Content-Type": "application/json"}
         if token:
             headers["Cookie"] = f"cow_session={token}"
@@ -92,14 +87,9 @@ class InstanceRosterPlatformGuardTests(unittest.TestCase):
             patch.object(web_channel, "get_data_root", return_value=self.data_root),
             patch.object(web_channel, "_reload_agent_runtime", lambda *a, **k: None),
             patch("auth.service.get_identity_service", lambda: self.svc),
+            patch.object(auth_handlers, "_get_service", lambda: self.svc),
+            patch.object(admin_handlers, "_get_service", lambda: self.svc),
         ]
-        if mode == "database":
-            patches += [
-                patch.object(auth_handlers, "_is_database", lambda: True),
-                patch.object(auth_handlers, "_get_service", lambda: self.svc),
-                patch.object(admin_handlers, "_is_database", lambda: True),
-                patch.object(admin_handlers, "_get_service", lambda: self.svc),
-            ]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
@@ -107,7 +97,7 @@ class InstanceRosterPlatformGuardTests(unittest.TestCase):
         return self._app().request("/api/agents", method="POST",
                                    data=json.dumps(payload), headers=headers)
 
-    def _bind(self, token=None, tenant=None, mode="database"):
+    def _bind(self, token=None, tenant=None):
         """Call the handler with the roster write spied on.
 
         ``calls`` is the spy's record: if it stays empty the instance roster was
@@ -125,7 +115,7 @@ class InstanceRosterPlatformGuardTests(unittest.TestCase):
             resp = self._request(
                 {"action": "bind_channel_instance", "id": "agent-a",
                  "channel_type": "wecom", "instance_id": "corp1", "members": []},
-                token=token, tenant=tenant, mode=mode)
+                token=token, tenant=tenant)
         return resp, calls
 
     @staticmethod
@@ -165,20 +155,6 @@ class InstanceRosterPlatformGuardTests(unittest.TestCase):
 
     def test_a_rejected_bind_writes_no_audit_event(self):
         self._bind(token=self.tenant_admin_token, tenant=self.tenant_id)
-        actions = [e["action"] for e in self.svc.list_audit(None)]
-        self.assertNotIn("channel.instance.bind", actions)
-
-    # --- legacy single-instance behaviour is unchanged ------------------
-
-    def test_legacy_mode_still_binds_with_the_console_password(self):
-        resp, calls = self._bind(mode="legacy")
-        self.assertEqual(resp.status, "200 OK", resp.data)
-        self.assertEqual(self._json(resp)["status"], "success")
-        self.assertEqual(len(calls), 1)
-
-    def test_legacy_mode_writes_no_identity_audit(self):
-        """Legacy has no identity database to audit into; it must not crash."""
-        self._bind(mode="legacy")
         actions = [e["action"] for e in self.svc.list_audit(None)]
         self.assertNotIn("channel.instance.bind", actions)
 

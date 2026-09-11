@@ -37,32 +37,22 @@ def test_new_instance_id_avoids_taken():
 
 
 # ---------------------------------------------------------------------------
-# legacy compatibility: no channel_instances -> synthesized from channel_type
+# database identity: channel_type alone never synthesizes instances
 # ---------------------------------------------------------------------------
 
-def test_legacy_channel_type_string(tmp_path):
+def test_channel_type_alone_does_not_start_channels(tmp_path):
     settings = {"agent_workspace": str(tmp_path), "channel_type": "feishu, dingtalk"}
-    insts = ci.resolve_channel_instances(settings)
-    ids = {i.instance_id for i in insts}
-    assert ids == {"feishu", "dingtalk"}
-    # legacy instances carry no per-instance credentials or binding
-    for i in insts:
-        assert i.legacy is True
-        assert i.credentials == {}
-        assert i.agent_id == ""
+    assert ci.resolve_channel_instances(settings) == []
 
 
-def test_legacy_channel_type_list(tmp_path):
+def test_channel_type_list_alone_does_not_start_channels(tmp_path):
     settings = {"agent_workspace": str(tmp_path), "channel_type": ["feishu"]}
-    insts = ci.resolve_channel_instances(settings)
-    assert [i.instance_id for i in insts] == ["feishu"]
-    assert insts[0].legacy is True
+    assert ci.resolve_channel_instances(settings) == []
 
 
-def test_legacy_normalizes_wx(tmp_path):
+def test_wx_alias_alone_does_not_start_channels(tmp_path):
     settings = {"agent_workspace": str(tmp_path), "channel_type": "wx"}
-    insts = ci.resolve_channel_instances(settings)
-    assert insts[0].channel_type == "weixin"
+    assert ci.resolve_channel_instances(settings) == []
 
 
 # ---------------------------------------------------------------------------
@@ -230,11 +220,10 @@ def test_upsert_sets_and_preserves_members(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# bootstrap: carry a legacy flat feishu channel into channel_instances the
-# first time the roster file is written (crossing into multi-Agent mode)
+# bootstrap: never synthesize from flat channel_type (database-only identity)
 # ---------------------------------------------------------------------------
 
-def test_bootstrap_synthesizes_feishu_from_flat_credentials(tmp_path):
+def test_bootstrap_does_not_synthesize_from_flat_credentials(tmp_path):
     settings = {
         "agent_workspace": str(tmp_path),
         "channel_type": "feishu",
@@ -242,16 +231,10 @@ def test_bootstrap_synthesizes_feishu_from_flat_credentials(tmp_path):
         "feishu_app_secret": "SECRET",
         "default_agent_id": "primary",
     }
-    records = ci.bootstrap_legacy_instances(settings, {}, "primary")
-    assert len(records) == 1
-    rec = records[0]
-    assert rec["instance_id"] == "feishu"
-    assert rec["channel_type"] == "feishu"
-    assert rec["agent_id"] == "primary"
-    assert rec["credentials"] == {"feishu_app_id": "APP", "feishu_app_secret": "SECRET"}
+    assert ci.bootstrap_legacy_instances(settings, {}, "primary") == []
 
 
-def test_bootstrap_is_idempotent_when_feishu_record_exists(tmp_path):
+def test_bootstrap_preserves_existing_records(tmp_path):
     settings = {
         "agent_workspace": str(tmp_path),
         "channel_type": "feishu",
@@ -264,18 +247,15 @@ def test_bootstrap_is_idempotent_when_feishu_record_exists(tmp_path):
         ]
     }
     records = ci.bootstrap_legacy_instances(settings, roster, "primary")
-    # no duplicate feishu record was added
     assert [r["instance_id"] for r in records] == ["feishu-a"]
 
 
-def test_bootstrap_skips_when_no_credentials(tmp_path):
+def test_bootstrap_empty_when_no_roster_instances(tmp_path):
     settings = {"agent_workspace": str(tmp_path), "channel_type": "feishu"}
     assert ci.bootstrap_legacy_instances(settings, {}, "primary") == []
 
 
-def test_bootstrap_ignores_non_multi_instance_types(tmp_path):
-    # wechatcom_app is a fixed-port webhook channel: it is not multi-instance
-    # ready, so its flat config credentials must NOT be folded into an instance.
+def test_bootstrap_ignores_flat_non_roster_types(tmp_path):
     settings = {
         "agent_workspace": str(tmp_path),
         "channel_type": "wechatcom_app",
@@ -285,28 +265,17 @@ def test_bootstrap_ignores_non_multi_instance_types(tmp_path):
     assert ci.bootstrap_legacy_instances(settings, {}, "primary") == []
 
 
-def test_bootstrap_folds_multi_instance_types_beyond_feishu(tmp_path):
-    # dingtalk is now multi-instance ready, so a legacy flat dingtalk config is
-    # carried into a channel_instances record when crossing into multi-Agent
-    # mode (otherwise multi-Agent startup, which skips the flat config entry for
-    # multi-instance types, would drop it).
+def test_bootstrap_does_not_fold_dingtalk_from_flat(tmp_path):
     settings = {
         "agent_workspace": str(tmp_path),
         "channel_type": "dingtalk",
         "dingtalk_client_id": "id",
         "dingtalk_client_secret": "sec",
     }
-    records = ci.bootstrap_legacy_instances(settings, {}, "primary")
-    assert len(records) == 1
-    assert records[0]["channel_type"] == "dingtalk"
-    assert records[0]["agent_id"] == "primary"
-    assert records[0]["credentials"]["dingtalk_client_id"] == "id"
+    assert ci.bootstrap_legacy_instances(settings, {}, "primary") == []
 
 
-def test_bootstrap_carries_weixin_token_file_to_instance_path(tmp_path, monkeypatch):
-    # A scan-login Weixin user keeps their token in a credentials file, not in
-    # config.json. Bootstrapping must copy that file to the per-instance path so
-    # the user is not forced to re-scan after adding an Agent.
+def test_bootstrap_does_not_carry_weixin_from_flat(tmp_path, monkeypatch):
     import config
 
     legacy = tmp_path / "weixin_creds.json"
@@ -323,17 +292,14 @@ def test_bootstrap_carries_weixin_token_file_to_instance_path(tmp_path, monkeypa
     settings = {
         "agent_workspace": str(tmp_path),
         "channel_type": "weixin",
-        "weixin_token": "",  # empty: token lives in the file, not config
+        "weixin_token": "",
     }
-    records = ci.bootstrap_legacy_instances(settings, {}, "primary")
-    assert any(r["channel_type"] == "weixin" for r in records)
-    carried = tmp_path / "weixin_creds.weixin.json"
-    assert carried.exists()
-    assert "SCAN_TOKEN" in carried.read_text(encoding="utf-8")
+    assert ci.bootstrap_legacy_instances(settings, {}, "primary") == []
+    assert not (tmp_path / "weixin_creds.weixin.json").exists()
 
 
-def test_write_bootstraps_feishu_on_first_roster_write(tmp_path):
-    """team.write folds a legacy flat feishu channel into channel_instances."""
+def test_write_does_not_bootstrap_feishu_from_flat(tmp_path):
+    """team.write must not invent channel_instances from flat credentials."""
     from agent import team
 
     settings = {
@@ -346,7 +312,4 @@ def test_write_bootstraps_feishu_on_first_roster_write(tmp_path):
     team.write(settings, {"default_agent_id": "primary", "agents": []})
     resolved = team.resolve(settings)
     insts = ci.resolve_channel_instances(resolved)
-    by_type = [i for i in insts if i.channel_type == "feishu"]
-    assert len(by_type) == 1
-    assert by_type[0].agent_id == "primary"
-    assert by_type[0].credentials["feishu_app_id"] == "APP"
+    assert [i for i in insts if i.channel_type == "feishu"] == []

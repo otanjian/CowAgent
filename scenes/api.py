@@ -15,15 +15,8 @@ import web
 from scenes import service as scenes_service
 
 
-def _auth():
-    """复用既有鉴权（惰性导入避免模块加载期循环依赖）。"""
-    from channel.web.web_channel import _require_auth
-
-    _require_auth()
-
-
 def _db_scope():
-    """请求作用域（legacy 模式为空操作），惰性导入避免循环依赖。"""
+    """请求作用域：解析数据库会话与租户（无身份则失败关闭）。"""
     from channel.web.web_channel import _db_scope as scope
 
     return scope()
@@ -43,7 +36,6 @@ def _require_management_write():
 
 class ScenesHandler:
     def GET(self):
-        _auth()
         web.header("Content-Type", "application/json; charset=utf-8")
         with _db_scope() as ctx:
             _require_chat_use(ctx)
@@ -61,7 +53,6 @@ class ScenesHandler:
 
 class SceneActivateHandler:
     def POST(self):
-        _auth()
         _require_management_write()
         web.header("Content-Type", "application/json; charset=utf-8")
         try:

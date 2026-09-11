@@ -3,13 +3,13 @@
 The workbench page reads a minimal whitelisted projection from
 ``/api/agents?view=workbench``. These tests cover:
 
-- the default snapshot is returned when `view` is omitted (old-client contract)
+- the tenant admin projection is returned when `view` is omitted
 - the projection only carries card fields, never workspace/channels/files
 - only saved + enabled Agents appear, and the default Agent is flagged
-- a no-param read keeps the full management snapshot
 
 No real registry is used: ``get_agent_registry`` is patched with a small stub
-whose ``list()`` returns a couple of ``AgentProfile``-like objects.
+whose ``list()`` returns a couple of ``AgentProfile``-like objects. Auth is
+satisfied by a faked ``_db_scope`` yielding a platform-admin RequestContext.
 """
 
 import json
@@ -24,7 +24,11 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-if "web" not in sys.modules:
+# Prefer the real web.py package when present so later tests are not polluted
+# by an incomplete stub (ThreadedDict ctx / application / etc.).
+try:
+    import web  # noqa: F401
+except ImportError:
     web_stub = types.ModuleType("web")
     web_stub.HTTPError = type("HTTPError", (Exception,), {})
     web_stub.cookies = lambda: {}
@@ -33,6 +37,7 @@ if "web" not in sys.modules:
     web_stub.input = lambda **kwargs: types.SimpleNamespace(**kwargs)
     web_stub.setcookie = lambda *args, **kwargs: None
     web_stub.storage = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    web_stub.ctx = types.SimpleNamespace(env={}, headers=[])
     sys.modules["web"] = web_stub
 
 
@@ -49,6 +54,19 @@ class _Profile:
         self.category = category
         self.tags = tags or ()
 
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "workspace": self.workspace,
+            "enabled": self.enabled,
+            "description": self.description,
+            "avatar": self.avatar,
+            "position": self.position or "",
+            "category": self.category or "",
+            "tags": list(self.tags or []),
+        }
+
 
 class _Registry:
     default_agent_id = "primary"
@@ -56,13 +74,41 @@ class _Registry:
     def __init__(self, profiles):
         self._profiles = profiles
 
-    def list(self):
-        return self._profiles
+    def list(self, include_disabled=False):
+        if include_disabled:
+            return list(self._profiles)
+        return [p for p in self._profiles if p.enabled]
+
+
+def _admin_ctx():
+    from auth.runtime import RequestContext
+    return RequestContext(
+        user_id="u_admin", username="admin", display_name="Admin",
+        is_platform_admin=True, must_change_password=False,
+        tenant_id="tnt_test", membership={"id": "m1"},
+        permissions={"agent.read", "chat.use", "agent.use"},
+        is_tenant_admin=True,
+    )
+
+
+def _fake_db_scope():
+    from contextlib import contextmanager
+
+    @contextmanager
+    def scope():
+        yield _admin_ctx()
+
+    return scope()
 
 
 def _call_get(handler_cls, view=""):
     import channel.web.web_channel as web_channel
-    with patch.object(web_channel, "_require_auth"), \
+    with patch.object(web_channel, "_db_scope", _fake_db_scope), \
+         patch.object(web_channel, "_require_read_permission"), \
+         patch.object(web_channel, "_tenant_default_agent_id",
+                      return_value="primary"), \
+         patch.object(web_channel, "_workbench_chat_readiness",
+                      return_value=(True, None)), \
          patch.object(web_channel.web, "header"), \
          patch.object(web_channel.web, "input", return_value=web_channel.web.storage(view=view)):
         return json.loads(handler_cls().GET())
@@ -84,15 +130,10 @@ class TestWorkbenchProjection(unittest.TestCase):
         self.assertEqual(data["status"], "success")
         self.assertEqual(len(data["agents"]), 2)  # archived excluded
         fields = {"id", "name", "description", "avatar", "is_default", "can_chat",
-                  "unavailable_reason", "position", "category", "tags"}
+                  "unavailable_reason"}
         for agent in data["agents"]:
             self.assertEqual(set(agent.keys()), fields,
                              "workbench projection must be a strict whitelist")
-        # Digital-employee fields project onto the cards.
-        for agent in data["agents"]:
-            self.assertEqual(agent["position"], "")
-            self.assertEqual(agent["category"], "")
-            self.assertEqual(agent["tags"], [])
         # No management data leaks into the projection.
         self.assertNotIn("workspace", data)
         self.assertNotIn("channel_instances", data)
@@ -101,7 +142,7 @@ class TestWorkbenchProjection(unittest.TestCase):
         by_id = {a["id"]: a for a in data["agents"]}
         self.assertTrue(by_id["primary"]["is_default"])
         self.assertFalse(by_id["research"]["is_default"])
-        # In legacy mode an enabled Agent can chat.
+        # Platform admin is execution-authorized for enabled Agents.
         self.assertTrue(all(a["can_chat"] for a in data["agents"]))
 
     def test_view_workbench_filters_disabled(self):
@@ -115,18 +156,17 @@ class TestWorkbenchProjection(unittest.TestCase):
             data = _call_get(AgentsHandler, view="workbench")
         self.assertEqual([a["id"] for a in data["agents"]], ["primary"])
 
-    def test_default_view_returns_full_snapshot(self):
+    def test_default_view_returns_tenant_admin_projection(self):
         from channel.web.web_channel import AgentsHandler
-        snapshot = {
+        projected = {
             "default_agent_id": "primary",
-            "agents": [{"id": "primary", "workspace": "/tmp/x"}],
-            "channel_instances": [],
-            "revision": "abc",
+            "agents": [{"id": "primary", "name": "Primary"}],
         }
-        with patch("channel.web.web_channel._agent_admin_service") as svc:
-            svc.return_value.snapshot.return_value = snapshot
+        with patch("channel.web.web_channel._tenant_agents_admin_projection",
+                   return_value=projected) as proj:
             data = _call_get(AgentsHandler, view="")
-        self.assertEqual(data, {"status": "success", **snapshot})
+        self.assertEqual(data, {"status": "success", **projected})
+        proj.assert_called_once()
 
     def test_default_agent_is_first_even_when_registry_order_differs(self):
         from channel.web.web_channel import AgentsHandler

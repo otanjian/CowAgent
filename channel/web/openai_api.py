@@ -461,30 +461,58 @@ def handle_chat_completions(
 
 
 def _is_database_mode() -> bool:
-    from config import conf
-    return str(conf().get("identity_mode", "legacy") or "legacy") == "database"
+    """Database is the only identity mode after retire-legacy-identity-mode."""
+    return True
 
 
 def _db_request_identity_and_agent() -> "tuple":
     """Resolve identity + tenant-bound agent for a database-mode API request.
 
-    Database mode uses the same identity stack as the Web console: the
-    ``Authorization: Bearer`` carries the database session token (or the login
-    cookie is accepted), ``X-Tenant-ID`` selects the tenant and an optional
-    ``X-Agent-ID`` selects the target agent (defaults to the tenant's only
-    bound agent; ambiguous defaults are rejected). ``external_api_token`` has no
-    meaning here (design decision 11). Raises ``OpenAIAPIError``.
+    Database mode accepts either:
+    * a service-account API key (``Authorization: Bearer sak_…``), resolved to
+      a real User + tenant membership; or
+    * a database session token (Bearer/cookie) + ``X-Tenant-ID`` like the Web
+      console.
+
+    ``external_api_token`` has no meaning here. Raises ``OpenAIAPIError``.
     """
     import web
 
-    from auth.runtime import IdentityContextError, to_runtime_identity
-    from auth.service import get_identity_service
+    from auth.runtime import IdentityContextError, member_context, to_runtime_identity
+    from auth.service import IdentityServiceError, get_identity_service
     from channel.web.auth_handlers import _get_service, _resolve_ctx_svc, _session_token
 
+    auth_header = (web.ctx.env.get("HTTP_AUTHORIZATION", "") or "").strip()
+    bearer = ""
+    if auth_header.lower().startswith("bearer "):
+        bearer = auth_header[7:].strip()
+
     try:
-        if not _session_token():
-            raise OpenAIAPIError(401, "Authentication required.", "unauthorized")
-        ctx = _resolve_ctx_svc(_get_service(), require_tenant=True)
+        if bearer.startswith("sak_"):
+            svc = get_identity_service()
+            try:
+                sak = svc.authenticate_service_account_api_key(bearer)
+            except IdentityServiceError as error:
+                status = getattr(error, "status", 401) or 401
+                if status == 503:
+                    raise OpenAIAPIError(
+                        503, "Identity service unavailable.", "unavailable",
+                    ) from error
+                raise OpenAIAPIError(
+                    401, "Authentication required.", "unauthorized",
+                ) from error
+            header_tenant = (web.ctx.env.get("HTTP_X_TENANT_ID", "") or "").strip()
+            tenant_id = header_tenant or sak["tenant_id"]
+            if header_tenant and header_tenant != sak["tenant_id"]:
+                raise OpenAIAPIError(
+                    403, "Service account is not a member of this tenant.", "forbidden",
+                )
+            ctx = member_context(svc, sak["user_id"], tenant_id)
+        else:
+            if not _session_token():
+                raise OpenAIAPIError(401, "Authentication required.", "unauthorized")
+            ctx = _resolve_ctx_svc(_get_service(), require_tenant=True)
+            svc = get_identity_service()
     except IdentityContextError as error:
         raise OpenAIAPIError(
             error.status, error.args[0] if error.args else "authentication failed",
@@ -496,7 +524,6 @@ def _db_request_identity_and_agent() -> "tuple":
         raise OpenAIAPIError(
             403, "You are not authorized to use the chat API.", "forbidden"
         )
-    svc = get_identity_service()
     bound_ids = svc.tenant_agent_ids(ctx.tenant_id)
     header_agent = (web.ctx.env.get("HTTP_X_AGENT_ID", "") or "").strip()
     if header_agent:

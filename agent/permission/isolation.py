@@ -59,31 +59,26 @@ _DB_DEFAULT_ENABLED = True
 
 
 def database_mode() -> bool:
-    """True when the deployment runs in database identity mode."""
-    try:
-        from config import conf
+    """True when the deployment runs in database identity mode.
 
-        return str(conf().get("identity_mode", "legacy") or "legacy") == "database"
-    except Exception:
-        return False
+    After retire-legacy-identity-mode this is always True; isolation stays on
+    unless ``execution_isolation=false``.
+    """
+    return True
 
 
 def enabled() -> bool:
     """True when the tenant execution-isolation gate is on.
 
-    Defaults to *on* in database mode (this slice is delivered and validated
-    with this change); set ``execution_isolation=false`` to fail closed: in
-    database mode arbitrary-code tools are then refused instead of running
-    unconfined. Legacy (single-tenant) deployments are never gated.
+    Defaults to *on* in database mode; set ``execution_isolation=false`` to
+    refuse arbitrary-code tools instead of running unconfined.
     """
-    if not database_mode():
-        return False
     try:
         from config import conf
 
         return bool(conf().get(CONFIG_KEY, _DB_DEFAULT_ENABLED))
     except Exception:
-        return True
+        return _DB_DEFAULT_ENABLED
 
 
 def _current_identity():

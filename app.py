@@ -607,6 +607,13 @@ def _guard_identity_mode_consistency():
     return run_startup_hook(HOOK_IDENTITY_MODE_CONSISTENCY)
 
 
+def _ensure_database_bootstrap():
+    """Run first-run auto-init when identity.db has no platform admin."""
+    from common.startup_hooks import HOOK_DATABASE_BOOTSTRAP, run_startup_hook
+
+    return run_startup_hook(HOOK_DATABASE_BOOTSTRAP)
+
+
 def _migrate_conversation_tenancy():
     """Run the registered conversation-store migrations (seam, task 6.11).
 
@@ -755,6 +762,7 @@ def run():
         # load config
         load_config()
         _guard_identity_mode_consistency()
+        _ensure_database_bootstrap()
         _migrate_team_roster()
         _migrate_conversation_tenancy()
         _warn_if_legacy_workspace_data_exists()

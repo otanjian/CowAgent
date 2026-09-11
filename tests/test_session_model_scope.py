@@ -98,14 +98,15 @@ class AuthorizedModelCodesTests(unittest.TestCase):
             with use_identity(EMPTY_IDENTITY):
                 self.assertEqual(web_channel._authorized_model_codes(), set())
 
-    def test_legacy_mode_without_identity_is_unrestricted(self):
+    def test_missing_identity_fails_closed_even_with_legacy_conf_pin(self):
+        """Explicit legacy conf must not restore unrestricted model catalog."""
         from common.runtime_identity import EMPTY_IDENTITY, use_identity
         from channel.web import web_channel
 
         with mock.patch.object(web_channel, "conf",
                                return_value={"identity_mode": "legacy"}):
             with use_identity(EMPTY_IDENTITY):
-                self.assertIsNone(web_channel._authorized_model_codes())
+                self.assertEqual(web_channel._authorized_model_codes(), set())
 
 
 class SessionSettingsScopeTests(unittest.TestCase):
@@ -256,7 +257,6 @@ class SessionSettingsPostScopeTests(unittest.TestCase):
                 mock.patch.object(web_channel, "_session_model_catalog",
                                   return_value=CATALOG), \
                 mock.patch.object(web_channel, "_db_scope", self._fake_db_scope), \
-                mock.patch.object(web_channel, "_require_auth", lambda: None), \
                 mock.patch.object(web_channel.web, "data",
                                   lambda: json.dumps(body).encode()), \
                 mock.patch.object(web_channel.web, "header", lambda *a, **k: None), \

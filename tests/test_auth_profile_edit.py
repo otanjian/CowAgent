@@ -65,8 +65,7 @@ class AuthProfileEditTests(unittest.TestCase):
         def _fake_service():
             return self.svc
 
-        with patch.object(auth_handlers, "_is_database", lambda: True), \
-                patch.object(auth_handlers, "_get_service", _fake_service):
+        with patch.object(auth_handlers, "_get_service", _fake_service):
             return app.request(path, **kwargs)
 
     @staticmethod

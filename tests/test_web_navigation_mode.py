@@ -54,10 +54,9 @@ class TestWebNavigationMode(unittest.TestCase):
         effective = {} if config_value is None else {"web_navigation_mode": config_value}
         html = "<html>{{COW_DEFAULT_LANG}}/{{COW_NAVIGATION_MODE}}</html>"
         with patch.object(web_channel, "conf", lambda: effective):
-            with patch("channel.web.web_channel._require_auth", lambda: None):
-                with patch("builtins.open", mock_open(read_data=html)):
-                    with patch.object(web_channel.web, "header", lambda *a, **k: None):
-                        return ChatHandler().GET()
+            with patch("builtins.open", mock_open(read_data=html)):
+                with patch.object(web_channel.web, "header", lambda *a, **k: None):
+                    return ChatHandler().GET()
 
     def test_chat_handler_injects_validated_mode(self):
         out = self._chat_handler_output("split")

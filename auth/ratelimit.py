@@ -232,17 +232,9 @@ def reject_multi_worker_identity():
 
     The in-process login limiter and identity state are single-process only; a
     multi-worker server would let each worker keep an independent counter,
-    letting a client expand the failure allowance by the worker count. When
-    ``identity_mode`` is ``database`` and a recognized worker-count signal is
-    present and >1, refuse to start rather than silently degrade the guarantee.
+    letting a client expand the failure allowance by the worker count. Refuse
+    to start rather than silently degrade the guarantee.
     """
-    try:
-        from config import conf
-        mode = str(conf().get("identity_mode", "legacy") or "legacy")
-    except Exception:
-        mode = "legacy"
-    if mode != "database":
-        return
     detected = []
     for name in _WORKER_ENVS:
         raw = os.environ.get(name, "")

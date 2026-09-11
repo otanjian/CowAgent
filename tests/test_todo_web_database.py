@@ -28,7 +28,6 @@ def api(tmp_path, monkeypatch):
     monkeypatch.setattr("agent.registry.get_agent_registry", lambda: registry)
     monkeypatch.setattr("config.get_data_root", lambda: str(tmp_path / "private"))
     monkeypatch.setattr(todo_handlers, "_get_identity_service", lambda: svc)
-    monkeypatch.setattr(todo_handlers, "_is_database", lambda: True)
     monkeypatch.setattr(todo_handlers, "default_enabled", lambda: True)
     app = web.application((
         "/api/todos", "TodosHandler",
@@ -148,8 +147,6 @@ def test_internal_error_is_500_without_internal_details(api, monkeypatch):
     assert "private internal path" not in body["message"]
 
 
-def test_legacy_auth_http_error_is_not_swallowed(api, monkeypatch):
+def test_unauthenticated_request_is_401(api):
     request, _, _, _ = api
-    monkeypatch.setattr(todo_handlers, "_is_database", lambda: False)
-    monkeypatch.setattr(todo_handlers, "_is_password_enabled", lambda: True)
     assert request(user=None)[0] == 401

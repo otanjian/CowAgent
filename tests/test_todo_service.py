@@ -30,7 +30,10 @@ from channel.web import todo_handlers
 
 
 def _make_service(db_dir, enabled=True):
-    actor = TodoActor.legacy()
+    actor = TodoActor(
+        bound=True, scope_id="tenant-1", owner_id="user-1", username="user-1",
+        permissions={"todo.read", "todo.write"},
+    )
     db_path = str(Path(db_dir) / "todo" / "todos.db")
     return TodoService(actor, enabled_fn=lambda: enabled, db_path=db_path)
 
@@ -85,43 +88,19 @@ class TodoServiceUnitTests(unittest.TestCase):
 
 
 class TodoWebHandlerTests(unittest.TestCase):
-    """Exercise the route handlers with patched auth + service."""
+    """Exercise actor resolution without a silent local-owner fallback."""
 
-    def setUp(self):
-        self.tmp = tempfile.mkdtemp()
-
-    def _patch_auth(self, enabled=True, password_set=True):
-        patches = [
-            # Pin the mode: the legacy path is what these tests are about, and
-            # reading it from the ambient config makes the outcome depend on
-            # whether an earlier test file happened to leave ``identity_mode``
-            # at "database" (this developer machine's ``config.json``).
-            patch("channel.web.todo_handlers._identity_mode", return_value="legacy"),
-            patch("channel.web.todo_handlers._is_password_enabled", return_value=password_set),
-        ]
-        for p in patches:
-            p.start()
-            self.addCleanup(p.stop)
-
-    def test_disabled_feature_refuses_legacy(self):
-        self._patch_auth(password_set=False)
-        with patch("channel.web.todo_handlers.default_enabled", return_value=False):
-            with self.assertRaises(TodoUnauthorized):
-                todo_handlers._resolve_actor()
-
-    def test_legacy_no_login_requires_password(self):
-        self._patch_auth(password_set=False)
-        with patch("channel.web.todo_handlers.default_enabled", return_value=True):
-            with self.assertRaises(TodoUnauthorized):
-                todo_handlers._resolve_actor()
-
-    def test_database_requires_permission(self):
-        with patch("channel.web.todo_handlers._identity_mode", return_value="database"), \
-             patch("channel.web.todo_handlers._database_session_token", return_value="tok"), \
+    def test_missing_session_refuses(self):
+        with patch("channel.web.todo_handlers._database_session_token", return_value=""), \
              patch("channel.web.todo_handlers._database_tenant_header", return_value="tenant-1"):
-            # no service -> will raise because identity not bootstrapped; assert it does not
-            # silently fall back to legacy
-            self.assertNotEqual(todo_handlers._identity_mode(), "legacy")
+            with self.assertRaises(TodoUnauthorized):
+                todo_handlers._resolve_actor()
+
+    def test_missing_tenant_refuses(self):
+        with patch("channel.web.todo_handlers._database_session_token", return_value="tok"), \
+             patch("channel.web.todo_handlers._database_tenant_header", return_value=""):
+            with self.assertRaises(TodoUnauthorized):
+                todo_handlers._resolve_actor()
 
 
 if __name__ == "__main__":

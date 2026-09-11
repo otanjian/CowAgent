@@ -9,7 +9,7 @@ table) used to be two hand-maintained literals with no machine check between
 them. Measured drift: 115 patterns in the URL table vs 110 in the policy table,
 and the 5 unregistered paths were not merely unpoliced -- an unlisted path made
 ``_match_policy`` report "unknown URL", so the request bypassed the gate entirely
-and reached a handler that only did ``_require_auth()``.
+and reached a handler that only checked a shared console password.
 
 Every route is therefore registered **once**, here, with:
 
@@ -97,12 +97,17 @@ def P(policy: str, permission: str = "", comment: str = "",
 
 
 #: The authoritative list. Order is significant (see module docstring).
+#:
+#: ``/auth/login|check|logout`` stay registered (not REMOVED): handlers are
+#: thin ``Auth*`` wrappers that delegate to database-only ``DbAuth*`` classes
+#: for route-class-name compatibility. Do not append REMOVED rows for these
+#: paths while the wrappers remain.
 ROUTES: Tuple[RouteEntry, ...] = (
     RouteEntry("/", "RootHandler", "upstream", {"GET": P("public", comment="console root")}),
     RouteEntry("/api/health", "HealthHandler", "upstream", {"GET": P("public", comment="health probe")}),
-    RouteEntry("/auth/login", "AuthLoginHandler", "upstream", {"POST": P("public", comment="login (db + legacy)")}),
-    RouteEntry("/auth/check", "AuthCheckHandler", "upstream", {"GET": P("public", comment="auth state probe")}),
-    RouteEntry("/auth/logout", "AuthLogoutHandler", "upstream", {"POST": P("public", comment="logout")}),
+    RouteEntry("/auth/login", "AuthLoginHandler", "upstream", {"POST": P("public", comment="database account login (username+password)")}),
+    RouteEntry("/auth/check", "AuthCheckHandler", "upstream", {"GET": P("public", comment="database auth state probe")}),
+    RouteEntry("/auth/logout", "AuthLogoutHandler", "upstream", {"POST": P("public", comment="database logout")}),
     RouteEntry("/auth/password", "DbAuthPasswordHandler", "fork:self-account", {"POST": P("personal", comment="self password change")}),
     RouteEntry("/auth/me", "DbAuthMeHandler", "fork:self-account", {"GET": P("personal", comment="self projection")}),
     RouteEntry("/auth/context", "DbAuthContextHandler", "fork:self-account", {"GET": P("tenant", comment="current-tenant capability")}),

@@ -84,9 +84,7 @@ class TenantAgentCreationTests(unittest.TestCase):
                              return_value=self.data_root), \
                 patch.object(web_channel, "_reload_agent_runtime",
                              lambda *a, **k: None), \
-                patch.object(auth_handlers, "_is_database", lambda: True), \
                 patch.object(auth_handlers, "_get_service", lambda: self.svc), \
-                patch.object(admin_handlers, "_is_database", lambda: True), \
                 patch.object(admin_handlers, "_get_service", lambda: self.svc), \
                 patch("auth.service.get_identity_service", lambda: self.svc):
             return self._app().request(path, **kwargs)

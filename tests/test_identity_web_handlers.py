@@ -86,9 +86,7 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
         def _fake_service():
             return self.svc
 
-        with patch.object(auth_handlers, "_is_database", lambda: True), \
-                patch.object(auth_handlers, "_get_service", _fake_service), \
-                patch.object(admin_handlers, "_is_database", lambda: True), \
+        with patch.object(auth_handlers, "_get_service", _fake_service), \
                 patch.object(admin_handlers, "_get_service", _fake_service):
             return app.request(path, **kwargs)
 
@@ -102,8 +100,8 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
             data=json.dumps({"username": "root", "password": "Str0ngAdminPass"}))
         data = self._json(resp)
         self.assertEqual(data["status"], "success")
-        # Web login only issues the session Cookie; no reusable token is returned.
-        self.assertEqual(data["token"], "")
+        # Cookie for the web console; token also returned for Desktop Bearer.
+        self.assertTrue(data.get("token"))
         self.assertGreaterEqual(len(data["tenants"]), 1)
         # cookie was set in the Set-Cookie header
         self.assertIn("cow_session", str(getattr(resp, "headers", {})))
@@ -323,18 +321,16 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
         def _fake_service():
             return self.svc
 
-        with patch.object(web_channel, "_is_database_identity", lambda: True), \
-                patch.object(auth_handlers, "_is_database", lambda: True), \
-                patch.object(auth_handlers, "_get_service", _fake_service):
+        with patch.object(auth_handlers, "_get_service", _fake_service):
             return app.request(path, **kwargs)
 
-    def test_legacy_login_delegates_to_db_handler(self):
+    def test_login_delegates_to_db_handler(self):
         resp = self._legacy_request(
             "/auth/login", method="POST",
             data=json.dumps({"username": "root", "password": "Str0ngAdminPass"}))
         data = self._json(resp)
         self.assertEqual(data["status"], "success")
-        self.assertEqual(data["token"], "")
+        self.assertTrue(data["token"])
         # database-mode cookie is cow_session, not the legacy cow_auth_token
         self.assertIn("cow_session", str(getattr(resp, "headers", {})))
         self.assertNotIn("cow_auth_token", str(getattr(resp, "headers", {})))
@@ -347,15 +343,6 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
         self.assertEqual(data["identity_mode"], "database")
         self.assertFalse(data["authenticated"])
 
-    def test_self_context_rejects_legacy_mode(self):
-        # In legacy identity mode, /auth/me must explicitly reject the database
-        # capability rather than fabricating a database account.
-        from channel.web.auth_handlers import DbAuthMeHandler
-        app = web.application(("/auth/me", "DbAuthMeHandler"), vars(web_channel), autoreload=False)
-        with patch.object(auth_handlers, "_is_database", lambda: False):
-            resp = app.request("/auth/me", method="GET")
-        data = json.loads(resp.data.decode("utf-8"))
-        self.assertEqual(data["code"], "not_database")
 
     # --- /auth/context (task 5.2) -----------------------------------------
     def test_context_requires_tenant_selection(self):
@@ -1050,48 +1037,45 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
 
     # --- tools/skills console read gating (platform admin vs member) ------
 
-    def _platform_admin_ctx(self):
-        from auth.runtime import RequestContext
-        return RequestContext(
-            user_id="usr_admin", username="root", display_name="Root",
-            is_platform_admin=True, must_change_password=False,
-            tenant_id=self.tid, membership={"id": "m_admin"},
-            permissions={"agent.read"}, is_tenant_admin=True)
+    def _member_token_without_catalog_grants(self):
+        """Login a plain member that holds neither tool.read nor skill.read."""
+        self.svc.create_member(
+            actor_user_id=self.root["id"], tenant_id=self.tid, operation="create-new",
+            username="tools-alice", display_name="Alice",
+            temporary_password="Str0ngPassTmp", roles=["member"])
+        with self.svc._tx() as con:
+            con.execute(
+                "UPDATE users SET must_change_password=0 WHERE username='tools-alice'")
+            con.commit()
+        return self.svc.login("tools-alice", "Str0ngPassTmp").token
 
-    def _member_ctx(self):
-        from auth.runtime import RequestContext
-        return RequestContext(
-            user_id="usr_member", username="alice", display_name="Alice",
-            is_platform_admin=False, must_change_password=False,
-            tenant_id=self.tid, membership={"id": "m_member"},
-            permissions={"agent.read"}, is_tenant_admin=False)
+    def _request_tools_skills(self, path, token):
+        """Drive ToolsHandler/SkillsHandler through the real HTTP policy gate.
 
-    def _request_tools_skills(self, path, ctx):
-        """Drive ToolsHandler/SkillsHandler with a patched _db_scope context."""
-        import contextlib
+        A live IdentityService Bearer session + ``X-Tenant-Id`` satisfies the
+        gate; the handler then applies catalog-read authorization against the
+        resolved context (platform admin / tenant admin bypass, plain member
+        requires ``tool.read`` / ``skill.read``).
+        """
+        def _fake_service():
+            return self.svc
 
-        @contextlib.contextmanager
-        def _fake_db_scope():
-            # Mirror the real ``_db_scope`` contract: it applies the request
-            # context to the ambient RuntimeIdentity for the duration of the
-            # block. Faking only the yield left the ambient identity empty,
-            # which is a state the real gate cannot reach (it requires an
-            # explicit tenant selection before yielding).
-            from auth.runtime import to_runtime_identity
-            from common.runtime_identity import use_identity
-
-            with use_identity(to_runtime_identity(ctx)):
-                yield ctx
-
-        with patch.object(web_channel, "_is_database_identity", lambda: True), \
-                patch.object(web_channel, "_db_scope", _fake_db_scope), \
-                patch("auth.service.get_identity_service", return_value=self.svc), \
-                patch.object(web_channel, "_require_auth", lambda: None):
+        with patch.object(auth_handlers, "_get_service", _fake_service), \
+                patch.object(admin_handlers, "_get_service", _fake_service), \
+                patch("auth.service.get_identity_service", return_value=self.svc):
             app = web_channel.build_web_app()
-            return app.request(path, method="GET")
+            return app.request(
+                path, method="GET",
+                headers={
+                    "Host": "test",
+                    "Authorization": f"Bearer {token}",
+                    "X-Tenant-Id": self.tid,
+                },
+            )
 
     def test_platform_admin_can_list_tools(self):
-        resp = self._request_tools_skills("/api/tools", self._platform_admin_ctx())
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        resp = self._request_tools_skills("/api/tools", token)
         # A platform admin must not be 403-gated by a functional tool.read they
         # do not hold; the catalog is returned (even if empty of tools).
         self.assertEqual(resp.status, "200 OK", resp.data[:200])
@@ -1099,18 +1083,21 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
         self.assertEqual(data["status"], "success")
 
     def test_platform_admin_can_list_skills(self):
-        resp = self._request_tools_skills("/api/skills", self._platform_admin_ctx())
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        resp = self._request_tools_skills("/api/skills", token)
         self.assertEqual(resp.status, "200 OK", resp.data[:200])
         data = json.loads(resp.data.decode("utf-8"))
         self.assertEqual(data["status"], "success")
         self.assertIn("skills", data)
 
     def test_member_without_tool_grant_is_rejected(self):
-        resp = self._request_tools_skills("/api/tools", self._member_ctx())
+        token = self._member_token_without_catalog_grants()
+        resp = self._request_tools_skills("/api/tools", token)
         self.assertEqual(resp.status, "403 Forbidden", resp.data[:200])
 
     def test_member_without_skill_grant_is_rejected(self):
-        resp = self._request_tools_skills("/api/skills", self._member_ctx())
+        token = self._member_token_without_catalog_grants()
+        resp = self._request_tools_skills("/api/skills", token)
         self.assertEqual(resp.status, "403 Forbidden", resp.data[:200])
 
 

@@ -36,10 +36,13 @@ AGENT_UNAVAILABLE = "external_agent_unavailable"
 
 
 def is_database_mode() -> bool:
-    """True when the deployment runs database identity mode."""
-    from config import conf
+    """True when the deployment runs database identity mode.
 
-    return str(conf().get("identity_mode", "legacy") or "legacy") == "database"
+    After retire-legacy-identity-mode, database is the only mode. Explicit
+    ``identity_mode=legacy`` is refused at boot; missing/other values run as
+    database.
+    """
+    return True
 
 
 def deny_notice(reason: str) -> str:

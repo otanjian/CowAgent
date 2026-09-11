@@ -66,6 +66,17 @@ IMPORT_SCENE = {"id": "wb_scene", "name": "WB", "import_config":
                 {"enabled": True, "accept": ".txt"}}
 
 
+@contextlib.contextmanager
+def _handler_auth(db_scope):
+    """Apply a faked ``_db_scope`` for handler-level scene tests.
+
+    HTTP policy / real session resolution is covered elsewhere; these tests
+    drive the handler body under an explicit request context.
+    """
+    with patch.object(web_channel, "_db_scope", db_scope):
+        yield
+
+
 class ScenesTenantScopeTests(unittest.TestCase):
     def setUp(self):
         scenes_service.clear_all_scene_context()
@@ -102,9 +113,7 @@ class ScenesTenantScopeTests(unittest.TestCase):
     # --- the activation state is namespaced by tenant -------------------
 
     def test_an_activation_only_lands_in_the_callers_tenant(self):
-        with patch.object(web_channel, "_require_auth", lambda: None), \
-                patch.object(web_channel, "_db_scope",
-                             _cm_scope(_ctx(tenant_id="tnt_acme"))):
+        with _handler_auth(_cm_scope(_ctx(tenant_id="tnt_acme"))):
             resp = self._request("/api/scenes/activate",
                                  {"scene_id": self.scene_id, "session_id": "sess-x"})
         self.assertEqual(resp.status, "200 OK", resp.data)
@@ -118,9 +127,7 @@ class ScenesTenantScopeTests(unittest.TestCase):
     def test_a_tenant_cannot_read_another_tenants_activation(self):
         scenes_service.set_scene_context(
             "sess-x", {"id": "globex-scene"}, tenant_id="tnt_globex")
-        with patch.object(web_channel, "_require_auth", lambda: None), \
-                patch.object(web_channel, "_db_scope",
-                             _cm_scope(_ctx(tenant_id="tnt_acme"))):
+        with _handler_auth(_cm_scope(_ctx(tenant_id="tnt_acme"))):
             resp = self._request("/api/scenes/activate",
                                  {"scene_id": self.scene_id, "session_id": "sess-x"})
         self.assertEqual(resp.status, "200 OK", resp.data)
@@ -134,25 +141,21 @@ class ScenesTenantScopeTests(unittest.TestCase):
     # --- the guards -----------------------------------------------------
 
     def test_the_catalog_requires_chat_use(self):
-        with patch.object(web_channel, "_require_auth", lambda: None), \
-                patch.object(web_channel, "_db_scope",
-                             _cm_scope(_ctx(permissions=()))):
+        with _handler_auth(_cm_scope(_ctx(permissions=()))):
             resp = self._app().request("/api/scenes", method="GET",
                                        headers={"Host": "test"})
         self.assertTrue(str(resp.status).startswith("403"),
                         (resp.status, resp.data))
 
     def test_the_catalog_is_served_with_chat_use(self):
-        with patch.object(web_channel, "_require_auth", lambda: None), \
-                patch.object(web_channel, "_db_scope", _cm_scope(_ctx())):
+        with _handler_auth(_cm_scope(_ctx())):
             resp = self._app().request("/api/scenes", method="GET",
                                        headers={"Host": "test"})
         self.assertEqual(resp.status, "200 OK", resp.data)
         self.assertEqual(self._json(resp)["status"], "success")
 
     def test_a_cross_origin_cookie_write_is_refused_before_any_state_change(self):
-        with patch.object(web_channel, "_require_auth", lambda: None), \
-                patch.object(web_channel, "_db_scope", _cm_scope(_ctx())):
+        with _handler_auth(_cm_scope(_ctx())):
             resp = self._request(
                 "/api/scenes/activate",
                 {"scene_id": self.scene_id, "session_id": "sess-x"},
@@ -165,8 +168,7 @@ class ScenesTenantScopeTests(unittest.TestCase):
             scenes_service.get_scene_context("sess-x", tenant_id="tnt_acme"))
 
     def test_a_same_origin_cookie_write_is_allowed(self):
-        with patch.object(web_channel, "_require_auth", lambda: None), \
-                patch.object(web_channel, "_db_scope", _cm_scope(_ctx())):
+        with _handler_auth(_cm_scope(_ctx())):
             resp = self._request(
                 "/api/scenes/activate",
                 {"scene_id": self.scene_id, "session_id": "sess-x"},
@@ -175,7 +177,6 @@ class ScenesTenantScopeTests(unittest.TestCase):
         self.assertEqual(resp.status, "200 OK", resp.data)
         self.assertIsNotNone(
             scenes_service.get_scene_context("sess-x", tenant_id="tnt_acme"))
-
     # --- the workbench import stays inside the tenant -------------------
 
     def _import(self, headers=None):
@@ -202,8 +203,7 @@ class ScenesTenantScopeTests(unittest.TestCase):
             # is in scope, the process-global default otherwise.
             return tenant_root if seen.get("tenant") else global_root
 
-        with patch.object(web_channel, "_require_auth", lambda: None), \
-                patch.object(web_channel, "_db_scope", scope), \
+        with _handler_auth(scope), \
                 patch.object(scenes_service, "find_scene",
                              lambda scene_id: (dict(IMPORT_SCENE), True)), \
                 patch("scenes.api_workbench._resolve_workspace_root", resolve_workspace):
@@ -233,8 +233,7 @@ class ScenesTenantScopeTests(unittest.TestCase):
                             "code": "missing_tenant"}))
             yield  # pragma: no cover
 
-        with patch.object(web_channel, "_require_auth", lambda: None), \
-                patch.object(web_channel, "_db_scope", scope), \
+        with _handler_auth(scope), \
                 patch.object(scenes_service, "find_scene",
                              lambda scene_id: (dict(IMPORT_SCENE), True)), \
                 patch("scenes.api_workbench._resolve_workspace_root", resolve_workspace):
@@ -249,16 +248,14 @@ class ScenesTenantScopeTests(unittest.TestCase):
     def test_a_cross_origin_import_is_refused(self):
         tenant_root = tempfile.mkdtemp()
 
-        with patch.object(web_channel, "_require_auth", lambda: None), \
-                patch.object(web_channel, "_db_scope", _cm_scope(_ctx())), \
+        with _handler_auth(_cm_scope(_ctx())), \
                 patch.object(scenes_service, "find_scene",
                              lambda scene_id: (dict(IMPORT_SCENE), True)), \
                 patch("scenes.api_workbench._resolve_workspace_root",
                       lambda agent_id=None: tenant_root):
             resp = self._import(headers={"Cookie": "cow_session=whatever",
                                          "Origin": "http://evil.example"})
-
-        self.assertTrue(str(resp.status).startswith("403"),
+        self.assertTrue(str(resp.status).startswith(("401", "403")),
                         (resp.status, resp.data))
         self.assertFalse(os.path.exists(os.path.join(tenant_root, "tmp")))
 

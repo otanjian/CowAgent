@@ -19,6 +19,7 @@ from unittest.mock import patch
 
 from common import startup_hooks
 from common.startup_hooks import (
+    HOOK_DATABASE_BOOTSTRAP,
     HOOK_IDENTITY_MODE_CONSISTENCY,
     HOOK_TENANT_CONVERSATION_BACKFILL,
     is_registered,
@@ -47,8 +48,9 @@ class RegistryTests(unittest.TestCase):
         order = registered_hooks()
         self.assertLess(order.index("test.early"), order.index("test.late"))
 
-    def test_the_fork_registers_both_boot_seams(self):
+    def test_the_fork_registers_boot_seams(self):
         self.assertTrue(is_registered(HOOK_IDENTITY_MODE_CONSISTENCY))
+        self.assertTrue(is_registered(HOOK_DATABASE_BOOTSTRAP))
         self.assertTrue(is_registered(HOOK_TENANT_CONVERSATION_BACKFILL))
 
 
@@ -61,6 +63,14 @@ class AppSeamTests(unittest.TestCase):
             self.assertTrue(app._guard_identity_mode_consistency())
         run.assert_called_once_with(HOOK_IDENTITY_MODE_CONSISTENCY)
 
+    def test_app_delegates_database_bootstrap_to_the_registry(self):
+        import app
+
+        with patch("common.startup_hooks.run_startup_hook",
+                   return_value=True) as run:
+            self.assertTrue(app._ensure_database_bootstrap())
+        run.assert_called_once_with(HOOK_DATABASE_BOOTSTRAP)
+
     def test_app_delegates_the_conversation_migration_to_the_registry(self):
         import app
 
@@ -71,37 +81,41 @@ class AppSeamTests(unittest.TestCase):
 
 
 class IdentityGuardTests(unittest.TestCase):
-    """The guard moved out of ``app.py`` and must behave identically."""
+    """Explicit legacy / unknown modes refuse to boot."""
 
-    def _run(self, mode="legacy", migrated=True, db_path=None):
-        svc = patch("auth.store.refuse_legacy_after_migration",
-                    return_value=migrated)
+    def _run(self, mode="legacy"):
         conf = patch("config.conf", return_value={"identity_mode": mode})
-        with svc as refuse, conf, \
-                patch("config.get_data_root", return_value=db_path or tempfile.mkdtemp()):
+        with conf:
             return startup_hooks._identity_mode_consistency()
 
-    def test_legacy_over_a_migrated_db_refuses_to_boot(self):
+    def test_legacy_mode_refuses_to_boot(self):
         with self.assertRaises(RuntimeError):
-            self._run(mode="legacy", migrated=True)
+            self._run(mode="legacy")
 
-    def test_legacy_over_an_unmigrated_db_boots(self):
-        self._run(mode="legacy", migrated=False)  # must not raise
+    def test_database_mode_boots(self):
+        self._run(mode="database")  # must not raise
 
-    def test_database_mode_never_refuses(self):
-        self._run(mode="database", migrated=False)  # must not raise
+    def test_missing_mode_boots(self):
+        with patch("config.conf", return_value={}):
+            startup_hooks._identity_mode_consistency()
+
+    def test_unknown_mode_refuses(self):
+        with self.assertRaises(RuntimeError):
+            self._run(mode="something-else")
 
 
 class TenantBackfillHookTests(unittest.TestCase):
     """"Legacy is a no-op" and "an ambiguous owner is never guessed"."""
 
     def test_legacy_mode_does_no_work(self):
+        """Historical name: backfill still runs under database-only mode."""
         import app  # noqa: F401  (registers the hooks)
 
-        with patch("config.conf", return_value={"identity_mode": "legacy"}), \
+        with patch("config.conf", return_value={"identity_mode": "database"}), \
                 patch("auth.service.get_identity_service") as svc:
+            svc.return_value.tenant_shared_roots.return_value = []
             startup_hooks._tenant_conversation_backfill()
-        svc.assert_not_called()
+        svc.assert_called()
 
     def test_the_backfill_never_guesses_between_two_tenants(self):
         import app  # noqa: F401

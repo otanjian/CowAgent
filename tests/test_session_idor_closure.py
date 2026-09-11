@@ -145,7 +145,6 @@ def test_session_handlers_refuse_before_touching_the_store(
 
     spy = _SpyStore()
     monkeypatch.setattr(_memory, "get_conversation_store", lambda ws: spy)
-    monkeypatch.setattr(wc, "_require_auth", lambda: None)
     monkeypatch.setattr(wc.web, "header", lambda *a, **k: None)
     monkeypatch.setattr(wc.web, "input", lambda **k: {})
     monkeypatch.setattr(wc.web, "data", lambda: b'{"title": "hacked", "user_message": "hi"}')
@@ -171,7 +170,6 @@ def test_message_delete_refuses_before_touching_the_store(monkeypatch):
 
     spy = _SpyStore()
     monkeypatch.setattr(_memory, "get_conversation_store", lambda ws: spy)
-    monkeypatch.setattr(wc, "_require_auth", lambda: None)
     monkeypatch.setattr(wc.web, "header", lambda *a, **k: None)
     monkeypatch.setattr(
         wc.web, "data",
@@ -198,7 +196,6 @@ def test_core_file_read_refuses_without_edit_grant(monkeypatch):
             reads.append((agent_id, filename))
             return {}
 
-    monkeypatch.setattr(wc, "_require_auth", lambda: None)
     monkeypatch.setattr(wc.web, "header", lambda *a, **k: None)
     monkeypatch.setattr(wc, "_db_scope", lambda: _fake_scope(_ctx()))
     monkeypatch.setattr(wc, "_require_tenant_agent_binding",
@@ -226,7 +223,6 @@ def test_avatar_upload_refuses_without_edit_grant(monkeypatch):
         def snapshot(self):
             return {"revision": 1}
 
-    monkeypatch.setattr(wc, "_require_auth", lambda: None)
     monkeypatch.setattr(wc.web, "header", lambda *a, **k: None)
     monkeypatch.setattr(wc, "_db_scope", lambda: _fake_scope(_ctx()))
     monkeypatch.setattr(wc, "_require_tenant_agent_binding",
@@ -247,16 +243,9 @@ def test_avatar_upload_refuses_without_edit_grant(monkeypatch):
 # D3: empty tenant scope in database mode never falls back to the global default
 # ---------------------------------------------------------------------------
 
-def test_workspace_root_refuses_empty_tenant_in_database_mode(monkeypatch):
+def test_workspace_root_refuses_empty_tenant(monkeypatch):
     monkeypatch.setattr(wc, "_is_database_identity", lambda: True)
     with use_identity(RuntimeIdentity()):
         with pytest.raises(_web.HTTPError) as exc:
             wc._get_workspace_root()
     assert exc.value.args[0] == "403 Forbidden"
-
-
-def test_workspace_root_keeps_the_legacy_fallback(monkeypatch, tmp_path):
-    ws = _register_test_agent(monkeypatch, tmp_path)
-    monkeypatch.setattr(wc, "_is_database_identity", lambda: False)
-    with use_identity(RuntimeIdentity()):
-        assert wc._get_workspace_root(agent_id="alpha") == str(ws)

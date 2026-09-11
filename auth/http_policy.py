@@ -51,11 +51,8 @@ ROUTE_POLICY: Dict[str, Dict[str, dict]] = derive_route_policy()
 
 
 def _is_database_mode() -> bool:
-    try:
-        from config import conf
-        return str(conf().get("identity_mode", "legacy") or "legacy") == "database"
-    except Exception:
-        return False
+    """Database is the only identity mode after retire-legacy-identity-mode."""
+    return True
 
 
 _REASON_PHRASES = {

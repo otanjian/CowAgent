@@ -12,8 +12,7 @@ The Web Console is 容大AI's default channel. It runs automatically once starte
   "channel_type": "web",
   "web_host": "0.0.0.0",
   "web_port": 9899,
-  "web_password": "",
-  "external_api_token": "",
+  "identity_mode": "database",
   "enable_thinking": false
 }
 ```
@@ -21,15 +20,14 @@ The Web Console is 容大AI's default channel. It runs automatically once starte
 | Parameter | Description | Default |
 | --- | --- | --- |
 | `channel_type` | Set to `web` | `web` |
-| `web_host` | Web service listen address. Defaults to `127.0.0.1` (local only); set to `0.0.0.0` for public access and configure a password | `""` |
+| `web_host` | Web service listen address. Defaults to `127.0.0.1` (local only); set to `0.0.0.0` for public access | `""` |
 | `web_port` | Web service listen port | `9899` |
-| `web_password` | Access password. Leave empty to disable password protection; recommended when listening on `0.0.0.0` | `""` |
-| `external_api_token` | Independent Bearer token for the OpenAI-compatible API. Leave empty to disable the API | `""` |
+| `identity_mode` | Identity mode. Only `database` is supported; explicit `legacy` refuses to start | `"database"` |
 | `web_session_expire_days` | Login session validity in days | `30` |
 | `web_file_serve_root` | Root directory the web console can directly read/send files from. Defaults to the user home dir and agent workspace only; set to `/` to allow the whole filesystem | `"~"` |
 | `enable_thinking` | Whether to enable deep thinking mode | `false` |
 
-Once a password is configured, you must enter it to log in when accessing the console. The login session is kept for 30 days by default, so restarting the service during that period does not require re-login. The password can also be changed online from the "Configuration" page in the console.
+Access requires a database account (username + password). On first start the platform admin is bootstrapped and the one-time initial password is printed to the console (and a protected file). The login session is kept for 30 days by default via an HttpOnly `cow_session` cookie. Desktop and other programmatic clients use the same session value as `Authorization: Bearer`. There is no shared `web_password`.
 
 ### Instance Branding
 
@@ -43,15 +41,13 @@ separate feature switch is required; the old `branding_enabled` setting is ignor
 
 - **Scope**: Instance-wide. Brand data lives under `<data_root>/branding/`; it is
   never written into `config.json`.
-- **Password prerequisite**: Because the logo is served to unauthenticated
-  visitors, editing is only allowed when `web_password` is set. With no password
-  the settings page is read-only and explains why.
-- **Identity mode**: Writes currently require single-instance `identity_mode=legacy`.
-  Database and other identity modes cannot save or reset until platform authorization
-  and auditing are integrated; a legacy shared password cannot bypass this gate.
-- **API authentication**: Writes accept verified Authorization Bearer or login cookies,
-  never a URL token alone. Cookie clients obtain `csrf_token` from `/api/branding`
-  and send it as `X-Branding-CSRF` on same-origin save/reset requests. The UI does this automatically.
+- **Authorization**: Brand writes require a platform administrator with
+  `branding.manage`. Shared passwords and anonymous access cannot authorize edits.
+- **API authentication**: Writes accept verified Authorization Bearer (same
+  `cow_session` value) or login cookies with origin/CSRF checks. Cookie clients
+  obtain `csrf_token` from `/api/branding` and send it as `X-Branding-CSRF` on
+  same-origin save/reset requests. The UI does this automatically. Query-token
+  auth is rejected.
 - **Damaged settings**: Missing or damaged published metadata is a read-only recovery
   preview. An explicit restore preserves the original in `branding/corrupt/` and
   allocates a new revision. Retain the `.revision.json` ledger in the brand directory.
@@ -92,8 +88,10 @@ After starting the project, visit:
 
 ## OpenAI-Compatible API
 
-Set `external_api_token` to enable `POST /v1/chat/completions`. This token is
-independent from `web_password` and Web Console login sessions.
+Create a service-account API key (`sak_…`) in the identity console to enable
+`POST /v1/chat/completions`. Pass it as `Authorization: Bearer`. This is
+independent from Web Console login sessions and replaces the retired
+`external_api_token` setting.
 
 The first release accepts text messages and uses 容大AI's configured Agent and
 model. The request `model` is required for OpenAI client compatibility and is
@@ -145,7 +143,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="http://localhost:9899/v1",
-    api_key="your-external-api-token",
+    api_key="sak_your-service-account-key",
 )
 response = client.chat.completions.create(
     model="cowagent",
@@ -155,8 +153,8 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)
 ```
 
-The API returns `400` for invalid requests, `401` for invalid credentials, and
-`503` when `external_api_token` is not configured. Non-streaming Agent failures
+The API returns `400` for invalid requests, `401` for invalid or revoked
+credentials, and `503` when the identity store is unavailable. Non-streaming Agent failures
 return a structured JSON `500` response.
 
 For streaming requests, 容大AI waits up to 30 seconds for the Agent to produce
@@ -174,7 +172,7 @@ followed by a terminal chunk with `finish_reason=error` and then
 
 ### Account Menu
 
-After signing in with an individual account (identity mode `database`), the card
+After signing in with an individual account, the card
 at the bottom left of the sidebar shows an avatar, your display name (or
 username), and `@username`. It stays visible as you scroll the navigation, and
 switching tenants keeps the same account identity.
@@ -214,13 +212,6 @@ leaving the current page:
 Press Escape or click outside to close the menu; the drawer/modal closes return
 focus to the card trigger. On mobile and in short viewports the entries stay
 reachable and the hidden menu never receives focus.
-
-With legacy access, the card shows **Local access**:
-
-- **Password protected**: you can log out from the menu, and only the
-  interface-preferences, about and logout entries apply.
-- **No login required**: the preferences and about entries remain; there is no
-  logout action and no personal password entry.
 
 If the initial login check fails, select **Check again** on the login screen.
 If account information becomes unavailable inside the console, open the card

@@ -37,16 +37,41 @@ def _runner(events, calls):
     return run
 
 
-def _http_app(monkeypatch, run_chat, configured_token="secret"):
-    import config
+def _http_app(monkeypatch, run_chat):
+    """Build the OpenAI handler app under database identity.
 
-    # These HTTP-level tests exercise the legacy external_api_token contract, so
-    # pin identity_mode to legacy regardless of the developer config.json.
+    Happy-path HTTP tests stub identity resolution so they exercise the
+    completion/stream body without re-testing SAK auth (covered separately).
+    """
+    import config
+    from common.runtime_identity import RuntimeIdentity
+    from types import SimpleNamespace
+
     monkeypatch.setattr(
-        config, "conf", lambda: {"external_api_token": configured_token,
-                                 "identity_mode": "legacy"}
+        config, "conf", lambda: {"identity_mode": "database"}
     )
     monkeypatch.setattr(openai_api, "_run_chat_service", run_chat)
+    monkeypatch.setattr(openai_api, "_is_database_mode", lambda: True)
+    monkeypatch.setattr(
+        openai_api,
+        "_db_request_identity_and_agent",
+        lambda: (RuntimeIdentity(user_id="api-user", tenant_id="tnt-api"), "primary"),
+    )
+
+    class FakeAgentBridge:
+        agent_registry = SimpleNamespace(default_agent_id="primary")
+
+        def _resolve_agent_id(self, agent_id=None):
+            return agent_id or "primary"
+
+        @staticmethod
+        def _cancel_key(agent_id, request_id, default_agent_id):
+            return f"{agent_id}::{request_id}"
+
+    monkeypatch.setattr(
+        "bridge.bridge.Bridge",
+        lambda: SimpleNamespace(get_agent_bridge=lambda: FakeAgentBridge()),
+    )
     return web.application(
         ("/v1/chat/completions", "OpenAIChatCompletionsHandler"),
         vars(web_channel),
@@ -54,15 +79,54 @@ def _http_app(monkeypatch, run_chat, configured_token="secret"):
     )
 
 
-def _post(app, payload, authorization="Bearer secret"):
+def _http_app_with_service_account(monkeypatch, run_chat, tmp_path):
+    """Real SAK authentication against an isolated identity.db."""
+    import config
+    from auth.service import IdentityService
+
+    master = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+    monkeypatch.setenv("COW_CREDENTIAL_MASTER_KEY", master)
+    db = str(tmp_path / "identity.db")
+    svc = IdentityService(db)
+    tenant = svc.bootstrap(
+        tenant_code="acme", tenant_name="Acme", admin_username="root",
+        admin_display="Root", admin_password="Str0ngAdminPass",
+        shared_root=str(tmp_path / "shared"), allow_weak=True,
+    )["id"]
+    root = svc.list_platform_users()[0]["id"]
+    created = svc.create_service_account_api_key(
+        actor_user_id=root, tenant_id=tenant, user_id=root,
+    )
+    svc.bind_agent(tenant_id=tenant, agent_id="primary")
+    settings = {"identity_mode": "database", "identity_db_path": db}
+    monkeypatch.setattr(config, "conf", lambda: settings)
+    monkeypatch.setattr(openai_api, "_run_chat_service", run_chat)
+    monkeypatch.setattr(openai_api, "_is_database_mode", lambda: True)
+    monkeypatch.setattr("auth.service.get_identity_service", lambda: svc)
+    monkeypatch.setattr(
+        "channel.web.auth_handlers._get_service", lambda: svc)
+    app = web.application(
+        ("/v1/chat/completions", "OpenAIChatCompletionsHandler"),
+        vars(web_channel),
+        autoreload=False,
+    )
+    return app, created["api_key"], tenant
+
+
+def _post(app, payload, authorization="Bearer sak_fixture", tenant=None, agent="primary"):
+    headers = {
+        "Authorization": authorization,
+        "Content-Type": "application/json",
+    }
+    if tenant:
+        headers["X-Tenant-ID"] = tenant
+    if agent:
+        headers["X-Agent-ID"] = agent
     return app.request(
         "/v1/chat/completions",
         method="POST",
         data=json.dumps(payload),
-        headers={
-            "Authorization": authorization,
-            "Content-Type": "application/json",
-        },
+        headers=headers,
     )
 
 
@@ -841,7 +905,7 @@ def test_http_post_returns_400_for_invalid_json(monkeypatch):
         method="POST",
         data="{",
         headers={
-            "Authorization": "Bearer secret",
+            "Authorization": "Bearer sak_fixture",
             "Content-Type": "application/json",
         },
     )
@@ -857,8 +921,9 @@ def test_http_post_returns_400_for_invalid_json(monkeypatch):
     }
 
 
-def test_http_post_returns_401_for_invalid_bearer_token(monkeypatch):
-    app = _http_app(monkeypatch, _runner([], []))
+def test_http_post_returns_401_for_invalid_service_account_key(monkeypatch, tmp_path):
+    app, _api_key, tenant = _http_app_with_service_account(
+        monkeypatch, _runner([], []), tmp_path)
 
     response = _post(
         app,
@@ -866,15 +931,21 @@ def test_http_post_returns_401_for_invalid_bearer_token(monkeypatch):
             "model": "cowagent",
             "messages": [{"role": "user", "content": "hello"}],
         },
-        authorization="Bearer wrong",
+        authorization="Bearer sak_not-a-real-key",
+        tenant=tenant,
     )
 
     assert response.status == "401 Unauthorized"
-    assert json.loads(response.data)["error"]["code"] == "invalid_api_key"
+    assert json.loads(response.data)["error"]["code"] in (
+        "unauthorized", "invalid_api_key")
 
 
-def test_http_post_returns_503_when_external_api_is_disabled(monkeypatch):
-    app = _http_app(monkeypatch, _runner([], []), configured_token="")
+def test_http_post_accepts_valid_service_account_key(monkeypatch, tmp_path):
+    app, api_key, tenant = _http_app_with_service_account(
+        monkeypatch,
+        _runner([{"chunk_type": "content", "delta": "Hello"}], []),
+        tmp_path,
+    )
 
     response = _post(
         app,
@@ -882,10 +953,29 @@ def test_http_post_returns_503_when_external_api_is_disabled(monkeypatch):
             "model": "cowagent",
             "messages": [{"role": "user", "content": "hello"}],
         },
+        authorization="Bearer " + api_key,
+        tenant=tenant,
     )
 
-    assert response.status == "503 Service Unavailable"
-    assert json.loads(response.data)["error"]["code"] == "api_disabled"
+    assert response.status == "200 OK", response.data
+    assert json.loads(response.data)["choices"][0]["message"]["content"] == "Hello"
+
+
+def test_http_post_returns_401_without_credentials(monkeypatch, tmp_path):
+    app, _api_key, tenant = _http_app_with_service_account(
+        monkeypatch, _runner([], []), tmp_path)
+
+    response = _post(
+        app,
+        {
+            "model": "cowagent",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+        authorization="",
+        tenant=tenant,
+    )
+
+    assert response.status == "401 Unauthorized"
 
 
 def test_http_stream_returns_500_when_agent_fails_immediately(monkeypatch):
@@ -958,7 +1048,7 @@ def test_http_stream_first_event_timeout_returns_500_and_cancels(monkeypatch):
         "code": "timeout",
     }
     assert len(request_ids) == 1
-    assert cancel_calls == [(request_ids[0], None)]
+    assert cancel_calls == [(request_ids[0], "primary")]
 
 
 def test_http_stream_returns_sse_body_and_done_marker(monkeypatch):
@@ -990,7 +1080,8 @@ def test_route_config_and_english_documentation_expose_the_public_api():
     config = json.loads((root / "config-template.json").read_text(encoding="utf-8"))
     docs = (root / "docs/channels/web.mdx").read_text(encoding="utf-8")
 
-    assert config["external_api_token"] == ""
+    assert "external_api_token" not in config
+    assert config.get("identity_mode") == "database"
     assert "POST /v1/chat/completions" in docs
     assert "Authorization: Bearer" in docs
     assert '"stream": true' in docs

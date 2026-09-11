@@ -16,37 +16,29 @@ Registered BEFORE the ``/api/todos/{id}`` wildcard (web.py matches in order), so
 
 Authorization is enforced here, not in the frontend:
 
-* legacy mode: requires ``_require_auth()`` (a configured web_password + valid
-  token). A verified login maps to a stable ``local-owner``.
-* database mode: requires a resolved ``RequestContext`` with
-  ``todo.read`` / ``todo.write`` (member default), a real tenant and membership.
+* requires a resolved ``RequestContext`` with ``todo.read`` / ``todo.write``
+  (member default), a real tenant and membership;
 * The service layer re-checks scope/owner and refuses when no trustworthy
-  subject can be established.
+  subject can be established;
 * Writes go through the same CSRF/origin gate as other console writes.
 """
 
 from __future__ import annotations
 
-import hmac
-import hashlib
 import json
-import time
 from http import HTTPStatus
-from typing import Any, Optional
+from typing import Any
 
 import web
 
 from auth.runtime import resolve_context, IdentityContextError
-from auth.service import IdentityServiceError, IdentityService
+from auth.service import IdentityService
 from agent.todo.service import (
     TodoService,
     TodoActor,
     TodoServiceError,
-    TodoDisabled,
     TodoUnauthorized,
     TodoPermissionDenied,
-    TodoNotFoundError,
-    TodoConflictError,
     TodoFieldValidationError,
     TodoUnavailable,
     default_enabled,
@@ -54,66 +46,11 @@ from agent.todo.service import (
 
 
 # --------------------------------------------------------------------------- #
-# Local auth helpers (kept independent of web_channel to avoid a circular
-# import; see channel/web/branding.py for the shared origin/csrf rationale).
+# Auth / CSRF helpers
 # --------------------------------------------------------------------------- #
 
-def _get_web_password() -> str:
-    from config import conf
-    pwd = conf().get("web_password", "")
-    return "" if pwd is None else str(pwd)
-
-
-def _is_password_enabled() -> bool:
-    return bool(_get_web_password())
-
-
-def _session_expire_seconds() -> int:
-    from config import conf
-    return int(conf().get("web_session_expire_days", 30)) * 86400
-
-
-def _verify_auth_token(token) -> bool:
-    if not token or "." not in token:
-        return False
-    ts_hex, sig = token.split(".", 1)
-    try:
-        ts = int(ts_hex, 16)
-    except ValueError:
-        return False
-    if time.time() - ts > _session_expire_seconds():
-        return False
-    expected = hmac.new(
-        _get_web_password().encode(), ts_hex.encode(), hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(sig, expected)
-
-
-def _get_bearer_token() -> str:
-    auth = web.ctx.env.get("HTTP_AUTHORIZATION", "") or ""
-    if auth.startswith("Bearer "):
-        return auth[7:].strip()
-    return ""
-
-
-def _require_auth() -> None:
-    """Raise 401 if not authenticated (password set but token invalid)."""
-    from config import conf
-    if not _is_password_enabled():
-        return
-    if _verify_auth_token(web.cookies().get("cow_auth_token", "")):
-        return
-    if _verify_auth_token(_get_bearer_token()):
-        return
-    raise web.HTTPError(
-        "401 Unauthorized",
-        {"Content-Type": "application/json; charset=utf-8"},
-        json.dumps({"status": "error", "message": "Unauthorized"}),
-    )
-
-
 def _origin_ok() -> bool:
-    """Same-origin check for a cookie-authorized write (mirrors branding)."""
+    """Same-origin check for a cookie-authorized write."""
     origin = web.ctx.env.get("HTTP_ORIGIN", "") or web.ctx.env.get("HTTP_REFERER", "") or ""
     if not origin:
         return True
@@ -127,19 +64,15 @@ def _origin_ok() -> bool:
 
 
 def _csrf_ok() -> bool:
-    """Bearer-authenticated writes bypass cookie-CSRF (desktop file:// origin)."""
-    if _verify_auth_token(_get_bearer_token()):
+    """Bearer-authenticated writes bypass cookie-CSRF (desktop file:// origin).
+
+    Token authenticity is revalidated by ``_resolve_actor``; this gate only
+    decides whether the cookie-origin rule applies.
+    """
+    auth = web.ctx.env.get("HTTP_AUTHORIZATION", "") or ""
+    if auth.startswith("Bearer ") and auth[7:].strip():
         return True
     return _origin_ok()
-
-
-def _identity_mode() -> str:
-    from config import conf
-    return str(conf().get("identity_mode", "legacy") or "legacy")
-
-
-def _is_database() -> bool:
-    return _identity_mode() == "database"
 
 
 def _get_identity_service() -> IdentityService:
@@ -164,8 +97,8 @@ def _database_tenant_header() -> str:
     return web.ctx.env.get("HTTP_X_TENANT_ID", "") or ""
 
 
-def _resolve_database_actor() -> TodoActor:
-    """Resolve a database-mode actor from a verified session + tenant header.
+def _resolve_actor() -> TodoActor:
+    """Resolve a database actor from a verified session + tenant header.
 
     Requires a real tenant + membership + the todo permission. Missing / stale
     membership, an inactive tenant or a disabled user all refuse (no silent
@@ -175,7 +108,7 @@ def _resolve_database_actor() -> TodoActor:
     token = _database_session_token()
     tenant = _database_tenant_header()
     if not token or not tenant:
-        raise TodoUnauthorized("database 模式需要登录及租户选择")
+        raise TodoUnauthorized("需要登录及租户选择")
     try:
         ctx = resolve_context(svc, token, tenant or None)
     except IdentityContextError as e:
@@ -192,7 +125,6 @@ def _resolve_database_actor() -> TodoActor:
         scope_id=ctx.tenant_id,
         owner_id=ctx.user_id,
         username=ctx.username,
-        is_legacy=False,
         permissions=set(ctx.permissions) | (
             {"todo.read", "todo.write", "tenant.info.read", "agent.read", "history.read",
              "knowledge.read", "memory.read"} if ctx.is_tenant_admin else set()
@@ -200,36 +132,17 @@ def _resolve_database_actor() -> TodoActor:
     )
 
 
-def _resolve_actor() -> TodoActor:
-    """Resolve the trusted actor for the current request.
-
-    legacy: requires a configured web_password AND a verified token. No-password
-    (compatibility) mode and unauthenticated requests are refused for todos,
-    because the spec forbids a silent single/default-subject fallback.
-    database: resolves a real user/tenant/membership with the todo permission.
-    """
-    if _is_database():
-        return _resolve_database_actor()
-    # Legacy path.
-    if not _is_password_enabled():
-        raise TodoUnauthorized("待办功能需要配置 web_password 并进行登录")
-    _require_auth()
-    return TodoActor.legacy()
-
-
 def _build_service() -> TodoService:
     actor = _resolve_actor()
-    app_data_root = None
-    if not actor.is_legacy:
-        from common.state_dir import StateDirError, tenant_app_data_root
-        try:
-            app_data_root = str(tenant_app_data_root(
-                actor.scope_id, identity_service=_get_identity_service(),
-            ))
-        except StateDirError as e:
-            from common.log import logger
-            logger.error("[TodoService] private tenant data root unavailable: %s", e)
-            raise TodoUnavailable("租户待办存储不可用") from e
+    from common.state_dir import StateDirError, tenant_app_data_root
+    try:
+        app_data_root = str(tenant_app_data_root(
+            actor.scope_id, identity_service=_get_identity_service(),
+        ))
+    except StateDirError as e:
+        from common.log import logger
+        logger.error("[TodoService] private tenant data root unavailable: %s", e)
+        raise TodoUnavailable("租户待办存储不可用") from e
     return TodoService(actor, enabled_fn=default_enabled, app_data_root=app_data_root)
 
 

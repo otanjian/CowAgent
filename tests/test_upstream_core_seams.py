@@ -93,22 +93,29 @@ class WorkspaceTenancySeamTests(unittest.TestCase):
         if not hasattr(web.ctx, "headers"):
             web.ctx.headers = []
 
-    def test_an_empty_tenant_scope_is_refused_in_database_mode(self):
+    def test_an_empty_tenant_scope_is_refused(self):
         import web
         from channel.web.tenant_workspace import resolve_tenant_workspace_root
         from common.runtime_identity import RuntimeIdentity, use_identity
 
         with use_identity(RuntimeIdentity()):
             with self.assertRaises(web.HTTPError) as caught:
-                resolve_tenant_workspace_root(database_mode=True)
+                resolve_tenant_workspace_root()
         self.assertEqual(caught.exception.args[0], "403 Forbidden")
 
-    def test_legacy_mode_returns_none_so_upstream_fallback_runs(self):
-        from channel.web.tenant_workspace import resolve_tenant_workspace_root
-        from common.runtime_identity import RuntimeIdentity, use_identity
+    def test_explicit_legacy_identity_mode_refuses_to_boot(self):
+        """Task 5.1: explicit ``identity_mode=legacy`` aborts startup."""
+        from unittest import mock
+        from common import startup_hooks
 
-        with use_identity(RuntimeIdentity()):
-            self.assertIsNone(resolve_tenant_workspace_root(database_mode=False))
+        with mock.patch("config.conf", return_value={"identity_mode": "legacy"}):
+            with self.assertRaises(RuntimeError):
+                startup_hooks._identity_mode_consistency()
+
+    def test_app_py_still_only_runs_guards_via_startup_hook(self):
+        source = _read("app.py")
+        self.assertIn("run_startup_hook", source)
+        self.assertNotIn("def _identity_mode_consistency", source)
 
     def test_a_resolved_tenant_root_is_returned(self):
         from unittest import mock
@@ -121,7 +128,7 @@ class WorkspaceTenancySeamTests(unittest.TestCase):
         with mock.patch("auth.service.get_identity_service", return_value=service):
             with use_identity(RuntimeIdentity(tenant_id="tnt-alpha")):
                 self.assertEqual(
-                    resolve_tenant_workspace_root(database_mode=True), "/s/alpha")
+                    resolve_tenant_workspace_root(), "/s/alpha")
 
     def test_a_tenant_without_a_root_is_refused_not_defaulted(self):
         from unittest import mock
@@ -135,7 +142,7 @@ class WorkspaceTenancySeamTests(unittest.TestCase):
         with mock.patch("auth.service.get_identity_service", return_value=service):
             with use_identity(RuntimeIdentity(tenant_id="tnt-alpha")):
                 with self.assertRaises(web.HTTPError):
-                    resolve_tenant_workspace_root(database_mode=True)
+                    resolve_tenant_workspace_root()
 
 
 class UpstreamFeaturePreservationTests(unittest.TestCase):

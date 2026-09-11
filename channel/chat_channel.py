@@ -398,7 +398,6 @@ class ChatChannel(Channel):
                 tenant_id=rt.get("tenant_id"),
                 session_id=rt.get("session_id") or context.get("session_id"),
                 web_auth_session_id=rt.get("web_auth_session_id"),
-                web_legacy_authenticated=rt.get("web_legacy_authenticated") is True,
             )
         return RuntimeIdentity(
             agent_id=context.get("agent_id"),

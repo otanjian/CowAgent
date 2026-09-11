@@ -28,19 +28,12 @@ from agent.tenant_provisioning import TenantProvisioningError
 from common.log import logger
 from channel.web.auth_handlers import (
     _get_service,
-    _is_database,
     _json,
     _error,
     _require_context,
     _service_error,
     require_management_write as _require_management_write,
 )
-
-
-def _guard_database() -> None:
-    if not _is_database():
-        raise web.HTTPError("400 Bad Request", {"Content-Type": "application/json"},
-                            _error("database identity mode is not enabled", 400, "not_database"))
 
 
 def _require_platform_admin(ctx: RequestContext) -> None:
@@ -146,7 +139,6 @@ class PlatformUsersHandler:
     """
 
     def GET(self):
-        _guard_database()
         ctx = _require_context()
         _require_platform_admin(ctx)
         svc = _get_service()
@@ -170,7 +162,6 @@ class PlatformUsersHandler:
         for optimistic concurrency, and the actor's current password is re-checked
         server-side (never persisted) before the write is committed.
         """
-        _guard_database()
         _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
@@ -203,7 +194,6 @@ class PlatformUserPasswordHandler:
     """POST /api/platform/users/{id}/password - reset a platform account password."""
 
     def POST(self, user_id: str):
-        _guard_database()
         _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
@@ -238,7 +228,6 @@ class PlatformUserExternalIdentitiesHandler:
     """
 
     def GET(self, user_id: str):
-        _guard_database()
         ctx = _require_context()
         _require_platform_admin(ctx)
         svc = _get_service()
@@ -252,7 +241,6 @@ class PlatformUserExternalIdentitiesHandler:
         return _json({"status": "success", **result})
 
     def POST(self, user_id: str):
-        _guard_database()
         _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
@@ -278,7 +266,6 @@ class PlatformUserExternalIdentityHandler:
     """DELETE /api/platform/users/{id}/external-identities/{binding_id}."""
 
     def DELETE(self, user_id: str, binding_id: str):
-        _guard_database()
         _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
@@ -305,7 +292,6 @@ class TenantMemberExternalIdentitiesHandler:
     """
 
     def GET(self, member_id: str):
-        _guard_database()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
         svc = _get_service()
@@ -320,7 +306,6 @@ class TenantMemberExternalIdentitiesHandler:
         return _json({"status": "success", **result})
 
     def POST(self, member_id: str):
-        _guard_database()
         _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
@@ -347,7 +332,6 @@ class TenantMemberExternalIdentityHandler:
     """DELETE /api/tenant/members/{member_id}/external-identities/{binding_id}."""
 
     def DELETE(self, member_id: str, binding_id: str):
-        _guard_database()
         _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
@@ -376,7 +360,6 @@ class ExternalIdentityAttemptsHandler:
     _scope = "tenant"
 
     def GET(self):
-        _guard_database()
         if self._scope == "platform":
             ctx = _require_context()
             _require_platform_admin(ctx)
@@ -406,7 +389,6 @@ class PlatformTenantsHandler:
     """GET list tenants; POST create tenant (platform admin)."""
 
     def GET(self):
-        _guard_database()
         ctx = _require_context()
         _require_platform_admin(ctx)
         svc = _get_service()
@@ -414,7 +396,6 @@ class PlatformTenantsHandler:
         return _json({"status": "success", "items": svc.list_tenants(q)})
 
     def POST(self):
-        _guard_database()
         _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
@@ -457,7 +438,6 @@ class PlatformTenantHandler:
     """
 
     def GET(self, tenant_id: str):
-        _guard_database()
         ctx = _require_context()
         _require_platform_admin(ctx)
         svc = _get_service()
@@ -469,7 +449,6 @@ class PlatformTenantHandler:
         return _json({"status": "success", "tenant": _tenant_platform_public(tenant)})
 
     def POST(self, tenant_id: str):
-        _guard_database()
         _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
@@ -523,7 +502,6 @@ class PlatformTenantAdminsHandler:
     """
 
     def GET(self, tenant_id: str):
-        _guard_database()
         ctx = _require_context()
         _require_platform_admin(ctx)
         svc = _get_service()
@@ -532,7 +510,6 @@ class PlatformTenantAdminsHandler:
         return _json({"status": "success", "items": svc.tenant_admins(tenant_id)})
 
     def POST(self, tenant_id: str):
-        _guard_database()
         _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
@@ -614,7 +591,6 @@ class PlatformTenantAgentsHandler:
                             _error("forbidden", 403, "forbidden"))
 
     def GET(self, tenant_id: str):
-        _guard_database()
         ctx = _require_context()
         _require_platform_admin(ctx)
         try:
@@ -624,7 +600,6 @@ class PlatformTenantAgentsHandler:
         return _json({"status": "success", **reading})
 
     def POST(self, tenant_id: str):
-        _guard_database()
         _require_management_write()
         ctx = _require_context()
         if not ctx.is_platform_admin:
@@ -674,7 +649,6 @@ class PlatformTenantAgentsHandler:
 
 class TenantInfoHandler:
     def GET(self):
-        _guard_database()
         ctx = _require_context(require_tenant=True)
         # Reading tenant basic info is a functional permission: a role with no
         # permissions cannot read the tenant profile.
@@ -690,7 +664,6 @@ class TenantMembersHandler:
     """GET list members (tenant.members.read); POST create/bind (tenant_admin)."""
 
     def GET(self):
-        _guard_database()
         ctx = _require_context(require_tenant=True)
         _require_permission(ctx, "tenant.members.read")
         svc = _get_service()
@@ -710,7 +683,6 @@ class TenantMembersHandler:
         return _json({"status": "success", **result})
 
     def POST(self):
-        _guard_database()
         _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
@@ -740,7 +712,6 @@ class TenantMemberHandler:
     """POST update a member (tenant_admin, expected_version)."""
 
     def POST(self, member_id: str):
-        _guard_database()
         _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
@@ -773,14 +744,12 @@ class TenantMemberHandler:
 
 class TenantRolesHandler:
     def GET(self):
-        _guard_database()
         ctx = _require_context(require_tenant=True)
         _require_permission(ctx, "tenant.members.read")
         svc = _get_service()
         return _json({"status": "success", "items": svc.list_roles(ctx.tenant_id)})
 
     def POST(self):
-        _guard_database()
         _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
@@ -806,7 +775,6 @@ class TenantRolesHandler:
 
 class TenantRoleHandler:
     def POST(self, role_id: str):
-        _guard_database()
         _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
@@ -833,7 +801,6 @@ class TenantRoleHandler:
         return _json({"status": "success", "role": role})
 
     def DELETE(self, role_id: str):
-        _guard_database()
         _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
@@ -848,7 +815,6 @@ class TenantRoleHandler:
 
 class TenantPermissionsHandler:
     def GET(self):
-        _guard_database()
         ctx = _require_context(require_tenant=True)
         svc = _get_service()
         return _json({"status": "success",
@@ -860,14 +826,12 @@ class TenantPermissionsHandler:
 
 class TenantDepartmentsHandler:
     def GET(self):
-        _guard_database()
         ctx = _require_context(require_tenant=True)
         _require_permission(ctx, "tenant.org.read")
         svc = _get_service()
         return _json({"status": "success", "items": svc.list_departments(ctx.tenant_id)})
 
     def POST(self):
-        _guard_database()
         _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
@@ -892,7 +856,6 @@ class TenantDepartmentsHandler:
 
 class TenantDepartmentHandler:
     def DELETE(self, dept_id: str):
-        _guard_database()
         _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
@@ -905,7 +868,6 @@ class TenantDepartmentHandler:
         return _json({"status": "success", **result})
 
     def PUT(self, dept_id: str):
-        _guard_database()
         _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
@@ -982,7 +944,6 @@ class TenantChannelsHandler:
     """
 
     def GET(self):
-        _guard_database()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
         svc = _get_service()
@@ -1000,7 +961,6 @@ class TenantChannelsHandler:
                       **listing})
 
     def POST(self):
-        _guard_database()
         _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
@@ -1030,7 +990,6 @@ class TenantChannelHandler:
     """Edit one of the current tenant's channel instances (``/api/tenant/channels/:id``)."""
 
     def POST(self, instance_id: str):
-        _guard_database()
         _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
@@ -1066,7 +1025,6 @@ class TenantChannelActiveHandler:
     """
 
     def POST(self, instance_id: str):
-        _guard_database()
         _require_management_write()
         ctx = _require_context(require_tenant=True)
         _require_tenant_admin(ctx)
@@ -1094,7 +1052,6 @@ class TenantChannelActiveHandler:
 
 class IdentityAuditHandler:
     def GET(self):
-        _guard_database()
         ctx = _require_context()
         svc = _get_service()
         # Audit is privileged: only a platform admin (all tenants) or the current
@@ -1142,7 +1099,6 @@ class IdentityAdministeredTenantsHandler:
     """
 
     def GET(self):
-        _guard_database()
         ctx = _require_context()
         svc = _get_service()
         user_id = web.input(user_id="").user_id or None
@@ -1165,7 +1121,6 @@ class PlatformTenantRolesHandler:
     """
 
     def GET(self, tenant_id: str):
-        _guard_database()
         ctx = _require_context()
         _require_platform_admin(ctx)
         svc = _get_service()
@@ -1174,7 +1129,6 @@ class PlatformTenantRolesHandler:
         return _json({"status": "success", "items": svc.list_roles(tenant_id)})
 
     def POST(self, tenant_id: str):
-        _guard_database()
         _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
@@ -1207,7 +1161,6 @@ class PlatformTenantRoleHandler:
     """
 
     def POST(self, tenant_id: str, role_id: str):
-        _guard_database()
         _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
@@ -1232,7 +1185,6 @@ class PlatformTenantRoleHandler:
         return _json({"status": "success", "role": role})
 
     def DELETE(self, tenant_id: str, role_id: str):
-        _guard_database()
         _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)
@@ -1261,7 +1213,6 @@ class TenantAuthorizationCatalogHandler:
     """
 
     def GET(self):
-        _guard_database()
         ctx = _require_context(require_tenant=True)
         inp = web.input(purpose="assign", kind="", q="", page="1", page_size="100")
         kind = (inp.kind or "").strip()
@@ -1303,7 +1254,6 @@ class PlatformTenantAuthorizationCatalogHandler:
     """
 
     def GET(self, tenant_id: str):
-        _guard_database()
         ctx = _require_context()
         _require_platform_admin(ctx)
         inp = web.input(kind="", q="", page="1", page_size="100")
@@ -1334,7 +1284,6 @@ class PlatformTenantResourcesHandler:
     """
 
     def GET(self, tenant_id: str):
-        _guard_database()
         ctx = _require_context()
         _require_platform_admin(ctx)
         svc = _get_service()
@@ -1343,7 +1292,6 @@ class PlatformTenantResourcesHandler:
         return _json({"status": "success", "grants": svc.tenant_resource_grants(tenant_id)})
 
     def PUT(self, tenant_id: str):
-        _guard_database()
         _require_management_write()
         ctx = _require_context()
         _require_platform_admin(ctx)

@@ -21,7 +21,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Callable, Iterator, Optional
 
 _FIELDS = ("agent_id", "user_id", "tenant_id", "session_id", "run_id",
-           "web_auth_session_id", "web_legacy_authenticated")
+           "web_auth_session_id")
 
 
 @dataclass(frozen=True)
@@ -30,10 +30,10 @@ class RuntimeIdentity:
 
     ``agent_id`` is None on single-Agent installs and before routing has run;
     ``user_id`` stays None until tenancy lands; ``tenant_id`` is set when the
-    request selected a tenant (database mode) so path resolution can scope to the
-    tenant's shared root; ``run_id`` is set per task once sub agents exist.
+    request selected a tenant so path resolution can scope to the tenant's
+    shared root; ``run_id`` is set per task once sub agents exist.
     Consumers must treat ``user_id``/``tenant_id``/``agent_id`` as None meaning
-    "use the legacy/default path".
+    "no verified subject yet".
     """
 
     agent_id: Optional[str] = None
@@ -45,7 +45,6 @@ class RuntimeIdentity:
     # database session row id, never the bearer/cookie token. Tools revalidate
     # its current owner, expiry and revocation when they act for the user.
     web_auth_session_id: Optional[str] = None
-    web_legacy_authenticated: bool = False
 
     def derive(self, **overrides: Any) -> "RuntimeIdentity":
         unknown = set(overrides) - set(_FIELDS)

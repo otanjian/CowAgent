@@ -15,32 +15,27 @@ function readStartupPreference(key) {
 }
 
 // Task 3.7 — user/tenant-scoped storage partition for the Agent/session
-// selection keys. In database identity mode the keys are namespaced by the
-// confirmed user and tenant so a different account or tenant on the same
-// browser never restores the wrong context. Legacy mode keeps the original
-// keys untouched (no migration, no bulk rewrite). The namespace is only
-// computable once the identity and the effective tenant are known, so callers
-// that restore these identifiers must wait for authentication + tenant select.
+// selection keys. Keys are namespaced by the confirmed user and tenant so a
+// different account or tenant on the same browser never restores the wrong
+// context. The namespace is only computable once the identity and the effective
+// tenant are known, so callers that restore these identifiers must wait for
+// authentication + tenant select.
 function _cowUserTenantKey(key) {
-    if (_identityMode() !== 'database') return key;
     const uid = (_accountState && _accountState.username) ? _accountState.username : '';
     const tid = sessionStorage.getItem('cow_tenant_id') || '';
-    if (!uid && !tid) return key;      // not confirmed yet -> legacy fallback
+    if (!uid && !tid) return key;      // not confirmed yet -> unpartitioned key
     return `${key}::u=${encodeURIComponent(uid)}::t=${encodeURIComponent(tid)}`;
 }
 
-// Read a user/tenant-scoped selection key, falling back to the legacy key when
-// the current context is not yet confirmed (database) or in legacy mode.
+// Read a user/tenant-scoped selection key. Once the account is authenticated,
+// do not carry an old unpartitioned value into the new context. Before the
+// context is confirmed, the unpartitioned key is allowed as the initial value.
 function readScopedPreference(key) {
     try {
         const scoped = _cowUserTenantKey(key);
         const v = localStorage.getItem(scoped);
         if (v !== null) return v;
-        // Database mode: do NOT carry the old unpartitioned value into a new
-        // context (spec: 旧未分区的 database 选择不得带入). But before the
-        // context is confirmed we may still be reading for the very first time,
-        // in which case the legacy key is allowed as the initial value.
-        if (_identityMode() === 'database' && _accountState && _accountState.authenticated) {
+        if (_accountState && _accountState.authenticated) {
             return null;
         }
         return localStorage.getItem(key);
@@ -59,8 +54,8 @@ function removeScopedPreference(key) {
 
 // Sidebar account state
 // UI-only identity: never retain the login response (which contains a token).
-let _identityModeState = 'unknown';
-let _accountState = { phase: 'loading', mode: 'unknown', authRequired: null,
+// Database identity is the only supported mode.
+let _accountState = { phase: 'loading', mode: 'database', authRequired: null,
     authenticated: null, username: '', displayName: '', mustChangePassword: false };
 let _authEpoch = 0;
 let _accountCheckSeq = 0;
@@ -84,7 +79,7 @@ function _accountHidden(id, hidden) {
 }
 
 function _emptyAccount(phase) {
-    return { phase, mode: _identityModeState, authRequired: null,
+    return { phase, mode: 'database', authRequired: null,
         authenticated: null, username: '', displayName: '', mustChangePassword: false };
 }
 
@@ -96,7 +91,6 @@ function _renderSidebarAccount() {
     const active = document.activeElement;
     const state = _accountState;
     const hasUser = state.phase !== 'loading' && state.authenticated === true && !!state.username;
-    const local = state.phase === 'ready' && state.mode === 'legacy';
     const leaving = state.phase === 'logout_pending';
     const logoutError = state.phase === 'logout_error';
     const canLogout = (state.authRequired === true && state.authenticated === true) || logoutError || leaving;
@@ -104,18 +98,12 @@ function _renderSidebarAccount() {
     if (hasUser) {
         name = state.displayName || state.username;
         subtitle = '@' + state.username;
-        // Database identity: prefer the *member* display name for the
-        // currently-selected tenant (per the "edit member" field) over the
-        // account-level display name. Falls back to the account name when the
-        // member projection is not yet loaded or the account has no active
-        // membership in the selected tenant.
-        if (state.mode === 'database' && _baseAccountSelf()) {
+        // Prefer the *member* display name for the currently-selected tenant
+        // (per the "edit member" field) over the account-level display name.
+        if (_baseAccountSelf()) {
             const memberName = _currentMemberDisplayName();
             if (memberName) name = memberName;
         }
-    } else if (local) {
-        name = t('account_local');
-        subtitle = t(state.authRequired ? 'account_password_mode' : 'account_public_mode');
     } else if (leaving || logoutError) {
         name = t(leaving ? 'account_logging_out' : 'account_logout_unconfirmed');
         subtitle = logoutError ? t('account_retry_hint') : '';
@@ -137,17 +125,15 @@ function _renderSidebarAccount() {
     _accountText('account-menu-username', hasUser ? '@' + state.username : '');
     _accountHidden('account-menu-identity', !hasUser);
     document.getElementById('account-menu-status')?.classList.remove('opacity-0');
-    _accountText('account-menu-status', hasUser || local ? '' : name);
-    _accountHidden('account-menu-status', hasUser || local || state.phase === 'unauthenticated');
+    _accountText('account-menu-status', hasUser ? '' : name);
+    _accountHidden('account-menu-status', hasUser || state.phase === 'unauthenticated');
     _accountHidden('account-menu-retry', !['error', 'logout_error', 'loading'].includes(state.phase));
     _accountHidden('account-menu-logout', !canLogout);
     _accountText('account-menu-logout-label', t(leaving ? 'account_logging_out' : logoutError ? 'account_retry_logout' : 'account_logout'));
     _accountHidden('logout-btn-header', !canLogout);
-    // Six-item menu (database identity mode, authenticated account). The items
-    // are only available to a real database user; legacy/error/logout states
-    // hide the whole group.
-    const dbUser = hasUser && state.mode === 'database';
-    _accountHidden('account-menu-settings', !(dbUser || local));
+    // Six-item menu for an authenticated database account.
+    const dbUser = hasUser;
+    _accountHidden('account-menu-settings', !dbUser);
     ['account-menu-profile', 'account-menu-password', 'account-menu-tenant'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.disabled = !!_accountWritePending;
@@ -156,7 +142,7 @@ function _renderSidebarAccount() {
     ['account-menu-prefs', 'account-menu-about'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.disabled = !!_accountWritePending;
-        _accountHidden(id, !(dbUser || local));
+        _accountHidden(id, !dbUser);
     });
     ['account-menu-logout', 'logout-btn-header'].forEach(id => {
         const el = document.getElementById(id);
@@ -251,23 +237,18 @@ function _invalidateAccountIdentity(phase) {
 function _normalizeAccountCheck(data) {
     if (!data || typeof data !== 'object' || Array.isArray(data) || data.status !== 'success'
             || typeof data.auth_required !== 'boolean') throw new Error('Invalid authentication response');
-    const mode = data.identity_mode === undefined ? 'legacy' : data.identity_mode;
-    if (!['legacy', 'database'].includes(mode)
-            || (data.identity_mode === undefined && _identityModeState === 'database')
-            || (mode === 'database' && !data.auth_required)
-            || (data.auth_required && typeof data.authenticated !== 'boolean')) {
+    if (data.identity_mode !== 'database' || !data.auth_required
+            || typeof data.authenticated !== 'boolean') {
         throw new Error('Invalid authentication mode');
     }
-    const authenticated = data.auth_required ? data.authenticated : false;
-    const user = mode === 'database' && authenticated && data.user;
+    const authenticated = data.authenticated;
+    const user = authenticated && data.user;
     const username = user && typeof user.username === 'string' && user.username.trim() ? user.username : '';
     const displayName = user && typeof user.display_name === 'string' && user.display_name.trim() ? user.display_name : '';
-    const mustChangePassword = mode === 'database' && authenticated
-        ? Boolean(data.must_change_password) : false;
-    return { mode, authRequired: data.auth_required, authenticated, username, displayName,
+    const mustChangePassword = authenticated ? Boolean(data.must_change_password) : false;
+    return { mode: 'database', authRequired: true, authenticated, username, displayName,
         mustChangePassword,
-        phase: data.auth_required && !authenticated ? 'unauthenticated'
-            : mode === 'database' && !username ? 'error' : 'ready' };
+        phase: !authenticated ? 'unauthenticated' : !username ? 'error' : 'ready' };
 }
 
 function _acceptAccountIdentity(next, newLogin = false) {
@@ -278,7 +259,6 @@ function _acceptAccountIdentity(next, newLogin = false) {
     // must still take effect after a profile-only retry.
     _accountIdentityKey = { mode: next.mode, authRequired: next.authRequired,
         username: next.username || previous?.username || '' };
-    _identityModeState = next.mode;
     _accountState = next;
     _renderSidebarAccount();
 }
@@ -451,13 +431,12 @@ function refreshAccountIdentity() {
             // use the tenant-admin request helper or cache a credentials body.
             const response = await fetch('/auth/check', { credentials: 'same-origin', cache: 'no-store' });
             if (!current()) return;
-            if (response.status === 401 && _identityModeState !== 'unknown') { showLoginScreen(); return; }
+            if (response.status === 401) { showLoginScreen(); return; }
             if (!response.ok) throw new Error('Authentication check failed');
             const data = await response.json();
             if (!current()) return;
             const next = _normalizeAccountCheck(data);
             if (next.phase === 'unauthenticated') {
-                _identityModeState = next.mode;
                 showLoginScreen();
                 return;
             }
@@ -1011,7 +990,8 @@ function installCfgTipPortal() {
 // =====================================================================
 // The pre-paint controller owns state; this is a resolved-mode projection for
 // existing console consumers, not a second persisted preference.
-let currentTheme = window.CowAppearance.getState().resolved;
+let currentTheme = (window.CowAppearance && window.CowAppearance.getState
+    && window.CowAppearance.getState().resolved) || 'light';
 let appearanceTrigger = null;
 
 function renderAppearancePreferences() {
@@ -5203,15 +5183,8 @@ function renderWorkspaceSelectorMenu() {
     }
 
     parts.push(`<div class="ws-sel-divider"></div>`);
-    // In database identity mode the host-filesystem folder picker is unavailable
-    // (browse stays closed) — only new-project / recents / default space remain.
-    if (_identityModeState !== 'database') {
-        parts.push(`
-            <button class="ws-sel-item" onclick="wsSelOpenProjectDialog()">
-                <i class="fas fa-folder-open"></i>
-                <span class="ws-sel-name">${escapeHtml(t('ws_sel_open'))}</span>
-            </button>`);
-    }
+    // Host-filesystem folder picker stays closed — only new-project / recents /
+    // default space remain.
     parts.push(`
         <button class="ws-sel-item" onclick="wsSelNewProjectDialog()">
             <i class="fas fa-folder-plus"></i>
@@ -8311,6 +8284,11 @@ function _sidebarRecentDenied() {
 
 let _sidebarRecentItems = [];
 let _sidebarRecentSeq = 0;
+// Declared before sidebar/history init so mid-script DOMContentLoaded or
+// deferred callbacks cannot hit temporal-dead-zone on these lets.
+let _dragSpaceKey = null;
+let _sessionActionMenu = null;
+let _sessionMenuCleanup = null;
 
 function renderSidebarRecentSessions() {
     const list = document.getElementById('sidebar-recent-list');
@@ -8418,11 +8396,12 @@ function _initSidebarRecent() {
     more?.addEventListener('click', () => navigateTo('history'));
     loadSidebarRecentSessions();
 }
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _initSidebarRecent);
-} else {
-    _initSidebarRecent();
-}
+// Never run sidebar init inline during console.js evaluation: deferred scripts
+// can already be past `loading`, and sync init may call render paths that
+// reference lets declared later in this file.
+queueMicrotask(() => {
+    try { _initSidebarRecent(); } catch (err) { console.error('[sidebar-recent]', err); }
+});
 
 function _fetchSessionPage(page, clear, onDone, seq) {
     if (_sessionLoading) return;
@@ -8654,8 +8633,6 @@ function _toggleProjectCollapse(key) {
 }
 
 // --- Project group drag-to-reorder -------------------------------------------
-let _dragSpaceKey = null;
-
 function _wireGroupDrag(header, key) {
     header.addEventListener('dragstart', (e) => {
         _dragSpaceKey = key;
@@ -8756,8 +8733,6 @@ function _historyTimeLabel(timestamp) {
     };
 }
 
-let _sessionActionMenu = null;
-let _sessionMenuCleanup = null;
 function _closeSessionActionMenu(restoreFocus = false) {
     if (_sessionMenuCleanup) _sessionMenuCleanup(restoreFocus);
     _sessionMenuCleanup = null;
@@ -9670,17 +9645,12 @@ function initConfigView(data) {
         );
     }
 
-    // Default permission mode for new conversations. Applied on pick, like the
-    // language selector: the card's save button belongs to the password field,
-    // and a security default that silently waited for a save would be worse than
-    // one that takes effect immediately.
-    //
-    // In database mode this setting is owned by role resource grants, so it is
-    // rendered read-only: it explains the effective default but offers no knob
-    // that a tenant user could turn to widen what their session may run.
+    // Default permission mode for new conversations. Owned by role resource
+    // grants: rendered read-only so a tenant user cannot widen what their
+    // session may run. Editable only when the server explicitly allows it.
     const permEl = document.getElementById('cfg-permission');
     if (permEl) {
-        const editable = data.permission_mode_editable !== false;
+        const editable = data.permission_mode_editable === true;
         const offered = data.permission_modes && data.permission_modes.length
             ? data.permission_modes
             : Object.keys(PERMISSION_META);
@@ -9701,33 +9671,6 @@ function initConfigView(data) {
         const roleDescEl = document.getElementById('cfg-permission-role-desc');
         if (descEl) descEl.classList.toggle('hidden', !editable);
         if (roleDescEl) roleDescEl.classList.toggle('hidden', editable);
-    }
-
-    const pwdInput = document.getElementById('cfg-password');
-    const maskedPwd = data.web_password_masked || '';
-    pwdInput.value = maskedPwd;
-    pwdInput.dataset.masked = maskedPwd ? '1' : '';
-    pwdInput.dataset.maskedVal = maskedPwd;
-    pwdInput.classList.toggle('cfg-key-masked', !!maskedPwd);
-
-    if (maskedPwd) {
-        pwdInput.placeholder = '••••••••';
-    } else {
-        pwdInput.placeholder = '';
-    }
-
-    if (!pwdInput._cfgBound) {
-        pwdInput.addEventListener('focus', function() {
-            if (this.dataset.masked === '1') {
-                this.value = '';
-                this.dataset.masked = '';
-                this.classList.remove('cfg-key-masked');
-            }
-        });
-        pwdInput.addEventListener('input', function() {
-            this.dataset.masked = '';
-        });
-        pwdInput._cfgBound = true;
     }
 }
 
@@ -10059,66 +10002,13 @@ function saveGlobalPermission(mode) {
     .then(r => r.json())
     .then(data => {
         if (data.status === 'success') {
-            showStatus('cfg-password-status', 'config_saved', false);
+            showStatus('cfg-permission-status', 'config_saved', false);
             refreshSessionSettings();
         } else {
-            showStatus('cfg-password-status', 'config_save_error', true);
+            showStatus('cfg-permission-status', 'config_save_error', true);
         }
     })
-    .catch(() => showStatus('cfg-password-status', 'config_save_error', true));
-}
-
-function savePasswordConfig() {
-    const input = document.getElementById('cfg-password');
-    if (input.dataset.masked === '1') {
-        showStatus('cfg-password-status', 'config_saved', false);
-        return;
-    }
-    const newPwd = input.value.trim();
-    const btn = document.getElementById('cfg-password-save');
-    btn.disabled = true;
-    fetch('/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ updates: { web_password: newPwd } })
-    })
-    .then(r => r.json())
-    .then(data => {
-        console.log('[Password Config] Response:', data); // Debug
-        if (data.status === 'success') {
-            refreshAccountIdentity();
-            if (newPwd) {
-                showStatus('cfg-password-status', 'config_password_changed', false);
-                // Mark as masked so user needs to re-enter to change again
-                input.dataset.masked = '1';
-                input.dataset.maskedVal = newPwd;
-                input.value = '••••••••';
-                input.classList.add('cfg-key-masked');
-                
-                // Show logout button since password is now enabled
-                const logoutBtn = document.getElementById('logout-btn-header');
-                if (logoutBtn) logoutBtn.classList.remove('hidden');
-            } else {
-                input.dataset.masked = '';
-                input.dataset.maskedVal = '';
-                input.classList.remove('cfg-key-masked');
-                
-                // Show security warning if password was cleared with public host
-                if (data.warning === 'password_cleared_with_public_host') {
-                    showStatus('cfg-password-status', 'config_password_security_warning', true);
-                } else {
-                    showStatus('cfg-password-status', 'config_password_cleared', false);
-                }
-                
-                const logoutBtn = document.getElementById('logout-btn-header');
-                if (logoutBtn) logoutBtn.classList.add('hidden');
-            }
-        } else {
-            showStatus('cfg-password-status', 'config_save_error', true);
-        }
-    })
-    .catch(() => showStatus('cfg-password-status', 'config_save_error', true))
-    .finally(() => { btn.disabled = false; });
+    .catch(() => showStatus('cfg-permission-status', 'config_save_error', true));
 }
 
 function loadConfigView() {
@@ -10151,7 +10041,6 @@ let brandingSaving = false;
 let brandingReadonly = false;
 let brandingReadonlyReason = '';
 let brandingCanReset = false;
-let brandingCsrfToken = '';
 let brandingConflict = false;
 let brandingSavePending = false;
 let brandingPreviewDark = true;
@@ -10318,7 +10207,6 @@ function _brandingSetError(msg) {
 }
 
 function _brandingPublishSuccess(record) {
-    brandingCsrfToken = record.csrf_token || brandingCsrfToken;
     brandingReadonly = record.can_manage === false;
     brandingCanReset = record.can_reset !== false;
     brandingReadonlyReason = record.readonly_reason || '';
@@ -10395,7 +10283,7 @@ function _brandingSubmitSave() {
     fd.append('logo_action', brandingDraft.logo_action || 'keep');
     if (brandingDraft.logo_action === 'replace' && brandingDraft.logoFile) fd.append('logo', brandingDraft.logoFile);
 
-    return fetch('/api/branding', { method: 'POST', body: fd, headers: { 'X-Branding-CSRF': brandingCsrfToken } })
+    return fetch('/api/branding', { method: 'POST', body: fd, credentials: 'same-origin' })
         .then(async (r) => {
             const data = await r.json().catch(() => ({}));
             if (r.status === 401) {
@@ -10501,7 +10389,6 @@ function _loadBrandingSetup() {
         .then((data) => {
             brandingReadonly = !data.can_manage;
             brandingCanReset = !!data.can_reset;
-            brandingCsrfToken = data.csrf_token || '';
             brandingReadonlyReason = data.readonly_reason || '';
             brandingBaseline = {
                 brand_name: data.brand_name || DEFAULT_BRAND.brand_name,
@@ -10524,7 +10411,6 @@ function _loadBrandingSetup() {
             brandingLoading = false;
             brandingReadonly = true;
             brandingCanReset = false;
-            brandingCsrfToken = '';
             _brandingUpdateControls();
             _brandingShowBanner(t('branding_load_failed'), 'error');
             _brandingRenderConflictActions();
@@ -10600,7 +10486,7 @@ function _brandingBindEvents() {
             fetch('/api/branding/reset', {
                 method: 'POST',
                 credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/json', 'X-Branding-CSRF': brandingCsrfToken },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ expected_revision: brandingBaseline ? brandingBaseline.revision : 0 }),
             })
                 .then(async (r) => {
@@ -16478,7 +16364,7 @@ function renderKnowledgeGraph(container, nodes, links) {
 // Authentication
 // =====================================================================
 function _identityMode() {
-    return _identityModeState;
+    return 'database';
 }
 
 // Console navigation presentation switch, injected by the backend as a validated
@@ -16655,10 +16541,9 @@ window.toggleLoginPassword = toggleLoginPassword;
 
 function showLoginScreen() {
     if (typeof closeAppearancePreferences === 'function') closeAppearancePreferences(false);
-    _invalidateAccountIdentity(_identityModeState === 'unknown' ? 'error' : 'unauthenticated');
+    _invalidateAccountIdentity('unauthenticated');
     _accountAppVisible = false;
     _resetHistorySearch();
-    if (_identityModeState === 'unknown') { _showAccountCheckGate(); return; }
     _accountState.authRequired = true;
     _accountState.authenticated = false;
     _accountHidden('login-overlay', false);
@@ -16666,7 +16551,7 @@ function showLoginScreen() {
     _accountHidden('auth-check-panel', true);
     _accountHidden('login-form', false);
     _accountHidden('login-error', true);
-    _accountHidden('login-username-wrap', _identityMode() !== 'database');
+    _accountHidden('login-username-wrap', false);
     const password = document.getElementById('login-password');
     if (password) { password.value = ''; password.type = 'password'; }
     const icon = document.querySelector('#login-toggle-pwd i');
@@ -16674,19 +16559,18 @@ function showLoginScreen() {
     const btn = document.getElementById('login-btn');
     if (btn) btn.disabled = !!_accountWritePending;
     _renderSidebarAccount();
-    document.getElementById(_identityMode() === 'database' ? 'login-username' : 'login-password')?.focus();
+    document.getElementById('login-username')?.focus();
 }
 
 async function _submitAccountLogin(event) {
     event.preventDefault();
-    if (_accountWritePending || _pendingTenantPicker || _identityMode() === 'unknown') return false;
+    if (_accountWritePending || _pendingTenantPicker) return false;
     const pwdInput = document.getElementById('login-password');
     const userInput = document.getElementById('login-username');
     if (!pwdInput?.value) return false;
-    const dbMode = _identityMode() === 'database';
     const epoch = _authEpoch;
     const btn = document.getElementById('login-btn');
-    const body = dbMode ? { username: userInput?.value || '', password: pwdInput.value } : { password: pwdInput.value };
+    const body = { username: userInput?.value || '', password: pwdInput.value };
     _accountWritePending = 'login';
     ++_accountCheckSeq;
     _accountCheckRequest = null;
@@ -16703,33 +16587,33 @@ async function _submitAccountLogin(event) {
             _accountText('login-error', t('account_credentials_error'));
             _accountHidden('login-error', false);
             pwdInput.value = '';
-            (dbMode ? userInput : pwdInput)?.focus();
+            userInput?.focus();
             return false;
         }
-        if (dbMode && data.identity_mode !== 'database') throw new Error('Invalid login mode');
+        if (data.identity_mode !== 'database') throw new Error('Invalid login mode');
         const loginNext = _normalizeAccountCheck({
-            status: 'success', identity_mode: dbMode ? 'database' : 'legacy',
+            status: 'success', identity_mode: 'database',
             auth_required: true, authenticated: true, user: data.user,
-            must_change_password: dbMode ? Boolean(data.must_change_password) : false
+            must_change_password: Boolean(data.must_change_password)
         });
         _acceptAccountIdentity(loginNext, true);
         pwdInput.value = '';
         // A forced change blocks tenant selection and business load: show the
         // change-password gate and stay there until set.
-        if (dbMode && loginNext.mustChangePassword) {
+        if (loginNext.mustChangePassword) {
             if (typeof bumpTenantGeneration === 'function') bumpTenantGeneration();
             _enterForcedPassword();
             return false;
         }
         // Keep only the sanitized user above, before entering the tenant step.
-        const tenants = dbMode && Array.isArray(data.tenants)
+        const tenants = Array.isArray(data.tenants)
             ? data.tenants.filter(tn => tn && typeof tn.id === 'string' && tn.id) : [];
-        if (dbMode) sessionStorage.removeItem('cow_tenant_id');
+        sessionStorage.removeItem('cow_tenant_id');
         if (tenants.length > 1) {
             _showTenantPicker(tenants, null);
         } else {
             if (tenants.length === 1) sessionStorage.setItem('cow_tenant_id', tenants[0].id);
-            _afterLogin(dbMode);
+            _afterLogin();
         }
     } catch (_) {
         if (epoch === _authEpoch) {
@@ -16744,7 +16628,7 @@ async function _submitAccountLogin(event) {
     return false;
 }
 
-function _afterLogin(dbMode) {
+function _afterLogin() {
     _clearTenantPicker();
     _resetHistorySearch();
     _enterAccountApp();

@@ -6,14 +6,15 @@
 
 - **BREAKING**：`identity_mode` 退场。系统仅支持 `database`；显式配置 `identity_mode=legacy` 时启动拒绝并给出可操作提示，不再提供双模式。
 - **BREAKING**：删除共享密码 `web_password` 认证与免登录模式，删除 `cow_auth_token` HMAC token 与 URL query token。Web 只认 `cow_session`（HttpOnly Cookie），Desktop/程序化只认同值的 `Authorization: Bearer`。
-- 删除所有「无身份即放行」路径（`ctx is None => 放行`）：无身份一律 401，无权/无成员 403，缺租户选择 400，身份库不可用 503。
+- 删除所有「无身份即放行」路径（`ctx is None => 放行`）与 handler 第二道共享密码门（约 62 处 `_require_auth`）：无身份一律 401，无权/无成员 403，缺租户选择 400，身份库不可用 503；以 `enforce_http_policy` + `_db_scope` 为唯一认证授权面。
 - 新增首启自动初始化：`identity.db` 无平台管理员时自动创建默认租户与平台管理员，一次性输出随机初始密码并强制改密，使单机/个人版在 database 下「装上即用」。
-- Desktop 迁移到 database 登录 + 会话 Bearer，废弃 `cow_auth_token` localStorage。
+- Desktop 八文件迁移到 database 登录 + 会话 Bearer（含 `LoginGate.tsx`、`client.ts`、`BasicSettings.tsx`、`python-manager.ts` 等），废弃 `cow_auth_token` localStorage。
 - 外部 OpenAI 兼容 API（原 `external_api_token`）迁移为**服务账号真实 User**：加密 API 密钥经凭据能力存储/掩码/轮换/撤权，请求以该用户身份执行，不伪造 Membership。
 - 文件服务改为**平台级只读文件根**（默认数据目录）+ 租户成员限本租户/Agent workspace，均审计。
 - 渠道实例必须显式登记（平台级/租户级），删除 `channel_type` 的隐式 legacy 合成；入站继续按 `external-identity-binding` 解析真实用户。
 - 品牌写入仅走 `database` 平台管理员门，删除密码派生 Brand CSRF；待办统一挂租户作用域，owner 为空的历史待办归属初始化管理员。
-- 删除迁移守卫 `refuse_legacy_after_migration` 与「legacy 启动行为不变」类场景；同步清理前端、Desktop 与三语文档中的 legacy 分支与文案。
+- 删除迁移守卫 `refuse_legacy_after_migration` 与「legacy 启动行为不变」类场景；同步清理前端、Desktop、`admin_overview.py` 与三语文档中的 legacy 分支与文案。
+- 路由基线对删除的 `/auth/*` **追加** `REMOVED` 行（append-only）；冲突基线对文件内改写登记 `keep-fork`/`seam:`，文档登记 `merge-docs`，不误用 `keep-deletion`。
 
 ## Capabilities
 
@@ -44,12 +45,15 @@
 - `agent-chat-launch`: 删除 legacy 部署允许聊天与「不得降级到 legacy」之类的双模式表述。
 - `agent-workbench`: 删除「legacy 模式不得进入租户归属」条款，工作区一律租户作用域。
 - `business-permission-catalog`: Desktop 不再属于「未适配保持关闭」；删除回退 legacy 表述。
+- `fork-upstream-decoupling`: 新增 legacy 面退役的长期合并决策与基线义务（文件内改写用 `keep-fork`/`seam:`，文档用 `merge-docs`，不误用 `keep-deletion`）、退役后「不复活」断言式回归（含 `_require_auth`）、删除批次完成后的同步排练与基线登记门槛。
 
 ## Impact
 
-- **代码范围**：`config.py`、`channel/web/web_channel.py`、`channel/web/auth_handlers.py`、`channel/web/{tenant_workspace,todo_handlers,admin_handlers,openai_api,branding}.py`、`auth/{credential,session,http_policy,ratelimit,store}.py`、`common/startup_hooks.py`、`app.py`、`agent/permission/isolation.py`、`channel/{channel_instances,chat_channel,external_identity}.py`、`agent/todo/*`、`agent/protocol/agent_stream.py`、前端 `channel/web/static/js/*`、`desktop/**`、`cli/commands/management.py`。
+- **代码范围**：`config.py`、`channel/web/web_channel.py`（约 62 处 `_require_auth` + 约 25 处 `ctx is None` 收敛为工作主体）、`channel/web/auth_handlers.py`、`channel/web/{tenant_workspace,todo_handlers,admin_handlers,admin_overview,openai_api}.py`、`auth/{credential,session,http_policy,ratelimit,store}.py`、`common/startup_hooks.py`、`app.py`、`agent/permission/isolation.py`、`channel/{channel_instances,chat_channel,external_identity}.py`、`agent/todo/*`、`agent/protocol/agent_stream.py`、前端 `channel/web/static/js/*`、Desktop 八文件（`LoginGate.tsx`/`client.ts`/`BasicSettings.tsx`/`python-manager.ts`/`useBackend.ts`/`App.tsx`/`types.ts`/`i18n.ts`）、`cli/commands/management.py`、`channel/web/route_registry.py`、`scripts/route-baseline.txt`。
 - **数据唯一归属**：`identity.db` 保有用户/租户/成员/角色/grants/凭据/服务账号与外部身份绑定；API 密钥与渠道凭据只以密文落身份库；Agent 工作区与业务会话仍在各自 workspace。
 - **API / 客户端**：旧 `/auth/*` 共享密码登录、`cow_auth_token`、URL query token、`external_api_token` 全部失效；Desktop 与外部集成必须改用 database 登录或服务账号密钥。
 - **兼容与恢复**：无存量安装，破坏性切换；不提供双模式回退。显式 `identity_mode=legacy` 拒绝启动，避免读已迁移库。
-- **测试与文档**：重写清点报告列出的 legacy 断言测试，新增首启初始化/强制改密、Desktop Bearer、服务账号密钥生命周期、平台级文件根隔离、渠道显式登记、旧 `/auth/*` 拒绝；同步三语 `channels/web.mdx` 等文档。
+- **测试与文档**：重写清点报告列出的 legacy 断言测试，新增首启初始化/强制改密、Desktop Bearer、服务账号密钥生命周期、平台级文件根隔离、渠道显式登记、handler 收敛、旧 `/auth/*` 拒绝与「不复活」断言；同步三语 `channels/web.mdx`、`guide/quick-start|manual-install.mdx` 与 webhelp 口径。
 - **依赖**：复用 `credential-management`、`external-identity-binding`、`tenant-channel-configuration`、`rbac-authorization`、`audit-log`、`execution-isolation` 既有能力，不新建并行真值。
+- **上游合并（master 持续更新）**：`legacy` 认证（`web_password`、`cow_auth_token`、`AuthLoginHandler`、`_check_auth`/`_require_auth`）是 **master 原生功能**且位于上游高频文件（`channel/web/web_channel.py`、`channel/web/static/js/console.js`、`channel/web/chat.html`、`config.py`、`app.py`），本 change 属「fork 删除上游原生功能」这一类最高冲突代价改动；处置词表按文件内改写使用 `keep-fork`/`seam:`，文档使用 `merge-docs`。
+- **未触碰但必须保住的上游资产**：`agent/memory/conversation_store.py` 的组合 schema 接缝、`agent/tools/scheduler/integration.py` 的统一调度服务与身份接缝、`channel/web/chat.html` 的 `data-fork-fragment` 挂载点与 login overlay DOM 契约、`tests/test_scheduler_web_update.py` 的上游行为断言，以及上游 `_import_local_file` 的 loopback + 每启动令牌校验；本 change 不改其语义，仅承诺合并时保留。

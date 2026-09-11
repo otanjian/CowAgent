@@ -404,12 +404,12 @@ class ModelUseGateTests(unittest.TestCase):
         # Only the granted model code is offered; the provider prefix is dropped.
         self.assertEqual(codes, {"deepseek-v4-flash"})
 
-    def test_session_catalog_unrestricted_when_no_identity(self):
+    def test_session_catalog_fail_closed_when_no_identity(self):
         from common.runtime_identity import EMPTY_IDENTITY, use_identity
         from channel.web import web_channel
         with use_identity(EMPTY_IDENTITY):
-            # Legacy / no identity -> unrestricted (whole catalog offered).
-            self.assertIsNone(web_channel._authorized_model_codes())
+            # Database-only: missing identity must not widen to the whole catalog.
+            self.assertEqual(web_channel._authorized_model_codes(), set())
 
 
 class ModelDefaultResolutionTests(unittest.TestCase):

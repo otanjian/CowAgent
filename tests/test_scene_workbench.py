@@ -8,7 +8,6 @@ import contextlib
 import json
 
 import pytest
-from types import SimpleNamespace
 from unittest import mock
 
 from scenes import api_workbench
@@ -91,13 +90,18 @@ def _handler_patches(payload, tmp_path=None, find_scene=None):
     never needs a live ``web.ctx`` or an identity database; the scope/permission
     and CSRF behaviour itself is covered by ``test_scenes_tenant_scope.py``.
     """
+    from auth.runtime import RequestContext
+
     @contextlib.contextmanager
     def fake_scope():
-        yield SimpleNamespace(tenant_id="tnt_test",
-                              permissions={"chat.use"})
+        yield RequestContext(
+            user_id="u_test", username="u_test", display_name="u_test",
+            is_platform_admin=False, must_change_password=False,
+            tenant_id="tnt_test", membership={"id": "m1"},
+            permissions={"chat.use"}, is_tenant_admin=False,
+        )
 
     patchers = [
-        mock.patch("channel.web.web_channel._require_auth"),
         mock.patch("scenes.api_workbench._require_management_write"),
         mock.patch("scenes.api_workbench._db_scope", fake_scope),
         mock.patch("scenes.api_workbench._require_chat_use"),

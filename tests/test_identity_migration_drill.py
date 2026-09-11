@@ -14,7 +14,7 @@ asks for, against the real store, without touching production data:
    retry -> confirm full recovery preserves ids/owner/directory/permissions and
    leaves exactly one migration marker set (no duplication, no partial rows).
 4. Never switches to legacy / never deletes the migration marker to bypass
-   protection: `refuse_legacy_after_migration` stays True after the drill.
+   protection: `has_migration_signature` stays True after the drill.
 
 All cases use an isolated temp identity.db; nothing touches the real store.
 """
@@ -25,7 +25,7 @@ import sqlite3
 import tempfile
 import unittest
 
-from auth.store import has_migration_signature, refuse_legacy_after_migration
+from auth.store import has_migration_signature
 from auth.service import IdentityService, IdentityServiceError
 
 
@@ -179,7 +179,7 @@ class BackupRecoveryDrillTests(unittest.TestCase):
         users = recovered.list_platform_users()
         self.assertTrue(any(u["username"] == "root" for u in users))
         self.assertTrue(has_migration_signature(path))
-        self.assertTrue(refuse_legacy_after_migration("legacy", path))
+        self.assertTrue(has_migration_signature(path))
 
     # -- helpers -----------------------------------------------------------
     def _all_versions(self):
@@ -214,12 +214,12 @@ class LegacyRefusalAfterDrillTests(unittest.TestCase):
     def test_legacy_refusal_still_holds_after_migration_and_recovery(self):
         path = _db()
         IdentityService(path)
-        self.assertTrue(refuse_legacy_after_migration("legacy", path))
+        self.assertTrue(has_migration_signature(path))
         # Restoring a backup keeps the marker intact -> still refuses legacy.
         backup_path = path + ".bak"
         shutil.copy2(path, backup_path)
         shutil.copy2(backup_path, path)
-        self.assertTrue(refuse_legacy_after_migration("legacy", path))
+        self.assertTrue(has_migration_signature(path))
         # The marker was never deleted to bypass the guard.
         self.assertTrue(has_migration_signature(path))
 

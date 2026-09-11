@@ -61,9 +61,7 @@ class AdminWriteOriginGuardTests(unittest.TestCase):
 
     def _patches(self):
         return [
-            patch.object(auth_handlers, "_is_database", lambda: True),
             patch.object(auth_handlers, "_get_service", lambda: self.svc),
-            patch.object(admin_handlers, "_is_database", lambda: True),
             patch.object(admin_handlers, "_get_service", lambda: self.svc),
             patch("auth.service.get_identity_service", lambda: self.svc),
         ]

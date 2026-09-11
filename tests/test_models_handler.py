@@ -8,7 +8,9 @@ from unittest.mock import mock_open, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-if "web" not in sys.modules:
+try:
+    import web  # noqa: F401
+except ImportError:
     web_stub = types.ModuleType("web")
     web_stub.HTTPError = type("HTTPError", (Exception,), {})
     web_stub.cookies = lambda: {}
@@ -25,6 +27,7 @@ if "web" not in sys.modules:
         StaticMiddleware=lambda app: app,
         WSGIServer=lambda *args, **kwargs: types.SimpleNamespace(serve_forever=lambda: None),
     )
+    web_stub.ctx = types.SimpleNamespace(env={}, headers=[])
     sys.modules["web"] = web_stub
 
 
@@ -53,7 +56,7 @@ class TestModelsHandler(unittest.TestCase):
             "reasoning_effort": "max",
         })
 
-        with patch("channel.web.web_channel._require_auth", lambda: None), \
+        with patch("channel.web.web_channel._require_platform_console", lambda: None), \
                 _no_response_headers():
             with patch("channel.web.web_channel.conf", return_value=local_config):
                 result = json.loads(ConfigHandler().GET())
@@ -107,7 +110,7 @@ class TestModelsHandler(unittest.TestCase):
         file_config = {"reasoning_effort_by_model": {"deepseek:deepseek-v4-flash": "high"}}
         payload = {"updates": {"reasoning_effort_by_model": "not-a-dict"}}
 
-        with patch("channel.web.web_channel._require_auth", lambda: None), \
+        with patch("channel.web.web_channel._require_platform_console", lambda: None), \
              patch("channel.web.web_channel.web.header"), \
              patch("channel.web.web_channel.web.data", return_value=json.dumps(payload).encode()), \
              patch("channel.web.web_channel.conf", return_value=local_config), \
@@ -133,7 +136,7 @@ class TestModelsHandler(unittest.TestCase):
             "reasoning_effort": "max",
         })
 
-        with patch("channel.web.web_channel._require_auth", lambda: None), \
+        with patch("channel.web.web_channel._require_platform_console", lambda: None), \
                 _no_response_headers():
             with patch("channel.web.web_channel.conf", return_value=local_config):
                 result = json.loads(ConfigHandler().GET())

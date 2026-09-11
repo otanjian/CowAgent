@@ -174,7 +174,6 @@ class TenantDefaultAgentProjectionTests(unittest.TestCase):
                 return False
 
         with self._patch_svc(), \
-                patch.object(web_channel, "_require_auth"), \
                 patch.object(web_channel, "_require_read_permission"), \
                 patch.object(web_channel, "_db_scope", return_value=_Scope()), \
                 patch.object(web_channel.web, "header"), \

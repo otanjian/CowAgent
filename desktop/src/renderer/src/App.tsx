@@ -44,7 +44,8 @@ const App: React.FC = () => {
   const onboardingOpen = useOnboardingStore((s) => s.open)
   const maybeOpenOnboarding = useOnboardingStore((s) => s.maybeOpen)
   const [, forceUpdate] = useState(0)
-  // Auth gate for web_password-protected backends. 'checking' until we know
+  // Auth gate for database identity. 'checking' until we know whether a
+  // session is required / already authenticated.
   // whether login is needed; 'need_login' shows the password screen; 'ok' lets
   // the main UI render.
   const [authState, setAuthState] = useState<'checking' | 'need_login' | 'ok'>('checking')
@@ -73,8 +74,7 @@ const App: React.FC = () => {
     }
   }, [])
 
-  // Once the backend is ready, check whether a web_password is set. If so and
-  // this session isn't authenticated, show the login gate before the app.
+  // Once the backend is ready, check whether database login is required.
   useEffect(() => {
     if (backend.status !== 'ready') {
       setAuthState('checking')
@@ -89,9 +89,9 @@ const App: React.FC = () => {
         setAuthState(needLogin ? 'need_login' : 'ok')
       })
       .catch(() => {
-        // If the check itself fails, don't hard-block the user — assume no auth
-        // is required (backends without web_password never return errors here).
-        if (!cancelled) setAuthState('ok')
+        // If the check itself fails, don't hard-block — surface as need_login
+        // so a down identity store cannot silently open the app.
+        if (!cancelled) setAuthState('need_login')
       })
     return () => {
       cancelled = true

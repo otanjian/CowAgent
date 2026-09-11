@@ -225,10 +225,33 @@ def test_write_content_refreshes_what_the_skill_list_shows(tmp_path):
 # ----------------------------------------------------------------------
 # HTTP handlers
 # ----------------------------------------------------------------------
+def _db_scope_ctx():
+    from auth.runtime import RequestContext
+    from contextlib import contextmanager
+
+    @contextmanager
+    def scope():
+        yield RequestContext(
+            user_id="u_admin", username="admin", display_name="Admin",
+            is_platform_admin=True, must_change_password=False,
+            tenant_id="tnt_test", membership={"id": "m1"},
+            permissions={"skill.read", "skill.edit", "memory.read"},
+            is_tenant_admin=True,
+        )
+
+    return scope()
+
+
 def _get(handler_cls, params):
     from channel.web import web_channel
 
-    with patch.object(web_channel, "_require_auth"), \
+    with patch.object(web_channel, "_db_scope", _db_scope_ctx), \
+         patch.object(web_channel, "_require_catalog_read"), \
+         patch.object(web_channel, "_require_read_permission"), \
+         patch.object(web_channel, "_require_resource_action"), \
+         patch.object(web_channel, "_require_tenant_agent_binding",
+                      lambda ctx, agent_id: agent_id or "primary"), \
+         patch.object(web_channel, "_require_private_owner"), \
          patch.object(web_channel.web, "header"), \
          patch.object(web_channel.web, "input", return_value=web_channel.web.storage(**params)):
         return json.loads(handler_cls().GET())
@@ -237,7 +260,13 @@ def _get(handler_cls, params):
 def _post(handler_cls, body):
     from channel.web import web_channel
 
-    with patch.object(web_channel, "_require_auth"), \
+    with patch.object(web_channel, "_db_scope", _db_scope_ctx), \
+         patch.object(web_channel, "_require_catalog_read"), \
+         patch.object(web_channel, "_require_read_permission"), \
+         patch.object(web_channel, "_require_resource_action"), \
+         patch.object(web_channel, "_require_tenant_agent_binding",
+                      lambda ctx, agent_id: agent_id or "primary"), \
+         patch.object(web_channel, "_require_private_owner"), \
          patch.object(web_channel.web, "header"), \
          patch.object(web_channel.web, "data", return_value=json.dumps(body).encode()):
         return json.loads(handler_cls().POST())

@@ -510,9 +510,7 @@ export interface ConfigData {
   /** Global default permission for sessions that have not picked one. */
   agent_permission_mode?: string
   permission_modes?: string[]
-  /** "config" (legacy install, editable) | "role" (database mode, read-only). */
-  permission_mode_source?: string
-  /** False when role resource grants own execution and this setting is read-only. */
+  /** True only when the server explicitly allows editing the global default. */
   permission_mode_editable?: boolean
   enable_thinking?: boolean
   reasoning_effort?: string
@@ -522,10 +520,6 @@ export interface ConfigData {
   api_bases: Record<string, string>
   api_keys: Record<string, string>
   providers: Record<string, ProviderMeta>
-  web_password_masked?: string
-  // Real password, only returned to the desktop app (trusted local machine) so
-  // it can be edited in place. Undefined for browser access.
-  web_password?: string
 }
 
 // ============================================================

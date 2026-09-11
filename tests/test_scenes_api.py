@@ -5,18 +5,40 @@
 ``scenes.service`` 的目录/激活逻辑：正常返回、配置缺失/解析失败、缺参、
 场景不存在、子场景激活（合并父元数据）与会话上下文写入。
 
-鉴权已在 ``_require_auth`` 单测中覆盖，本文件把 ``_require_auth`` 打桩为空
-操作，专注验证场景接口本身。
+鉴权与租户门禁分别由 ``tests/test_http_gate.py`` /
+``tests/test_scenes_tenant_scope.py`` 覆盖；本文件把 ``_db_scope`` 打桩为带
+``chat.use`` 的 ``RequestContext``，专注验证场景接口本身。
 """
+import contextlib
 import json
 import unittest
 from unittest.mock import patch
 
 import web
 
+from auth.runtime import RequestContext
 from channel.web import web_channel
+from common.runtime_identity import RuntimeIdentity, use_identity
 from scenes import service as scenes_service
 from scenes import config as scenes_config
+
+
+_TENANT = "tnt_test"
+
+
+def _ctx():
+    return RequestContext(
+        user_id="u_test", username="u_test", display_name="u_test",
+        is_platform_admin=False, must_change_password=False,
+        tenant_id=_TENANT, membership={"id": "m1"},
+        permissions={"chat.use"}, is_tenant_admin=False,
+    )
+
+
+@contextlib.contextmanager
+def _fake_db_scope():
+    with use_identity(RuntimeIdentity(user_id="u_test", tenant_id=_TENANT)):
+        yield _ctx()
 
 
 class ScenesApiTests(unittest.TestCase):
@@ -27,28 +49,24 @@ class ScenesApiTests(unittest.TestCase):
         scenes_service.clear_all_scene_context()
 
     def _app(self):
-        return web_channel.build_web_app()
+        # Minimal routes only: HTTP policy is covered elsewhere. These tests
+        # exercise the handler body under a faked request scope.
+        return web.application(
+            (
+                "/api/scenes", "ScenesHandler",
+                "/api/scenes/activate", "SceneActivateHandler",
+            ),
+            vars(web_channel),
+            autoreload=False,
+        )
 
     def _request(self, path, method="GET", data=None):
         app = self._app()
         kwargs = {"method": method, "headers": {"Host": "test"}}
-        if data:
+        if data is not None:
             kwargs["data"] = json.dumps(data)
-        # These are scene-handler tests: they stub the legacy ``_require_auth``
-        # console password, long before the multi-tenant console existed. Both
-        # the HTTP policy gate *and* the handler's request scope read
-        # ``web_channel.conf``, so the whole mode is pinned to legacy here --
-        # otherwise the result depends on whether an earlier test file called
-        # ``config.load_config()`` (which reads this developer machine's
-        # ``./config.json``, ``identity_mode=database``), and in database mode
-        # the handlers correctly refuse for a missing tenant selection before
-        # ever reaching the scene logic. The tenant-gate contract for these
-        # routes is asserted separately in ``tests/test_http_gate.py`` and
-        # ``tests/test_scenes_tenant_scope.py``.
-        legacy = {"identity_mode": "legacy"}
-        with patch.object(web_channel, "_require_auth", lambda: None), \
-                patch.object(web_channel, "conf", lambda: legacy), \
-                patch("config.conf", lambda: legacy):
+            kwargs["headers"]["Content-Type"] = "application/json"
+        with patch.object(web_channel, "_db_scope", _fake_db_scope):
             return app.request(path, **kwargs)
 
     @staticmethod
@@ -116,8 +134,8 @@ class ScenesApiTests(unittest.TestCase):
         data = self._json(resp)
         self.assertEqual(data["status"], "success")
         self.assertEqual(data["scene"]["id"], "procurement_supplier")
-        # 会话上下文已写入
-        ctx = scenes_service.get_scene_context("s1")
+        # 会话上下文已写入（按请求租户命名空间）
+        ctx = scenes_service.get_scene_context("s1", tenant_id=_TENANT)
         self.assertIsNotNone(ctx)
         self.assertEqual(ctx["id"], "procurement_supplier")
 

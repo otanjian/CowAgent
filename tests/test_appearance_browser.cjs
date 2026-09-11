@@ -25,8 +25,8 @@ fs.mkdirSync(output, { recursive: true });
 const identities = {
     database: { status: 'success', identity_mode: 'database', auth_required: true, authenticated: true,
         user: { username: 'appearance-member', display_name: '普通成员', roles: ['member'], is_admin: false } },
-    legacy: { status: 'success', identity_mode: 'legacy', auth_required: true, authenticated: true },
-    public: { status: 'success', identity_mode: 'legacy', auth_required: false, authenticated: false },
+    // Unauthenticated database shell (login overlay visible); not a shared-password mode.
+    public: { status: 'success', identity_mode: 'database', auth_required: true, authenticated: false },
 };
 
 const fixture = {
@@ -735,8 +735,8 @@ const panelAuditSelectors = [
         await ctx.close();
     });
 
-    await scenario('already-authorized database member, legacy password and public UI can choose locally', async () => {
-        for (const identity of ['database', 'legacy', 'public']) {
+    await scenario('already-authorized database member and public login shell can choose locally', async () => {
+        for (const identity of ['database', 'public']) {
             const ctx = await context({ identity });
             const page = await open(ctx);
             const start = report.requests.length;

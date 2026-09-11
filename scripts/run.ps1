@@ -720,6 +720,7 @@ function New-ConfigFile {
         channel_type              = if ($script:ChannelType) { $script:ChannelType } else { "web" }
         model                     = if ($script:ModelName)  { $script:ModelName }  else { "" }
         cow_lang                  = if ($script:InstallLang) { $script:InstallLang } else { "auto" }
+        identity_mode             = "database"
         open_ai_api_key           = ""
         open_ai_api_base          = "https://api.openai.com/v1"
         claude_api_key            = ""

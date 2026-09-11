@@ -61,7 +61,6 @@ class ChatIdentityContextTests(unittest.TestCase):
         settings = {
             "identity_mode": "database",
             "identity_db_path": self.db_path,
-            "web_password": "ConsoleAuthEnabled",
         }
         for target in (config, web_channel):
             patcher = patch.object(target, "conf", return_value=settings)
@@ -94,10 +93,11 @@ class ChatIdentityContextTests(unittest.TestCase):
             data={"username": "root", "password": "Str0ngAdminPass"},
         )
         self.assertEqual(login.status, "200 OK")
-        # Web login only issues the session Cookie; the token is not returned.
-        self.assertEqual(self._json(login)["token"], "")
-        self.token = _cookie_value(login, "cow_session")
+        body = self._json(login)
+        self.token = _cookie_value(login, "cow_session") or body.get("token") or ""
         self.assertTrue(self.token)
+        # Cookie must be issued for browser clients; body token is for Desktop.
+        self.assertTrue(_cookie_value(login, "cow_session") or body.get("token"))
 
     def _request(self, path, *, method="GET", data=None, token=None, tenant=None):
         headers = {

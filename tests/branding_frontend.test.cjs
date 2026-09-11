@@ -23,6 +23,7 @@ function element(value = '') {
         },
         addEventListener(event, handler) { this.handlers[event] = handler; },
         querySelectorAll() { return []; },
+        closest() { return null; },
     };
 }
 
@@ -35,7 +36,7 @@ function setup() {
         : selector === '[data-brand-slot="desc"]' ? descriptions : [];
     el('branding-preview-canvas').querySelectorAll = slots;
     const published = { status: 'success', enabled: true, revision: 1, brand_name: 'Saved', logo_description: 'Description',
-        logo_url: '/old.png', favicon_url: '/old-icon.png', can_manage: true, can_reset: true, csrf_token: 'session-csrf' };
+        logo_url: '/old.png', favicon_url: '/old-icon.png', can_manage: true, can_reset: true };
     const response = (data, status = 200) => ({ ok: status < 400, status, json: async () => data });
     const calls = [];
     let confirm;
@@ -47,17 +48,19 @@ function setup() {
         DEFAULT_BRAND: { brand_name: 'Default', logo_url: '/default.svg', favicon_url: '/default.ico' },
         t: s => s, escapeHtml: s => s, brandWordmarkHTML: s => s, productTitle: s => s,
         effectiveLogoUrl: () => published.logo_url,
+        _isDefaultLogoDescription: () => false,
         applyBrandToDocument() {}, applyBrandToAgentAvatars() {}, renderAccountVersion() {},
         showConfirmDialog(options) { confirm = options; },
         fetch: async (url, options) => { calls.push({url, options}); return response(published); },
     });
     const run = code => vm.runInContext(code, context);
+    run('function _isDefaultLogoDescription() { return false; }');
     run(brandingSource);
     run('_brandingBindEvents()');
     return {context, run, el, captions, descriptions, calls, published, response, getConfirm: () => confirm};
 }
 
-test('upload then default sends no file, preserves text and includes CSRF', async () => {
+test('upload then default sends no file, preserves text, platform-admin session only', async () => {
     const h = setup();
     await h.run('_loadBrandingSetup()');
     h.el('branding-brand-name').value = 'Draft name';
@@ -71,7 +74,8 @@ test('upload then default sends no file, preserves text and includes CSRF', asyn
     assert.equal(options.body.has('logo'), false);
     assert.equal(options.body.get('brand_name'), 'Draft name');
     assert.equal(options.body.get('logo_description'), 'Description');
-    assert.equal(options.headers['X-Branding-CSRF'], 'session-csrf');
+    assert.equal(options.credentials, 'same-origin');
+    assert.equal(options.headers && options.headers['X-Branding-CSRF'], undefined);
 });
 
 for (const conflict of [false, true]) {
@@ -104,6 +108,7 @@ test('empty description hides all preview and published caption rows', async () 
     }
     Object.assign(h.context, {effectiveBrandName: () => 'Saved', effectiveLogoDescription: () => '',
         effectiveFaviconUrl: () => '/icon.png', _brandArmFallback() {}});
+    h.run('function welcomeHeroDescription() { return ""; }');
     h.run(source.slice(source.indexOf('function applyBrandToDocument()'), source.indexOf('function applyBrandToAgentAvatars()')));
     h.run('applyBrandToDocument()');
     assert.equal(h.el('sidebar-brand-caption').textContent, '');
@@ -136,7 +141,11 @@ test('damaged storage disables editing but allows explicit protected reset', asy
     assert.equal(h.calls.length, 1);
     h.getConfirm().onConfirm();
     assert.equal(h.calls.at(-1).url, '/api/branding/reset');
-    assert.equal(h.calls.at(-1).options.headers['X-Branding-CSRF'], 'session-csrf');
+    assert.equal(h.calls.at(-1).options.credentials, 'same-origin');
+    assert.equal(
+        h.calls.at(-1).options.headers && h.calls.at(-1).options.headers['X-Branding-CSRF'],
+        undefined,
+    );
 });
 
 test('management read failure disables writes and offers retry', async () => {

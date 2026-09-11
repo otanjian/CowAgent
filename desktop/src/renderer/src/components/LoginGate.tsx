@@ -4,28 +4,29 @@ import apiClient from '../api/client'
 import { t } from '../i18n'
 
 interface LoginGateProps {
-  // Called once the password is accepted (auth cookie set), so the app can
-  // proceed to the main UI.
   onAuthenticated: () => void
 }
 
 /**
- * Shown when the backend has a web_password set and the current session isn't
- * authenticated yet. Submitting the correct password sets an auth cookie
- * (handled by the backend), after which the app reloads its data.
+ * Database-account login gate for Desktop.
+ *
+ * Uses username + password against the database identity login API and stores
+ * the returned session value as a Bearer token (file:// origins cannot rely on
+ * cookies).
  */
 const LoginGate: React.FC<LoginGateProps> = ({ onAuthenticated }) => {
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!password || submitting) return
+    if (!username || !password || submitting) return
     setSubmitting(true)
     setError('')
     try {
-      const res = await apiClient.authLogin(password)
+      const res = await apiClient.authLogin(username, password)
       if (res.status === 'success') {
         onAuthenticated()
       } else {
@@ -47,8 +48,20 @@ const LoginGate: React.FC<LoginGateProps> = ({ onAuthenticated }) => {
           <p className="text-sm text-slate-500 dark:text-slate-400">{t('login_desc')}</p>
         </div>
         <input
-          type="password"
+          type="text"
           autoFocus
+          autoComplete="username"
+          value={username}
+          onChange={(e) => {
+            setUsername(e.target.value)
+            if (error) setError('')
+          }}
+          placeholder={t('login_username_placeholder')}
+          className="w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#1a1a1a] text-slate-800 dark:text-slate-100 text-sm outline-none focus:border-primary-500 transition-colors"
+        />
+        <input
+          type="password"
+          autoComplete="current-password"
           value={password}
           onChange={(e) => {
             setPassword(e.target.value)
@@ -60,7 +73,7 @@ const LoginGate: React.FC<LoginGateProps> = ({ onAuthenticated }) => {
         {error && <p className="text-sm text-red-500">{error}</p>}
         <button
           type="submit"
-          disabled={submitting || !password}
+          disabled={submitting || !username || !password}
           className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-primary-500 hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm font-medium cursor-pointer"
         >
           {submitting ? t('login_checking') : t('login_submit')}

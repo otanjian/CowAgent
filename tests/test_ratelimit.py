@@ -126,10 +126,13 @@ class MultiWorkerRejectionTests(unittest.TestCase):
             # A single worker is the supported baseline.
             reject_multi_worker_identity()  # no raise
 
-    def test_legacy_mode_allows_multi_worker(self):
+    def test_explicit_legacy_config_still_rejects_multi_worker(self):
+        # identity_mode=legacy is refused at boot; the limiter still refuses
+        # multi-worker because database is the only remaining mode.
         with patch.dict(os.environ, {"WEB_CONCURRENCY": "4"}, clear=False), \
                 patch("config.conf", return_value=self._conf("legacy")):
-            reject_multi_worker_identity()  # no raise
+            with self.assertRaises(DeploymentError):
+                reject_multi_worker_identity()
 
 
 if __name__ == "__main__":

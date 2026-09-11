@@ -35,14 +35,14 @@ export interface ApiResult {
   message?: string
 }
 
-const AUTH_TOKEN_KEY = 'cow_auth_token'
+const AUTH_TOKEN_KEY = 'cow_session'
 
 class ApiClient {
   private baseUrl = 'http://127.0.0.1:9876'
-  // Bearer token for web_password-protected backends. The desktop renderer
-  // runs from a file:// origin, where cross-origin cookies to http://127.0.0.1
-  // aren't sent reliably, so we authenticate via an Authorization header
-  // instead. Persisted in localStorage so it survives reloads.
+  // Bearer session token for database identity. The desktop renderer runs from
+  // a file:// origin, where cross-origin cookies to http://127.0.0.1 aren't
+  // sent reliably, so we authenticate via an Authorization header instead.
+  // Persisted in localStorage so it survives reloads.
   private authToken: string | null =
     typeof localStorage !== 'undefined' ? localStorage.getItem(AUTH_TOKEN_KEY) : null
 
@@ -325,8 +325,8 @@ class ApiClient {
 
   getFileUrl(previewUrl: string): string {
     if (/^https?:\/\//.test(previewUrl)) return previewUrl
-    // Served via <img src>, which can't set headers — carry the token in the
-    // query so protected file endpoints load under web_password.
+    // Served via <img src>, which can't set headers — carry the session token
+    // in the query so protected file endpoints still load.
     return this.withToken(`${this.baseUrl}${previewUrl}`)
   }
 
@@ -910,8 +910,8 @@ class ApiClient {
     return new EventSource(this.withToken(`${this.baseUrl}/api/logs`))
   }
 
-  // Full run.log as a downloadable attachment. Carries the token in the query
-  // string like the other file endpoints so it works under web_password.
+  // Full run.log as a downloadable attachment. Carries the session token in the
+  // query string like the other file endpoints.
   getLogDownloadUrl(): string {
     return this.withToken(`${this.baseUrl}/api/logs/download`)
   }
@@ -922,18 +922,29 @@ class ApiClient {
   }
 
   // ---------------------------------------------------------
-  // Auth (web_password) — placeholder for future use
+  // Auth (database identity session)
   // ---------------------------------------------------------
 
-  async authCheck(): Promise<{ status: string; auth_required: boolean; authenticated?: boolean }> {
+  async authCheck(): Promise<{
+    status: string
+    auth_required: boolean
+    authenticated?: boolean
+    identity_mode?: string
+  }> {
     return this.request('/auth/check')
   }
 
-  async authLogin(password: string): Promise<ApiResult & { token?: string }> {
-    const res = await this.request<ApiResult & { token?: string }>('/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ password }),
-    })
+  async authLogin(
+    username: string,
+    password: string,
+  ): Promise<ApiResult & { token?: string; identity_mode?: string }> {
+    const res = await this.request<ApiResult & { token?: string; identity_mode?: string }>(
+      '/auth/login',
+      {
+        method: 'POST',
+        body: JSON.stringify({ username, password }),
+      },
+    )
     if (res.status === 'success' && res.token) {
       this.setAuthToken(res.token)
     }

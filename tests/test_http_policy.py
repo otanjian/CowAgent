@@ -4,7 +4,7 @@
 Verifies that the real ``build_web_app()`` app factory and the test harness share
 the same gate: closed/deferred consumers return 503 in database mode, unknown
 URLs stay 404, a matched route with an unregistered method is rejected (405),
-and legacy mode is not gated by the database closure.
+and an explicit legacy conf pin still fail-closes rather than pass through.
 """
 
 import json
@@ -105,12 +105,17 @@ class HttpPolicyTests(unittest.TestCase):
         resp = self._request("/api/health", method="GET")
         self.assertNotEqual(resp.status, "503 Service Unavailable")
 
-    def test_legacy_mode_not_gated_by_database_closure(self):
-        # In legacy identity mode the /upload consumer is not forced closed.
+    def test_explicit_legacy_conf_still_gates_upload(self):
+        # Database is the only identity mode: even an explicit legacy pin in
+        # conf must not restore shared-password pass-through for consumers.
         settings = {"identity_mode": "legacy", "identity_db_path": self.db}
-        with patch.object(config, "conf", return_value=settings):
+        with patch.object(config, "conf", return_value=settings), \
+                patch.object(web_channel, "conf", return_value=settings):
             resp = self._request("/upload", method="POST", data=b"")
-        self.assertNotEqual(resp.status, "503 Service Unavailable")
+        self.assertTrue(
+            str(resp.status).startswith(("400", "401")),
+            resp.status,
+        )
 
     def test_admin_cannot_override_still_closed_consumer(self):
         # A valid database login must NOT let admin status bypass closure of a

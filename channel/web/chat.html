@@ -114,7 +114,7 @@
                             onclick="refreshAccountIdentity()" data-i18n="account_retry">重新检查</button>
                 </div>
                 <form id="login-form" class="login-form hidden" onsubmit="return false;">
-                    <div class="relative hidden" id="login-username-wrap">
+                    <div class="relative" id="login-username-wrap">
                         <input id="login-username" type="text" autocomplete="username"
                                placeholder="Username"
                                class="login-input">
@@ -1321,23 +1321,7 @@
                                             </div>
                                             <p id="cfg-permission-desc" class="text-xs text-slate-400 dark:text-slate-500 mt-1.5" data-i18n="config_permission_desc">新会话默认使用该权限</p>
                                             <p id="cfg-permission-role-desc" class="hidden text-xs text-slate-400 dark:text-slate-500 mt-1.5" data-i18n="config_permission_role_desc">本机对话的执行权限由管理员分配的角色资源授权决定，此处仅供查看。</p>
-                                        </div>
-                                        <div>
-                                            <label class="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5" data-i18n="config_password">访问密码</label>
-                                            <input id="cfg-password" type="password" autocomplete="new-password"
-                                                   class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600
-                                                          bg-slate-50 dark:bg-white/5 text-sm text-slate-800 dark:text-slate-100
-                                                          focus:outline-none focus:border-primary-500 font-mono transition-colors
-                                                          cfg-key-masked"
-                                                   data-masked="1">
-                                            <p class="text-xs text-slate-400 dark:text-slate-500 mt-1.5" data-i18n="config_password_hint">留空则不启用密码保护</p>
-                                        </div>
-                                        <div class="flex items-center justify-end gap-3 pt-1">
-                                            <span id="cfg-password-status" class="text-xs text-primary-500 opacity-0 transition-opacity duration-300"></span>
-                                            <button id="cfg-password-save"
-                                                    class="px-4 py-2 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium
-                                                           cursor-pointer transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                    onclick="savePasswordConfig()" data-i18n="config_save">保存</button>
+                                            <p id="cfg-permission-status" class="text-xs text-primary-500 opacity-0 transition-opacity duration-300 mt-1.5"></p>
                                         </div>
                                     </div>
                                 </div>

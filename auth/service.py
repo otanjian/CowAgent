@@ -971,6 +971,22 @@ class IdentityService:
         """True when the user is an active platform admin (the ``all`` source)."""
         return self._has_platform_admin_binding(user_id)
 
+    def has_any_platform_admin(self) -> bool:
+        """True when at least one active platform-admin binding exists.
+
+        Used by first-run auto-init: any platform admin (including one still
+        forced to change password) means the instance is already initialized
+        and MUST NOT be re-bootstrapped.
+        """
+        rows = self._store.execute(
+            "SELECT 1 AS ok FROM user_platform_roles upr"
+            " JOIN platform_roles r ON r.id = upr.platform_role_id"
+            " JOIN users u ON u.id = upr.user_id"
+            " WHERE r.code = ? AND u.active = 1 LIMIT 1",
+            (PLATFORM_ADMIN_CODE,),
+        )
+        return bool(rows)
+
     def _has_platform_admin_binding(self, user_id: str) -> bool:
         """True when the active user holds the platform_admin role binding.
 
@@ -1667,6 +1683,12 @@ class IdentityService:
                 result="success",
             )
             con.commit()
+        # First-run one-shot password file is consumed after a successful change.
+        try:
+            from common.startup_hooks import clear_bootstrap_password_file
+            clear_bootstrap_password_file()
+        except Exception:
+            pass
 
     def _set_password_for_user(self, user_id: str, new_password: str, must_change: bool) -> None:
         if new_password.lower() in _COMMON_PASSWORDS or len(new_password) < MIN_PASSWORD_LENGTH:
@@ -4336,6 +4358,211 @@ class IdentityService:
                 target=f"credential:{row['id']}", redacted_changes={}, result="success")
             con.commit()
         return True
+
+    # --- service-account API keys (retire-legacy-identity-mode) ------------
+
+    _SERVICE_API_KEY_KIND = "service_api_key"
+
+    @staticmethod
+    def _service_api_key_name(api_key: str) -> str:
+        import hashlib
+        digest = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+        return f"sak:{digest}"
+
+    @staticmethod
+    def _new_service_api_key() -> str:
+        import secrets
+        return "sak_" + secrets.token_urlsafe(32)
+
+    def create_service_account_api_key(
+        self, *, actor_user_id: str, tenant_id: str, user_id: str,
+    ) -> Dict[str, Any]:
+        """Issue a one-shot ``sak_`` API key bound to a real tenant member User."""
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError(
+                "service api key manage denied", code="forbidden", status=403)
+        membership = self.get_membership(user_id, tenant_id)
+        if not membership or not membership.get("active"):
+            raise IdentityServiceError(
+                "service account is not an active tenant member",
+                code="not_found", status=404)
+        user = self._find_user_by_id(user_id)
+        if not user or not user.get("active"):
+            raise IdentityServiceError(
+                "service account user not found", code="not_found", status=404)
+
+        api_key = self._new_service_api_key()
+        name = self._service_api_key_name(api_key)
+        created = self.create_credential(
+            actor_user_id=actor_user_id,
+            tenant_id=tenant_id,
+            name=name,
+            secret=api_key,
+            resource_kind=self._SERVICE_API_KEY_KIND,
+            resource_id=user_id,
+        )
+        return {
+            "id": created["id"],
+            "user_id": user_id,
+            "api_key": api_key,
+            "active": True,
+            "version": created["version"],
+        }
+
+    def list_service_account_api_keys(
+        self, *, actor_user_id: str, tenant_id: str, user_id: str,
+    ) -> Dict[str, Any]:
+        """Masked projection of service API keys for a user (never plaintext)."""
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError(
+                "service api key list denied", code="forbidden", status=403)
+        rows = self._store.execute(
+            "SELECT id, name, resource_kind, resource_id, active, version,"
+            " created_at, updated_at FROM credentials"
+            " WHERE tenant_id=? AND resource_kind=? AND resource_id=? AND active=1"
+            " ORDER BY created_at DESC",
+            (tenant_id, self._SERVICE_API_KEY_KIND, user_id),
+        )
+        items = []
+        for row in rows:
+            item = dict(row)
+            item["active"] = bool(row["active"])
+            item["masked"] = f"sak:••••{row['id'][-6:]}"
+            items.append(item)
+        return {"items": items, "total": len(items)}
+
+    def authenticate_service_account_api_key(self, api_key: str) -> Dict[str, Any]:
+        """Resolve a Bearer ``sak_`` key to user/tenant identity fields.
+
+        Raises IdentityServiceError 401 on invalid/revoked keys and 503 when
+        the identity store is unavailable.
+        """
+        if not isinstance(api_key, str) or not api_key.startswith("sak_"):
+            raise IdentityServiceError("unauthorized", code="unauthorized", status=401)
+        name = self._service_api_key_name(api_key)
+        try:
+            rows = self._store.execute(
+                "SELECT id, tenant_id, resource_id, ciphertext, active"
+                " FROM credentials WHERE name=? AND resource_kind=?",
+                (name, self._SERVICE_API_KEY_KIND),
+            )
+        except Exception as error:
+            raise IdentityServiceError(
+                "identity store unavailable", code="unavailable", status=503,
+            ) from error
+        if not rows or not rows[0]["active"]:
+            raise IdentityServiceError("unauthorized", code="unauthorized", status=401)
+        row = rows[0]
+        try:
+            from auth.crypto import decrypt_secret
+            import hmac as _hmac
+            plain = decrypt_secret(row["ciphertext"])
+        except Exception as error:
+            raise IdentityServiceError(
+                "identity store unavailable", code="unavailable", status=503,
+            ) from error
+        if not _hmac.compare_digest(plain, api_key):
+            raise IdentityServiceError("unauthorized", code="unauthorized", status=401)
+
+        user_id = row["resource_id"]
+        tenant_id = row["tenant_id"]
+        try:
+            user = self._find_user_by_id(user_id)
+            membership = self.get_membership(user_id, tenant_id)
+            tenant = self.get_tenant(tenant_id)
+        except Exception as error:
+            raise IdentityServiceError(
+                "identity store unavailable", code="unavailable", status=503,
+            ) from error
+        if (not user or not user.get("active")
+                or not membership or not membership.get("active")
+                or not tenant or not tenant.get("active")):
+            raise IdentityServiceError("unauthorized", code="unauthorized", status=401)
+        permissions = self.permissions_for(user_id, tenant_id)
+        return {
+            "user_id": user_id,
+            "username": user["username"],
+            "display_name": user["display_name"],
+            "tenant_id": tenant_id,
+            "permissions": permissions,
+            "is_platform_admin": self.is_platform_admin_user(user_id),
+            "credential_id": row["id"],
+        }
+
+    def rotate_service_account_api_key(
+        self, *, actor_user_id: str, tenant_id: str, user_id: str,
+        credential_id: str,
+    ) -> Dict[str, Any]:
+        """Replace a service API key in place; previous plaintext fails immediately."""
+        from auth.crypto import encrypt_secret
+
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError(
+                "service api key rotate denied", code="forbidden", status=403)
+        rows = self._store.execute(
+            "SELECT id, name, resource_id, version FROM credentials"
+            " WHERE id=? AND tenant_id=? AND resource_kind=? AND active=1",
+            (credential_id, tenant_id, self._SERVICE_API_KEY_KIND),
+        )
+        if not rows or rows[0]["resource_id"] != user_id:
+            raise IdentityServiceError("credential not found", code="not_found", status=404)
+
+        api_key = self._new_service_api_key()
+        new_name = self._service_api_key_name(api_key)
+        ciphertext = encrypt_secret(api_key)
+        with self._tx() as con:
+            # Ensure the new hash-name does not collide with another active key.
+            dup = con.execute(
+                "SELECT 1 FROM credentials WHERE tenant_id=? AND name=? AND active=1"
+                " AND id!=?",
+                (tenant_id, new_name, credential_id),
+            ).fetchone()
+            if dup:
+                raise IdentityServiceError(
+                    "credential name exists", code="conflict", status=409)
+            next_version = con.execute(
+                "SELECT COALESCE(MAX(version), 0) + 1 v FROM credential_versions"
+                " WHERE credential_id=?", (credential_id,),
+            ).fetchone()["v"]
+            con.execute(
+                "INSERT INTO credential_versions(credential_id, version, ciphertext,"
+                " action, changed_by) VALUES (?,?,?,?,?)",
+                (credential_id, next_version, ciphertext, "rotated", actor_user_id),
+            )
+            con.execute(
+                "UPDATE credentials SET name=?, ciphertext=?, version=?,"
+                " updated_at=unixepoch() WHERE id=?",
+                (new_name, ciphertext, next_version, credential_id),
+            )
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                target_tenant_id=tenant_id, action="credential.rotate",
+                target=f"credential:{credential_id}", redacted_changes={},
+                result="success")
+            con.commit()
+        return {
+            "id": credential_id,
+            "user_id": user_id,
+            "api_key": api_key,
+            "active": True,
+            "version": next_version,
+        }
+
+    def revoke_service_account_api_key(
+        self, *, actor_user_id: str, tenant_id: str, credential_id: str,
+    ) -> bool:
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError(
+                "service api key revoke denied", code="forbidden", status=403)
+        rows = self._store.execute(
+            "SELECT name FROM credentials"
+            " WHERE id=? AND tenant_id=? AND resource_kind=? AND active=1",
+            (credential_id, tenant_id, self._SERVICE_API_KEY_KIND),
+        )
+        if not rows:
+            raise IdentityServiceError("credential not found", code="not_found", status=404)
+        return self.revoke_credential(
+            actor_user_id=actor_user_id, tenant_id=tenant_id, name=rows[0]["name"])
 
     # --- tenant-owned channel instances (tenant-owned-message-channels 2.x) -
 

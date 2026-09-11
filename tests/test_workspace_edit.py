@@ -190,8 +190,7 @@ def test_dispatch_stays_read_only():
 def _post(handler_cls, body):
     from channel.web import web_channel
 
-    with patch.object(web_channel, "_require_auth"), \
-         patch.object(web_channel.web, "header"), \
+    with patch.object(web_channel.web, "header"), \
          patch.object(web_channel.web, "data", return_value=json.dumps(body).encode()):
         return json.loads(handler_cls().POST())
 
@@ -199,8 +198,7 @@ def _post(handler_cls, body):
 def _get(handler_cls, params):
     from channel.web import web_channel
 
-    with patch.object(web_channel, "_require_auth"), \
-         patch.object(web_channel.web, "header"), \
+    with patch.object(web_channel.web, "header"), \
          patch.object(web_channel.web, "input", return_value=web_channel.web.storage(**params)):
         return json.loads(handler_cls().GET())
 

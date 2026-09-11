@@ -38,9 +38,10 @@ services:
       DINGTALK_CLIENT_SECRET: ''
       WECOM_BOT_ID: ''
       WECOM_BOT_SECRET: ''
-      # To access the web console from the host, set this to '0.0.0.0' and set WEB_PASSWORD
+      # To access the web console from the host, set this to '0.0.0.0'.
+      # Auth is database-only (username + password); no shared console password.
       WEB_HOST: '127.0.0.1'
-      WEB_PASSWORD: ''
+      IDENTITY_MODE: 'database'
       AGENT: 'True'
       # Container is already an isolation boundary, so the agent runs unconfined inside it
       AGENT_PERMISSION_MODE: 'full-access'

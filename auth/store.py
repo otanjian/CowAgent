@@ -38,8 +38,8 @@ def has_migration_signature(db_path: str) -> bool:
 
     A database is considered "already migrated" (new-mode data) when the
     ``schema_migrations`` table exists and has at least one recorded version.
-    Used at startup to refuse silently booting legacy mode over new-mode data
-    (task 4.6 / isolation spec: "已有迁移标识或新模式数据时 MUST 阻止直接启动 legacy").
+    Used by recovery/migration drills to detect that identity.db already carries
+    new-mode schema markers.
     """
     if not db_path or not os.path.exists(db_path):
         return False
@@ -54,22 +54,6 @@ def has_migration_signature(db_path: str) -> bool:
             con.close()
     except (sqlite3.Error, Exception):
         return False
-
-
-def refuse_legacy_after_migration(identity_mode: str, db_path: str) -> bool:
-    """Return True (refuse) when legacy mode would read already-migrated data.
-
-    This is the server-side startup guard: if the config still says ``legacy``
-    but ``identity.db`` already carries a valid migration signature (new-mode
-    data), booting legacy would silently read data it was never meant to
-    consume. The caller SHOULD abort startup and tell the operator to either
-    switch ``identity_mode`` to ``database`` (the data is authoritative) or
-    restore a pre-migration snapshot (the data is disposable).
-    """
-    mode = str(identity_mode or "").lower()
-    if mode == "database":
-        return False
-    return has_migration_signature(db_path)
 
 
 def _migration_1(con: sqlite3.Connection) -> None:

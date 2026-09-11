@@ -138,8 +138,13 @@ def agent_environment(tmp_path, monkeypatch):
     monkeypatch.setattr(project_store, "get_project_map", lambda agent_id: {})
     monkeypatch.setattr(project_store, "get_order", lambda: [])
     monkeypatch.setattr(common.state_dir, "state_root_str", lambda: str(tmp_path))
-    ctx = SimpleNamespace(user_id="u1", tenant_id="tenant-1",
-                          permissions={"history.read"}, is_tenant_admin=False)
+    from auth.runtime import RequestContext
+    ctx = RequestContext(
+        user_id="u1", username="u1", display_name="u1",
+        is_platform_admin=False, must_change_password=False,
+        tenant_id="tenant-1", membership={"id": "m1"},
+        permissions={"history.read"}, is_tenant_admin=False,
+    )
     return SimpleNamespace(stores=stores, opened=opened, ctx=ctx)
 
 
@@ -168,7 +173,6 @@ def test_search_merges_all_batches_then_deduplicates_and_pages(agent_environment
 
 
 def _request(monkeypatch, ctx, **params):
-    monkeypatch.setattr(web_channel, "_require_auth", lambda: None)
     monkeypatch.setattr(web_channel, "_db_scope", lambda: nullcontext(ctx))
     app = web.application(("/api/sessions", "SessionsHandler"), vars(web_channel), autoreload=False)
     response = app.request("/api/sessions?" + urlencode(params))

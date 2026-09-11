@@ -169,20 +169,6 @@ def _parse_tool_args(args_str: str, finish_reason: Optional[str],
         return {}, f"Invalid JSON in tool arguments: {e.msg}"
 
 
-def _db_mode() -> bool:
-    """True when this deployment runs in database identity mode.
-
-    Mirrors ``agent.permission.isolation.database_mode`` without importing it at
-    module scope (the isolation module pulls config, which must stay lazy).
-    """
-    try:
-        from agent.permission.isolation import database_mode
-
-        return database_mode()
-    except Exception:
-        return False
-
-
 def _fail_closed_denial(kind: str, tool_name: str, zh: str, en: str) -> str:
     """Record and describe a refusal caused by an unresolvable identity.
 
@@ -2032,9 +2018,8 @@ class AgentStreamExecutor:
         """Reason this call is not allowed, or None when it may run.
 
         Never raises: a broken permission check must not take the conversation
-        down with it. In legacy mode an unexpected error falls through to the
-        historical unrestricted behavior; in database mode it fails closed,
-        because an identity outage must not become an authorization bypass.
+        down with it. An unexpected error fails closed, because an identity
+        outage must not become an authorization bypass.
         """
         agent = self.agent
         if agent is None:
@@ -2043,12 +2028,12 @@ class AgentStreamExecutor:
         # stale kind can never describe a later, different refusal.
         self._last_denial_kind = None
         try:
-            from agent.permission.isolation import database_mode, isolation_decision
+            from agent.permission.isolation import isolation_decision
 
             # Tenant execution isolation (open-database-runtime 6.x): in a
             # tenant-member run arbitrary-code and file tools are confined to
-            # the tenant roots regardless of the legacy permission mode. This
-            # runs before every other check so nothing can cross tenants.
+            # the tenant roots. This runs before every other check so nothing
+            # can cross tenants.
             isolation = isolation_decision(
                 tool_name, arguments, cwd=agent.effective_cwd()
             )
@@ -2056,31 +2041,13 @@ class AgentStreamExecutor:
                 self._last_denial_kind = "isolation"
                 return isolation.reason
 
-            # The legacy permission mode is a single-tenant control. In
-            # database mode execution is governed by the caller's role grants
-            # (``tool.execute`` + resource grant, below) plus isolation, so
-            # applying the mode here would refuse tools the role allows and
-            # point the user at a switch that cannot fix it.
-            if not database_mode():
-                from agent.permission import FULL_ACCESS, check_tool_call
+            # Execution is governed by the caller's role grants
+            # (``tool.execute`` + resource grant, below) plus isolation.
 
-                mode = agent.effective_permission_mode()
-                if mode != FULL_ACCESS:
-                    decision = check_tool_call(
-                        mode,
-                        tool_name,
-                        arguments,
-                        cwd=agent.effective_cwd(),
-                        write_roots=agent.write_roots(),
-                    )
-                    if not decision.allowed:
-                        self._last_denial_kind = "mode"
-                        return decision.reason
-
-            # Fine-grained resource authorization: in database mode the tool
-            # must be granted for ``tool.execute`` to the current identity.
-            # Recomputed per call (never cached) so a grant made mid-session
-            # applies to the very next invocation.
+            # Fine-grained resource authorization: the tool must be granted for
+            # ``tool.execute`` to the current identity. Recomputed per call
+            # (never cached) so a grant made mid-session applies to the very
+            # next invocation.
             denial = self._resource_tool_denial(tool_name)
             if denial:
                 self._last_denial_kind = "role"
@@ -2098,14 +2065,12 @@ class AgentStreamExecutor:
             return quota_denial
         except Exception as e:
             logger.warning(f"[Permission] Check failed for {tool_name}: {e}")
-            if _db_mode():
-                self._last_denial_kind = "identity"
-                return _fail_closed_denial(
-                    "identity", tool_name,
-                    "执行授权校验异常，工具调用已拒绝。",
-                    "Tool call refused: the execution authorization check could not be completed.",
-                )
-            return None
+            self._last_denial_kind = "identity"
+            return _fail_closed_denial(
+                "identity", tool_name,
+                "执行授权校验异常，工具调用已拒绝。",
+                "Tool call refused: the execution authorization check could not be completed.",
+            )
 
     def _quota_tool_denial(self, tool_name: str) -> Optional[str]:
         """Charge one tool call against the current identity's ``tool_calls``
@@ -2135,15 +2100,14 @@ class AgentStreamExecutor:
     def _resource_tool_denial(self, tool_name: str) -> Optional[str]:
         """Return a denial reason when tool.execution is not authorized.
 
-        Unrestricted (legacy mode / platform all) returns None.
         A *self-authorized* tool is exempt: it resolves the caller's identity
         and refuses on its own (personal todo, scheduler act only on the
         caller's own data), so the coarse ``tool.execute`` grant is not also
         required. Every other tool still needs the grant.
 
-        Fails closed in database mode: an unresolvable identity is refused
-        rather than read as "no user dimension", and an identity-service
-        exception refuses the call instead of skipping the check.
+        Fails closed: an unresolvable identity is refused rather than read as
+        "no user dimension", and an identity-service exception refuses the
+        call instead of skipping the check.
         """
         tool = self.tools.get(tool_name) if isinstance(self.tools, dict) else None
         if getattr(tool, "self_authorized", False):
@@ -2151,13 +2115,11 @@ class AgentStreamExecutor:
         from common.runtime_identity import current_identity
         ident = current_identity()
         if not ident.user_id or not ident.tenant_id:
-            if _db_mode():
-                return _fail_closed_denial(
-                    "identity", tool_name,
-                    "身份上下文不可解析，工具调用已拒绝。",
-                    "Tool call refused: the caller identity could not be resolved.",
-                )
-            return None
+            return _fail_closed_denial(
+                "identity", tool_name,
+                "身份上下文不可解析，工具调用已拒绝。",
+                "Tool call refused: the caller identity could not be resolved.",
+            )
         resource_id = self._tool_resource_id(tool_name)
         try:
             from auth.service import get_identity_service

@@ -44,7 +44,7 @@ class SelfContextServiceTests(unittest.TestCase):
         self.assertEqual(ctx["status"], "success")
         user = ctx["user"]
         # only white-listed fields
-        self.assertEqual(set(user.keys()), {"id", "username", "display_name", "is_platform_admin"})
+        self.assertEqual(set(user.keys()), {"id", "username", "display_name", "is_platform_admin", "avatar"})
         self.assertEqual(user["id"], self.root["id"])  # id present
         self.assertEqual(user["username"], "root")
         self.assertTrue(user["is_platform_admin"])
@@ -88,7 +88,7 @@ class SelfContextServiceTests(unittest.TestCase):
         self.assertTrue(result.must_change_password)
         ctx = self.svc.self_context(result.token)
         # minimal projection: no tenant/org details
-        self.assertEqual(set(ctx["user"].keys()), {"id", "username", "display_name", "is_platform_admin"})
+        self.assertEqual(set(ctx["user"].keys()), {"id", "username", "display_name", "is_platform_admin", "avatar"})
         self.assertTrue(ctx["must_change_password"])
         self.assertEqual(ctx["tenants"], [])
 

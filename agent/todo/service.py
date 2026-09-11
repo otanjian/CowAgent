@@ -23,6 +23,7 @@ thin.
 from __future__ import annotations
 
 import datetime
+import os
 import re
 from typing import Any, Dict, Optional, Tuple
 
@@ -58,6 +59,46 @@ except ImportError:  # pragma: no cover - Python < 3.9
 
 LEGACY_OWNER = "local-owner"
 LEGACY_SCOPE = "default"
+
+
+def reassign_empty_owner_todos(
+    *,
+    scope_id: str,
+    owner_id: str,
+    app_data_root: Optional[str] = None,
+) -> int:
+    """Reassign rows with empty/legacy owner to ``owner_id`` (idempotent).
+
+    Used by first-run bootstrap so historical empty-owner todos land under the
+    initial platform admin instead of remaining unreachable in database mode.
+    """
+    from agent.todo.store import TodoStore
+
+    path = memory_db_path(scope_id, LEGACY_OWNER, app_data_root=app_data_root)
+    if not os.path.isfile(path):
+        # Also try the default-scope legacy path under app_data_root.
+        path = memory_db_path(LEGACY_SCOPE, LEGACY_OWNER, app_data_root=app_data_root)
+    if not os.path.isfile(path):
+        return 0
+    store = TodoStore(path)
+    updated = 0
+    con = store._connect()  # noqa: SLF001 — migration helper
+    try:
+        cur = con.execute(
+            "UPDATE todo_items SET owner_id=?, scope_id=?"
+            " WHERE owner_id IN ('', ?) OR owner_id IS NULL",
+            (owner_id, scope_id, LEGACY_OWNER),
+        )
+        updated += cur.rowcount or 0
+        con.execute(
+            "UPDATE todo_events SET owner_id=?, scope_id=?"
+            " WHERE owner_id IN ('', ?) OR owner_id IS NULL",
+            (owner_id, scope_id, LEGACY_OWNER),
+        )
+        con.commit()
+    finally:
+        con.close()
+    return updated
 
 
 class TodoServiceError(Exception):
@@ -161,37 +202,29 @@ class TodoActor:
     """A trusted, resolved actor for one todo request.
 
     ``bound`` is False when no valid identity could be established — the service
-    must then refuse (no silent fallback).
+    must then refuse (no silent fallback). Actor always carries a real
+    tenant/user subject; shared-password / local-owner paths are retired.
     """
 
-    __slots__ = ("bound", "scope_id", "owner_id", "username", "is_legacy", "permissions")
+    __slots__ = ("bound", "scope_id", "owner_id", "username", "permissions")
 
     def __init__(
         self,
         *,
         bound: bool,
-        scope_id: str = LEGACY_SCOPE,
-        owner_id: str = LEGACY_OWNER,
+        scope_id: str = "",
+        owner_id: str = "",
         username: str = "",
-        is_legacy: bool = False,
         permissions: Optional[set] = None,
     ):
         self.bound = bound
-        self.scope_id = scope_id or LEGACY_SCOPE
-        self.owner_id = owner_id or LEGACY_OWNER
+        self.scope_id = scope_id or ""
+        self.owner_id = owner_id or ""
         self.username = username
-        self.is_legacy = is_legacy
         self.permissions = permissions or set()
 
     def has(self, permission: str) -> bool:
         return permission in self.permissions
-
-    @staticmethod
-    def legacy() -> "TodoActor":
-        """A trusted legacy single-owner actor (login verified, password set)."""
-        return TodoActor(bound=True, scope_id=LEGACY_SCOPE, owner_id=LEGACY_OWNER,
-                         username=LEGACY_OWNER, is_legacy=True,
-                         permissions={"todo.read", "todo.write"})
 
 
 # --------------------------------------------------------------------------- #
@@ -363,16 +396,9 @@ class TodoService:
 
     # -- storage path -------------------------------------------------------- #
     def _resolve_db_path(self) -> str:
-        if self.actor.is_legacy:
-            # Legacy: private instance appdata root.
-            return memory_db_path(
-                scope_id=self.actor.scope_id,
-                owner_id=self.actor.owner_id,
-                app_data_root=self._app_data_root,
-            )
-        # database mode: caller must supply a confirmed tenant app-data root.
+        # Caller must supply a confirmed tenant app-data root.
         if not self._app_data_root:
-            raise TodoUnavailable("database 模式缺少可信租户数据根")
+            raise TodoUnavailable("缺少可信租户数据根")
         path = memory_db_path(
             scope_id=self.actor.scope_id,
             owner_id=self.actor.owner_id,

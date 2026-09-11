@@ -18,7 +18,7 @@ from common.runtime_identity import RuntimeIdentity, current_identity, identity_
 def identities(tmp_path, monkeypatch):
     svc = IdentityService(str(tmp_path / "identity.db"))
     settings = {"identity_mode": "database", "identity_db_path": str(tmp_path / "identity.db"),
-                "todo_enabled": True, "web_password": "test-web-password"}
+                "todo_enabled": True}
     monkeypatch.setattr("config.conf", lambda: settings)
     monkeypatch.setattr(web_channel, "conf", lambda: settings)
     monkeypatch.setattr("config.get_data_root", lambda: str(tmp_path / "private"))
@@ -129,7 +129,7 @@ def test_authorization_changes_take_effect_before_storage(identities, tmp_path, 
     {"user_id": None}, {"tenant_id": None}, {"agent_id": None}, {"session_id": None},
     {"agent_id": "beta"},
 ])
-def test_incomplete_or_untrusted_delegation_has_no_legacy_fallback(identities, tmp_path, change):
+def test_incomplete_or_untrusted_delegation_has_no_fallback(identities, tmp_path, change):
     _, records, _, _ = identities
     _, ident = records[0]
     with use_identity(ident.derive(**change)):
@@ -168,23 +168,6 @@ def test_scheduler_and_external_contexts_cannot_supply_web_delegation(identities
         with use_identity(restored):
             assert not TodoTool().is_available()
             assert TodoTool().execute({"action": "create", "title": "Forbidden"}).status == "error"
-
-
-def test_legacy_requires_actual_web_login_and_keeps_local_owner(identities, monkeypatch, tmp_path):
-    _, _, settings, _ = identities
-    settings["identity_mode"] = "legacy"
-    monkeypatch.setattr(web_channel, "_check_auth", lambda: True)
-    with use_identity(RuntimeIdentity()):
-        snapshot = web_channel._web_runtime_identity_snapshot()
-    ident = ChatChannel._identity_for(None, {"runtime_identity": snapshot,
-                                            "agent_id": "alpha", "session_id": "legacy"})
-    with use_identity(ident):
-        tool = TodoTool()
-        assert tool._service().actor.owner_id == "local-owner"
-        assert tool.execute({"action": "create", "title": "Legacy task"}).status == "success"
-        settings["web_password"] = ""
-        assert not tool.is_available()
-    assert (tmp_path / "private" / "todo" / "todos.db").is_file()
 
 
 def test_disabled_feature_creates_no_storage(identities, tmp_path):

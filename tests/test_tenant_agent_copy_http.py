@@ -91,8 +91,7 @@ class TenantAgentCopyHttpTests(unittest.TestCase):
 
     # --- harness -------------------------------------------------------------
 
-    def _request(self, tenant_id=None, method="GET", payload=None, token=None,
-                 database=True):
+    def _request(self, tenant_id=None, method="GET", payload=None, token=None):
         kwargs = {"method": method}
         if payload is not None:
             kwargs["data"] = json.dumps(payload)
@@ -116,9 +115,7 @@ class TenantAgentCopyHttpTests(unittest.TestCase):
                              return_value=self.data_root), \
                 patch.object(web_channel, "_reload_agent_runtime",
                              return_value=None) as reload_mock, \
-                patch.object(auth_handlers, "_is_database", lambda: database), \
                 patch.object(auth_handlers, "_get_service", lambda: self.svc), \
-                patch.object(admin_handlers, "_is_database", lambda: database), \
                 patch.object(admin_handlers, "_get_service", lambda: self.svc), \
                 patch("auth.service.get_identity_service", lambda: self.svc):
             response = app.request(path, **kwargs)
@@ -246,11 +243,6 @@ class TenantAgentCopyHttpTests(unittest.TestCase):
                                              "source_agent_ids": ["alpha"],
                                              "recent_password": PLATFORM_PASSWORD})
         self.assertEqual(self._status(response), "404")
-
-    def test_the_endpoint_is_closed_in_legacy_identity_mode(self):
-        response, _ = self._request(token=self.admin_token, database=False)
-        self.assertEqual(self._status(response), "400")
-        self.assertEqual(self._body(response)["code"], "not_database")
 
     # --- POST: the copy ------------------------------------------------------
 

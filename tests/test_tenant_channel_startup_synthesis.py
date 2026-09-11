@@ -95,14 +95,14 @@ class ResolveMergeTests(_StartupFixture):
         ids = [i.instance_id for i in merged]
         assert ids == ["chan_r", "chan_t"]
 
-    def test_tenant_instances_ride_along_with_a_legacy_settings_doc(self):
+    def test_tenant_instances_ride_along_with_explicit_roster_only(self):
         tenant = [ChannelInstance(instance_id="chan_t", channel_type="feishu",
                                   agent_id="agent-a", credentials=dict(FEISHU_CREDS))]
+        # channel_type alone no longer synthesizes a web instance.
         merged = resolve_channel_instances(
             {"channel_type": "web"}, tenant_instances=tenant)
         ids = [i.instance_id for i in merged]
-        assert "chan_t" in ids
-        assert "web" in ids
+        assert ids == ["chan_t"]
 
     def test_a_duplicate_instance_id_is_not_started_twice(self):
         tenant = [ChannelInstance(instance_id="chan_r", channel_type="feishu",
@@ -199,31 +199,25 @@ class AdapterTests(_StartupFixture):
 # 6.6 legacy mode must not touch the tenant table.
 # ---------------------------------------------------------------------------
 
-class LegacyModeTests(_StartupFixture):
+class DatabaseOnlyResolutionTests(_StartupFixture):
 
-    def test_a_non_database_install_reads_no_tenant_instances(self):
+    def test_database_mode_loads_tenant_instances(self):
         self._new_instance("Acme Bot")
         import channel.external_identity as ext
-
-        def _forbidden():
-            raise AssertionError("legacy install must not consult the identity store")
-
-        original_mode = ext.is_database_mode
-        ext.is_database_mode = lambda: False
         import auth.service as service_module
+        original_mode = ext.is_database_mode
         original_service = service_module.get_identity_service
-        service_module.get_identity_service = _forbidden
+        ext.is_database_mode = lambda: True
+        service_module.get_identity_service = lambda: self.svc
         self.addCleanup(lambda: setattr(ext, "is_database_mode", original_mode))
         self.addCleanup(lambda: setattr(service_module, "get_identity_service",
                                        original_service))
+        loaded = load_tenant_channel_instances()
+        assert len(loaded) == 1
 
-        # The instance exists in the table, but a legacy install must not load it.
-        assert load_tenant_channel_instances() == []
-
-    def test_the_legacy_resolution_path_is_unchanged(self):
+    def test_channel_type_alone_does_not_synthesize_instances(self):
         settings = {"channel_type": "web,dingtalk"}
-        assert [i.instance_id for i in resolve_channel_instances(settings)] == [
-            "web", "dingtalk"]
+        assert resolve_channel_instances(settings) == []
 
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
-/* identity-admin.js - Database-mode admin views (Tenant / Users / Roles / Org /
+/* identity-admin.js - Admin views (Tenant / Users / Roles / Org /
  * Platform accounts / Audit).
  *
- * Loaded alongside console.js when identity_mode=database. Provides the admin
+ * Loaded unconditionally from chat.html alongside console.js. Provides the admin
  * views, a shared request helper, per-view loading and rendering, plus full
  * create/edit/delete forms (previously read-only). All authorization happens
  * server-side; this only improves UX and wires the frontend to the existing

@@ -37,9 +37,7 @@ def _require_trusted_web_delegation() -> bool:
     try:
         from common.runtime_identity import current_identity
         ident = current_identity()
-        return bool(ident.agent_id and ident.session_id and (
-            ident.web_auth_session_id or ident.web_legacy_authenticated
-        ))
+        return bool(ident.agent_id and ident.session_id and ident.web_auth_session_id)
     except Exception:
         return False
 
@@ -210,19 +208,12 @@ class TodoTool(BaseTool):
         """Build a service bound to the current trusted identity."""
         from common.runtime_identity import current_identity
         from agent.todo.service import TodoActor, TodoService
-        from config import conf
 
         ident = current_identity()
         if not _require_trusted_web_delegation():
             raise PermissionError("仅允许可信 Web 会话调用待办工具")
         if not _todo_enabled():
             raise PermissionError("待办功能未开启")
-
-        if str(conf().get("identity_mode", "legacy") or "legacy") != "database":
-            if (not ident.web_legacy_authenticated or ident.user_id or ident.tenant_id
-                    or not conf().get("web_password")):
-                raise PermissionError("待办功能需要有效的 Web 登录")
-            return TodoService(TodoActor.legacy(), enabled_fn=_todo_enabled)
 
         # Resolve from the immutable runtime identity, never self.config or tool
         # arguments: one tool instance can be reused by different callers.
@@ -261,7 +252,7 @@ class TodoTool(BaseTool):
             raise PermissionError("无待办权限")
         actor = TodoActor(
             bound=True, scope_id=ident.tenant_id, owner_id=ident.user_id,
-            username=user["username"], is_legacy=False, permissions=permissions,
+            username=user["username"], permissions=permissions,
         )
         return TodoService(
             actor, enabled_fn=_todo_enabled,

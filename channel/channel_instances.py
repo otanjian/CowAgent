@@ -228,8 +228,11 @@ def resolve_channel_instances(
     """Channel instances to run for *settings*.
 
     Prefers explicit ``channel_instances`` (multi-Agent); otherwise synthesizes
-    the legacy set from ``channel_type``. The ``web`` console is intentionally
-    not represented here — it is managed separately by the launcher.
+    the legacy set from ``channel_type`` **only in legacy identity mode**.
+    In database identity mode, ``channel_type`` alone MUST NOT start channels —
+    only explicit roster/tenant registrations run. The ``web`` console is
+    intentionally not represented here — it is managed separately by the
+    launcher.
 
     *tenant_instances* are tenant-owned channels resolved from the identity
     store (see :func:`load_tenant_channel_instances`) and are appended to the
@@ -237,17 +240,20 @@ def resolve_channel_instances(
     already present in the roster is skipped: the roster is the source of truth
     for a given id, and starting it twice would open two identical connections.
     """
+    def _is_database() -> bool:
+        return True
+
     raw_list = settings.get("channel_instances")
     if isinstance(raw_list, list) and raw_list:
         instances = _explicit_instances(raw_list)
         if not instances:
             logger.warning(
                 "[ChannelInstances] channel_instances present but yielded nothing; "
-                "falling back to legacy channel_type"
+                "database mode refuses legacy channel_type fallback"
             )
-            instances = _legacy_instances(settings)
+            instances = []
     else:
-        instances = _legacy_instances(settings)
+        instances = []
 
     if not tenant_instances:
         return instances
@@ -290,59 +296,17 @@ def bootstrap_legacy_instances(
     roster: Mapping[str, Any],
     default_agent_id: str = "",
 ) -> List[Dict[str, Any]]:
-    """Fold a legacy single-channel setup into ``channel_instances`` records.
+    """Return existing ``channel_instances`` only — never synthesize from channel_type.
 
-    Called when an install first crosses into multi-Agent territory (team.json
-    is being written for the first time). A legacy install keeps its channel
-    credentials as flat keys in config.json and names the channel in
-    ``channel_type``; multi-Agent mode routes entirely off ``channel_instances``,
-    so those flat channels would silently go dark unless carried over.
-
-    For every multi-instance-ready channel named in ``channel_type`` that has
-    credentials in ``settings`` and no existing record, synthesize one record
-    bound to the default Agent (``instance_id == channel_type``, matching the
-    legacy id so nothing else has to change). The config.json flat keys are left
-    in place untouched — multi-Agent startup simply ignores them.
-
-    Returns the (possibly extended) channel_instances list.
+    Kept as a named entry point for team roster writes; database identity requires
+    explicit registration, so flat ``channel_type`` credentials are ignored.
     """
-    records = [
+    del settings, default_agent_id  # retained for call-site compatibility
+    return [
         dict(item)
         for item in (roster.get("channel_instances") or [])
         if isinstance(item, Mapping)
     ]
-    have_types = {
-        _normalize_type(str(r.get("channel_type") or "").strip()) for r in records
-    }
-    default_id = (default_agent_id or roster.get("default_agent_id") or "").strip()
-
-    for name in _parse_channel_type(settings.get("channel_type", "")):
-        ctype = _normalize_type(name)
-        if ctype not in MULTI_INSTANCE_READY or ctype in have_types:
-            continue
-        creds = _filtered_credentials(ctype, settings)
-        if not creds:
-            continue
-        records.append(
-            {
-                "instance_id": ctype,
-                "channel_type": ctype,
-                "agent_id": default_id,
-                "credentials": creds,
-            }
-        )
-        have_types.add(ctype)
-        # Weixin's scan-login token lives in a credentials file, not config.json.
-        # The bootstrapped instance (instance_id == "weixin") reads a per-instance
-        # file, so carry the legacy default file over to it — otherwise the user
-        # would have to re-scan just because they added an Agent.
-        if ctype == const.WEIXIN:
-            _carry_weixin_credentials_file(ctype)
-        logger.info(
-            f"[ChannelInstances] bootstrapped legacy '{ctype}' credentials into a "
-            f"channel_instances record bound to '{default_id or 'default'}'"
-        )
-    return records
 
 
 def _carry_weixin_credentials_file(instance_id: str) -> None:

@@ -34,16 +34,6 @@ from auth.runtime import (
 from auth.policy import PERMISSION_CATALOG, BUILTIN_ROLES
 from auth.ratelimit import shared_login_limiter, RateLimitDecision
 
-
-def _identity_mode() -> str:
-    from config import conf
-    return str(conf().get("identity_mode", "legacy") or "legacy")
-
-
-def _is_database() -> bool:
-    return _identity_mode() == "database"
-
-
 # --- login protection (task 2.7) ------------------------------------------
 def reset_login_rate_limiter() -> None:
     """Reset the shared login rate limiter (used by tests to isolate state)."""
@@ -350,8 +340,6 @@ def _require_context(require_tenant: bool = False) -> RequestContext:
 
 class DbAuthCheckHandler:
     def GET(self):
-        if not _is_database():
-            return web.seeother("/auth/check")
         svc = _get_service()
         token = _session_token()
         ctx = None
@@ -374,8 +362,6 @@ class DbAuthCheckHandler:
 
 class DbAuthLoginHandler:
     def POST(self):
-        if not _is_database():
-            return _error("database identity mode is not enabled", 400, "not_database")
         # A login creates a cookie session (a state change) -> require same-origin
         if not _csrf_ok():
             return _error("cross-origin request rejected", 403, "cross_origin")
@@ -405,10 +391,10 @@ class DbAuthLoginHandler:
             return _identity_unavailable()
         web.setcookie("cow_session", result.token, expires=7 * 86400, path="/",
                       httponly=True, samesite="Lax")
-        # Web login only issues the session Cookie; the token is NOT returned so
-        # the client cannot construct a reusable Bearer credential from it.
+        # Return the session token so Desktop (file:// origin) can send it as
+        # Authorization: Bearer. Web console continues to rely on the cookie.
         return _json({
-            "status": "success", "token": "", "identity_mode": "database",
+            "status": "success", "token": result.token, "identity_mode": "database",
             "must_change_password": result.must_change_password,
             "user": {"username": result.username, "display_name": result.display_name,
                      "is_platform_admin": result.is_platform_admin},
@@ -418,8 +404,6 @@ class DbAuthLoginHandler:
 
 class DbAuthLogoutHandler:
     def POST(self):
-        if not _is_database():
-            return _error("database identity mode is not enabled", 400, "not_database")
         if not _csrf_ok():
             return _error("cross-origin request rejected", 403, "cross_origin")
         token = _session_token()
@@ -442,8 +426,6 @@ class DbAuthMeHandler:
     """
 
     def GET(self):
-        if not _is_database():
-            return _error("database identity mode is not enabled", 400, "not_database")
         svc = _get_service()
         token = _session_token()
         if not token:
@@ -469,8 +451,6 @@ class DbAuthContextHandler:
     """
 
     def GET(self):
-        if not _is_database():
-            return _error("database identity mode is not enabled", 400, "not_database")
         svc = _get_service()
         token = _session_token()
         if not token:
@@ -489,8 +469,6 @@ class DbAuthContextHandler:
 
 class DbAuthPasswordHandler:
     def POST(self):
-        if not _is_database():
-            return _error("database identity mode is not enabled", 400, "not_database")
         # Password change is a cookie state change -> same-origin / bearer-safe
         if not _csrf_ok():
             return _error("cross-origin request rejected", 403, "cross_origin")
@@ -612,8 +590,6 @@ class DbSelfProfileHandler:
     """
 
     def PATCH(self):
-        if not _is_database():
-            return _error("database identity mode is not enabled", 400, "not_database")
         if not _csrf_ok():
             return _error("cross-origin request rejected", 403, "cross_origin")
         try:
@@ -649,8 +625,6 @@ class DbSelfAvatarHandler:
     """
 
     def GET(self):
-        if not _is_database():
-            return _error("database identity mode is not enabled", 400, "not_database")
         token = _session_token()
         if not token:
             return _error("unauthorized", 401, "unauthorized")
@@ -679,8 +653,6 @@ class DbSelfAvatarHandler:
         return data
 
     def POST(self):
-        if not _is_database():
-            return _error("database identity mode is not enabled", 400, "not_database")
         # Avatar upload is a cookie state change -> same-origin / bearer-safe
         if not _csrf_ok():
             return _error("cross-origin request rejected", 403, "cross_origin")

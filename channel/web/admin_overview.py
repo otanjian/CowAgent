@@ -10,7 +10,6 @@ import web
 
 from channel.web.auth_handlers import (
     _error,
-    _is_database,
     _json,
     _require_context,
     _tenant_header,
@@ -64,8 +63,6 @@ def build_admin_overview(
 
 def _require_admin_console_access(ctx) -> None:
     """Same gate as opening /admin: platform admin or tenant_admin."""
-    if not _is_database():
-        return
     if ctx.is_platform_admin:
         return
     if ctx.is_tenant_admin and ctx.tenant_id:
@@ -107,8 +104,6 @@ def _gather_messages_today(ctx, start_ts: int, end_ts: int) -> int:
 
 
 def _gather_member_count(ctx) -> Optional[int]:
-    if not _is_database():
-        return None
     if ctx is None or not ctx.tenant_id:
         return 0
     from channel.web.auth_handlers import _get_service
@@ -128,7 +123,7 @@ def _overview_payload(ctx) -> str:
     except Exception:
         agent_count = 0
         messages_today = 0
-        member_count = None if not _is_database() else 0
+        member_count = 0
         system_status = "degraded"
     payload = build_admin_overview(
         ctx=ctx,
@@ -144,24 +139,20 @@ def _overview_payload(ctx) -> str:
 class AdminOverviewHandler:
     def GET(self):
         from auth.runtime import to_runtime_identity
-        from channel.web.web_channel import _require_auth
         from common.runtime_identity import use_identity
 
-        _require_auth()
         web.header("Content-Type", "application/json; charset=utf-8")
         web.header("Cache-Control", "no-store")
         try:
-            if _is_database():
-                # Honor X-Tenant-ID when present so tenant_admin qualifies and
-                # member_count is tenant-scoped. Platform admin may omit tenant
-                # (member_count 0, scope "none"). Do not use _db_scope here —
-                # it always requires a tenant.
-                require_tenant = bool(_tenant_header())
-                ctx = _require_context(require_tenant=require_tenant)
-                _require_admin_console_access(ctx)
-                with use_identity(to_runtime_identity(ctx)):
-                    return _overview_payload(ctx)
-            return _overview_payload(None)
+            # Honor X-Tenant-ID when present so tenant_admin qualifies and
+            # member_count is tenant-scoped. Platform admin may omit tenant
+            # (member_count 0, scope "none"). Do not use _db_scope here —
+            # it always requires a tenant.
+            require_tenant = bool(_tenant_header())
+            ctx = _require_context(require_tenant=require_tenant)
+            _require_admin_console_access(ctx)
+            with use_identity(to_runtime_identity(ctx)):
+                return _overview_payload(ctx)
         except web.HTTPError:
             raise
         except Exception as e:

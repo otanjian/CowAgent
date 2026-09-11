@@ -63,9 +63,8 @@ class TestChatHandlerContentType(unittest.TestCase):
 
         patcher, sent = _capture_headers()
         with patcher:
-            with patch("channel.web.web_channel._require_auth", lambda: None):
-                with patch("builtins.open", mock_open(read_data="<!doctype html><html></html>")):
-                    ChatHandler().GET()
+            with patch("builtins.open", mock_open(read_data="<!doctype html><html></html>")):
+                ChatHandler().GET()
 
         content_types = [value for name, value in sent if name.lower() == "content-type"]
         self.assertTrue(

@@ -34,14 +34,8 @@ from common.log import logger
 
 
 def is_database_identity() -> bool:
-    """Whether this instance runs the database identity mode.
-
-    Kept for callers outside ``web_channel``; the workspace seam itself takes
-    the answer as an argument so the caller's own notion of the mode stays the
-    single one in play (a test may stub either one).
-    """
-    from config import conf
-    return str(conf().get("identity_mode", "legacy") or "legacy") == "database"
+    """Database is the only identity mode after retire-legacy-identity-mode."""
+    return True
 
 
 def _refuse(message: str, code: str = "") -> "web.HTTPError":
@@ -53,15 +47,12 @@ def _refuse(message: str, code: str = "") -> "web.HTTPError":
     )
 
 
-def resolve_tenant_workspace_root(*, database_mode: bool) -> Optional[str]:
-    """The caller's tenant shared root, when the tenant dimension applies.
+def resolve_tenant_workspace_root(*, database_mode: bool = True) -> Optional[str]:
+    """The caller's tenant shared root (database identity only).
 
-    ``database_mode`` is passed in by the caller rather than re-read here, so
-    the request's mode is decided once, at the edge, and this seam only decides
-    what that mode *means* for the working root.
-
-    Read-only: it resolves the ambient ``RuntimeIdentity`` and the tenant's
-    configured root, and raises rather than inventing a fallback (task 4.5/D3).
+    Raises rather than inventing a process-global fallback. ``database_mode``
+    is retained for call-site compatibility but ignored — database is the only
+    mode.
     """
     from common.runtime_identity import current_identity
 
@@ -72,18 +63,10 @@ def resolve_tenant_workspace_root(*, database_mode: bool) -> Optional[str]:
         root = get_identity_service().tenant_shared_root(identity.tenant_id)
         if root:
             return root
-        # A tenant without a configured root has nowhere to work; falling back
-        # to the global default would place one tenant's files in another
-        # tenant's workspace, so it is refused.
         logger.warning(
             "[WebChannel] tenant %s has no shared root; refusing workspace resolution",
             identity.tenant_id,
         )
         raise _refuse("tenant has no shared root")
 
-    if database_mode:
-        # No tenant in scope: refuse rather than fall back to the process-global
-        # default Agent's workspace, which may belong to another tenant.
-        raise _refuse("tenant scope required", code="missing_tenant")
-
-    return None
+    raise _refuse("tenant scope required", code="missing_tenant")

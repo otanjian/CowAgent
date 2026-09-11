@@ -3,19 +3,19 @@
 
 Chat and file consumers are no longer 503-closed in database mode: they run
 under per-request identity + permission checks. Anonymous requests are rejected
-with 401; closed consumers (scheduler, until its own slice) still 503.
+with 400 (missing tenant) or 401 (no session); closed consumers (scheduler,
+until its own slice) still 503.
 """
 
 import json
 import unittest
-from unittest.mock import patch
 
 import web
 
 from channel.web import web_channel
 
 
-def _request(path, method="GET", data=""):
+def _request(path, method="GET", data="", headers=None):
     app = web.application(
         (
             path, _handler_for(path),
@@ -26,6 +26,8 @@ def _request(path, method="GET", data=""):
     kwargs = {"method": method}
     if data:
         kwargs["data"] = data
+    if headers:
+        kwargs["headers"] = headers
     return app.request(path, **kwargs)
 
 
@@ -42,55 +44,53 @@ def _handler_for(path):
     }.get(path, "RootHandler")
 
 
-class ConsumerAuthTests:
+def _assert_auth_rejected(testcase, resp):
+    """Anonymous database requests fail closed (tenant gate or session)."""
+    status = str(resp.status)
+    testcase.assertTrue(
+        status.startswith(("400", "401")),
+        "expected 400/401, got %s: %s" % (status, resp.data),
+    )
+    testcase.assertNotEqual(status, "503 Service Unavailable")
+
+
+class DatabaseConsumerAuthTests(unittest.TestCase):
     """Database consumers demand login instead of the old blanket 503."""
 
-    def _patch_mode(self, mode):
-        return patch.object(web_channel, "_is_database_identity", lambda: mode == "database")
-
     def test_message_requires_database_login(self):
-        with self._patch_mode("database"):
-            resp = _request("/message", "POST", json.dumps({"content": "hi"}))
-        self.assertTrue(resp.status.startswith("401"), resp.data)
+        resp = _request("/message", "POST", json.dumps({"content": "hi"}))
+        _assert_auth_rejected(self, resp)
 
     def test_stream_requires_database_login(self):
-        with self._patch_mode("database"):
-            resp = _request("/stream")
-        self.assertTrue(resp.status.startswith(("400", "401")), resp.data)
+        resp = _request("/stream")
+        _assert_auth_rejected(self, resp)
 
     def test_poll_requires_database_login(self):
-        with self._patch_mode("database"):
-            resp = _request("/poll", "POST", json.dumps({}))
-        self.assertTrue(resp.status.startswith("401"), resp.data)
+        resp = _request("/poll", "POST", json.dumps({}))
+        _assert_auth_rejected(self, resp)
 
     def test_cancel_requires_database_login(self):
-        with self._patch_mode("database"):
-            resp = _request("/cancel", "POST", json.dumps({}))
-        self.assertTrue(resp.status.startswith("401"), resp.data)
+        resp = _request("/cancel", "POST", json.dumps({}))
+        _assert_auth_rejected(self, resp)
 
     def test_upload_requires_database_login(self):
-        with self._patch_mode("database"):
-            resp = _request("/upload", "POST", b"")
-        self.assertTrue(resp.status.startswith("401"), resp.data)
+        resp = _request("/upload", "POST", b"")
+        _assert_auth_rejected(self, resp)
 
     def test_file_serve_requires_database_login(self):
-        with self._patch_mode("database"):
-            resp = _request("/api/file")
-        self.assertTrue(resp.status.startswith("401"), resp.data)
+        resp = _request("/api/file")
+        _assert_auth_rejected(self, resp)
 
+    def test_anonymous_never_bypasses_as_shared_password(self):
+        """Pinning a shared password in conf must not open consumers."""
+        from unittest.mock import patch
 
-class DatabaseConsumerAuthTests(unittest.TestCase, ConsumerAuthTests):
-    pass
-
-
-# In legacy mode the closure gate must not trip. These assert the handlers are
-# not rejected by the database closure (they may 400/401 on missing auth input,
-# which is fine — the point is they must NOT be 503 database_unavailable).
-class LegacyConsumerTests(unittest.TestCase):
-    def test_message_not_503_in_legacy(self):
-        with patch.object(web_channel, "_is_database_identity", lambda: False):
-            resp = _request("/message", "POST", json.dumps({"content": "hi"}))
-        self.assertNotEqual(resp.status, 503)
+        settings = {"identity_mode": "database", "web_password": "shared"}
+        with patch.object(web_channel, "conf", return_value=settings), \
+                patch("config.conf", return_value=settings):
+            resp = _request("/message", "POST", json.dumps({"content": "hi"}),
+                            headers={"Cookie": "cow_auth_token=forged"})
+        _assert_auth_rejected(self, resp)
 
 
 if __name__ == "__main__":

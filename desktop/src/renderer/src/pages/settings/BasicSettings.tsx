@@ -95,10 +95,6 @@ const BasicSettings: React.FC<BasicSettingsProps> = ({ baseUrl, onLangChange, on
   const [agentStatus, setAgentStatus] = useState('')
 
   // security card
-  const [password, setPassword] = useState('')
-  const [pwDirty, setPwDirty] = useState(false)
-  const [pwVisible, setPwVisible] = useState(false)
-  const [pwStatus, setPwStatus] = useState('')
   const [permissionMode, setPermissionMode] = useState('full-access')
   const [permStatus, setPermStatus] = useState('')
 
@@ -154,10 +150,6 @@ const BasicSettings: React.FC<BasicSettingsProps> = ({ baseUrl, onLangChange, on
       setSubagent(data.subagent_enabled !== false)
       setEvolution(!!data.self_evolution_enabled)
       setPermissionMode(asPermissionMode(data.agent_permission_mode))
-      // Prefer the real password (desktop only) so it can be edited in place;
-      // fall back to the masked value for browser access.
-      setPassword(data.web_password ?? data.web_password_masked ?? '')
-      setPwDirty(false)
 
       const ids = data.providers ? Object.keys(data.providers) : []
       const current = showManagedApiKey ? 'linkai' : data.use_linkai ? 'linkai' : data.bot_type || ids[0] || ''
@@ -327,24 +319,6 @@ const BasicSettings: React.FC<BasicSettingsProps> = ({ baseUrl, onLangChange, on
     setTimeout(() => setAgentStatus(''), 2000)
   }
 
-  // Desktop returns the real password, so the field holds plaintext and can be
-  // saved (including cleared) directly. Browser access only has the masked
-  // value, where a masked string must never be saved as the real password.
-  const hasRealPassword = config?.web_password !== undefined
-
-  const savePassword = async () => {
-    if (!pwDirty) return
-    if (!hasRealPassword && MASK_RE.test(password)) return
-    try {
-      await apiClient.updateConfig({ web_password: password })
-      setPwStatus(password ? t('config_password_saved') : t('config_password_cleared'))
-      setPwDirty(false)
-    } catch {
-      setPwStatus(t('config_save_error'))
-    }
-    setTimeout(() => setPwStatus(''), 3000)
-  }
-
   const savePermission = async (mode: string) => {
     setPermissionMode(mode)
     try {
@@ -416,10 +390,9 @@ const BasicSettings: React.FC<BasicSettingsProps> = ({ baseUrl, onLangChange, on
     { value: '__custom__', label: t('config_custom_option') },
   ]
 
-  // In database mode the session permission mode is not what gates execution -
-  // the caller's role resource grants are - so the global default is shown
-  // read-only as an explanation, never as a knob that could widen a session.
-  const permissionEditable = config?.permission_mode_editable !== false
+  // Session permission defaults are owned by role resource grants, so the
+  // global setting is read-only unless the server explicitly allows edits.
+  const permissionEditable = config?.permission_mode_editable === true
 
   return (
     <div className="grid gap-5">
@@ -611,37 +584,11 @@ const BasicSettings: React.FC<BasicSettingsProps> = ({ baseUrl, onLangChange, on
             />
             {permissionEditable && permStatus && <p className="text-xs text-accent mt-1">{permStatus}</p>}
           </Field>
-          <Field label={t('config_password')} hint={t('config_password_hint')}>
-            <div className="relative">
-              <TextInput
-                type={pwVisible ? 'text' : 'password'}
-                className="pr-10"
-                value={password}
-                placeholder={t('config_password_placeholder')}
-                onFocus={() => {
-                  // Browser access shows a mask; clear it on focus so the user
-                  // types a fresh password. Desktop holds the real password and
-                  // must stay editable in place (cursor at the end).
-                  if (!hasRealPassword && !pwDirty && MASK_RE.test(password)) setPassword('')
-                }}
-                onBlur={() => {
-                  if (!hasRealPassword && !pwDirty) setPassword(config?.web_password_masked || '')
-                }}
-                onChange={(e) => {
-                  setPassword(e.target.value)
-                  setPwDirty(true)
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => setPwVisible((v) => !v)}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-content-tertiary hover:text-content-secondary cursor-pointer p-1"
-              >
-                {pwVisible ? <EyeOff size={14} /> : <Eye size={14} />}
-              </button>
-            </div>
+          <Field label={t('config_password')} hint={t('config_password_account_hint')}>
+            <p className="text-sm text-content-secondary">
+              {t('config_password_account_desc')}
+            </p>
           </Field>
-          <SaveRow status={pwStatus} onSave={savePassword} />
         </div>
       </Card>
 

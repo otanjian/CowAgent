@@ -63,8 +63,7 @@ class AuthSecurityTests(unittest.TestCase):
         def _fake_service():
             return self.svc
 
-        with patch.object(auth_handlers, "_is_database", lambda: True), \
-                patch.object(auth_handlers, "_get_service", _fake_service):
+        with patch.object(auth_handlers, "_get_service", _fake_service):
             return app.request(path, method=method, data=data, headers=headers)
 
     def _login(self, path="/auth/login", origin="http://localhost:9899", token=None):
@@ -82,8 +81,10 @@ class AuthSecurityTests(unittest.TestCase):
         resp = self._login()
         data = self._json(resp)
         self.assertEqual(data["status"], "success")
-        # Web login only issues the session Cookie; no reusable token is returned.
-        self.assertEqual(data["token"], "")
+        # Web login sets the session Cookie and also returns the token so
+        # Desktop (file://) can send Authorization: Bearer.
+        self.assertTrue(data.get("token"))
+        self.assertIn("cow_session", str(getattr(resp, "headers", {})))
 
     def test_login_cross_origin_rejected(self):
         resp = self._login(origin="https://evil.example.com")
@@ -164,8 +165,7 @@ class AuthSecurityTests(unittest.TestCase):
             raise RuntimeError("identity.db is corrupt")
 
         app = self._app()
-        with patch.object(auth_handlers, "_is_database", lambda: True), \
-                patch.object(auth_handlers, "_get_service", _boom):
+        with patch.object(auth_handlers, "_get_service", _boom):
             resp = app.request(
                 "/auth/login", method="POST",
                 data=json.dumps({"username": "root", "password": "Str0ngAdminPass"}),
@@ -193,8 +193,7 @@ class LoginRateLimitWebTests(unittest.TestCase):
 
     def _login(self, username="root", password="nope", source="127.0.0.1"):
         app = self._app()
-        with patch.object(auth_handlers, "_is_database", lambda: True), \
-                patch.object(auth_handlers, "_get_service", lambda: self.svc), \
+        with patch.object(auth_handlers, "_get_service", lambda: self.svc), \
                 patch.object(auth_handlers, "shared_login_limiter", \
                              auth_handlers.shared_login_limiter):
             resp = app.request(

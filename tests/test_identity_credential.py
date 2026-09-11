@@ -121,9 +121,7 @@ class CredentialRouteTests(unittest.TestCase):
         def _fake_service():
             return self.svc
 
-        with patch.object(auth_handlers, "_is_database", lambda: True), \
-                patch.object(auth_handlers, "_get_service", _fake_service), \
-                patch.object(admin_handlers, "_is_database", lambda: True), \
+        with patch.object(auth_handlers, "_get_service", _fake_service), \
                 patch.object(admin_handlers, "_get_service", _fake_service):
             return app.request(path, **kwargs)
 
@@ -154,14 +152,14 @@ class CredentialRouteTests(unittest.TestCase):
         self.assertEqual(resp.status, "403")
         self.assertEqual(self._json(resp)["code"], "cross_origin")
 
-    def test_web_login_returns_no_token(self):
+    def test_web_login_returns_token_for_desktop_bearer(self):
         resp = self._request("/auth/login", method="POST",
                              data=json.dumps({"username": "root",
                                               "password": "Str0ngAdminPass"}),
                              origin="http://localhost:9899")
         data = self._json(resp)
         self.assertEqual(data["status"], "success")
-        self.assertEqual(data["token"], "")
+        self.assertTrue(data.get("token"))
 
     def test_invalid_cookie_no_fallback_to_bearer(self):
         # A malformed cookie plus an unrelated bearer are DIFFERENT values ->

@@ -119,9 +119,7 @@ class _ChannelHttpFixture(unittest.TestCase):
         def _fake_service():
             return self.svc
 
-        with patch.object(auth_handlers, "_is_database", lambda: True), \
-                patch.object(auth_handlers, "_get_service", _fake_service), \
-                patch.object(admin_handlers, "_is_database", lambda: True), \
+        with patch.object(auth_handlers, "_get_service", _fake_service), \
                 patch.object(admin_handlers, "_get_service", _fake_service):
             return self._app().request(path, **kwargs)
 
@@ -153,44 +151,6 @@ class _ChannelHttpFixture(unittest.TestCase):
         assert resp.status == "200 OK", resp.data
         return self._json(resp)["instance"]
 
-
-class DatabaseModeGateTests(_ChannelHttpFixture):
-    """The capability exists only in database mode (10.7).
-
-    Legacy mode has no identity.db, so no tenant, no credential store and no
-    audit trail: the endpoints must refuse rather than half-work. This pins the
-    "no feature flag, gated by deployment mode" decision.
-    """
-
-    def _legacy_request(self, path, method="GET", payload=None):
-        headers = {"Content-Type": "application/json"}
-        if payload is not None:
-            data = json.dumps(payload)
-        else:
-            data = None
-        headers["Cookie"] = f"cow_session={self.token_a}"
-        headers["X-Tenant-ID"] = self.ta
-        headers["Host"] = "test"
-        headers["Origin"] = "http://test"
-        kwargs = {"method": method, "headers": headers}
-        if data is not None:
-            kwargs["data"] = data
-
-        with patch.object(auth_handlers, "_is_database", lambda: False), \
-                patch.object(admin_handlers, "_is_database", lambda: False):
-            return self._app().request(path, **kwargs)
-
-    def test_list_is_refused_in_legacy_mode(self):
-        resp = self._legacy_request("/api/tenant/channels")
-        self.assertTrue(str(resp.status).startswith("400"), resp.status)
-        self.assertEqual(self._json(resp).get("code"), "not_database")
-
-    def test_create_is_refused_in_legacy_mode(self):
-        resp = self._legacy_request("/api/tenant/channels", method="POST", payload={
-            "channel_type": "feishu", "display_name": "X", "agent_id": "",
-            "credentials": dict(FEISHU), "recent_password": "Str0ngRootFinal"})
-        self.assertTrue(str(resp.status).startswith("400"), resp.status)
-        self.assertEqual(self._json(resp).get("code"), "not_database")
 
 
 class GetTenantChannelTypesTests(_ChannelHttpFixture):

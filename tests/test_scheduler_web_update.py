@@ -9,8 +9,11 @@ from unittest.mock import Mock, patch
 
 from agent.tools.scheduler.task_store import TaskStore
 
-# Keep this unit test independent from the optional web.py dependency.
-if "web" not in sys.modules:
+# Prefer the real web.py package when present so later tests are not polluted
+# by an incomplete stub (ThreadedDict ctx / application / etc.).
+try:
+    import web  # noqa: F401
+except ImportError:
     web_stub = types.ModuleType("web")
     web_stub.HTTPError = type("HTTPError", (Exception,), {})
     web_stub.cookies = lambda: {}
@@ -27,6 +30,7 @@ if "web" not in sys.modules:
         StaticMiddleware=lambda app: app,
         WSGIServer=lambda *args, **kwargs: types.SimpleNamespace(serve_forever=lambda: None),
     )
+    web_stub.ctx = types.SimpleNamespace(env={}, headers=[])
     sys.modules["web"] = web_stub
 
 from channel.web import web_channel
@@ -50,24 +54,21 @@ def _store_task(tmp_path, action):
 
 
 def _post_update(tmp_path, payload):
-    with patch("channel.web.web_channel._require_auth"), \
-         patch("channel.web.web_channel.web.header"), \
+    with patch("channel.web.web_channel.web.header"), \
          patch("channel.web.web_channel.web.data", return_value=json.dumps(payload).encode()), \
          patch("channel.web.web_channel._get_workspace_root", return_value=str(tmp_path)):
         return json.loads(SchedulerUpdateHandler().POST())
 
 
-def test_web_manual_run_is_authenticated_and_delegates_to_scheduler():
+def test_web_manual_run_delegates_to_scheduler():
     assert hasattr(web_channel, "SchedulerRunHandler")
 
     service = Mock()
-    with patch("channel.web.web_channel._require_auth") as require_auth, \
-         patch("channel.web.web_channel.web.header"), \
+    with patch("channel.web.web_channel.web.header"), \
          patch("channel.web.web_channel.web.data", return_value=b'{"task_id":"task-1"}'), \
          patch("agent.tools.scheduler.integration.get_scheduler_service", return_value=service):
         response = json.loads(web_channel.SchedulerRunHandler().POST())
 
-    require_auth.assert_called_once_with()
     service.run_task_now.assert_called_once_with("task-1")
     assert response == {
         "status": "success",
@@ -78,8 +79,7 @@ def test_web_manual_run_is_authenticated_and_delegates_to_scheduler():
 def test_web_manual_run_rejects_unavailable_scheduler():
     assert hasattr(web_channel, "SchedulerRunHandler")
 
-    with patch("channel.web.web_channel._require_auth"), \
-         patch("channel.web.web_channel.web.header"), \
+    with patch("channel.web.web_channel.web.header"), \
          patch("channel.web.web_channel.web.data", return_value=b'{"task_id":"task-1"}'), \
          patch("agent.tools.scheduler.integration.get_scheduler_service", return_value=None):
         response = json.loads(web_channel.SchedulerRunHandler().POST())
@@ -202,8 +202,7 @@ def test_list_aggregates_every_agent_and_tags_the_owner(tmp_path):
     )
     roots = {"primary": str(primary), "research": str(research)}
 
-    with patch("channel.web.web_channel._require_auth"), \
-         patch("channel.web.web_channel.web.header"), \
+    with patch("channel.web.web_channel.web.header"), \
          patch("channel.web.web_channel.web.input", return_value=types.SimpleNamespace(agent_id="")), \
          patch("agent.registry.get_agent_registry", return_value=registry), \
          patch("channel.web.web_channel._get_workspace_root", side_effect=lambda agent_id=None: roots[agent_id]):
@@ -220,8 +219,7 @@ def test_list_scopes_to_a_single_agent_when_asked(tmp_path):
     _seed_agent_task(primary, "p-task")
     _seed_agent_task(research, "r-task")
 
-    with patch("channel.web.web_channel._require_auth"), \
-         patch("channel.web.web_channel.web.header"), \
+    with patch("channel.web.web_channel.web.header"), \
          patch("channel.web.web_channel.web.input", return_value=types.SimpleNamespace(agent_id="research")), \
          patch("channel.web.web_channel._get_workspace_root", return_value=str(research)):
         response = json.loads(web_channel.SchedulerHandler().GET())

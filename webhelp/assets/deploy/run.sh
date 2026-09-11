@@ -855,6 +855,7 @@ base = {
     'channel_type': e('CHANNEL_TYPE') or 'web',
     'model': e('MODEL_NAME') or '',
     'cow_lang': e('COW_LANG', 'auto'),
+    'identity_mode': 'database',
     'open_ai_api_key': e('OPENAI_KEY', ''),
     'open_ai_api_base': e('OPENAI_BASE'),
     'claude_api_key': e('CLAUDE_KEY', ''),

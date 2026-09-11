@@ -128,9 +128,7 @@ class _Fixture(unittest.TestCase):
             headers["X-Tenant-ID"] = tenant
         kwargs["headers"] = headers
 
-        with patch.object(admin_handlers, "_is_database", lambda: True), \
-                patch.object(admin_handlers, "_get_service", lambda: self.svc), \
-                patch.object(auth_handlers, "_is_database", lambda: True), \
+        with patch.object(admin_handlers, "_get_service", lambda: self.svc), \
                 patch.object(auth_handlers, "_get_service", lambda: self.svc):
             return self._app().request(path, **kwargs)
 

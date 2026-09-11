@@ -51,7 +51,7 @@ def _post(tmp_path, updates, stored=None, runtime=None):
     config_path.write_text(json.dumps(stored or {}), encoding="utf-8")
     live = runtime if runtime is not None else {}
 
-    with patch("channel.web.web_channel._require_auth"), \
+    with patch("channel.web.web_channel._require_platform_console", lambda: None), \
          patch("channel.web.web_channel.web.header"), \
          patch("channel.web.web_channel.web.data",
                return_value=json.dumps({"updates": updates}).encode()), \

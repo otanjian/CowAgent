@@ -870,7 +870,7 @@ export class PythonBackend extends EventEmitter {
 
       const check = () => {
         // Probe the unauthenticated health endpoint, NOT /config: /config
-        // requires auth once a web_password is set, which would make this poll
+        // requires an authenticated session, which would make this poll
         // 401 forever and hang startup.
         const req = http.get(`http://127.0.0.1:${this.port}/api/health`, (res) => {
           // Drain the body so the socket isn't held out of the keep-alive pool.

@@ -62,8 +62,7 @@ def boundary(tmp_path, monkeypatch):
     service.bind_agent(tenant_id=other_tenant, agent_id="other-agent")
     monkeypatch.setattr("agent.registry.get_agent_registry", lambda: registry)
     monkeypatch.setattr("auth.service.get_identity_service", lambda: service)
-    settings = {"identity_mode": "database", "identity_db_path": str(tmp_path / "identity.db"),
-                "web_password": "LegacyPasswordMustNotBypassDatabaseAuth"}
+    settings = {"identity_mode": "database", "identity_db_path": str(tmp_path / "identity.db")}
     monkeypatch.setattr(config, "conf", lambda: settings)
     monkeypatch.setattr(web_channel, "conf", lambda: settings)
     channel = SimpleNamespace(_sse_streams_lock=threading.RLock(), request_owners={})
@@ -182,7 +181,7 @@ def test_another_users_session_is_rejected_before_any_runtime_action(boundary, p
 
 
 @pytest.mark.parametrize("owner, channel_type", [("", "web"), (None, "feishu")])
-def test_legacy_and_nonweb_sessions_cannot_be_claimed(boundary, owner, channel_type):
+def test_unowned_and_nonweb_sessions_cannot_be_claimed(boundary, owner, channel_type):
     b = boundary
     b.seed("reserved", owner=b.root if owner is None else owner, channel_type=channel_type)
     response = b.send("reserved")
