@@ -41,9 +41,9 @@
 
 ### Requirement: 数据库模式使用明确凭据来源并兼容同值重复凭据
 
-在 database 模式中，系统 SHALL 仅使用数据库会话 Cookie 或 Authorization Bearer 认证，MUST NOT 从旧共享密码、旧 token、URL token、空 web_password 或 legacy 免密设置取得身份。只携带一种凭据时按该来源认证；Cookie 与 Bearer 的 token 值相同时 SHALL 仅认证一次且按 Cookie 来源执行来源检查，值不同时 SHALL 返回 400 mixed_credentials，不回退其中任一凭据。选定凭据无效或过期返回 401。显式 legacy 部署 SHALL 保持原有登录兼容行为，但不得作为 database 认证失败的回退。
+在 database 模式中，系统 SHALL 仅使用数据库会话 Cookie 或 Authorization Bearer 认证，MUST NOT 从旧共享密码、旧 token、URL token、空 web_password 或 legacy 免密设置取得身份。只携带一种凭据时按该来源认证；Cookie 与 Bearer 的 token 值相同时 SHALL 仅认证一次且按 Cookie 来源执行来源检查，值不同时 SHALL 返回 400 mixed_credentials，不回退其中任一凭据。选定凭据无效或过期返回 401。系统 MUST NOT 提供或兼容 `identity_mode=legacy` 运行路径；显式配置 legacy SHALL 拒绝启动。
 
-database 的 Web /auth/login SHALL 只设置会话 Cookie，JSON 保留必要兼容字段但不返回可复用 token；本次不新增原生登录接口或承诺 Desktop 企业登录支持。
+database 的 Web /auth/login SHALL 只设置会话 Cookie，JSON 保留必要兼容字段但不返回可复用 token；Desktop 等程序化客户端 SHALL 使用同一会话值作为 Bearer。
 
 #### Scenario: 旧凭据不提供数据库访问资格
 - **WHEN** 客户端只有旧共享 token、URL token，或服务配置了空共享密码后匿名访问受保护接口
@@ -61,9 +61,9 @@ database 的 Web /auth/login SHALL 只设置会话 Cookie，JSON 保留必要兼
 - **WHEN** 浏览器以有效用户名密码通过 /auth/login 登录
 - **THEN** 系统按普通或受限会话规则设置会话 Cookie，响应 JSON 不返回可复用 token，客户端不得从该响应构造额外 Bearer 凭据
 
-#### Scenario: 显式 legacy 模式保持兼容
-- **WHEN** 既有 legacy 部署继续使用原登录和业务客户端
-- **THEN** 原模式契约保持兼容；同一旧凭据用于 database 部署时仍被拒绝，不能通过自动降级访问企业数据
+#### Scenario: 显式 legacy 配置拒绝启动
+- **WHEN** 部署配置显式声明 `identity_mode=legacy`
+- **THEN** 进程拒绝启动，不建立共享密码或旧 token 认证路径
 
 ### Requirement: 受限会话与管理写来源检查不可绕过
 

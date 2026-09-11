@@ -21,7 +21,7 @@
 
 ### Requirement: 平台管理员可读取全局配置与模型配置
 
-已认证且具备平台管理员资格的请求 SHALL 能够读取全局系统配置与模型配置。GET `/config` SHALL 返回系统配置投影（含标题、模型、`bot_type`、api_base、掩码后的 api_keys、providers 与 web_password 掩码等现契约字段）；GET `/api/models` SHALL 返回 `{status, providers, capabilities}`。返回内容 MUST NOT 泄漏未掩码的 api_key 明文或敏感完整凭据。
+已认证且具备平台管理员资格的请求 SHALL 能够读取全局系统配置与模型配置。GET `/config` SHALL 返回系统配置投影（含标题、模型、`bot_type`、api_base、掩码后的 api_keys、providers 等现契约字段，MUST NOT 再暴露 `web_password`）；GET `/api/models` SHALL 返回 `{status, providers, capabilities}`。返回内容 MUST NOT 泄漏未掩码的 api_key 明文或敏感完整凭据。
 
 #### Scenario: 平台管理员读取系统配置
 - **WHEN** 平台管理员携带有效会话 GET `/config`
@@ -58,12 +58,4 @@
 #### Scenario: 受限会话被拒绝
 - **WHEN** 处于强制改密（`must_change_password=true`）受限状态的会话请求 `/config` 或 `/api/models`
 - **THEN** 系统按受限会话规则拒绝访问，不返回全局配置或执行写入
-
-### Requirement: legacy 模式访问控制保持不变
-
-当 `identity_mode=legacy`（非 database）时，`/config` 与 `/api/models` 的访问控制 SHALL 保持既有行为，继续使用共享控制台密码鉴权（`_require_auth()`），MUST NOT 引入平台管理员资格要求或改变旧客户端行为。
-
-#### Scenario: legacy 模式继续用共享密码鉴权
-- **WHEN** 在 legacy 模式下已通过共享控制台密码认证的客户端访问 `/config` 或 `/api/models`
-- **THEN** 系统行为与改动前一致，不额外要求平台管理员资格，也不返回数据库模式专属的 503
 

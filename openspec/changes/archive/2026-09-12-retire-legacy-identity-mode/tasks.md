@@ -103,4 +103,4 @@
 - [x] 6.4 安全验收：无凭据/旧 HMAC 拒绝；平台文件跨租户不可见；无身份 fail-closed；服务账号密钥生命周期测试通过
 - [x] 6.5 执行隔离 fail-closed：无身份工具拒绝 + 安全事件告警；模型目录空集
 - [x] 6.6 恢复演练：`tests/test_migration_recovery_acceptance.py` 通过；显式 legacy 启动拒绝，不开放共享密码
-- [ ] 6.7 归档 change 并复核主规范无遗留 legacy 强制条款
+- [x] 6.7 归档 change 并复核主规范无遗留 legacy 强制条款

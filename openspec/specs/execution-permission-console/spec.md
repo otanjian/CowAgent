@@ -14,32 +14,35 @@ Web 控制台与 Desktop 的对话界面 SHALL NOT 提供会话级权限模式�
 - **WHEN** 一次工具调用被拒绝并在对话中显示提示
 - **THEN** 提示只说明原因，不包含可点击的调整权限入口
 
-### Requirement: 被拒提示说明真实原因
-工具被拒提示 SHALL 说明拒绝来源。legacy 模式下由权限模式拒绝 SHALL 显示当前模式；database 模式下由角色授权或执行隔离拒绝 SHALL 说明当前角色未获授权，MUST NOT 显示会话权限模式或暗示可通过聊天调整。
-
-#### Scenario: database 模式角色拒绝
-- **WHEN** database 模式下工具因缺少 `tool.execute` 或对应资源 grant 被拒绝
-- **THEN** 提示说明当前角色未获授权并可联系管理员，不显示"当前权限为…"的模式文案
-
-#### Scenario: legacy 模式模式拒绝
-- **WHEN** legacy 模式下工具因当前 read-only/workspace-write 模式被拒绝
-- **THEN** 提示显示当前权限模式，但不提供调整入口
-
-### Requirement: 全局默认权限在数据库模式下只读
-平台设置页的全局「默认权限」配置 SHALL 在 database 身份模式下只读展示并说明执行权限由角色资源授权控制，MUST NOT 允许通过该设置改变 database 模式的实际执行授权；legacy 模式 SHALL 保持可编辑。
-
-#### Scenario: 数据库模式查看默认权限
-- **WHEN** 平台管理员在 database 模式下打开设置页
-- **THEN** 「默认权限」不可编辑并显示由角色授权控制的说明
-
-#### Scenario: legacy 模式保持可编辑
-- **WHEN** 平台管理员在 legacy 模式下打开设置页
-- **THEN** 「默认权限」仍可编辑并保存
-
 ### Requirement: 会话设置接口不接受数据库模式覆盖
-会话设置接口 SHALL 在 database 身份模式下不返回可用于自行调整的权限模式集合，且 MUST NOT 接受或持久化会话级 permission 覆盖；legacy 模式 SHALL 保留现有行为。
+
+会话设置接口 SHALL 不返回可用于自行调整的权限模式集合，且 MUST NOT 接受或持久化会话级 permission 覆盖。
 
 #### Scenario: 数据库模式提交会话权限覆盖
-- **WHEN** database 模式下客户端提交 `permission` 会话设置
+- **WHEN** 客户端提交 `permission` 会话设置
 - **THEN** 服务端不应用该覆盖，实际工具授权仍由角色决定
+
+### Requirement: 被拒提示仅说明角色授权原因
+
+工具被拒提示 SHALL 说明拒绝来源。由角色授权或执行隔离拒绝 SHALL 说明当前角色未获授权，MUST NOT 显示会话权限模式或暗示可通过聊天调整，MUST NOT 提供共享密码模式下的模式文案。
+
+#### Scenario: 角色拒绝
+- **WHEN** 工具因缺少 `tool.execute` 或对应资源 grant 被拒绝
+- **THEN** 提示说明当前角色未获授权并可联系管理员，不显示"当前权限为…"的模式文案
+
+#### Scenario: 执行隔离拒绝
+- **WHEN** 工具因执行隔离边界被拒绝
+- **THEN** 提示说明隔离边界原因，不提供自行调整执行权限的入口
+
+### Requirement: 全局默认权限统一只读
+
+平台设置页的全局「默认权限」配置 SHALL 只读展示并说明执行权限由角色资源授权控制，MUST NOT 允许通过该设置改变实际执行授权。
+
+#### Scenario: 平台管理员查看默认权限
+- **WHEN** 平台管理员打开设置页
+- **THEN** 「默认权限」不可编辑并显示由角色授权控制的说明
+
+#### Scenario: 尝试修改默认权限
+- **WHEN** 客户端提交全局「默认权限」变更
+- **THEN** 服务端不应用该变更，实际工具授权仍由角色与资源 grant 决定
 

@@ -51,21 +51,6 @@ Agent列表/详情、编辑、启停和使用 SHALL 各自验证功能、资源�
 - **WHEN** 角色配置及实际组件授权验收通过，且运行开放已由本 change 验收，但调用者缺少 `chat.use`/目标 `agent.use`，或 Desktop 等未适配客户端仍关闭
 - **THEN** 缺权 Web 请求返回 403 类拒绝；未适配客户端保持关闭说明；获权 Web/已适配通道按开放边界执行，发布说明不把未适配客户端写成可用
 
-### Requirement: 数据库模式执行授权只由角色与隔离决定
-在 database 身份模式下，一次工具调用的执行授权 SHALL 只由租户执行隔离、角色的 `tool.execute` 功能权限与资源 grant、以及配额决定；legacy 会话权限模式（read-only / workspace-write / full-access）MUST NOT 参与拒绝或放行。legacy 单租户安装 SHALL 保持原权限模式行为不变。角色或资源 grant 的撤销 SHALL 在后续调用前生效。
-
-#### Scenario: 角色已授权但会话模式更低
-- **WHEN** database 模式中某成员当前生效角色授予目标工具的 execute 资源动作与 `tool.execute`，而其会话权限模式为 read-only
-- **THEN** 调用按角色授权执行，不因 legacy 模式被拒绝
-
-#### Scenario: 角色未授权工具
-- **WHEN** database 模式中某成员缺少目标工具的 `tool.execute` 或对应资源 grant
-- **THEN** 调用在产生副作用前被拒绝，且拒绝结论不因会话权限模式而改变
-
-#### Scenario: legacy 单租户保持模式行为
-- **WHEN** 非 database 的 legacy 安装将会话或全局权限模式设为 read-only
-- **THEN** 写入类工具仍按原模式被拒绝
-
 ### Requirement: 执行授权与隔离在身份不可解析时 fail-closed
 
 工具执行授权判定与执行路径隔离决策 SHALL 在身份不可解析时拒绝执行：身份服务查询失败或抛异常、请求上下文未携带有效身份、后台线程丢失身份上下文等情形 MUST NOT 降级为放行。拒绝 SHALL 记录可诊断告警，并在可能时按失败原因返回明确错误。仅当身份被完整解析且满足授权条件时才允许执行。
@@ -93,4 +78,20 @@ Agent列表/详情、编辑、启停和使用 SHALL 各自验证功能、资源�
 
 - **WHEN** 新增一条后台执行路径且未建立身份上下文
 - **THEN** 该路径上的隔离与授权检查拒绝执行并告警，或存在显式断言使该遗漏在上线前被发现
+
+### Requirement: 执行授权只由角色与隔离决定
+
+一次工具调用的执行授权 SHALL 只由租户执行隔离、角色的 `tool.execute` 功能权限与资源 grant、以及配额决定；会话或全局权限模式（read-only / workspace-write / full-access）MUST NOT 参与拒绝或放行。角色或资源 grant 的撤销 SHALL 在后续调用前生效。系统 MUST NOT 回退共享密码、免登录或旧模式的直接放行。
+
+#### Scenario: 角色已授权但会话模式更低
+- **WHEN** 某成员当前生效角色授予目标工具的 execute 资源动作与 `tool.execute`，而其会话权限模式为 read-only
+- **THEN** 调用按角色授权执行，不因会话权限模式被拒绝
+
+#### Scenario: 角色未授权工具
+- **WHEN** 成员缺少目标工具的 `tool.execute` 或对应资源 grant
+- **THEN** 调用在产生副作用前被拒绝，且拒绝结论不因会话权限模式而改变
+
+#### Scenario: 身份不可解析
+- **WHEN** 请求上下文未携带有效身份或身份服务查询失败
+- **THEN** 执行被拒绝并记录可诊断告警，不降级为放行
 

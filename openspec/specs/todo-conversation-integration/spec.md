@@ -17,7 +17,7 @@
 
 ### Requirement: Agent 使用可信请求上下文操作本人数据
 
-系统 SHALL 仅在 todo_enabled、既有工具启用配置及当前合法 Web 聊天能力均允许时提供 todo 的 create、list、get 动作。服务端 MUST 从经过验证的独立请求上下文取得 scope、人工 owner、Agent 和会话来源，并采用与 Web 相同的权限及持久化规则；legacy 映射为 local-owner，database 使用已验证的 user/tenant。系统 MUST NOT 跨请求复用可变主体或来源，不接受模型自报的用户、租户、目录或其他会话作为授权。缺少可信人工委托的 scheduler、外部通道、后台运行和免登录入口不得调用本期工具；隐藏工具之外，直接调用也 MUST 拒绝。
+系统 SHALL 仅在 todo_enabled、既有工具启用配置及当前合法 Web 聊天能力均允许时提供 todo 的 create、list、get 动作。服务端 MUST 从经过验证的独立请求上下文取得 scope、人工 owner、Agent 和会话来源，并采用与 Web 相同的权限及持久化规则；既有 user/tenant 身份 SHALL 为唯一主体来源，MUST NOT 映射为本地所有者。系统 MUST NOT 跨请求复用可变主体或来源，不接受模型自报的用户、租户、目录或其他会话作为授权。缺少可信人工委托的 scheduler、外部通道、后台运行和免登录入口不得调用本工具；隐藏工具之外，直接调用也 MUST 拒绝。
 
 #### Scenario: 并发请求保持个人隔离
 - **WHEN** 两个用户或租户的 Web 请求交错调用同一个工具实例

@@ -1,0 +1,29 @@
+# platform-file-browsing Specification
+
+## Purpose
+定义文件服务在唯一 database 身份模式下的作用域：平台级只读文件根仅平台管理员可浏览、租户成员限本租户共享根与授权 Agent workspace，且不再以操作员主目录或全盘作为默认根。
+## Requirements
+### Requirement: 平台级只读文件根仅平台管理员可浏览
+
+系统 SHALL 提供一个平台级文件根用于平台管理员只读浏览，默认 MUST 为部署数据目录，MUST NOT 默认使用操作员主目录或文件系统根。平台级文件根的读取 SHALL 仅允许平台管理员，MUST NOT 允许写入、上传、删除或重命名，且 SHALL 记录可归属审计。配置指定文件系统根时必须显式声明，系统 MUST NOT 以未声明的高风险根作为默认。
+
+#### Scenario: 平台管理员只读浏览
+- **WHEN** 平台管理员请求浏览平台级文件根
+- **THEN** 系统返回该根内允许的文件内容且拒绝任何写入操作
+
+#### Scenario: 普通成员访问平台级文件根
+- **WHEN** 非平台管理员请求平台级文件根
+- **THEN** 系统返回 403，不返回平台级路径或目录结构
+
+### Requirement: 租户与 Agent 工作区文件服务按作用域隔离
+
+租户成员的文件服务访问 SHALL 限于其当前有效租户的共享根与获授权 Agent 的 workspace；缺少有效租户上下文时 SHALL 返回 403，请求其他租户资源时 SHALL 按不可见拒绝。系统 MUST NOT 因客户端自报路径、租户头或 Agent 标识扩大可见范围，MUST NOT 沿用单租户 instance-root 的全局可见语义。
+
+#### Scenario: 同租户成员访问本租户文件
+- **WHEN** 有效租户成员请求本租户共享根或获授权 Agent workspace 内的文件
+- **THEN** 系统在租户作用域内返回文件内容
+
+#### Scenario: 跨租户或缺少租户上下文
+- **WHEN** 请求指向其他租户的文件路径，或调用方没有有效租户上下文
+- **THEN** 系统按不可见拒绝（404 或 403），MUST NOT 返回该文件内容或路径存在性
+

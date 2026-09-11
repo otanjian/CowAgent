@@ -63,14 +63,6 @@
 - **WHEN** POST `/api/skills` 提交无法识别的 `action`
 - **THEN** 系统返回 `{"status":"error","message":"unknown action"}`，不改变任何技能状态
 
-### Requirement: legacy 模式访问控制保持不变
-
-当 `identity_mode=legacy`（非 database）时，`/api/skills`、`/api/tools`、`/api/skills/content` 的访问控制 SHALL 保持既有行为，继续使用共享控制台密码鉴权（`_require_auth()`），MUST NOT 引入租户 `agent.read` 权限要求或改变旧客户端行为。
-
-#### Scenario: legacy 模式继续用共享密码鉴权
-- **WHEN** 在 legacy 模式下已通过共享控制台密码认证的客户端访问 `/api/skills` 或 `/api/tools`
-- **THEN** 系统行为与改动前一致，不额外要求 `agent.read` 权限，也不返回数据库模式专属的 503
-
 ### Requirement: 缺少对应技能工具授权的成员被拒绝
 
 已登录请求 SHALL 按目标用途验证对应skill或tool功能权限与资源授权；缺动作权限返回403，不可见资源按原404规则，不执行写入或返回未授权数据。平台all同样受真实租户/资源及执行条件约束；仅有agent.read不能替代技能工具动作。授权拒绝 SHALL 正确返回HTTP错误，不被兜底异常吞为成功或普通空数据。
