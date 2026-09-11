@@ -280,7 +280,17 @@ def _resolve_ctx_svc(svc: IdentityService, require_tenant: bool) -> RequestConte
     endpoints require an explicit, valid selection. A failed session is a 401,
     a missing tenant is a 400, a missing membership/permission is a 403, and an
     unavailable identity store is a 503.
+
+    When the HTTP policy gate already resolved this identity domain for the
+    request, that context is reused: it is the same resolution, so re-reading the
+    identity store would only add a round trip and a chance for the gate and the
+    handler to disagree.
     """
+    from auth.runtime import cached_gate_context
+
+    cached = cached_gate_context(require_tenant)
+    if cached is not None:
+        return cached
     if require_tenant:
         tenant = _tenant_header()
         if not tenant:

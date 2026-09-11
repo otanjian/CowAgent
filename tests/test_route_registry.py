@@ -110,6 +110,23 @@ class RegistryDerivationTests(unittest.TestCase):
                 entry.source == "upstream" or entry.source.startswith("fork:"),
                 "route %r has source %r" % (entry.pattern, entry.source))
 
+    def test_stream_declares_its_tenant_is_resource_derived(self):
+        """The one route whose tenant cannot come from a header (group 3).
+
+        A native ``EventSource`` reconnect sends the session cookie but no
+        ``X-Tenant-ID``, so the gate must not demand a selection there.
+        Recording that in the registry keeps the exemption explicit and
+        reviewable instead of a special case buried in the gate.
+        """
+        entry = derive_route_policy()["/stream"]["GET"]
+        self.assertEqual(entry["policy"], "tenant")
+        self.assertTrue(entry.get("tenant_from_resource"))
+
+    def test_a_plain_tenant_route_does_not_claim_the_exemption(self):
+        entry = derive_route_policy()["/api/logs"]["GET"]
+        self.assertEqual(entry["policy"], "tenant")
+        self.assertFalse(entry.get("tenant_from_resource", False))
+
 
 class FrozenBaselineEquivalenceTests(unittest.TestCase):
     """The migration must be behavior-preserving for every pre-existing entry."""

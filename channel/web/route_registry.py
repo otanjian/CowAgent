@@ -48,7 +48,7 @@ at the right position, not appended blindly.
 
 from __future__ import annotations
 
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 #: HTTP methods the registry may declare.
 HTTP_METHODS: Tuple[str, ...] = ("GET", "POST", "PUT", "DELETE", "PATCH")
@@ -74,11 +74,23 @@ class RouteEntry:
             self.pattern, self.handler, self.source, sorted(self.methods))
 
 
-def P(policy: str, permission: str = "", comment: str = "") -> dict:
-    """Build one method's policy entry in the historical ``ROUTE_POLICY`` shape."""
-    entry: Dict[str, str] = {"policy": policy}
+def P(policy: str, permission: str = "", comment: str = "",
+      tenant_from_resource: bool = False) -> dict:
+    """Build one method's policy entry in the historical ``ROUTE_POLICY`` shape.
+
+    ``tenant_from_resource`` marks a ``tenant`` route whose tenant is *derived
+    from the addressed resource* rather than from an explicit selection. The
+    gate then authenticates the caller without demanding ``X-Tenant-ID``, and
+    the handler re-derives the tenant from the owned resource. ``GET /stream``
+    is the measured case: native ``EventSource`` can send the session cookie but
+    cannot add a header, so the reconnect resolves the tenant from the recorded
+    request (``web_channel._stream_identity_scope``).
+    """
+    entry: Dict[str, Any] = {"policy": policy}
     if permission:
         entry["permission"] = permission
+    if tenant_from_resource:
+        entry["tenant_from_resource"] = True
     if comment:
         entry["comment"] = comment
     return entry
@@ -148,7 +160,7 @@ ROUTES: Tuple[RouteEntry, ...] = (
     RouteEntry("/api/voice/asr", "VoiceAsrHandler", "upstream", {"POST": P("tenant", comment="voice ASR")}),
     RouteEntry("/api/voice/tts", "VoiceTtsHandler", "upstream", {"POST": P("tenant", comment="voice TTS")}),
     RouteEntry("/poll", "PollHandler", "upstream", {"POST": P("tenant", comment="poll response")}),
-    RouteEntry("/stream", "StreamHandler", "upstream", {"GET": P("tenant", comment="SSE stream")}),
+    RouteEntry("/stream", "StreamHandler", "upstream", {"GET": P("tenant", comment="SSE stream (tenant derived from the owned request)", tenant_from_resource=True)}),
     RouteEntry("/cancel", "CancelHandler", "upstream", {"POST": P("tenant", comment="cancel request")}),
     RouteEntry("/chat", "ChatHandler", "upstream", {"GET": P("tenant", comment="chat page")}),
     RouteEntry("/admin", "ChatHandler", "fork:admin-console", {"GET": P("tenant", comment="admin console shell (same handler as /chat)")}),

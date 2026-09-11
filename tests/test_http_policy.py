@@ -32,6 +32,7 @@ class HttpPolicyTests(unittest.TestCase):
             tenant_code="acme", tenant_name="Acme", admin_username="root",
             admin_display="Root", admin_password="Str0ngAdminPass", shared_root="/s/acme",
             allow_weak=True)
+        self.tid = self.svc.list_tenants()[0]["id"]
 
     def _app(self):
         return web_channel.build_web_app()
@@ -76,15 +77,28 @@ class HttpPolicyTests(unittest.TestCase):
 
     def test_file_serve_requires_auth_in_database(self):
         # /api/file is now open under a tenant policy (task 2.4); an anonymous
-        # database request must be rejected by authentication, not a blanket 503.
+        # database request must be rejected by the gate, not a blanket 503.
+        #
+        # tenant selection is resolved before the session (design D2), so the
+        # anonymous rejection order is: no selection -> 400, selection but no
+        # session -> 401. Both are asserted so the order is pinned, not loosened.
         self._patch_db()
         resp = self._request("/api/file", method="GET")
-        self.assertTrue(str(resp.status).startswith("401"), resp.data)
+        self.assertEqual(resp.status, "400 Bad Request")
+        self.assertIn(b"missing_tenant", resp.data)
+
+        resp = self._request("/api/file", method="GET", headers={"X-Tenant-ID": self.tid})
+        self.assertEqual(resp.status, "401 Unauthorized")
 
     def test_upload_requires_auth_in_database(self):
         self._patch_db()
         resp = self._request("/upload", method="POST", data=b"")
-        self.assertTrue(str(resp.status).startswith("401"), resp.data)
+        self.assertEqual(resp.status, "400 Bad Request")
+        self.assertIn(b"missing_tenant", resp.data)
+
+        resp = self._request("/upload", method="POST", data=b"",
+                             headers={"X-Tenant-ID": self.tid})
+        self.assertEqual(resp.status, "401 Unauthorized")
 
     def test_public_route_unaffected_by_database_gate(self):
         self._patch_db()
@@ -425,8 +439,16 @@ class HttpPolicyTests(unittest.TestCase):
             # Pass data=b"" (the existing convention) so _request omits the body
             # and web.py never tries to encode a bytes payload.
             resp = self._request(path, method=method, data=b"")
-            # Anonymous database request => auth required (401), NOT a blanket 503.
-            self.assertTrue(str(resp.status).startswith("401"), f"{path} {method} got {resp.status}")
+            # Anonymous database request is rejected by the gate, not a blanket
+            # 503: no tenant selection -> 400 (checked first), selection but no
+            # session -> 401.
+            self.assertEqual(resp.status, "400 Bad Request", f"{path} {method} got {resp.status}")
+            self.assertIn(b"missing_tenant", resp.data)
+
+            resp = self._request(path, method=method, data=b"",
+                                 headers={"X-Tenant-ID": self.tid})
+            self.assertEqual(resp.status, "401 Unauthorized",
+                             f"{path} {method} got {resp.status}")
 
     def test_projects_browse_still_closed_in_database(self):
         self._patch_db()

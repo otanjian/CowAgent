@@ -15,8 +15,10 @@ tenant selection and never use one to grant business access.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 from auth.service import IdentityService, IdentityServiceError
 from auth.policy import TENANT_ADMIN_CODE
@@ -66,6 +68,44 @@ def _conflicting() -> IdentityContextError:
 
 def _forbidden() -> IdentityContextError:
     return IdentityContextError("forbidden", code="forbidden", status=403)
+
+
+# --------------------------------------------------------------------------- #
+# Per-request gate cache
+#
+# ``enforce_http_policy`` resolves the request context *before* the handler runs
+# so that a tenant/platform route cannot reach a handler without one. The
+# resolved context is cached here for the remainder of the request, so the
+# handler's own ``_require_context``/``_db_scope`` reuses it instead of paying a
+# second identity-store round trip -- and, more importantly, so gate and handler
+# can never disagree about who the caller is.
+#
+# Keyed by the ``require_tenant`` flag: a personal/platform context (no tenant)
+# must not satisfy a tenant-scoped lookup, and vice versa.
+# --------------------------------------------------------------------------- #
+
+_GATE_CONTEXT: ContextVar = ContextVar("cow_gate_context", default=None)
+
+
+@contextmanager
+def gate_context_scope(ctx: RequestContext, require_tenant: bool) -> Iterator[RequestContext]:
+    """Publish ``ctx`` as this request's gate context for the duration of the block.
+
+    The value is restored on exit, so a pooled web.py worker thread cannot leak
+    one request's identity into the next.
+    """
+    cache = dict(_GATE_CONTEXT.get() or {})
+    cache[bool(require_tenant)] = ctx
+    token = _GATE_CONTEXT.set(cache)
+    try:
+        yield ctx
+    finally:
+        _GATE_CONTEXT.reset(token)
+
+
+def cached_gate_context(require_tenant: bool) -> Optional[RequestContext]:
+    """The gate-resolved context for this identity domain, or ``None``."""
+    return (_GATE_CONTEXT.get() or {}).get(bool(require_tenant))
 
 
 def resolve_context(

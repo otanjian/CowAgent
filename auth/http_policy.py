@@ -31,11 +31,14 @@ enforces resource ownership, permission and field whitelisting.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Dict, List, Optional, Tuple
 
 import web
 
 from channel.web.route_registry import derive_route_policy
+
+logger = logging.getLogger("http_policy")
 
 #: Route method -> policy entry, DERIVED from the single authoritative
 #: route registry (``channel.web.route_registry``). Do not add entries here:
@@ -94,6 +97,103 @@ def _match_policy(path: str, method: str) -> Tuple[Optional[dict], bool]:
     return None, False
 
 
+def _gate_fail_closed() -> bool:
+    """Whether an *unexpected* resolution failure must deny instead of defer.
+
+    Staged rollout (design D2 / task 3.7): a deterministic failure (no session,
+    no tenant selection, no membership, not a platform admin, missing
+    permission) is denied immediately, because that is the security hole this
+    gate closes. Only an *unexpected* failure -- the identity store being
+    unreachable, say -- is initially logged and deferred to the handler so a
+    transient outage is observed before it becomes a hard 503. Set
+    ``http_policy_gate_fail_closed: true`` to deny those too.
+    """
+    try:
+        from config import conf
+        return bool(conf().get("http_policy_gate_fail_closed", False))
+    except Exception:
+        return False
+
+
+def _normalize_gate_error(exc: web.HTTPError) -> str:
+    """Re-emit a gate resolution error through :func:`_json_error`.
+
+    ``auth_handlers._require_context`` raises ``web.HTTPError(str(status), ...)``
+    with the machine-readable ``code`` in the JSON body but no reason phrase.
+    Normalising here keeps every gate rejection in one shape
+    (``{"status","message","code"}`` with a proper ``"400 Bad Request"`` status)
+    without duplicating the resolution rules.
+    """
+    try:
+        status = int(str(exc.args[0]).split()[0])
+    except Exception:
+        raise exc
+    code = ""
+    message = ""
+    payload = getattr(exc, "data", "")
+    if payload:
+        if isinstance(payload, bytes):
+            payload = payload.decode("utf-8", "replace")
+        try:
+            parsed = json.loads(payload)
+            code = str(parsed.get("code", "") or "")
+            message = str(parsed.get("message", "") or "")
+        except Exception:
+            raise exc
+    return _json_error(message or "request rejected", status, code or "rejected")
+
+
+def _enforce_context_gate(handler, policy: str, entry: dict):
+    """Resolve + authorize the request context, then run the handler.
+
+    Mandate (design D2/D3, task 3.5): context existence, identity domain and the
+    route's declared permission. Object-level ownership/resource checks stay in
+    the handler -- the context they need is guaranteed to exist here.
+    """
+    from auth.runtime import IdentityContextError, gate_context_scope
+
+    require_tenant = policy == "tenant" and not entry.get("tenant_from_resource")
+    try:
+        from channel.web.auth_handlers import _require_context
+        ctx = _require_context(require_tenant=require_tenant)
+    except web.HTTPError as exc:
+        return _normalize_gate_error(exc)
+    except IdentityContextError as exc:
+        return _json_error(str(exc), exc.status, exc.code)
+    except Exception as exc:
+        if _gate_fail_closed():
+            logger.warning("[http-gate] identity resolution failed closed: %r", exc)
+            return _json_error("identity resolution failed", 503, "identity_unavailable")
+        # Deferred: the handler keeps its historical behaviour for this request
+        # only. This is the observation window, not a grant.
+        logger.warning("[http-gate] identity resolution failed, deferring to handler: %r", exc)
+        return handler()
+
+    if policy == "platform" and not ctx.is_platform_admin:
+        _record_gate_denial("platform-domain", web.ctx.path, ctx)
+        return _json_error("forbidden", 403, "forbidden")
+
+    permission = entry.get("permission")
+    if permission and not ctx.is_platform_admin:
+        if not ctx.tenant_id or permission not in ctx.permissions:
+            _record_gate_denial("permission:%s" % permission, web.ctx.path, ctx)
+            return _json_error("forbidden", 403, "forbidden")
+
+    with gate_context_scope(ctx, require_tenant):
+        return handler()
+
+
+def _record_gate_denial(kind: str, path: str, ctx) -> None:
+    """Best-effort observability for a *deterministic* authorization denial."""
+    try:
+        from common.security_events import record_denial
+        record_denial("http-gate", reason=kind, action="http.access.denied",
+                      target=path, user_id=getattr(ctx, "user_id", None),
+                      tenant_id=getattr(ctx, "tenant_id", None))
+    except Exception:  # pragma: no cover - telemetry must never change the decision
+        pass
+
+
 def enforce_http_policy(handler):
     """web.py processor enforcing the route/method policy.
 
@@ -102,6 +202,13 @@ def enforce_http_policy(handler):
     or a closed/deferred consumer never reaches downstream logic. ``handler`` is
     the rest-of-the-chain continuation; this function returns its result, or
     raises an HTTPError for rejected routes.
+
+    In database identity mode a ``tenant``/``platform`` route is additionally
+    gated *here*: the session token and tenant selection are resolved into a
+    ``RequestContext``, the identity domain and declared permission are checked,
+    and the context is published for the handler (see :func:`_enforce_context_gate`).
+    ``public``/``personal``/``closed`` routes are not resolved, and legacy
+    identity mode remains a pass-through.
 
     NOTE (web.py contract): a processor is ``p(handler)`` and the *return value
     of the processor call* is the response. We therefore return ``handler()``
@@ -123,9 +230,6 @@ def enforce_http_policy(handler):
         # must never reach a downstream handler, regardless of admin status.
         return _json_error("unavailable in database identity mode", 503,
                            "database_unavailable")
-    # For public / personal / platform / tenant routes the handler resolves
-    # the session, tenant and permissions and produces the precise 401/400/403.
-    # This route-completeness gate only rejects unregistered methods and
-    # short-circuits closed consumers; it does not duplicate handler auth so
-    # response semantics stay owned by the handler.
+    if policy in ("tenant", "platform") and _is_database_mode():
+        return _enforce_context_gate(handler, policy, entry)
     return handler()

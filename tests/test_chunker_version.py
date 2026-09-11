@@ -73,6 +73,20 @@ class TestSyncStampsVersion(unittest.TestCase):
     """MemoryManager.sync stamps chunker_version only when starting from an
     empty index."""
 
+    def setUp(self):
+        # ``config.load_config()`` rebinds the process-global ``config`` from the
+        # developer's ``./config.json``. Leaving that in place makes every later
+        # test depend on this machine's file (notably ``identity_mode``, which the
+        # HTTP policy gate now reads), so the suite would behave differently
+        # locally and in CI. Snapshot and restore it: this class may reload the
+        # global, but nobody after it inherits the reload.
+        import config
+        self._saved_config = config.config
+
+    def tearDown(self):
+        import config
+        config.config = self._saved_config
+
     def _make(self, ws):
         import config
         config.load_config()

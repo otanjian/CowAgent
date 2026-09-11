@@ -34,7 +34,17 @@ class ScenesApiTests(unittest.TestCase):
         kwargs = {"method": method, "headers": {"Host": "test"}}
         if data:
             kwargs["data"] = json.dumps(data)
-        with patch.object(web_channel, "_require_auth", lambda: None):
+        # These are scene-handler tests: they stub the legacy ``_require_auth``
+        # console password, long before the multi-tenant console existed. Pin the
+        # *gate's* mode to legacy so the result does not depend on whether an
+        # earlier test file already called ``config.load_config()`` (which reads
+        # this developer machine's ``./config.json``, ``identity_mode=database``).
+        # ``web_channel.conf`` is deliberately left alone: the handlers keep
+        # whatever mode they would have had, so this pin changes nothing but the
+        # HTTP policy gate. The tenant-gate contract for these routes is asserted
+        # separately in ``tests/test_http_gate.py``.
+        with patch.object(web_channel, "_require_auth", lambda: None), \
+                patch("config.conf", lambda: {"identity_mode": "legacy"}):
             return app.request(path, **kwargs)
 
     @staticmethod
