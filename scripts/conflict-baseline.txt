@@ -1,0 +1,38 @@
+# Upstream sync conflict baseline
+#
+# Frozen at:  origin/master@9ad944dd  x  origin/rdai@dc760766
+# Merge base: e5e2a52d
+# Totals:     20 conflicted files, 41 content-conflict hunks
+#             (10 code/config, 6 doc .mdx, 4 README delete/modify)
+#
+# Regenerate with scripts/sync-from-master.sh (task 9.3); the script compares the
+# live merge against this file and reports drift (added/removed conflict files).
+#
+# Columns: hunks <TAB> status <TAB> path <TAB> disposition
+#   status: UU = both modified, DU = deleted by fork / modified upstream
+#
+# Disposition keys:
+#   keep-deletion   fork intentionally removed the file; keep the removal
+#   keep-fork       keep fork's side, in its own labelled block
+#   merge-docs      ordinary documentation merge, no code impact
+#   seam:<tasks>    handled by this change's seam / P0 closure tasks
+1	UU	.gitignore	keep-fork	fork /openspec/ ignore block, keep in own labelled section (9.6)
+0	DU	README.md	keep-deletion	fork removes all READMEs (upstream 25 -> fork 0); upstream README edits not carried (9.7)
+11	UU	agent/memory/conversation_store.py	seam:6.1-6.11	constraint-level seam; composite PK per decision 0.1
+1	UU	agent/tools/scheduler/integration.py	seam:8.15-8.16	converge to upstream global service + identity seam (0.2)
+1	UU	app.py	seam:6.11,8.9	keep upstream migration; fork guard via extension hook (0.3)
+1	UU	channel/channel_instances.py	seam:8.13	partitioned symbol registration (D4b, manual discipline)
+2	UU	channel/web/chat.html	seam:8.8	fork blocks via mount points
+12	UU	channel/web/static/js/console.js	seam:8.5-8.7	i18n namespaces + view registry
+3	UU	channel/web/web_channel.py	seam:8.3-8.4	signature seam; keep upstream _import_local_file
+0	DU	desktop/src/renderer/src/components/PermissionSelector.tsx	keep-deletion	replaced by RBAC execution permission; test asserts absence (0.4)
+2	UU	docs/intro/architecture.mdx	merge-docs	both-sides doc edit, no code impact
+1	UU	docs/intro/index.mdx	merge-docs	both-sides doc edit, no code impact
+0	DU	docs/ja/README.md	keep-deletion	fork removes all READMEs (9.7)
+2	UU	docs/ja/intro/architecture.mdx	merge-docs	both-sides doc edit, no code impact
+1	UU	docs/ja/intro/index.mdx	merge-docs	both-sides doc edit, no code impact
+0	DU	docs/zh/README-Hant.md	keep-deletion	fork removes all READMEs (9.7)
+0	DU	docs/zh/README.md	keep-deletion	fork removes all READMEs (9.7)
+1	UU	docs/zh/intro/architecture.mdx	merge-docs	both-sides doc edit, no code impact
+1	UU	docs/zh/intro/index.mdx	merge-docs	both-sides doc edit, no code impact
+1	UU	tests/test_scheduler_web_update.py	seam:8.17	revise with upstream behaviour change

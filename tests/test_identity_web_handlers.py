@@ -29,10 +29,14 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
         auth_handlers.reset_login_rate_limiter()
         self.db = _mk_db()
         self.svc = IdentityService(self.db)
+        # A writable, real path: the shared root is where the tenant's skills
+        # and workspace live, so a literal like "/s/acme" would make the console
+        # read endpoints fail for reasons unrelated to authorization.
+        self.shared_root = os.path.join(os.path.realpath(tempfile.mkdtemp()), "acme")
         self.svc.bootstrap(
             tenant_code="acme", tenant_name="Acme", admin_username="root",
-            admin_display="Root", admin_password="Str0ngAdminPass", shared_root="/s/acme",
-            allow_weak=True)
+            admin_display="Root", admin_password="Str0ngAdminPass",
+            shared_root=self.shared_root, allow_weak=True)
         self.tid = self.svc.list_tenants()[0]["id"]
         self.root = self.svc.list_platform_users()[0]
 
@@ -637,7 +641,7 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
         self.assertEqual(space["isolation"], "dedicated-root")
         raw = resp.data.decode("utf-8")
         self.assertNotIn("shared_root", raw)
-        self.assertNotIn("/s/acme", raw)
+        self.assertNotIn(self.shared_root, raw)
 
     def test_tenant_space_reports_ready_for_an_existing_root(self):
         root_dir = os.path.realpath(tempfile.mkdtemp())
@@ -660,7 +664,7 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
         self.assertNotIn("space", data["tenant"])
         raw = resp.data.decode("utf-8")
         self.assertNotIn("shared_root", raw)
-        self.assertNotIn("/s/acme", raw)
+        self.assertNotIn(self.shared_root, raw)
 
     # --- tenant create derives controlled shared_root (task 4.4) ----------
     def test_tenant_create_derives_shared_root_when_omitted(self):
@@ -982,22 +986,20 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
 
     # --- tools/skills console read gating (platform admin vs member) ------
 
-    @staticmethod
-    def _platform_admin_ctx():
+    def _platform_admin_ctx(self):
         from auth.runtime import RequestContext
         return RequestContext(
             user_id="usr_admin", username="root", display_name="Root",
             is_platform_admin=True, must_change_password=False,
-            tenant_id="tnt_acme", membership={"id": "m_admin"},
+            tenant_id=self.tid, membership={"id": "m_admin"},
             permissions={"agent.read"}, is_tenant_admin=True)
 
-    @staticmethod
-    def _member_ctx():
+    def _member_ctx(self):
         from auth.runtime import RequestContext
         return RequestContext(
             user_id="usr_member", username="alice", display_name="Alice",
             is_platform_admin=False, must_change_password=False,
-            tenant_id="tnt_acme", membership={"id": "m_member"},
+            tenant_id=self.tid, membership={"id": "m_member"},
             permissions={"agent.read"}, is_tenant_admin=False)
 
     def _request_tools_skills(self, path, ctx):
@@ -1006,10 +1008,20 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
 
         @contextlib.contextmanager
         def _fake_db_scope():
-            yield ctx
+            # Mirror the real ``_db_scope`` contract: it applies the request
+            # context to the ambient RuntimeIdentity for the duration of the
+            # block. Faking only the yield left the ambient identity empty,
+            # which is a state the real gate cannot reach (it requires an
+            # explicit tenant selection before yielding).
+            from auth.runtime import to_runtime_identity
+            from common.runtime_identity import use_identity
+
+            with use_identity(to_runtime_identity(ctx)):
+                yield ctx
 
         with patch.object(web_channel, "_is_database_identity", lambda: True), \
                 patch.object(web_channel, "_db_scope", _fake_db_scope), \
+                patch("auth.service.get_identity_service", return_value=self.svc), \
                 patch.object(web_channel, "_require_auth", lambda: None):
             app = web_channel.build_web_app()
             return app.request(path, method="GET")

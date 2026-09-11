@@ -12,8 +12,8 @@ Scope and ownership (see ``openspec/changes/add-branding-settings``):
   source and MUST NOT be copied into ``config.json``.
 - Branding is always available; no separate feature switch is required.
 - This is a single-instance compatibility target only. Enterprise multi-user /
-  multi-tenant deployment is gated by real PRD-10A audit + per-request
-  ``branding.manage`` authorization, which this module refuses to fake.
+  multi-tenant deployment is gated by the audit-log capability slice plus
+  per-request ``branding.manage`` authorization, which this module refuses to fake.
 
 The module deliberately avoids importing the web route module so it stays
 unit-testable and does not create import cycles.

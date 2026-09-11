@@ -1,0 +1,159 @@
+# Route authorization baseline
+#
+# Frozen at: origin/rdai@dc760766
+# Totals:    _WEB_URLS 115 patterns  vs  ROUTE_POLICY 110 patterns / 140 method entries
+# Gap:       5 patterns registered in _WEB_URLS but ABSENT from ROUTE_POLICY
+#            -> MUST be filled with a verified policy each (task 2.9), not defaulted
+#
+# Sources:
+#   _WEB_URLS     channel/web/web_channel.py
+#   ROUTE_POLICY  auth/http_policy.py
+#
+# Columns: pattern <TAB> METHOD <TAB> policy <TAB> permission
+/	GET	public	
+/api/admin/overview	GET	tenant	
+/api/agents	GET	tenant	
+/api/agents	POST	tenant	
+/api/agents/([^/]+)/avatar	GET	tenant	
+/api/agents/([^/]+)/avatar	POST	tenant	
+/api/agents/([^/]+)/files/([^/]+)	GET	tenant	
+/api/agents/([^/]+)/files/([^/]+)	PUT	tenant	
+/api/branding	GET	tenant	
+/api/branding	POST	tenant	
+/api/branding/assets/(.*)	GET	public	
+/api/branding/public	GET	public	
+/api/branding/reset	POST	tenant	
+/api/channels	GET	platform	
+/api/channels	POST	platform	
+/api/feishu/register	GET	personal	
+/api/feishu/register	POST	personal	
+/api/file	GET	tenant	
+/api/health	GET	public	
+/api/history	GET	tenant	
+/api/identity/audit	GET	tenant	
+/api/knowledge/action	POST	closed	
+/api/knowledge/graph	GET	closed	
+/api/knowledge/import	POST	closed	
+/api/knowledge/list	GET	closed	
+/api/knowledge/read	GET	closed	
+/api/logs	GET	tenant	
+/api/logs/download	GET	tenant	
+/api/memory	GET	closed	
+/api/memory/content	GET	closed	
+/api/messages/delete	POST	tenant	
+/api/models	GET	platform	
+/api/models	POST	platform	
+/api/platform/external-identity-attempts	GET	platform	
+/api/platform/tenants	GET	platform	
+/api/platform/tenants	POST	platform	
+/api/platform/tenants/([^/]+)	GET	platform	
+/api/platform/tenants/([^/]+)	POST	platform	
+/api/platform/tenants/([^/]+)/admins	GET	platform	
+/api/platform/tenants/([^/]+)/admins	POST	platform	
+/api/platform/tenants/([^/]+)/agents	GET	platform	
+/api/platform/tenants/([^/]+)/agents	POST	platform	
+/api/platform/tenants/([^/]+)/authorization/catalog	GET	platform	
+/api/platform/tenants/([^/]+)/resources	GET	platform	
+/api/platform/tenants/([^/]+)/resources	PUT	platform	
+/api/platform/tenants/([^/]+)/roles	GET	platform	
+/api/platform/tenants/([^/]+)/roles	POST	platform	
+/api/platform/tenants/([^/]+)/roles/([^/]+)	DELETE	platform	
+/api/platform/tenants/([^/]+)/roles/([^/]+)	POST	platform	
+/api/platform/users	GET	platform	
+/api/platform/users/([^/]+)	PATCH	platform	
+/api/platform/users/([^/]+)/external-identities	GET	platform	
+/api/platform/users/([^/]+)/external-identities	POST	platform	
+/api/platform/users/([^/]+)/external-identities/([^/]+)	DELETE	platform	
+/api/platform/users/([^/]+)/password	POST	platform	
+/api/projects	GET	tenant	
+/api/projects/browse	GET	closed	
+/api/projects/create	POST	tenant	
+/api/projects/manage	DELETE	tenant	
+/api/projects/manage	PUT	tenant	
+/api/projects/order	POST	tenant	
+/api/projects/select	POST	tenant	
+/api/prompt/optimize	POST	tenant	
+/api/scheduler	GET	closed	
+/api/scheduler/delete	POST	closed	
+/api/scheduler/run	POST	closed	
+/api/scheduler/toggle	POST	closed	
+/api/scheduler/update	POST	closed	
+/api/sessions	GET	tenant	
+/api/sessions/(.*)	DELETE	tenant	
+/api/sessions/(.*)	GET	tenant	
+/api/sessions/(.*)	PUT	tenant	
+/api/sessions/(.*)/clear_context	POST	tenant	
+/api/sessions/(.*)/generate_title	POST	tenant	
+/api/sessions/(.*)/settings	GET	tenant	
+/api/sessions/(.*)/settings	POST	tenant	
+/api/skills	GET	tenant	
+/api/skills	POST	tenant	
+/api/skills/content	GET	tenant	
+/api/skills/content	POST	tenant	
+/api/tenant	GET	tenant	tenant.info.read
+/api/tenant/authorization/catalog	GET	tenant	
+/api/tenant/channels	GET	tenant	
+/api/tenant/channels	POST	tenant	
+/api/tenant/channels/([^/]+)	POST	tenant	
+/api/tenant/channels/([^/]+)/active	POST	tenant	
+/api/tenant/departments	GET	tenant	tenant.org.read
+/api/tenant/departments	POST	tenant	
+/api/tenant/departments/([^/]+)	DELETE	tenant	
+/api/tenant/departments/([^/]+)	PUT	tenant	
+/api/tenant/external-identity-attempts	GET	tenant	
+/api/tenant/members	GET	tenant	tenant.members.read
+/api/tenant/members	POST	tenant	
+/api/tenant/members/([^/]+)	POST	tenant	
+/api/tenant/members/([^/]+)/external-identities	GET	tenant	tenant.members.read
+/api/tenant/members/([^/]+)/external-identities	POST	tenant	
+/api/tenant/members/([^/]+)/external-identities/([^/]+)	DELETE	tenant	
+/api/tenant/permissions	GET	tenant	
+/api/tenant/roles	GET	tenant	tenant.members.read
+/api/tenant/roles	POST	tenant	
+/api/tenant/roles/([^/]+)	DELETE	tenant	
+/api/tenant/roles/([^/]+)	POST	tenant	
+/api/todos	GET	tenant	
+/api/todos/(.*)	GET	tenant	
+/api/todos/(.*)/events	GET	tenant	
+/api/todos/(.*)/source	GET	tenant	
+/api/todos/summary	GET	tenant	
+/api/tools	GET	tenant	
+/api/version	GET	public	
+/api/voice/asr	POST	tenant	
+/api/voice/tts	POST	tenant	
+/api/weixin/qrlogin	GET	closed	
+/api/workspace/meta	GET	closed	
+/api/workspace/read	GET	closed	
+/api/workspace/resolve	GET	closed	
+/api/workspace/search	GET	closed	
+/api/workspace/tree	GET	closed	
+/api/workspace/write	POST	closed	
+/assets/(.*)	GET	public	
+/auth/check	GET	public	
+/auth/context	GET	tenant	
+/auth/login	POST	public	
+/auth/logout	POST	public	
+/auth/me	GET	personal	
+/auth/password	POST	personal	
+/auth/profile	PATCH	personal	
+/auth/profile/avatar	GET	personal	
+/auth/profile/avatar	POST	personal	
+/cancel	POST	tenant	
+/chat	GET	tenant	
+/config	GET	platform	
+/config	POST	platform	
+/mcp/oauth/callback	GET	public	
+/message	POST	tenant	
+/poll	POST	tenant	
+/preview/(.+)	GET	public	
+/stream	GET	tenant	
+/upload	POST	tenant	
+/uploads/(.*)	GET	tenant	
+/v1/chat/completions	POST	tenant	
+
+# --- GAPS: in _WEB_URLS but NOT in ROUTE_POLICY (policy undecided) ---
+/admin	?	UNREGISTERED	-
+/api/identity/administered-tenants	?	UNREGISTERED	-
+/api/scenes	?	UNREGISTERED	-
+/api/scenes/activate	?	UNREGISTERED	-
+/api/scenes/workbench/import	?	UNREGISTERED	-

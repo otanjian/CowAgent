@@ -169,6 +169,45 @@ def _parse_tool_args(args_str: str, finish_reason: Optional[str],
         return {}, f"Invalid JSON in tool arguments: {e.msg}"
 
 
+def _db_mode() -> bool:
+    """True when this deployment runs in database identity mode.
+
+    Mirrors ``agent.permission.isolation.database_mode`` without importing it at
+    module scope (the isolation module pulls config, which must stay lazy).
+    """
+    try:
+        from agent.permission.isolation import database_mode
+
+        return database_mode()
+    except Exception:
+        return False
+
+
+def _fail_closed_denial(kind: str, tool_name: str, zh: str, en: str) -> str:
+    """Record and describe a refusal caused by an unresolvable identity.
+
+    Observability is best effort; the caller always gets a denial reason back,
+    so a broken recorder cannot turn the refusal into an allow.
+    """
+    reason = f"{zh}\n\n{en}"
+    try:
+        from common.runtime_identity import current_identity
+        from common.security_events import record_denial
+
+        ident = current_identity()
+        record_denial(
+            kind,
+            reason=reason,
+            action=f"execution.tool.{kind}.denied",
+            target=tool_name,
+            user_id=getattr(ident, "user_id", None),
+            tenant_id=getattr(ident, "tenant_id", None),
+        )
+    except Exception:  # pragma: no cover - best effort
+        pass
+    return reason
+
+
 class AgentStreamExecutor:
     """
     Agent Stream Executor
@@ -1993,8 +2032,9 @@ class AgentStreamExecutor:
         """Reason this call is not allowed, or None when it may run.
 
         Never raises: a broken permission check must not take the conversation
-        down with it, so an error here falls through to the historical
-        unrestricted behavior.
+        down with it. In legacy mode an unexpected error falls through to the
+        historical unrestricted behavior; in database mode it fails closed,
+        because an identity outage must not become an authorization bypass.
         """
         agent = self.agent
         if agent is None:
@@ -2057,7 +2097,14 @@ class AgentStreamExecutor:
                 self._last_denial_kind = "quota"
             return quota_denial
         except Exception as e:
-            logger.warning(f"[Permission] Check skipped for {tool_name}: {e}")
+            logger.warning(f"[Permission] Check failed for {tool_name}: {e}")
+            if _db_mode():
+                self._last_denial_kind = "identity"
+                return _fail_closed_denial(
+                    "identity", tool_name,
+                    "执行授权校验异常，工具调用已拒绝。",
+                    "Tool call refused: the execution authorization check could not be completed.",
+                )
             return None
 
     def _quota_tool_denial(self, tool_name: str) -> Optional[str]:
@@ -2088,11 +2135,15 @@ class AgentStreamExecutor:
     def _resource_tool_denial(self, tool_name: str) -> Optional[str]:
         """Return a denial reason when tool.execution is not authorized.
 
-        Unrestricted (legacy mode / platform all / no identity) returns None.
+        Unrestricted (legacy mode / platform all) returns None.
         A *self-authorized* tool is exempt: it resolves the caller's identity
         and refuses on its own (personal todo, scheduler act only on the
         caller's own data), so the coarse ``tool.execute`` grant is not also
         required. Every other tool still needs the grant.
+
+        Fails closed in database mode: an unresolvable identity is refused
+        rather than read as "no user dimension", and an identity-service
+        exception refuses the call instead of skipping the check.
         """
         tool = self.tools.get(tool_name) if isinstance(self.tools, dict) else None
         if getattr(tool, "self_authorized", False):
@@ -2100,6 +2151,12 @@ class AgentStreamExecutor:
         from common.runtime_identity import current_identity
         ident = current_identity()
         if not ident.user_id or not ident.tenant_id:
+            if _db_mode():
+                return _fail_closed_denial(
+                    "identity", tool_name,
+                    "身份上下文不可解析，工具调用已拒绝。",
+                    "Tool call refused: the caller identity could not be resolved.",
+                )
             return None
         resource_id = self._tool_resource_id(tool_name)
         try:
@@ -2110,8 +2167,12 @@ class AgentStreamExecutor:
                 permission="tool.execute",
             )
         except Exception as e:
-            logger.warning(f"[Permission] Tool auth check skipped for {tool_name}: {e}")
-            return None
+            logger.warning(f"[Permission] Tool auth check failed for {tool_name}: {e}")
+            return _fail_closed_denial(
+                "tool-grant", tool_name,
+                "工具授权判定异常，工具调用已拒绝。",
+                "Tool call refused: the authorization check could not be completed.",
+            )
         return None if ok else (
             f"You are not authorized to use tool '{tool_name}' ({resource_id})."
         )

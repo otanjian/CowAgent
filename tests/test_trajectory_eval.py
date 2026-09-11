@@ -2,6 +2,8 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from agent.protocol.agent_stream import AgentStreamExecutor
 from agent.tools.base_tool import BaseTool, ToolResult
 
@@ -29,6 +31,24 @@ class _LookupTool(BaseTool):
 class _TestAgent:
     def effective_permission_mode(self):
         return "full-access"
+
+    def effective_cwd(self):
+        """Required by ``_permission_denial``: the cwd is resolved *before* the
+        isolation gate runs, so an incomplete stub would raise and (in database
+        mode) now fail closed rather than being silently swallowed."""
+        import tempfile
+
+        return tempfile.gettempdir()
+
+
+@pytest.fixture(autouse=True)
+def _legacy_permission_chain(monkeypatch):
+    """These scenarios exercise the agent loop, not authorization. Pin the
+    deployment to legacy mode so the ambient ``identity_mode`` (a process-wide
+    config that other tests mutate) cannot turn the gate on underneath them."""
+    import agent.permission.isolation as isolation
+
+    monkeypatch.setattr(isolation, "database_mode", lambda: False)
 
 
 class _ScriptedExecutor(AgentStreamExecutor):

@@ -71,7 +71,12 @@ class SelfAuthorizedToolsTest(unittest.TestCase):
 
     def test_legacy_install_without_identity_is_unrestricted(self):
         executor = _executor([_GatedTool()])
-        self.assertIsNone(executor._resource_tool_denial("gated_probe"))
+        # Pin the mode explicitly: this test is about a legacy install, and the
+        # ambient config is shared across the process, so reading it here would
+        # make the outcome depend on test order.
+        with patch("agent.permission.isolation.database_mode",
+                   return_value=False):
+            self.assertIsNone(executor._resource_tool_denial("gated_probe"))
 
 
 class _AgentStub:

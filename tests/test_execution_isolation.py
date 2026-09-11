@@ -56,7 +56,15 @@ def _db_identity(monkeypatch, tmp_path):
 
 
 def test_legacy_no_tenant_run_is_unaffected(monkeypatch, tmp_path):
-    boundary, _ = _boundary(tmp_path)
+    """A legacy install (isolation gate off) keeps the historical unconfined
+    behaviour even though no tenant identity is present.
+
+    Note the gate itself is what makes a run "legacy": ``enabled()`` is False
+    whenever ``database_mode()`` is False. A database-mode run that merely lost
+    its identity is NOT this case — see the fail-closed tests below.
+    """
+    monkeypatch.setattr(iso, "enabled", lambda: False)
+    monkeypatch.setattr(iso, "database_mode", lambda: False)
     monkeypatch.setattr(iso, "_current_identity", lambda: type(
         "E", (), {"user_id": None, "tenant_id": None, "agent_id": None})())
     assert isolation_decision("bash", {"command": "cat /etc/hostname"}, None).allowed
@@ -206,3 +214,66 @@ def test_rule_text_is_stable_and_honest(tmp_path):
     assert "隔离边界拒绝" in decision.reason
     assert "Isolation boundary refused" in decision.reason
     assert "not an OS sandbox" in decision.reason
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed on an unresolvable identity (fork-decoupling 5.1-5.6)
+# ---------------------------------------------------------------------------
+
+def _no_identity():
+    return type("E", (), {"user_id": None, "tenant_id": None, "agent_id": None})()
+
+
+def test_gate_on_without_identity_denies_code_tools(monkeypatch, tmp_path):
+    """The gate being on while the identity cannot be resolved is the exact
+    state the audit flagged: it MUST NOT be read as 'no user dimension'."""
+    monkeypatch.setattr(iso, "_current_identity", _no_identity)
+    decision = isolation_decision("bash", {"command": "echo hi"}, None)
+    assert not decision.allowed
+    assert "身份" in decision.reason
+
+
+def test_gate_on_without_identity_denies_file_tools_too(monkeypatch, tmp_path):
+    """No tool-type distinction: file tools and path-free tools are refused
+    just like code tools, so losing the identity buys no unconfined path."""
+    monkeypatch.setattr(iso, "_current_identity", _no_identity)
+    assert not isolation_decision(
+        "write", {"path": f"{tmp_path}/x.txt", "content": "x"}, None).allowed
+    assert not isolation_decision(
+        "read", {"path": f"{tmp_path}/x.txt"}, None).allowed
+    assert not isolation_decision("web_search", {"query": "x"}, None).allowed
+
+
+def test_gate_malfunction_denies_non_code_tools(monkeypatch, tmp_path):
+    """A broken boundary resolver must refuse a file tool, not fall through to
+    the historical unrestricted behaviour (scenario: 非代码类工具在门禁损坏时)."""
+    def boom(ident=None):
+        raise RuntimeError("identity db down")
+
+    monkeypatch.setattr(iso, "resolve_boundary", boom)
+    decision = isolation_decision(
+        "write", {"path": f"{tmp_path}/x.txt", "content": "x"}, None)
+    assert not decision.allowed
+
+
+def test_fail_closed_denial_is_counted(monkeypatch, tmp_path):
+    """A fail-closed refusal must be observable, not just a log line."""
+    from common import security_events
+
+    security_events.reset_counters()
+    monkeypatch.setattr(iso, "_current_identity", _no_identity)
+    isolation_decision("bash", {"command": "echo hi"}, None)
+    assert security_events.counters().get("isolation", 0) >= 1
+
+
+def test_legacy_mode_never_records_a_denial(monkeypatch, tmp_path):
+    """Legacy installs are not a refusal case, so they must not inflate the
+    counter (which exists to expose identity loss in database mode)."""
+    from common import security_events
+
+    security_events.reset_counters()
+    monkeypatch.setattr(iso, "enabled", lambda: False)
+    monkeypatch.setattr(iso, "database_mode", lambda: False)
+    monkeypatch.setattr(iso, "_current_identity", _no_identity)
+    assert isolation_decision("bash", {"command": "echo hi"}, None).allowed
+    assert security_events.counters() == {}

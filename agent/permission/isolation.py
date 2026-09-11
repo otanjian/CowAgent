@@ -230,6 +230,34 @@ def _deny(what: str) -> Decision:
     )
 
 
+def _fail_closed(tool_name: str, reason: str) -> Decision:
+    """Refuse an execution whose identity or boundary could not be established.
+
+    Counted and audited best-effort so an identity outage is observable, then
+    refused. The refusal is returned unconditionally: recording failures must
+    not be able to turn it into an allow.
+    """
+    ident = None
+    try:
+        ident = _current_identity()
+    except Exception:
+        ident = None
+    try:
+        from common.security_events import record_denial
+
+        record_denial(
+            "isolation",
+            reason=reason,
+            action="execution.isolation.denied",
+            target=tool_name,
+            user_id=getattr(ident, "user_id", None),
+            tenant_id=getattr(ident, "tenant_id", None),
+        )
+    except Exception:  # pragma: no cover - observability is best effort
+        pass
+    return _deny(reason)
+
+
 # ---------------------------------------------------------------------------
 # Bash command parsing (reuses the policy lexer for consistency)
 # ---------------------------------------------------------------------------
@@ -325,7 +353,11 @@ def isolation_decision(tool_name: str, arguments: Dict[str, Any],
             return Decision(True)
         ident = _current_identity()
         if not ident or not ident.user_id or not ident.tenant_id:
-            return Decision(True)  # not a tenant-member code-execution run
+            # Fail closed: the gate is on (database mode) but no identity could
+            # be resolved. This is the identity-loss state the audit flagged —
+            # an empty identity is NOT a licence to run unconfined, and the rule
+            # does not depend on the tool type.
+            return _fail_closed(tool_name, "身份上下文不可解析，执行已拒绝")
 
         if tool_name in CODE_TOOLS:
             boundary = resolve_boundary(ident)
@@ -356,8 +388,6 @@ def isolation_decision(tool_name: str, arguments: Dict[str, Any],
         return Decision(True)
     except Exception as error:
         logger.warning(f"[isolation] check skipped for {tool_name}: {error}")
-        # Fail closed for arbitrary-code tools when the gate itself is broken,
-        # so a DB-mode bash call cannot silently run without a boundary.
-        if tool_name in CODE_TOOLS:
-            return _deny("隔离校验异常，代码执行已拒绝")
-        return Decision(True)
+        # Fail closed for every tool, not only arbitrary-code ones: a gate that
+        # cannot complete its judgement must not hand out an unconfined run.
+        return _fail_closed(tool_name, "隔离校验异常，执行已拒绝")

@@ -89,5 +89,6 @@ memory / task records 划给 **Per end user（`user_root`）**——"Wang 喜欢
 - **个人档案与个人记忆的编辑入口**（控制台页面 vs 对话内编辑）不在本轮范围；
   本轮先保证运行时注入与隔离正确。档案目前以文件形式存在，可由运维/工具写入。
 - 共享/团队会话中是否允许注入调用者个人人设（当前：**不注入**），需产品确认。
-- PRD 中"个人助理是否为独立实体 / 自动固化默认归属 / 个人记忆是否跨租户或跨设备
-  同步"三处口径，待原文恢复后复核，需要时另开 change。
+- 规范中"个人助理是否为独立实体 / 自动固化默认归属 / 个人记忆是否跨租户或跨设备
+  同步"三处口径，当前以 `openspec/specs/` 相关 capability（`self-account-context`、
+  `tenant-resource-isolation`、`agent-memory-explicit-add-tool`）为准；需要变更时另开 change。

@@ -988,6 +988,29 @@ def _require_owned_session(ctx: "Optional[RequestContext]", session_id: str,
             con.close()
 
 
+def _require_session_scope(ctx: "Optional[RequestContext]", session_id: str,
+                           agent_id: Optional[str]) -> str:
+    """Enforce the tenant-binding + visibility + durable-ownership triple.
+
+    Every session-scoped read or mutation owes the same three checks, so they
+    live here instead of being re-derived per handler:
+
+    * the addressed (or default) Agent must be bound to the caller's tenant;
+    * the session's Agent must be visible to the caller, and when no Agent was
+      named the tenant's bound default must resolve unambiguously;
+    * the durable ``sessions`` row must be owned by the caller (and be a web
+      session).
+
+    Returns the resolved agent id so the caller addresses the store under the
+    tenant-bound Agent rather than the raw request parameter. Legacy mode
+    (``ctx is None``) is a no-op.
+    """
+    resolved = _require_tenant_agent_binding(ctx, agent_id)
+    _require_session_owner(ctx, session_id, agent_id)
+    _require_owned_session(ctx, session_id, resolved)
+    return resolved
+
+
 def _require_tenant_agent_binding(ctx: "Optional[RequestContext]", agent_id: Optional[str]) -> str:
     """Validate that ``agent_id`` is bound to the caller's tenant (task 3.10).
 
@@ -1077,6 +1100,13 @@ def _get_workspace_root(session_id: str = None, agent_id: str = None) -> str:
         # No configured shared root -> reject rather than fall back globally.
         raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
                             json.dumps({"status": "error", "message": "tenant has no shared root"}))
+    if _is_database_identity():
+        # database mode with no tenant in scope: refuse rather than fall back to
+        # the process-global default Agent's workspace, which may belong to
+        # another tenant (task 4.5 / D3).
+        raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
+                            json.dumps({"status": "error", "message": "tenant scope required",
+                                        "code": "missing_tenant"}))
     from agent.registry import get_agent_registry
 
     return get_agent_registry().get(agent_id).workspace
@@ -8702,8 +8732,16 @@ class AgentCoreFileHandler:
         _require_auth()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
-            result = _agent_admin_service().read_core_file(agent_id, filename)
+            with _db_scope() as ctx:
+                resolved = _require_tenant_agent_binding(ctx, agent_id)
+                # Core files carry the Agent's prompt/model configuration, so
+                # reading them owes the same edit grant as writing them: being
+                # able to reach the Agent is not a licence to read its config.
+                _require_agent_action(ctx, resolved, "edit", "agent.edit")
+                result = _agent_admin_service().read_core_file(resolved, filename)
             return json.dumps({"status": "success", **result}, ensure_ascii=False)
+        except web.HTTPError:
+            raise
         except Exception as e:
             return json.dumps({"status": "error", "message": str(e)})
 
@@ -8712,22 +8750,27 @@ class AgentCoreFileHandler:
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             body = json.loads(web.data())
-            result = _agent_admin_service().write_core_file(
-                agent_id,
-                filename,
-                body.get("content"),
-                body.get("revision", ""),
-            )
-            try:
-                from bridge.bridge import Bridge
-                agent_bridge = getattr(Bridge(), "_agent_bridge", None)
-                if agent_bridge is not None:
-                    agent_bridge.clear_agent(agent_id)
-            except Exception as e:
-                logger.warning(
-                    f"[WebChannel] Failed to evict edited agent={agent_id}: {e}"
+            with _db_scope() as ctx:
+                resolved = _require_tenant_agent_binding(ctx, agent_id)
+                _require_agent_action(ctx, resolved, "edit", "agent.edit")
+                result = _agent_admin_service().write_core_file(
+                    resolved,
+                    filename,
+                    body.get("content"),
+                    body.get("revision", ""),
                 )
+                try:
+                    from bridge.bridge import Bridge
+                    agent_bridge = getattr(Bridge(), "_agent_bridge", None)
+                    if agent_bridge is not None:
+                        agent_bridge.clear_agent(resolved)
+                except Exception as e:
+                    logger.warning(
+                        f"[WebChannel] Failed to evict edited agent={resolved}: {e}"
+                    )
             return json.dumps({"status": "success", **result}, ensure_ascii=False)
+        except web.HTTPError:
+            raise
         except Exception as e:
             from agent.admin import StaleAgentFileError
             if isinstance(e, StaleAgentFileError):
@@ -8763,7 +8806,13 @@ def _avatar_path(agent_id: str) -> Optional[str]:
 class AgentAvatarHandler:
     def GET(self, agent_id: str):
         _require_auth()
-        path = _avatar_path(agent_id)
+        with _db_scope() as ctx:
+            resolved = _require_tenant_agent_binding(ctx, agent_id)
+            # Seeing an avatar is a read of the Agent, not a change to it, so a
+            # member who can use the Agent can still see the roster image; an
+            # unbound/foreign Agent is refused before any bytes are served.
+            _require_agent_action(ctx, resolved, "read", "agent.read")
+            path = _avatar_path(resolved)
         if not path:
             web.ctx.status = "404 Not Found"
             web.header('Content-Type', 'application/json; charset=utf-8')
@@ -8782,62 +8831,71 @@ class AgentAvatarHandler:
             from common.state_dir import shared_root
             from agent.registry import get_agent_registry
 
-            get_agent_registry().get(agent_id, require_enabled=False)
-            # Read the multipart body raw. web.input() decodes it as UTF-8, which
-            # dies on the first non-text byte of an image (a PNG starts with the
-            # byte 0x89) with "utf-8 codec can't decode byte 0x89". rawinput hands
-            # back the bytes untouched, the same path the knowledge upload uses.
-            params = _raw_web_input()
-            upload = params.get("avatar")
-            if upload is None:
-                return json.dumps({"status": "error", "message": "avatar file required"})
-            filename = getattr(upload, "filename", "") or ""
-            raw = _read_uploaded_file_bytes(upload)
-            if not raw:
-                return json.dumps({"status": "error", "message": "avatar file required"})
-            if len(raw) > MAX_AVATAR_BYTES:
-                return json.dumps({"status": "error", "message": "avatar exceeds 2 MiB"})
-            suffix = os.path.splitext(filename)[1].lower()
-            if suffix not in AVATAR_TYPES:
-                return json.dumps({
-                    "status": "error",
-                    "message": f"unsupported image type: {suffix or 'unknown'}",
-                })
-
-            base = shared_root() / "avatars"
-            base.mkdir(parents=True, exist_ok=True)
-            # Drop any other extension first, so one Agent never ends up with
-            # two avatar files and a resolution order deciding which one wins.
-            for other in AVATAR_TYPES:
-                stale = base / f"{agent_id}{other}"
-                if other != suffix and stale.is_file():
-                    try:
-                        stale.unlink()
-                    except OSError:
-                        pass
-            target = base / f"{agent_id}{suffix}"
-            tmp = base / f".{agent_id}{suffix}.tmp"
-            with open(tmp, "wb") as handle:
-                handle.write(raw)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp, target)
-
-            service = _agent_admin_service()
-            result = service.update_agent(agent_id, avatar=AVATAR_IMAGE_TOKEN)
-            # An avatar is a file plus a metadata flag; it changes nothing about
-            # routing, sessions or schedulers. Skipping the full runtime reload
-            # keeps the upload instant instead of tearing everything down.
-            # Hand back the fresh revision so the console can patch its roster in
-            # place without a full reload and without going stale on the next edit.
-            revision = service.snapshot().get("revision")
-            return json.dumps(
-                {"status": "success", "result": result, "revision": revision},
-                ensure_ascii=False,
-            )
+            with _db_scope() as ctx:
+                resolved = _require_tenant_agent_binding(ctx, agent_id)
+                _require_agent_action(ctx, resolved, "edit", "agent.edit")
+                agent_id = resolved
+                return self._store_avatar(agent_id, shared_root, get_agent_registry)
+        except web.HTTPError:
+            raise
         except Exception as e:
             logger.error(f"[WebChannel] Agent avatar upload error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
+
+    def _store_avatar(self, agent_id, shared_root, get_agent_registry):
+        get_agent_registry().get(agent_id, require_enabled=False)
+        # Read the multipart body raw. web.input() decodes it as UTF-8, which
+        # dies on the first non-text byte of an image (a PNG starts with the
+        # byte 0x89) with "utf-8 codec can't decode byte 0x89". rawinput hands
+        # back the bytes untouched, the same path the knowledge upload uses.
+        params = _raw_web_input()
+        upload = params.get("avatar")
+        if upload is None:
+            return json.dumps({"status": "error", "message": "avatar file required"})
+        filename = getattr(upload, "filename", "") or ""
+        raw = _read_uploaded_file_bytes(upload)
+        if not raw:
+            return json.dumps({"status": "error", "message": "avatar file required"})
+        if len(raw) > MAX_AVATAR_BYTES:
+            return json.dumps({"status": "error", "message": "avatar exceeds 2 MiB"})
+        suffix = os.path.splitext(filename)[1].lower()
+        if suffix not in AVATAR_TYPES:
+            return json.dumps({
+                "status": "error",
+                "message": f"unsupported image type: {suffix or 'unknown'}",
+            })
+
+        base = shared_root() / "avatars"
+        base.mkdir(parents=True, exist_ok=True)
+        # Drop any other extension first, so one Agent never ends up with
+        # two avatar files and a resolution order deciding which one wins.
+        for other in AVATAR_TYPES:
+            stale = base / f"{agent_id}{other}"
+            if other != suffix and stale.is_file():
+                try:
+                    stale.unlink()
+                except OSError:
+                    pass
+        target = base / f"{agent_id}{suffix}"
+        tmp = base / f".{agent_id}{suffix}.tmp"
+        with open(tmp, "wb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, target)
+
+        service = _agent_admin_service()
+        result = service.update_agent(agent_id, avatar=AVATAR_IMAGE_TOKEN)
+        # An avatar is a file plus a metadata flag; it changes nothing about
+        # routing, sessions or schedulers. Skipping the full runtime reload
+        # keeps the upload instant instead of tearing everything down.
+        # Hand back the fresh revision so the console can patch its roster in
+        # place without a full reload and without going stale on the next edit.
+        revision = service.snapshot().get("revision")
+        return json.dumps(
+            {"status": "success", "result": result, "revision": revision},
+            ensure_ascii=False,
+        )
 
 
 def _annotate_sessions_with_projects(store, result: dict, agent_id: Optional[str],
@@ -9185,58 +9243,63 @@ class SessionDetailHandler:
             if not session_id:
                 return json.dumps({"status": "error", "message": "session_id required"})
             params = web.input(agent_id='')
-            agent_id = _request_agent_id(params)
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "history.read")
+                agent_id = _require_session_scope(
+                    ctx, session_id, _request_agent_id(params))
 
-            # Stop any in-flight run first: a reply that lands after the delete
-            # would otherwise keep burning tokens for a session nobody can see.
-            try:
-                from agent.protocol import get_cancel_registry
-                from bridge.bridge import Bridge
-                scoped = Bridge().get_agent_bridge().scoped_session_key(session_id)
-                cancelled = get_cancel_registry().cancel_session(scoped)
-                if cancelled:
-                    logger.info(
-                        f"[WebChannel] Cancelled {cancelled} in-flight request(s) "
-                        f"for deleted session {session_id}"
-                    )
-            except Exception as e:
-                logger.warning(f"[WebChannel] Cancel on delete failed: {e}")
+                # Stop any in-flight run first: a reply that lands after the delete
+                # would otherwise keep burning tokens for a session nobody can see.
+                try:
+                    from agent.protocol import get_cancel_registry
+                    from bridge.bridge import Bridge
+                    scoped = Bridge().get_agent_bridge().scoped_session_key(session_id)
+                    cancelled = get_cancel_registry().cancel_session(scoped)
+                    if cancelled:
+                        logger.info(
+                            f"[WebChannel] Cancelled {cancelled} in-flight request(s) "
+                            f"for deleted session {session_id}"
+                        )
+                except Exception as e:
+                    logger.warning(f"[WebChannel] Cancel on delete failed: {e}")
 
-            from agent.memory import get_conversation_store
-            store = get_conversation_store(_get_workspace_root(agent_id=agent_id))
-            store.clear_session(session_id)
+                from agent.memory import get_conversation_store
+                store = get_conversation_store(_get_workspace_root(agent_id=agent_id))
+                store.clear_session(session_id)
 
-            # Drop the session's side stores too. Left behind, a stale project
-            # binding would keep inflating the "how many spaces are in use"
-            # count that decides how the session list is grouped.
-            try:
-                from agent.workspace import project_store, session_prefs
-                project_store.forget_session(session_id)
-                session_prefs.forget_session(session_id)
-            except Exception as e:
-                logger.debug(f"[WebChannel] Session side-store cleanup skipped: {e}")
+                # Drop the session's side stores too. Left behind, a stale project
+                # binding would keep inflating the "how many spaces are in use"
+                # count that decides how the session list is grouped.
+                try:
+                    from agent.workspace import project_store, session_prefs
+                    project_store.forget_session(session_id)
+                    session_prefs.forget_session(session_id)
+                except Exception as e:
+                    logger.debug(f"[WebChannel] Session side-store cleanup skipped: {e}")
 
-            # Also remove the Agent instance from AgentBridge if exists
-            try:
-                from bridge.bridge import Bridge
-                ab = Bridge().get_agent_bridge()
-                ab.clear_session(session_id, agent_id=agent_id)
-            except Exception:
-                pass
+                # Also remove the Agent instance from AgentBridge if exists
+                try:
+                    from bridge.bridge import Bridge
+                    ab = Bridge().get_agent_bridge()
+                    ab.clear_session(session_id, agent_id=agent_id)
+                except Exception:
+                    pass
 
-            channel = WebChannel()
-            # Drop messages still waiting in the channel queue: processing them
-            # after the delete would recreate the session from scratch.
-            try:
-                channel.cancel_session(session_id)
-            except Exception as e:
-                logger.warning(f"[WebChannel] Failed to drain queue on delete: {e}")
-            channel.session_queues.pop(
-                channel._session_queue_key(session_id, agent_id), None
-            )
+                channel = WebChannel()
+                # Drop messages still waiting in the channel queue: processing them
+                # after the delete would recreate the session from scratch.
+                try:
+                    channel.cancel_session(session_id)
+                except Exception as e:
+                    logger.warning(f"[WebChannel] Failed to drain queue on delete: {e}")
+                channel.session_queues.pop(
+                    channel._session_queue_key(session_id, agent_id), None
+                )
 
-            logger.info(f"[WebChannel] Session deleted: {session_id}")
-            return json.dumps({"status": "success"})
+                logger.info(f"[WebChannel] Session deleted: {session_id}")
+                return json.dumps({"status": "success"})
+        except web.HTTPError:
+            raise
         except Exception as e:
             logger.error(f"[WebChannel] Session delete error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -9249,25 +9312,31 @@ class SessionDetailHandler:
             if not session_id:
                 return json.dumps({"status": "error", "message": "session_id required"})
             body = json.loads(web.data())
-            agent_id = _request_agent_id(body)
             title = (body.get("title") or "").strip()
             pinned = body.get("pinned")
             if not title and pinned is None:
                 return json.dumps({"status": "error", "message": "title or pinned required"})
 
-            from agent.memory import get_conversation_store
-            store = get_conversation_store(_get_workspace_root(agent_id=agent_id))
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "history.read")
+                agent_id = _require_session_scope(
+                    ctx, session_id, _request_agent_id(body))
 
-            found = True
-            if title:
-                found = store.rename_session(session_id, title)
-            if pinned is not None:
-                found = store.set_pinned(session_id, bool(pinned)) and found
-            if not found:
-                # A session only gets a row once its first message is stored, so
-                # this is also what a pin on a brand-new empty chat looks like.
-                return json.dumps({"status": "error", "message": "session not found"})
-            return json.dumps({"status": "success"})
+                from agent.memory import get_conversation_store
+                store = get_conversation_store(_get_workspace_root(agent_id=agent_id))
+
+                found = True
+                if title:
+                    found = store.rename_session(session_id, title)
+                if pinned is not None:
+                    found = store.set_pinned(session_id, bool(pinned)) and found
+                if not found:
+                    # A session only gets a row once its first message is stored, so
+                    # this is also what a pin on a brand-new empty chat looks like.
+                    return json.dumps({"status": "error", "message": "session not found"})
+                return json.dumps({"status": "success"})
+        except web.HTTPError:
+            raise
         except Exception as e:
             logger.error(f"[WebChannel] Session update error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -9638,7 +9707,6 @@ class SessionTitleHandler:
                 return json.dumps({"status": "error", "message": "session_id required"})
 
             body = json.loads(web.data())
-            agent_id = _request_agent_id(body)
             user_message = body.get("user_message", "")
             assistant_reply = body.get("assistant_reply", "")
             if not user_message:
@@ -9646,12 +9714,19 @@ class SessionTitleHandler:
 
             title = _generate_session_title(user_message, assistant_reply, session_id)
 
-            from agent.memory import get_conversation_store
-            store = get_conversation_store(_get_workspace_root(agent_id=agent_id))
-            updated = store.rename_session(session_id, title)
-            logger.info(f"[WebChannel] Session title set: sid={session_id}, title='{title}', db_updated={updated}")
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "history.read")
+                agent_id = _require_session_scope(
+                    ctx, session_id, _request_agent_id(body))
 
-            return json.dumps({"status": "success", "title": title}, ensure_ascii=False)
+                from agent.memory import get_conversation_store
+                store = get_conversation_store(_get_workspace_root(agent_id=agent_id))
+                updated = store.rename_session(session_id, title)
+                logger.info(f"[WebChannel] Session title set: sid={session_id}, title='{title}', db_updated={updated}")
+
+                return json.dumps({"status": "success", "title": title}, ensure_ascii=False)
+        except web.HTTPError:
+            raise
         except Exception as e:
             logger.error(f"[WebChannel] Title generation error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -9693,22 +9768,28 @@ class SessionClearContextHandler:
             params = web.input(agent_id='')
             raw_body = web.data()
             body = json.loads(raw_body) if raw_body else {}
-            agent_id = _request_agent_id(body) or _request_agent_id(params)
+            requested = _request_agent_id(body) or _request_agent_id(params)
 
-            from agent.memory import get_conversation_store
-            store = get_conversation_store(_get_workspace_root(agent_id=agent_id))
-            new_seq = store.clear_context(session_id)
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "history.read")
+                agent_id = _require_session_scope(ctx, session_id, requested)
 
-            # Delete the agent instance so a fresh one is created on the next message
-            try:
-                from bridge.bridge import Bridge
-                bridge = Bridge()
-                ab = bridge.get_agent_bridge()
-                ab.clear_session(session_id, agent_id=agent_id)
-            except Exception:
-                pass
+                from agent.memory import get_conversation_store
+                store = get_conversation_store(_get_workspace_root(agent_id=agent_id))
+                new_seq = store.clear_context(session_id)
 
-            return json.dumps({"status": "success", "context_start_seq": new_seq})
+                # Delete the agent instance so a fresh one is created on the next message
+                try:
+                    from bridge.bridge import Bridge
+                    bridge = Bridge()
+                    ab = bridge.get_agent_bridge()
+                    ab.clear_session(session_id, agent_id=agent_id)
+                except Exception:
+                    pass
+
+                return json.dumps({"status": "success", "context_start_seq": new_seq})
+        except web.HTTPError:
+            raise
         except Exception as e:
             logger.error(f"[WebChannel] Clear context error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -9764,7 +9845,6 @@ class MessageDeleteHandler:
         web.header('Access-Control-Allow-Origin', '*')
         try:
             data = json.loads(web.data())
-            agent_id = _request_agent_id(data)
             session_id = data.get('session_id', '').strip()
             user_seq = data.get('user_seq')
             delete_user = data.get('delete_user', True)
@@ -9773,22 +9853,29 @@ class MessageDeleteHandler:
             if not session_id or user_seq is None:
                 return json.dumps({"status": "error", "message": "session_id and user_seq required"})
             
-            # 1. Delete from database
-            from agent.memory import get_conversation_store
-            store = get_conversation_store(_get_workspace_root(agent_id=agent_id))
-            deleted = store.delete_message_pair(session_id, int(user_seq), delete_user=delete_user, cascade=cascade)
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "history.read")
+                agent_id = _require_session_scope(
+                    ctx, session_id, _request_agent_id(data))
 
-            # 2. Sync agent's in-memory context so its next turn sees the
-            # same history as the DB. Handled by the agent_bridge helper.
-            try:
-                from bridge.bridge import Bridge
-                Bridge().get_agent_bridge().sync_session_messages_from_store(
-                    session_id, agent_id=agent_id
-                )
-            except Exception as sync_err:
-                logger.warning(f"[WebChannel] Failed to sync agent memory: {sync_err}")
+                # 1. Delete from database
+                from agent.memory import get_conversation_store
+                store = get_conversation_store(_get_workspace_root(agent_id=agent_id))
+                deleted = store.delete_message_pair(session_id, int(user_seq), delete_user=delete_user, cascade=cascade)
 
-            return json.dumps({"status": "success", "deleted": deleted}, ensure_ascii=False)
+                # 2. Sync agent's in-memory context so its next turn sees the
+                # same history as the DB. Handled by the agent_bridge helper.
+                try:
+                    from bridge.bridge import Bridge
+                    Bridge().get_agent_bridge().sync_session_messages_from_store(
+                        session_id, agent_id=agent_id
+                    )
+                except Exception as sync_err:
+                    logger.warning(f"[WebChannel] Failed to sync agent memory: {sync_err}")
+
+                return json.dumps({"status": "success", "deleted": deleted}, ensure_ascii=False)
+        except web.HTTPError:
+            raise
         except Exception as e:
             logger.error(f"[WebChannel] Message delete error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
