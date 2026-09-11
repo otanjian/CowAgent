@@ -362,7 +362,21 @@ def test_document_editor_contract():
     assert "target.content = data.content;" in editor
 
 
+def _i18n_count(root, needle):
+    """Occurrences of ``needle`` in the split locale namespaces (task 8.5).
+
+    The dictionaries now live in ``channel/web/static/js/i18n/*.js`` and are
+    merged by the console at load time, so a key present in all three locales
+    shows up three times across those files.
+    """
+    total = 0
+    for path in sorted((root / "channel/web/static/js/i18n").glob("*.js")):
+        total += path.read_text(encoding="utf-8").count('"%s":' % needle)
+    return total
+
+
 def test_memory_and_skill_editor_wiring():
+    root = Path(__file__).parents[1]
     html = _web("chat.html")
     console = _web("static/js/console.js")
     css = _web("static/css/console.css")
@@ -406,10 +420,12 @@ def test_memory_and_skill_editor_wiring():
     assert "if (!skillEditor.guard(closeSkillViewer)) return;" in console
     assert "if (!memoryEditor.isDirty() && !skillEditor.isDirty() && !brandingDirty) return;" in console
 
-    # Every string these views show must exist in all three locales.
+    # Every string these views show must exist in all three locales. Task 8.5
+    # moved the dictionaries into per-domain namespace files, so the count runs
+    # over the merged layer (console.js + static/js/i18n/*.js).
     for key in ("skill_back", "skill_open_hint", "skill_load_failed",
                 "skill_builtin_readonly"):
-        assert console.count(f"{key}:") == 3, key
+        assert _i18n_count(root, key) == 3, key
 
 
 # ----------------------------------------------------------------------

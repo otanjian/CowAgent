@@ -4156,6 +4156,19 @@
     window.loadOrgView = loadOrgView;
     window.loadPlatformUsersView = loadPlatformUsersView;
     window.loadAuditView = loadAuditView;
+    // Register the fork admin views with console.js (change
+    // fork-decoupling-and-tenant-hardening, task 8.6) so navigation iterates a
+    // view registry instead of the core file hard-coding fork-only branches.
+    // `repaint` keeps the old language-switch re-render; absent when console.js
+    // is loaded standalone (contract tests) and never registered.
+    if (typeof window.registerConsoleView === 'function') {
+        window.registerConsoleView({ id: 'tenant', label: 'menu_tenant', load: loadTenantView, repaint: loadTenantView });
+        window.registerConsoleView({ id: 'system_user', label: 'menu_system_user', load: loadMembersView, repaint: loadMembersView });
+        window.registerConsoleView({ id: 'roles', label: 'menu_roles', load: loadRolesView, repaint: loadRolesView });
+        window.registerConsoleView({ id: 'org', label: 'menu_org', load: loadOrgView, repaint: loadOrgView });
+        window.registerConsoleView({ id: 'platform', label: 'menu_platform', load: loadPlatformUsersView, repaint: loadPlatformUsersView });
+        window.registerConsoleView({ id: 'audit', label: 'menu_audit', load: loadAuditView, repaint: loadAuditView });
+    }
     window.bumpTenantGeneration = bumpTenantGeneration;
     window.adminRowAction = adminRowAction;
     window.openExternalIdentities = openExternalIdentities;

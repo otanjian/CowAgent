@@ -93,63 +93,6 @@ CREDENTIAL_KEYS: Dict[str, tuple] = {
     ),
 }
 
-#: Subset of :data:`CREDENTIAL_KEYS` without which a channel instance cannot
-#: start. Kept beside the full key list rather than replacing it: the full list
-#: still decides which field names a write may carry, so an optional field
-#: (a verification token, a display name) stays storable and is simply not
-#: required.
-#:
-#: Every entry is the *startup guard the channel class itself enforces*, verified
-#: by reading that class, not guessed from the field names:
-#:   feishu      feishu_channel.py     "app_id ... or app_secret" guard
-#:   wecom_bot   wecom_bot_channel.py  "wecom_bot_id and wecom_bot_secret" guard
-#:                                     (websocket mode; the webhook transport is
-#:                                      single-instance and refuses extra
-#:                                      instances, so token/aes are not needed
-#:                                      for a tenant-owned bot)
-#:   qq          qq_channel.py         "qq_app_id and qq_app_secret" guard
-#:   telegram    telegram_channel.py   "telegram_token is required" guard
-#:   slack       slack_channel.py      "slack_bot_token and slack_app_token" guard
-#:   discord     discord_channel.py    "discord_token is required" guard
-#:
-#: ``dingtalk`` and ``weixin`` are deliberately absent: their minimum set has not
-#: been verified against the channel classes yet, and inventing one would reject
-#: writes that work today. A type without an entry here keeps the previous rule
-#: (at least one declared, non-empty field).
-REQUIRED_CREDENTIAL_KEYS: Dict[str, tuple] = {
-    const.FEISHU: (
-        "feishu_app_id",
-        "feishu_app_secret",
-    ),
-    const.WECOM_BOT: (
-        "wecom_bot_id",
-        "wecom_bot_secret",
-    ),
-    const.QQ: (
-        "qq_app_id",
-        "qq_app_secret",
-    ),
-    const.TELEGRAM: (
-        "telegram_token",
-    ),
-    const.SLACK: (
-        "slack_bot_token",
-        "slack_app_token",
-    ),
-    const.DISCORD: (
-        "discord_token",
-    ),
-}
-
-
-def required_credential_keys(channel_type: str) -> tuple:
-    """Keys that must be present and non-empty for *channel_type* to start.
-
-    Empty for a type whose minimum set has not been verified yet (see
-    :data:`REQUIRED_CREDENTIAL_KEYS`), which leaves that type's validation to the
-    "at least one declared field" rule it had before.
-    """
-    return REQUIRED_CREDENTIAL_KEYS.get(_normalize_type(channel_type), ())
 
 # Channel types that actually support running more than one instance today.
 # Others may appear in channel_instances but will run as a single instance
@@ -321,6 +264,318 @@ def resolve_channel_instances(
         seen_ids.add(inst.instance_id)
         merged.append(inst)
     return merged
+
+
+# ---------------------------------------------------------------------------
+# Persistence helpers for the explicit multi-instance list.
+#
+# These edit the ``channel_instances`` array in the roster file (team.json) and
+# leave the legacy ``channel_type`` + flat credentials path completely alone, so
+# an install that never opts into multiple instances is never touched.
+# ---------------------------------------------------------------------------
+
+def _filtered_credentials(channel_type: str, source: Mapping[str, Any]) -> Dict[str, Any]:
+    """Keep only the credential keys meaningful for *channel_type*."""
+    ctype = _normalize_type((channel_type or "").strip())
+    creds: Dict[str, Any] = {}
+    for key in CREDENTIAL_KEYS.get(ctype, ()):
+        value = source.get(key)
+        if value is not None:
+            creds[key] = value
+    return creds
+
+
+def bootstrap_legacy_instances(
+    settings: Mapping[str, Any],
+    roster: Mapping[str, Any],
+    default_agent_id: str = "",
+) -> List[Dict[str, Any]]:
+    """Fold a legacy single-channel setup into ``channel_instances`` records.
+
+    Called when an install first crosses into multi-Agent territory (team.json
+    is being written for the first time). A legacy install keeps its channel
+    credentials as flat keys in config.json and names the channel in
+    ``channel_type``; multi-Agent mode routes entirely off ``channel_instances``,
+    so those flat channels would silently go dark unless carried over.
+
+    For every multi-instance-ready channel named in ``channel_type`` that has
+    credentials in ``settings`` and no existing record, synthesize one record
+    bound to the default Agent (``instance_id == channel_type``, matching the
+    legacy id so nothing else has to change). The config.json flat keys are left
+    in place untouched — multi-Agent startup simply ignores them.
+
+    Returns the (possibly extended) channel_instances list.
+    """
+    records = [
+        dict(item)
+        for item in (roster.get("channel_instances") or [])
+        if isinstance(item, Mapping)
+    ]
+    have_types = {
+        _normalize_type(str(r.get("channel_type") or "").strip()) for r in records
+    }
+    default_id = (default_agent_id or roster.get("default_agent_id") or "").strip()
+
+    for name in _parse_channel_type(settings.get("channel_type", "")):
+        ctype = _normalize_type(name)
+        if ctype not in MULTI_INSTANCE_READY or ctype in have_types:
+            continue
+        creds = _filtered_credentials(ctype, settings)
+        if not creds:
+            continue
+        records.append(
+            {
+                "instance_id": ctype,
+                "channel_type": ctype,
+                "agent_id": default_id,
+                "credentials": creds,
+            }
+        )
+        have_types.add(ctype)
+        # Weixin's scan-login token lives in a credentials file, not config.json.
+        # The bootstrapped instance (instance_id == "weixin") reads a per-instance
+        # file, so carry the legacy default file over to it — otherwise the user
+        # would have to re-scan just because they added an Agent.
+        if ctype == const.WEIXIN:
+            _carry_weixin_credentials_file(ctype)
+        logger.info(
+            f"[ChannelInstances] bootstrapped legacy '{ctype}' credentials into a "
+            f"channel_instances record bound to '{default_id or 'default'}'"
+        )
+    return records
+
+
+def _carry_weixin_credentials_file(instance_id: str) -> None:
+    """Copy the legacy Weixin token file to the per-instance path, once.
+
+    Best-effort and idempotent: if the legacy default file exists and the
+    per-instance file does not yet, the token (and persisted context tokens) are
+    copied so the bootstrapped instance stays logged in. Never overwrites an
+    existing per-instance file, and never raises into the write path.
+    """
+    try:
+        import shutil
+        from config import get_weixin_credentials_path
+
+        legacy = get_weixin_credentials_path()
+        target = get_weixin_credentials_path(instance_id)
+        if legacy == target:
+            return
+        if os.path.exists(legacy) and not os.path.exists(target):
+            shutil.copy2(legacy, target)
+            logger.info(
+                f"[ChannelInstances] carried Weixin credentials '{legacy}' -> "
+                f"'{target}' so the bootstrapped instance stays logged in"
+            )
+    except Exception as e:
+        logger.warning(f"[ChannelInstances] Weixin credentials carry-over skipped: {e}")
+
+
+def read_raw_instances(settings: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    """The raw ``channel_instances`` records as stored, or an empty list."""
+    from agent import team
+
+    roster = team.read(settings)
+    raw = roster.get("channel_instances")
+    if isinstance(raw, list):
+        return [dict(item) for item in raw if isinstance(item, Mapping)]
+    return []
+
+
+def _clean_members(members, owner_id: str) -> list:
+    """Normalize a members list: strings, de-duped, no owner, order preserved."""
+    out: list = []
+    owner = (owner_id or "").strip()
+    for m in members or []:
+        mid = str(m or "").strip()
+        if mid and mid != owner and mid not in out:
+            out.append(mid)
+    return out
+
+
+def upsert_instance(
+    settings: Mapping[str, Any],
+    channel_type: str,
+    instance_id: str = "",
+    agent_id: Optional[str] = None,
+    credentials: Optional[Mapping[str, Any]] = None,
+    members: Optional[list] = None,
+) -> ChannelInstance:
+    """Create or update one channel instance record and persist it.
+
+    Matching is by ``instance_id``. When it is empty a new stable id is
+    generated. ``agent_id``, ``credentials`` and ``members`` are merged onto any
+    existing record so a partial update (e.g. credentials only) does not drop
+    the binding or the team. Pass ``members=None`` to leave the team untouched,
+    or ``members=[]`` to clear it. Returns the resulting :class:`ChannelInstance`.
+    """
+    from agent import team
+
+    ctype = _normalize_type((channel_type or "").strip())
+    records = read_raw_instances(settings)
+    taken = {str(r.get("instance_id") or "").strip() for r in records}
+
+    target_id = (instance_id or "").strip()
+    if not target_id:
+        target_id = new_instance_id(ctype, taken)
+
+    incoming_creds = _filtered_credentials(ctype, credentials or {})
+
+    updated = False
+    for record in records:
+        if str(record.get("instance_id") or "").strip() != target_id:
+            continue
+        record["channel_type"] = ctype
+        if agent_id is not None:
+            record["agent_id"] = str(agent_id).strip()
+        if incoming_creds:
+            merged = dict(record.get("credentials") or {})
+            merged.update(incoming_creds)
+            record["credentials"] = merged
+        if members is not None:
+            cleaned = _clean_members(members, record.get("agent_id") or "")
+            if cleaned:
+                record["members"] = cleaned
+            else:
+                record.pop("members", None)
+        updated = True
+        result_record = record
+        break
+
+    if not updated:
+        result_record = {
+            "instance_id": target_id,
+            "channel_type": ctype,
+            "agent_id": str(agent_id).strip() if agent_id is not None else "",
+            "credentials": incoming_creds,
+        }
+        cleaned = _clean_members(members, result_record["agent_id"])
+        if cleaned:
+            result_record["members"] = cleaned
+        records.append(result_record)
+
+    roster = team.read(settings)
+    roster["channel_instances"] = records
+    team.write(settings, roster)
+
+    return ChannelInstance(
+        instance_id=target_id,
+        channel_type=ctype,
+        agent_id=str(result_record.get("agent_id") or ""),
+        credentials=dict(result_record.get("credentials") or {}),
+        members=list(result_record.get("members") or []),
+        legacy=False,
+    )
+
+
+def remove_instance(settings: Mapping[str, Any], instance_id: str) -> bool:
+    """Drop one instance record by id. Returns True if something was removed."""
+    from agent import team
+
+    target_id = (instance_id or "").strip()
+    if not target_id:
+        return False
+    records = read_raw_instances(settings)
+    kept = [r for r in records if str(r.get("instance_id") or "").strip() != target_id]
+    if len(kept) == len(records):
+        return False
+    roster = team.read(settings)
+    roster["channel_instances"] = kept
+    team.write(settings, roster)
+    return True
+
+
+def get_instance(settings: Mapping[str, Any], instance_id: str) -> Optional[ChannelInstance]:
+    """Resolve one instance by id, or None.
+
+    Overlays the roster file first so the lookup works even when the caller
+    passes bare ``conf()`` (channel_instances lives in team.json, not config).
+    """
+    from agent import team
+
+    target_id = (instance_id or "").strip()
+    resolved = team.resolve(settings)
+    for inst in resolve_channel_instances(resolved):
+        if inst.instance_id == target_id:
+            return inst
+    return None
+
+
+# ===========================================================================
+# UPSTREAM REGION (D4b). Shared and upstream-owned symbols live here.
+# Upstream-only additions such as `_CHANNEL_TYPE_LABELS` and
+# `default_instance_name` belong above the divider below.
+# ===========================================================================
+
+
+# PARTITION DIVIDER (D4b): add fork symbols below this line only; upstream symbols above.
+
+
+# ===========================================================================
+# FORK REGION (D4b). Fork-only symbols live below this line.
+# Credential-minimum sets, tenant runtime state and the tenant console
+# contract are added here, so an upstream merge that adds its own symbols
+# at the anchors above never collides with a fork addition in place.
+# ===========================================================================
+
+
+#: Subset of :data:`CREDENTIAL_KEYS` without which a channel instance cannot
+#: start. Kept beside the full key list rather than replacing it: the full list
+#: still decides which field names a write may carry, so an optional field
+#: (a verification token, a display name) stays storable and is simply not
+#: required.
+#:
+#: Every entry is the *startup guard the channel class itself enforces*, verified
+#: by reading that class, not guessed from the field names:
+#:   feishu      feishu_channel.py     "app_id ... or app_secret" guard
+#:   wecom_bot   wecom_bot_channel.py  "wecom_bot_id and wecom_bot_secret" guard
+#:                                     (websocket mode; the webhook transport is
+#:                                      single-instance and refuses extra
+#:                                      instances, so token/aes are not needed
+#:                                      for a tenant-owned bot)
+#:   qq          qq_channel.py         "qq_app_id and qq_app_secret" guard
+#:   telegram    telegram_channel.py   "telegram_token is required" guard
+#:   slack       slack_channel.py      "slack_bot_token and slack_app_token" guard
+#:   discord     discord_channel.py    "discord_token is required" guard
+#:
+#: ``dingtalk`` and ``weixin`` are deliberately absent: their minimum set has not
+#: been verified against the channel classes yet, and inventing one would reject
+#: writes that work today. A type without an entry here keeps the previous rule
+#: (at least one declared, non-empty field).
+REQUIRED_CREDENTIAL_KEYS: Dict[str, tuple] = {
+    const.FEISHU: (
+        "feishu_app_id",
+        "feishu_app_secret",
+    ),
+    const.WECOM_BOT: (
+        "wecom_bot_id",
+        "wecom_bot_secret",
+    ),
+    const.QQ: (
+        "qq_app_id",
+        "qq_app_secret",
+    ),
+    const.TELEGRAM: (
+        "telegram_token",
+    ),
+    const.SLACK: (
+        "slack_bot_token",
+        "slack_app_token",
+    ),
+    const.DISCORD: (
+        "discord_token",
+    ),
+}
+
+
+def required_credential_keys(channel_type: str) -> tuple:
+    """Keys that must be present and non-empty for *channel_type* to start.
+
+    Empty for a type whose minimum set has not been verified yet (see
+    :data:`REQUIRED_CREDENTIAL_KEYS`), which leaves that type's validation to the
+    "at least one declared field" rule it had before.
+    """
+    return REQUIRED_CREDENTIAL_KEYS.get(_normalize_type(channel_type), ())
 
 
 # ---------------------------------------------------------------------------
@@ -633,238 +888,3 @@ def tenant_channel_types() -> List[Dict[str, Any]]:
             ],
         })
     return out
-
-
-# ---------------------------------------------------------------------------
-# Persistence helpers for the explicit multi-instance list.
-#
-# These edit the ``channel_instances`` array in the roster file (team.json) and
-# leave the legacy ``channel_type`` + flat credentials path completely alone, so
-# an install that never opts into multiple instances is never touched.
-# ---------------------------------------------------------------------------
-
-def _filtered_credentials(channel_type: str, source: Mapping[str, Any]) -> Dict[str, Any]:
-    """Keep only the credential keys meaningful for *channel_type*."""
-    ctype = _normalize_type((channel_type or "").strip())
-    creds: Dict[str, Any] = {}
-    for key in CREDENTIAL_KEYS.get(ctype, ()):
-        value = source.get(key)
-        if value is not None:
-            creds[key] = value
-    return creds
-
-
-def bootstrap_legacy_instances(
-    settings: Mapping[str, Any],
-    roster: Mapping[str, Any],
-    default_agent_id: str = "",
-) -> List[Dict[str, Any]]:
-    """Fold a legacy single-channel setup into ``channel_instances`` records.
-
-    Called when an install first crosses into multi-Agent territory (team.json
-    is being written for the first time). A legacy install keeps its channel
-    credentials as flat keys in config.json and names the channel in
-    ``channel_type``; multi-Agent mode routes entirely off ``channel_instances``,
-    so those flat channels would silently go dark unless carried over.
-
-    For every multi-instance-ready channel named in ``channel_type`` that has
-    credentials in ``settings`` and no existing record, synthesize one record
-    bound to the default Agent (``instance_id == channel_type``, matching the
-    legacy id so nothing else has to change). The config.json flat keys are left
-    in place untouched — multi-Agent startup simply ignores them.
-
-    Returns the (possibly extended) channel_instances list.
-    """
-    records = [
-        dict(item)
-        for item in (roster.get("channel_instances") or [])
-        if isinstance(item, Mapping)
-    ]
-    have_types = {
-        _normalize_type(str(r.get("channel_type") or "").strip()) for r in records
-    }
-    default_id = (default_agent_id or roster.get("default_agent_id") or "").strip()
-
-    for name in _parse_channel_type(settings.get("channel_type", "")):
-        ctype = _normalize_type(name)
-        if ctype not in MULTI_INSTANCE_READY or ctype in have_types:
-            continue
-        creds = _filtered_credentials(ctype, settings)
-        if not creds:
-            continue
-        records.append(
-            {
-                "instance_id": ctype,
-                "channel_type": ctype,
-                "agent_id": default_id,
-                "credentials": creds,
-            }
-        )
-        have_types.add(ctype)
-        # Weixin's scan-login token lives in a credentials file, not config.json.
-        # The bootstrapped instance (instance_id == "weixin") reads a per-instance
-        # file, so carry the legacy default file over to it — otherwise the user
-        # would have to re-scan just because they added an Agent.
-        if ctype == const.WEIXIN:
-            _carry_weixin_credentials_file(ctype)
-        logger.info(
-            f"[ChannelInstances] bootstrapped legacy '{ctype}' credentials into a "
-            f"channel_instances record bound to '{default_id or 'default'}'"
-        )
-    return records
-
-
-def _carry_weixin_credentials_file(instance_id: str) -> None:
-    """Copy the legacy Weixin token file to the per-instance path, once.
-
-    Best-effort and idempotent: if the legacy default file exists and the
-    per-instance file does not yet, the token (and persisted context tokens) are
-    copied so the bootstrapped instance stays logged in. Never overwrites an
-    existing per-instance file, and never raises into the write path.
-    """
-    try:
-        import shutil
-        from config import get_weixin_credentials_path
-
-        legacy = get_weixin_credentials_path()
-        target = get_weixin_credentials_path(instance_id)
-        if legacy == target:
-            return
-        if os.path.exists(legacy) and not os.path.exists(target):
-            shutil.copy2(legacy, target)
-            logger.info(
-                f"[ChannelInstances] carried Weixin credentials '{legacy}' -> "
-                f"'{target}' so the bootstrapped instance stays logged in"
-            )
-    except Exception as e:
-        logger.warning(f"[ChannelInstances] Weixin credentials carry-over skipped: {e}")
-
-
-def read_raw_instances(settings: Mapping[str, Any]) -> List[Dict[str, Any]]:
-    """The raw ``channel_instances`` records as stored, or an empty list."""
-    from agent import team
-
-    roster = team.read(settings)
-    raw = roster.get("channel_instances")
-    if isinstance(raw, list):
-        return [dict(item) for item in raw if isinstance(item, Mapping)]
-    return []
-
-
-def _clean_members(members, owner_id: str) -> list:
-    """Normalize a members list: strings, de-duped, no owner, order preserved."""
-    out: list = []
-    owner = (owner_id or "").strip()
-    for m in members or []:
-        mid = str(m or "").strip()
-        if mid and mid != owner and mid not in out:
-            out.append(mid)
-    return out
-
-
-def upsert_instance(
-    settings: Mapping[str, Any],
-    channel_type: str,
-    instance_id: str = "",
-    agent_id: Optional[str] = None,
-    credentials: Optional[Mapping[str, Any]] = None,
-    members: Optional[list] = None,
-) -> ChannelInstance:
-    """Create or update one channel instance record and persist it.
-
-    Matching is by ``instance_id``. When it is empty a new stable id is
-    generated. ``agent_id``, ``credentials`` and ``members`` are merged onto any
-    existing record so a partial update (e.g. credentials only) does not drop
-    the binding or the team. Pass ``members=None`` to leave the team untouched,
-    or ``members=[]`` to clear it. Returns the resulting :class:`ChannelInstance`.
-    """
-    from agent import team
-
-    ctype = _normalize_type((channel_type or "").strip())
-    records = read_raw_instances(settings)
-    taken = {str(r.get("instance_id") or "").strip() for r in records}
-
-    target_id = (instance_id or "").strip()
-    if not target_id:
-        target_id = new_instance_id(ctype, taken)
-
-    incoming_creds = _filtered_credentials(ctype, credentials or {})
-
-    updated = False
-    for record in records:
-        if str(record.get("instance_id") or "").strip() != target_id:
-            continue
-        record["channel_type"] = ctype
-        if agent_id is not None:
-            record["agent_id"] = str(agent_id).strip()
-        if incoming_creds:
-            merged = dict(record.get("credentials") or {})
-            merged.update(incoming_creds)
-            record["credentials"] = merged
-        if members is not None:
-            cleaned = _clean_members(members, record.get("agent_id") or "")
-            if cleaned:
-                record["members"] = cleaned
-            else:
-                record.pop("members", None)
-        updated = True
-        result_record = record
-        break
-
-    if not updated:
-        result_record = {
-            "instance_id": target_id,
-            "channel_type": ctype,
-            "agent_id": str(agent_id).strip() if agent_id is not None else "",
-            "credentials": incoming_creds,
-        }
-        cleaned = _clean_members(members, result_record["agent_id"])
-        if cleaned:
-            result_record["members"] = cleaned
-        records.append(result_record)
-
-    roster = team.read(settings)
-    roster["channel_instances"] = records
-    team.write(settings, roster)
-
-    return ChannelInstance(
-        instance_id=target_id,
-        channel_type=ctype,
-        agent_id=str(result_record.get("agent_id") or ""),
-        credentials=dict(result_record.get("credentials") or {}),
-        members=list(result_record.get("members") or []),
-        legacy=False,
-    )
-
-
-def remove_instance(settings: Mapping[str, Any], instance_id: str) -> bool:
-    """Drop one instance record by id. Returns True if something was removed."""
-    from agent import team
-
-    target_id = (instance_id or "").strip()
-    if not target_id:
-        return False
-    records = read_raw_instances(settings)
-    kept = [r for r in records if str(r.get("instance_id") or "").strip() != target_id]
-    if len(kept) == len(records):
-        return False
-    roster = team.read(settings)
-    roster["channel_instances"] = kept
-    team.write(settings, roster)
-    return True
-
-
-def get_instance(settings: Mapping[str, Any], instance_id: str) -> Optional[ChannelInstance]:
-    """Resolve one instance by id, or None.
-
-    Overlays the roster file first so the lookup works even when the caller
-    passes bare ``conf()`` (channel_instances lives in team.json, not config).
-    """
-    from agent import team
-
-    target_id = (instance_id or "").strip()
-    resolved = team.resolve(settings)
-    for inst in resolve_channel_instances(resolved):
-        if inst.instance_id == target_id:
-            return inst
-    return None

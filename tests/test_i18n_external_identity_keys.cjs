@@ -8,65 +8,23 @@
 //
 // The strongest check reads the *code* rather than a hand-kept list, so a key
 // added later without a translation fails here instead of shipping.
+//
+// After change fork-decoupling-and-tenant-hardening (task 8.5) the dictionaries
+// live in per-domain namespace files under static/js/i18n/; the shared loader
+// merges them the way console.js does.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { loadDictionaries } = require('./support/i18n_namespaces.cjs');
 
-const consoleSource = fs.readFileSync(path.join(__dirname, '../channel/web/static/js/console.js'), 'utf8');
 const adminSource = fs.readFileSync(path.join(__dirname, '../channel/web/static/js/identity-admin.js'), 'utf8');
 const LANGS = ['zh', 'zh-Hant', 'en'];
 
-function blockEnd(src, openIdx) {
-    let depth = 0;
-    let quote = null;
-    for (let i = openIdx; i < src.length; i++) {
-        const c = src[i];
-        if (quote) {
-            if (c === '\\') { i++; continue; }
-            if (c === quote) quote = null;
-            continue;
-        }
-        if (c === '"' || c === "'" || c === '`') { quote = c; continue; }
-        if (c === '/' && src[i + 1] === '/') {
-            const nl = src.indexOf('\n', i);
-            i = nl === -1 ? src.length : nl;
-            continue;
-        }
-        if (c === '/' && src[i + 1] === '*') {
-            const close = src.indexOf('*/', i);
-            i = close === -1 ? src.length : close + 1;
-            continue;
-        }
-        if (c === '{') depth++;
-        else if (c === '}') {
-            depth--;
-            if (depth === 0) return i;
-        }
-    }
-    throw new Error('unbalanced braces at ' + openIdx);
-}
-
-function dictionaries(src) {
-    const out = { zh: '', 'zh-Hant': '', en: '' };
-    const baseIdx = src.indexOf('const I18N = {');
-    assert.ok(baseIdx >= 0, 'the I18N literal is still where this test expects it');
-    const baseOpen = src.indexOf('{', baseIdx);
-    const base = src.slice(baseOpen, blockEnd(src, baseOpen) + 1);
-    for (const lang of LANGS) {
-        const re = new RegExp("(?:^|[\\s,{])'?" + lang + "'?\\s*:\\s*\\{");
-        const m = re.exec(base);
-        assert.ok(m, 'the base literal still declares ' + lang);
-        const open = base.indexOf('{', m.index + m[0].length - 1);
-        out[lang] += base.slice(open, blockEnd(base, open) + 1);
-    }
-    return out;
-}
-
-const dicts = dictionaries(consoleSource);
+const dicts = loadDictionaries();
 
 function hasKey(lang, key) {
-    return new RegExp('\\b' + key + '\\s*:').test(dicts[lang]);
+    return Object.prototype.hasOwnProperty.call(dicts[lang] || {}, key);
 }
 
 // The keys the dialog itself names, so a renamed key cannot quietly drop a row.
@@ -117,9 +75,8 @@ test('the provider label falls back to the raw code, never to a blank', () => {
 test('the extid key set is identical across languages', () => {
     const keysOf = (lang) => {
         const keys = new Set();
-        const re = /\b(extid_[a-z_]+)\s*:/g;
-        let m;
-        while ((m = re.exec(dicts[lang]))) keys.add(m[1]);
+        const re = /^extid_[a-z_]+$/;
+        for (const key of Object.keys(dicts[lang] || {})) if (re.test(key)) keys.add(key);
         return keys;
     };
     const per = LANGS.map(keysOf);
@@ -133,8 +90,8 @@ test('the extid key set is identical across languages', () => {
     }
 });
 
-test('the dictionary scanner is not silently reading empty blocks', () => {
+test('the dictionary loader is not silently reading empty blocks', () => {
     for (const lang of LANGS) {
-        assert.ok(dicts[lang].includes('cancel'), lang + ' dictionary content was not extracted');
+        assert.ok(hasKey(lang, 'cancel'), lang + ' dictionary content was not extracted');
     }
 });

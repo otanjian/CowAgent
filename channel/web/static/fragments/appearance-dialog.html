@@ -1,0 +1,52 @@
+        <div id="appearance-options">
+            <div class="appearance-header">
+                <h2 id="appearance-title" class="appearance-title" data-i18n="appearance_title">外观</h2>
+                <button type="button" class="appearance-close" onclick="closeAppearancePreferences()"
+                        data-i18n-aria-label="appearance_close" aria-label="关闭外观设置"><i class="fas fa-xmark" aria-hidden="true"></i></button>
+            </div>
+            <p id="appearance-scope" class="appearance-description" data-i18n="appearance_scope">仅在当前浏览器生效，此浏览器中的不同账号共用外观设置。</p>
+            <fieldset class="appearance-fieldset">
+                <legend data-i18n="appearance_palette">配色方案</legend>
+                <div class="appearance-presets">
+                    <label class="appearance-preset" data-palette="business">
+                        <input type="radio" name="web-palette" value="business" onchange="CowAppearance.setPalette(this.value)">
+                        <span class="appearance-preview" aria-hidden="true"><span class="appearance-preview-sidebar"></span><span class="appearance-preview-header"></span><span class="appearance-preview-body"><span class="appearance-preview-card"></span></span></span>
+                        <span class="appearance-preset-label" data-i18n="appearance_business">商务青蓝</span>
+                        <span class="appearance-preset-hint" data-i18n="appearance_recommended">推荐</span>
+                    </label>
+                    <label class="appearance-preset" data-palette="slate">
+                        <input type="radio" name="web-palette" value="slate" onchange="CowAppearance.setPalette(this.value)">
+                        <span class="appearance-preview" aria-hidden="true"><span class="appearance-preview-sidebar"></span><span class="appearance-preview-header"></span><span class="appearance-preview-body"><span class="appearance-preview-card"></span></span></span>
+                        <span class="appearance-preset-label" data-i18n="appearance_slate">深蓝侧栏</span>
+                    </label>
+                    <label class="appearance-preset" data-palette="classic">
+                        <input type="radio" name="web-palette" value="classic" onchange="CowAppearance.setPalette(this.value)">
+                        <span class="appearance-preview" aria-hidden="true"><span class="appearance-preview-sidebar"></span><span class="appearance-preview-header"></span><span class="appearance-preview-body"><span class="appearance-preview-card"></span></span></span>
+                        <span class="appearance-preset-label" data-i18n="appearance_classic">经典配色</span>
+                    </label>
+                </div>
+            </fieldset>
+            <fieldset class="appearance-fieldset">
+                <legend data-i18n="appearance_mode">明暗模式</legend>
+                <div class="appearance-modes">
+                    <label class="appearance-mode"><input type="radio" name="web-mode" value="light" onchange="CowAppearance.setMode(this.value)"><span data-i18n="appearance_light">浅色</span></label>
+                    <label class="appearance-mode"><input type="radio" name="web-mode" value="dark" onchange="CowAppearance.setMode(this.value)"><span data-i18n="appearance_dark">深色</span></label>
+                    <label class="appearance-mode"><input type="radio" name="web-mode" value="system" onchange="CowAppearance.setMode(this.value)"><span data-i18n="appearance_system">跟随系统</span></label>
+                </div>
+                <p id="appearance-resolved" class="appearance-description" aria-live="polite"></p>
+            </fieldset>
+            <fieldset class="appearance-fieldset">
+                <legend data-i18n="account_prefs_lang">语言</legend>
+                <div class="appearance-modes">
+                    <label class="appearance-mode"><input type="radio" name="web-language" value="zh" onchange="setAccountLang(this.value)"><span data-i18n="account_prefs_zh">简体</span></label>
+                    <label class="appearance-mode"><input type="radio" name="web-language" value="zh-Hant" onchange="setAccountLang(this.value)"><span data-i18n="account_prefs_hant">繁體</span></label>
+                    <label class="appearance-mode"><input type="radio" name="web-language" value="en" onchange="setAccountLang(this.value)"><span data-i18n="account_prefs_en">EN</span></label>
+                </div>
+            </fieldset>
+            <p id="appearance-language-warning" class="appearance-warning" role="status" hidden data-i18n="account_prefs_storage_fail">浏览器存储不可用，本次修改仅在本页生效</p>
+            <p id="appearance-storage-warning" class="appearance-warning" role="status" hidden data-i18n="appearance_storage_failed">仅本页生效，刷新后可能恢复之前设置。</p>
+            <div class="appearance-footer">
+                <span class="appearance-description" data-i18n="appearance_instant">选择后立即生效</span>
+                <button type="button" class="appearance-reset" onclick="CowAppearance.reset()" data-i18n="appearance_reset">恢复默认</button>
+            </div>
+        </div>

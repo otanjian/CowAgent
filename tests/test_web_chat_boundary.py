@@ -16,6 +16,7 @@ import web
 import config
 from agent.memory import clear_conversation_store_cache, get_conversation_store
 from agent.registry import AgentProfile, AgentRegistry
+from auth.runtime import authorized_target
 from auth.service import IdentityService
 from channel.web import web_channel
 from common.runtime_identity import RuntimeIdentity, current_identity, use_identity
@@ -68,9 +69,15 @@ def boundary(tmp_path, monkeypatch):
     channel = SimpleNamespace(_sse_streams_lock=threading.RLock(), request_owners={})
     identities = []
 
-    def post_message(*, auth_context, authorized_session):
+    # Stands in for the real ``WebChannel.post_message``: it takes upstream's
+    # signature and reads what the handler authorized from the request-scoped
+    # seam, exactly as the real method does (task 8.2/8.3).
+    def post_message():
+        target = authorized_target()
+        channel.last_target = target
         identities.append(current_identity())
-        agent, session = authorized_session
+        auth_context = target.get("auth_context")
+        agent, session = target["session"]
         with channel._sse_streams_lock:
             rid = "request-" + str(len(channel.request_owners) + 1)
             channel.request_owners[rid] = (auth_context.tenant_id, auth_context.user_id, agent, session)
@@ -124,10 +131,10 @@ def test_resuming_history_preserves_the_verified_identity_agent_and_session(boun
     previous = current_identity()
     response = b.send()
     assert status(response) == 200
-    call = b.channel.post_message.call_args.kwargs
-    assert call["authorized_session"] == ("shared-agent", "historical")
-    assert call["auth_context"].user_id == b.root
-    assert call["auth_context"].tenant_id == b.tenant
+    target = b.channel.last_target
+    assert target["session"] == ("shared-agent", "historical")
+    assert target["auth_context"].user_id == b.root
+    assert target["auth_context"].tenant_id == b.tenant
     assert b.identities[0].user_id == b.root
     assert b.identities[0].tenant_id == b.tenant
     assert current_identity() == previous
@@ -149,7 +156,7 @@ def test_client_identity_claims_never_replace_verified_chat_owner(boundary):
         "runtime_identity": {"user_id": b.member, "tenant_id": b.other_tenant},
     })
     assert status(response) == 200
-    ctx = b.channel.post_message.call_args.kwargs["auth_context"]
+    ctx = b.channel.last_target["auth_context"]
     assert ctx.user_id == b.root and ctx.tenant_id == b.tenant
     assert next(iter(b.channel.request_owners.values()))[:2] == (b.tenant, b.root)
 
@@ -196,7 +203,7 @@ def test_two_users_cannot_race_to_claim_the_same_new_session(boundary):
         responses = [future.result(timeout=15) for future in futures]
     assert sorted(status(response) for response in responses) == [200, 404]
     b.channel.post_message.assert_called_once()
-    owner = b.channel.post_message.call_args.kwargs["auth_context"].user_id
+    owner = b.channel.last_target["auth_context"].user_id
     con = b.store._connect()
     try:
         assert con.execute("SELECT owner FROM sessions WHERE session_id='new-shared-id'").fetchone()[0] == owner

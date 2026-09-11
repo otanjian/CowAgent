@@ -75,6 +75,10 @@ from common import const
 from common import i18n
 from common.log import logger
 from common.singleton import singleton
+# Request-scoped authorized chat/upload target (seam, tasks 8.2/8.3). Imported at
+# module level so every handler that needs to publish a target uses one name; it
+# holds no state itself, so importing it cannot pull in the identity service.
+from auth.runtime import authorized_target, authorized_target_scope
 from config import (
     conf,
     get_data_root,
@@ -1096,24 +1100,15 @@ def _get_workspace_root(session_id: str = None, agent_id: str = None) -> str:
                 return project_dir
         except Exception as e:
             logger.debug(f"[WebChannel] project_dir resolve failed: {e}")
-    # database mode: scope to the tenant's trusted shared root (task 3.8/3.9)
-    from common.runtime_identity import current_identity
-    ident = current_identity()
-    if ident.tenant_id:
-        from auth.service import get_identity_service
-        root = get_identity_service().tenant_shared_root(ident.tenant_id)
-        if root:
-            return root
-        # No configured shared root -> reject rather than fall back globally.
-        raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
-                            json.dumps({"status": "error", "message": "tenant has no shared root"}))
-    if _is_database_identity():
-        # database mode with no tenant in scope: refuse rather than fall back to
-        # the process-global default Agent's workspace, which may belong to
-        # another tenant (task 4.5 / D3).
-        raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
-                            json.dumps({"status": "error", "message": "tenant scope required",
-                                        "code": "missing_tenant"}))
+    # Fork seam (tasks 8.1/8.3): tenancy is resolved by
+    # ``channel/web/tenant_workspace.py``, which returns None when the tenant
+    # dimension does not apply (legacy mode) and raises when the request must be
+    # refused rather than fall back to a global workspace.
+    from channel.web.tenant_workspace import resolve_tenant_workspace_root
+
+    scoped_root = resolve_tenant_workspace_root(database_mode=_is_database_identity())
+    if scoped_root:
+        return scoped_root
     from agent.registry import get_agent_registry
 
     return get_agent_registry().get(agent_id).workspace
@@ -2150,13 +2145,16 @@ class WebChannel(ChatChannel):
         except Exception as e:
             logger.warning(f"[WebChannel] voice cleanup failed: {e}")
 
-    def upload_file(self, *, agent_id: str = None):
+    def upload_file(self):
         """Handle file or directory upload via multipart/form-data.
 
-        ``agent_id`` is set by database-mode callers that have already resolved
-        and authorized the tenant-bound target agent; it overrides the raw form
-        field so a cross-tenant ``agent_id`` can never steer the write.
+        The target Agent is not a parameter: the handler authorizes it (tenant
+        binding, private-owner rule, ``agent.use``) and publishes it through the
+        request-scoped authorized target (tasks 8.2/8.3), so a cross-tenant
+        ``agent_id`` in the form field can never steer the write and upstream's
+        signature stays exactly as upstream wrote it.
         """
+        agent_id = authorized_target().get("agent_id")
 
         def _reject(message):
             logger.warning("[WebChannel] Upload rejected: %s", message)
@@ -2280,12 +2278,22 @@ class WebChannel(ChatChannel):
             logger.error(f"[WebChannel] File upload error: {e}", exc_info=True)
             return json.dumps({"status": "error", "message": str(e)})
 
-    def post_message(self, *, auth_context=None, authorized_session=None):
+    def post_message(self):
         """
         Handle incoming messages from users via POST request.
         Returns a request_id for tracking this specific request.
         Supports optional attachments (file paths from /upload).
+
+        Any database-mode chat context (the resolved tenant membership and the
+        already-authorized ``(agent_id, session_id)`` pair) arrives through the
+        request-scoped authorized target rather than as parameters, so upstream's
+        signature and body stay mergeable (tasks 8.2/8.3). With no target
+        published this behaves exactly as upstream: the Agent is resolved by the
+        router from the request body.
         """
+        target = authorized_target()
+        auth_context = target.get("auth_context")
+        authorized_session = target.get("session")
         try:
             data = web.data()
             json_data = json.loads(data)
@@ -2672,7 +2680,7 @@ class WebChannel(ChatChannel):
             # The event log is deliberately retained for reconnection.
             raise
 
-    def cancel_request(self, *, authorized_session=None):
+    def cancel_request(self):
         """
         Cancel an in-flight agent run.
 
@@ -2680,7 +2688,12 @@ class WebChannel(ChatChannel):
         Either field is sufficient; request_id is preferred when known.
         Always returns success even when nothing was running, so the
         client's UX is idempotent.
+
+        The authorized ``(agent_id, session_id)`` pair, when the handler
+        resolved one, arrives through the request-scoped authorized target
+        (tasks 8.2/8.3) instead of a rewritten signature.
         """
+        authorized_session = authorized_target().get("session")
         try:
             from agent.protocol import get_cancel_registry
 
@@ -2746,10 +2759,15 @@ class WebChannel(ChatChannel):
             logger.error(f"[WebChannel] cancel_request error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
 
-    def poll_response(self, *, authorized_session=None):
+    def poll_response(self):
         """
         Poll for responses using the session_id.
+
+        The authorized ``(agent_id, session_id)`` pair, when the handler
+        resolved one, arrives through the request-scoped authorized target
+        (tasks 8.2/8.3) instead of a rewritten signature.
         """
+        authorized_session = authorized_target().get("session")
         try:
             data = web.data()
             json_data = json.loads(data)
@@ -3167,9 +3185,10 @@ class MessageHandler:
             agent_id = _authorize_chat_session(
                 ctx, session_id, _request_agent_id(body), create=creating,
             )
-            return WebChannel().post_message(
-                auth_context=ctx, authorized_session=(agent_id, session_id),
-            )
+            with authorized_target_scope(
+                auth_context=ctx, session=(agent_id, session_id),
+            ):
+                return WebChannel().post_message()
 
 
 class UploadHandler:
@@ -3188,7 +3207,8 @@ class UploadHandler:
             agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
             _require_private_owner(ctx, agent_id)
             _require_agent_action(ctx, agent_id, "use", "agent.use")
-            return WebChannel().upload_file(agent_id=agent_id)
+            with authorized_target_scope(agent_id=agent_id):
+                return WebChannel().upload_file()
 
 
 class VoiceAsrHandler:
@@ -3522,7 +3542,8 @@ class PollHandler:
             body = _chat_body()
             session_id = body.get("session_id")
             agent_id = _authorize_chat_session(ctx, session_id, _request_agent_id(body))
-            return WebChannel().poll_response(authorized_session=(agent_id, session_id))
+            with authorized_target_scope(session=(agent_id, session_id)):
+                return WebChannel().poll_response()
 
 
 class CancelHandler:
@@ -3544,7 +3565,8 @@ class CancelHandler:
             else:
                 session_id = body.get("session_id")
                 agent_id = _authorize_chat_session(ctx, session_id, _request_agent_id(body))
-            return channel.cancel_request(authorized_session=(agent_id, session_id))
+            with authorized_target_scope(session=(agent_id, session_id)):
+                return channel.cancel_request()
 
 
 class StreamHandler:
@@ -3596,10 +3618,30 @@ class ChatHandler:
         # identity-admin.js carries the tabbed editors: if it is missed here a
         # browser can keep rendering the previous (per-tab save) editor even
         # though the server already ships the unified-save one.
-        for asset in ('js/console.js', 'js/workspace.js', 'js/doc-editor.js',
-                      'js/appearance.js', 'js/scenes/index.js',
-                      'js/identity-admin.js', 'js/todos.js',
-                      'css/console.css', 'css/appearance.css'):
+        assets = ['js/console.js', 'js/workspace.js', 'js/doc-editor.js',
+                  'js/appearance.js', 'js/scenes/index.js',
+                  'js/identity-admin.js', 'js/todos.js', 'js/fragments.js',
+                  'css/console.css', 'css/appearance.css']
+        # The per-domain i18n namespaces are discovered rather than listed: the
+        # split (task 8.5) adds files over time, and a name missed here would
+        # leave a browser rendering an upgraded console with a stale dictionary.
+        try:
+            i18n_dir = os.path.join(os.path.dirname(__file__), 'static', 'js', 'i18n')
+            assets += [f'js/i18n/{name}' for name in sorted(os.listdir(i18n_dir))
+                       if name.endswith('.js')]
+        except OSError:
+            pass
+        # Fork fragments (task 8.8) are fetched at runtime by fragments.js, so
+        # they need the same cache-busting as the scripts: a browser-cached copy
+        # would keep mounting stale fork markup after an upgrade. Discovered
+        # rather than listed so a new fragment needs no server edit.
+        try:
+            fragments_dir = os.path.join(os.path.dirname(__file__), 'static', 'fragments')
+            assets += [f'fragments/{name}' for name in sorted(os.listdir(fragments_dir))
+                       if name.endswith('.html')]
+        except OSError:
+            pass
+        for asset in assets:
             html = html.replace(f'assets/{asset}', f'assets/{asset}?v={cache_bust}')
         # Inject the backend-resolved default language for first-load fallback.
         html = html.replace("{{COW_DEFAULT_LANG}}", i18n.get_language())

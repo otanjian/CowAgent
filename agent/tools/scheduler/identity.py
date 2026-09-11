@@ -84,6 +84,42 @@ def owner_snapshot(context) -> Optional[dict]:
     }
 
 
+def execution_identity(task: dict, agent_id: Optional[str] = None):
+    """The identity a stored task fires under — the single resolver (8.15/8.16).
+
+    A scheduled task has exactly two possible shapes, and this is the one place
+    that decides which applies:
+
+    * **tenant member** — the task carries an ``owner`` snapshot taken at
+      creation. The fire re-runs as that member, so workspace, conversation
+      state and memory resolve the way they did for the person who asked. The
+      session is the task's notify session when it has one, so a recurring task
+      keeps reporting into the conversation it came from;
+    * **Agent-only** — a legacy task (no owner, or an owner without
+      user/tenant). The historical Agent-scoped behaviour is kept exactly.
+
+    Nothing else here: authorization (``revalidate_owner``) runs *before* this
+    and is a policy over the snapshot, and delivery/run-recording are downstream
+    of the fire. Keeping the decision in one function is what stops a second
+    resolver appearing next to it — the failure mode this convergence exists to
+    remove (8.16).
+
+    Identity reaches the runtime only through ``common/runtime_identity``.
+    """
+    from common.runtime_identity import RuntimeIdentity
+
+    owner = (task or {}).get("owner") or {}
+    if owner.get("user_id") and owner.get("tenant_id"):
+        return RuntimeIdentity(
+            agent_id=agent_id,
+            user_id=owner["user_id"],
+            tenant_id=owner["tenant_id"],
+            session_id=((task or {}).get("action") or {}).get("notify_session_id")
+            or owner.get("session_id") or "",
+        )
+    return RuntimeIdentity(agent_id=agent_id)
+
+
 def revalidate_owner(task) -> Optional[str]:
     """Re-check the task's creator before a fire.
 

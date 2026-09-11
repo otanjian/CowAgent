@@ -765,6 +765,12 @@
     // ---- expose to global scope for onclick/fetch --------------------------
     window.loadTodosView = loadTodosView;
     window.refreshTodosView = refreshTodosView;
+    // Register the fork TODO view with console.js (change
+    // fork-decoupling-and-tenant-hardening, task 8.6). No `repaint`: a language
+    // switch left this view untouched before, and it still does.
+    if (typeof window.registerConsoleView === 'function') {
+        window.registerConsoleView({ id: 'todo', label: 'menu_todo', load: loadTodosView });
+    }
     window.openTodoCreate = openTodoCreate;
     window.openTodoEdit = openTodoEdit;
     window.openTodoDetail = openTodoDetail;

@@ -230,6 +230,14 @@ class TestWorkbenchFrontEnd(unittest.TestCase):
     def _read(relative):
         return (Path(__file__).resolve().parents[1] / relative).read_text(encoding="utf-8")
 
+    def _i18n_text(self):
+        """The console's merged locale layer: console.js + i18n namespaces."""
+        root = Path(__file__).resolve().parents[1] / "channel/web/static/js"
+        parts = [self._read("channel/web/static/js/console.js")]
+        parts += [p.read_text(encoding="utf-8")
+                  for p in sorted((root / "i18n").glob("*.js"))]
+        return "\n".join(parts)
+
     def test_console_reads_workbench_projection(self):
         js = self._read("channel/web/static/js/console.js")
         assert "fetch('/api/agents?view=workbench'," in js
@@ -261,7 +269,10 @@ class TestWorkbenchFrontEnd(unittest.TestCase):
         assert "refreshWorkbenchAfterUnavailable" in js
 
     def test_workbench_i18n_keys_present(self):
-        js = self._read("channel/web/static/js/console.js")
+        # Task 8.5 split the dictionaries into per-domain namespace files
+        # (console.js merges window.__cowI18N__ at load time), so the keys are
+        # asserted against the merged locale layer.
+        js = self._i18n_text()
         for key in ("agent_workbench_title", "agent_workbench_refresh",
                     "agent_workbench_empty", "agent_workbench_failed",
                     "agent_target_unavailable", "agent_permission_denied",

@@ -277,7 +277,11 @@ test('the list renders the runtime notice', () => {
 });
 
 test('the secret note promises immediate effect, not a maintenance restart', () => {
-    const lines = source.split('\n').filter(l => l.includes('tenant_channel_secret_note:'));
+    // The dictionaries moved to per-domain namespace files (task 8.5), so the
+    // note is asserted where it now lives.
+    const tenantChannelI18n = fs.readFileSync(
+        path.join(__dirname, '../channel/web/static/js/i18n/tenant-channel.js'), 'utf8');
+    const lines = tenantChannelI18n.split('\n').filter(l => /tenant_channel_secret_note["']?\s*:/.test(l));
     assert.equal(lines.length, 3, 'zh / zh-Hant / en must all carry the note');
     assert.ok(lines.some(l => /即时生效/.test(l)), 'zh must say it takes effect now');
     assert.ok(lines.some(l => /即時生效/.test(l)), 'zh-Hant must say it takes effect now');

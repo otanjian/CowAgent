@@ -5,74 +5,23 @@
 // both directions for the keys this change introduced: they exist in all three
 // languages, and every key the new code calls actually exists.
 //
-// The dictionaries are extracted by brace matching rather than JSON.parse: the
-// I18N literal contains functions and is extended later with Object.assign.
+// The dictionaries used to be extracted from console.js by brace matching.
+// After change fork-decoupling-and-tenant-hardening (task 8.5) they live in the
+// per-domain namespace files under static/js/i18n/; the shared loader merges
+// them the same way console.js does.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { loadDictionaries } = require('./support/i18n_namespaces.cjs');
 
 const source = fs.readFileSync(path.join(__dirname, '../channel/web/static/js/console.js'), 'utf8');
 const LANGS = ['zh', 'zh-Hant', 'en'];
 
-function blockEnd(src, openIdx) {
-    let depth = 0;
-    let quote = null;
-    for (let i = openIdx; i < src.length; i++) {
-        const c = src[i];
-        if (quote) {
-            if (c === '\\') { i++; continue; }
-            if (c === quote) quote = null;
-            continue;
-        }
-        if (c === '"' || c === "'" || c === '`') { quote = c; continue; }
-        if (c === '/' && src[i + 1] === '/') {
-            const nl = src.indexOf('\n', i);
-            i = nl === -1 ? src.length : nl;
-            continue;
-        }
-        if (c === '/' && src[i + 1] === '*') {
-            const close = src.indexOf('*/', i);
-            i = close === -1 ? src.length : close + 1;
-            continue;
-        }
-        if (c === '{') depth++;
-        else if (c === '}') {
-            depth--;
-            if (depth === 0) return i;
-        }
-    }
-    throw new Error('unbalanced braces at ' + openIdx);
-}
-
-function dictionaries(src) {
-    const out = { zh: '', 'zh-Hant': '', en: '' };
-    const baseIdx = src.indexOf('const I18N = {');
-    assert.ok(baseIdx >= 0, 'the I18N literal is still where this test expects it');
-    const baseOpen = src.indexOf('{', baseIdx);
-    const base = src.slice(baseOpen, blockEnd(src, baseOpen) + 1);
-    for (const lang of LANGS) {
-        const re = new RegExp("(?:^|[\\s,{])'?" + lang + "'?\\s*:\\s*\\{");
-        const m = re.exec(base);
-        assert.ok(m, 'the base literal still declares ' + lang);
-        const open = base.indexOf('{', m.index + m[0].length - 1);
-        out[lang] += base.slice(open, blockEnd(base, open) + 1);
-    }
-    const assign = /Object\.assign\(\s*I18N(?:\.([A-Za-z-]+)|\[\s*['"]([A-Za-z-]+)['"]\s*\])\s*,\s*\{/g;
-    let m;
-    while ((m = assign.exec(src))) {
-        const lang = m[1] || m[2];
-        if (!LANGS.includes(lang)) continue;
-        const open = m.index + m[0].length - 1;
-        out[lang] += '\n' + src.slice(open, blockEnd(src, open) + 1);
-    }
-    return out;
-}
-
-const dicts = dictionaries(source);
+const dicts = loadDictionaries();
 
 function hasKey(lang, key) {
-    return new RegExp('\\b' + key + '\\s*:').test(dicts[lang]);
+    return Object.prototype.hasOwnProperty.call(dicts[lang] || {}, key);
 }
 
 // The keys this change introduces, grouped by the surface that renders them.
@@ -107,9 +56,8 @@ test('every key this change adds exists in all three languages', () => {
 test('the tenant-channel key set is identical across languages', () => {
     const keysOf = (lang) => {
         const keys = new Set();
-        const re = /\b(tenant_channel_[a-z_]+|channels_(?:not_open|no_permission|load_failed)[a-z_]*)\s*:/g;
-        let m;
-        while ((m = re.exec(dicts[lang]))) keys.add(m[1]);
+        const re = /^(tenant_channel_[a-z_]+|channels_(?:not_open|no_permission|load_failed)[a-z_]*)$/;
+        for (const key of Object.keys(dicts[lang] || {})) if (re.test(key)) keys.add(key);
         return keys;
     };
     const per = LANGS.map(keysOf);
@@ -145,8 +93,8 @@ test('every translated key the new channels code calls exists', () => {
     }
 });
 
-test('the dictionary scanner is not silently reading empty blocks', () => {
+test('the dictionary loader is not silently reading empty blocks', () => {
     for (const lang of LANGS) {
-        assert.ok(dicts[lang].includes('cancel'), lang + ' dictionary content was not extracted');
+        assert.ok(hasKey(lang, 'cancel'), lang + ' dictionary content was not extracted');
     }
 });

@@ -5,6 +5,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { loadDictionaries } = require('./support/i18n_namespaces.cjs');
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
@@ -49,7 +50,13 @@ test('the global default permission reads as owned by roles in database mode', (
     const consoleJs = read('channel/web/static/js/console.js');
     assert.match(consoleJs, /permission_mode_editable/);
     assert.match(consoleJs, /cfg-dropdown-readonly/);
-    assert.match(consoleJs, /config_permission_role_desc/);
+    // The dictionary moved to a per-domain namespace file (task 8.5); the
+    // localized read-only explanation must still ship in every language.
+    const dicts = loadDictionaries();
+    for (const lang of ['zh', 'zh-Hant', 'en']) {
+        assert.ok(Object.prototype.hasOwnProperty.call(dicts[lang] || {}, 'config_permission_role_desc'),
+            `config_permission_role_desc is missing from the ${lang} dictionary`);
+    }
     assert.match(read('channel/web/chat.html'), /cfg-permission-role-desc/);
 
     // Desktop settings page: same read-only treatment.

@@ -535,6 +535,20 @@ class BrandingFrontendTests(unittest.TestCase):
         with open(os.path.join(self.ROOT, relative), "r", encoding="utf-8") as f:
             return f.read()
 
+    def _i18n_text(self):
+        """The console's whole locale layer, as loaded at runtime.
+
+        ``console.js`` plus every ``static/js/i18n/*.js`` namespace: task 8.5
+        split the dictionaries out of ``console.js``, so a "all three locales
+        define key X" contract has to be checked against the merged layer.
+        """
+        i18n_dir = os.path.join(self.ROOT, "channel/web/static/js/i18n")
+        parts = [self._read("channel/web/static/js/console.js")]
+        for name in sorted(os.listdir(i18n_dir)):
+            if name.endswith(".js"):
+                parts.append(self._read(os.path.join("channel/web/static/js/i18n", name)))
+        return "\n".join(parts)
+
     def test_html_has_branding_view_and_menu(self):
         html = self._read("channel/web/chat.html")
         self.assertIn('data-view="branding"', html)
@@ -571,12 +585,17 @@ class BrandingFrontendTests(unittest.TestCase):
         self.assertIn("effectiveLogoUrl()", js)
 
     def test_js_has_trilingual_branding_labels(self):
-        js = self._read("channel/web/static/js/console.js")
+        # Task 8.5 moved the dictionary literals out of ``console.js`` into
+        # per-domain namespace files, so the contract ("all three locales carry
+        # the branding set") is asserted against the merged layer the console
+        # actually builds at load time.
+        js = self._i18n_text()
         # All three languages carry the branding set: zh (简体), zh-Hant (繁體),
-        # en. The keys are the same, only the text differs.
-        self.assertEqual(js.count("branding_save:"), 3)
-        self.assertEqual(js.count("branding_reset_all:"), 3)
-        self.assertEqual(js.count("branding_conflict:"), 3)
+        # en. The keys are the same, only the text differs. Namespaces declare
+        # them as quoted JSON keys, so the count is on the ``"key":`` form.
+        self.assertEqual(js.count('"branding_save":'), 3)
+        self.assertEqual(js.count('"branding_reset_all":'), 3)
+        self.assertEqual(js.count('"branding_conflict":'), 3)
 
 
 class BrandingBackupServiceTests(unittest.TestCase):

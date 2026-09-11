@@ -310,6 +310,19 @@ def test_write_handler_falls_back_to_state_root_for_system_assets(tmp_path):
 # ----------------------------------------------------------------------
 # Frontend contract
 # ----------------------------------------------------------------------
+def _i18n_count(root, needle):
+    """Occurrences of ``needle`` in the split locale namespaces (task 8.5).
+
+    The dictionaries now live in ``channel/web/static/js/i18n/*.js``; the
+    console merges them at load time, so a key present in all three locales
+    shows up three times across those files.
+    """
+    total = 0
+    for path in sorted((root / "channel/web/static/js/i18n").glob("*.js")):
+        total += path.read_text(encoding="utf-8").count('"%s":' % needle)
+    return total
+
+
 def test_web_console_editor_contract():
     root = Path(__file__).parents[1]
     html = (root / "channel/web/chat.html").read_text(encoding="utf-8")
@@ -342,13 +355,15 @@ def test_web_console_editor_contract():
     assert "data.code === 'conflict'" in js
 
     assert ".ws-editor" in css
-    # Every string the editor shows must exist in all three locales.
+    # Every string the editor shows must exist in all three locales. Task 8.5
+    # split the dictionaries into per-domain namespace files, so the count runs
+    # over the merged locale layer (console.js + static/js/i18n/*.js).
     for key in ("ws_edit", "ws_edit_save", "ws_edit_cancel", "ws_edit_saved",
                 "ws_edit_save_failed", "ws_edit_load_failed", "ws_edit_too_large",
                 "ws_edit_unsupported", "ws_edit_encoding", "ws_edit_conflict_title",
                 "ws_edit_conflict_msg", "ws_edit_overwrite", "ws_edit_discard_title",
                 "ws_edit_discard_msg", "ws_edit_discard_ok"):
-        assert console.count(f"{key}:") == 3, key
+        assert _i18n_count(root, key) == 3, key
 
     # An unchanged file must not be rewritten, and Ctrl+S must not be able to
     # race a second write against the first one's mtime.

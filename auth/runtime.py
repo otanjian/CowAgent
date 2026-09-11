@@ -108,6 +108,49 @@ def cached_gate_context(require_tenant: bool) -> Optional[RequestContext]:
     return (_GATE_CONTEXT.get() or {}).get(bool(require_tenant))
 
 
+# --------------------------------------------------------------------------- #
+# Per-request authorized *target*
+#
+# The web handlers authorize a concrete target before the channel is called:
+# which Agent a chat may run as, which session it may touch, which Agent an
+# upload may write into. Upstream's channel methods take no such argument, and
+# adding one is what turned every upstream edit in this area into a merge
+# conflict (design D11, tasks 8.2/8.3). So the decision is published here for
+# the duration of the call and read back inside the channel:
+#
+# * authorization still happens *before* the channel method, in the handler,
+#   where the policy gate and the IDOR checks run;
+# * the channel keeps upstream's signature and body, so upstream edits land
+#   cleanly and a missing seam degrades to upstream's own defaults (resolve the
+#   Agent through the router, or no target at all) instead of crashing.
+# --------------------------------------------------------------------------- #
+
+_AUTHORIZED_TARGET: ContextVar = ContextVar("cow_authorized_target", default=None)
+
+
+@contextmanager
+def authorized_target_scope(**target: Any) -> Iterator[dict]:
+    """Publish the authorized chat/upload target for the duration of the block.
+
+    Restored on exit, so a pooled ``web.py`` worker thread cannot carry one
+    request's authorized Agent (or session) into the next request.
+    """
+    token = _AUTHORIZED_TARGET.set(dict(target))
+    try:
+        yield target
+    finally:
+        _AUTHORIZED_TARGET.reset(token)
+
+
+def authorized_target() -> dict:
+    """The authorized target for this request; ``{}`` when none was published.
+
+    A copy, so a caller cannot mutate the published target for handlers
+    downstream in the same request.
+    """
+    return dict(_AUTHORIZED_TARGET.get() or {})
+
+
 def resolve_context(
     svc: IdentityService,
     token: str,

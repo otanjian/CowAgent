@@ -13,6 +13,7 @@ import web
 import config
 from agent.registry import AgentProfile, AgentRegistry
 from agent.memory import clear_conversation_store_cache
+from auth.runtime import authorized_target
 from auth.service import IdentityService
 from auth.session import SessionStore, generate_token
 from channel.web import web_channel
@@ -69,8 +70,13 @@ class ChatIdentityContextTests(unittest.TestCase):
         self.app = web_channel.build_web_app()
 
         self.identities = []
+        self.authorized_target = {}
 
-        def post_message(**kwargs):
+        # Stands in for the real ``WebChannel.post_message``: upstream signature,
+        # reading what the handler authorized from the request-scoped seam
+        # (task 8.2/8.3).
+        def post_message():
+            self.authorized_target = authorized_target()
             self.identities.append(current_identity())
             web.header("Content-Type", "application/json; charset=utf-8")
             return json.dumps({"status": "success", "request_id": "chat-test"})
@@ -147,8 +153,7 @@ class ChatIdentityContextTests(unittest.TestCase):
         self.assertEqual(response.status, "200 OK")
         self.assertEqual(self._json(response)["status"], "success")
         self.post_message.assert_called_once()
-        self.assertEqual(self.post_message.call_args.kwargs["authorized_session"],
-                         ("chat-agent", "chat-test"))
+        self.assertEqual(self.authorized_target["session"], ("chat-agent", "chat-test"))
         self.assertEqual(self.identities[0].user_id, self.user_id)
         self.assertEqual(self.identities[0].tenant_id, self.tenant_id)
         self.assertEqual(current_identity(), previous)

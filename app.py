@@ -595,35 +595,33 @@ def _migrate_team_roster():
 
 
 def _guard_identity_mode_consistency():
-    """Abort startup if legacy mode would read already-migrated identity data.
+    """Run the registered identity-mode guards (seam, tasks 8.9 + 6.11).
 
-    ``identity_mode=legacy`` must never silently open ``identity.db`` that was
-    already migrated to the new IAM mode (task 4.6, isolation spec). When that
-    happens the database holds authoritative new-mode data; continuing in
-    legacy would read it through the wrong (shared-password) path.
+    The guard itself lives in ``common/startup_hooks.py``; this entry point
+    only runs whatever is registered, so an upstream edit to the boot sequence
+    never merges against fork-specific guard logic. With no hook registered
+    (the fork's module absent) this is a no-op and upstream boots unchanged.
     """
-    try:
-        from config import conf, get_data_root
-        from auth.store import refuse_legacy_after_migration
-        mode = str(conf().get("identity_mode", "legacy") or "legacy")
-        configured = conf().get("identity_db_path")
-        db_path = configured or os.path.join(get_data_root(), "identity.db")
-        if refuse_legacy_after_migration(mode, db_path):
-            logger.error(
-                f"[App] Refusing to start: identity.db at {db_path} has already "
-                f"been migrated to the 'database' identity mode, but config "
-                f"'identity_mode={mode}'. Either set identity_mode=database "
-                f"(the identity data is authoritative) or restore a pre-migration "
-                f"snapshot before booting legacy. Refusing to read new-mode data "
-                f"in legacy mode."
-            )
-            # Desktop shell treats non-zero as a real startup failure; servers
-            # should not limp along reading the wrong identity either.
-            raise RuntimeError("refusing to boot legacy over migrated identity.db")
-    except Exception as e:
-        if isinstance(e, RuntimeError):
-            raise
-        logger.warning(f"[App] Identity-mode consistency check skipped: {e}")
+    from common.startup_hooks import HOOK_IDENTITY_MODE_CONSISTENCY, run_startup_hook
+
+    return run_startup_hook(HOOK_IDENTITY_MODE_CONSISTENCY)
+
+
+def _migrate_conversation_tenancy():
+    """Run the registered conversation-store migrations (seam, task 6.11).
+
+    Placeholder for upstream's own ``_migrate_conversations()`` each time it
+    lands in the boot sequence: the fork's tenancy dimension is a *filter*
+    dimension on the store's composed schema (design D10), so this side only
+    fills ``owner``/``tenant_id`` columns and never splits the store per Agent.
+    The two therefore compose instead of contradicting each other.
+    """
+    from common.startup_hooks import (
+        HOOK_TENANT_CONVERSATION_BACKFILL,
+        run_startup_hook,
+    )
+
+    return run_startup_hook(HOOK_TENANT_CONVERSATION_BACKFILL)
 
 
 def _warn_if_legacy_workspace_data_exists():
@@ -758,6 +756,7 @@ def run():
         load_config()
         _guard_identity_mode_consistency()
         _migrate_team_roster()
+        _migrate_conversation_tenancy()
         _warn_if_legacy_workspace_data_exists()
         # ctrl + c
         sigterm_handler_wrap(signal.SIGINT)

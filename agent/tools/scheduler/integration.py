@@ -107,26 +107,6 @@ def init_scheduler(agent_bridge, workspace_root: str = None, agent_id: str = Non
             return False
 
 
-def _execution_identity(task: dict, agent_id: str = None):
-    """Resolve the identity a task fires under.
-
-    Tasks created by a database tenant member carry an owner snapshot; the
-    fire then re-runs as that member (member workspace / conversation state /
-    memory), not as the bare Agent. Legacy tasks (no owner) keep the historical
-    Agent-only scope.
-    """
-    from common.runtime_identity import RuntimeIdentity
-
-    owner = (task or {}).get("owner") or {}
-    if owner.get("user_id") and owner.get("tenant_id"):
-        return RuntimeIdentity(
-            agent_id=agent_id,
-            user_id=owner["user_id"],
-            tenant_id=owner["tenant_id"],
-            session_id=((task or {}).get("action") or {}).get("notify_session_id")
-            or owner.get("session_id") or "",
-        )
-    return RuntimeIdentity(agent_id=agent_id)
 
 
 def _make_execute_callback(agent_bridge, agent_id: str, task_store):
@@ -177,7 +157,10 @@ def _make_execute_callback(agent_bridge, agent_id: str, task_store):
                     )
                 return True  # do not deliver, do not retry this tick
 
-            with use_identity(_execution_identity(task, agent_id)):
+            # Single identity resolver (8.15/8.16): the fork's decision
+            # lives in scheduler/identity.py, so this upstream file holds
+            # no fork-only identity branch to conflict on.
+            with use_identity(sched_identity.execution_identity(task, agent_id)):
                 action = task.get("action", {})
                 action_type = action.get("type")
                 channel_type = _primary_channel_type(action.get("channel_type"))
