@@ -357,6 +357,29 @@ class GateIntegrationTests(unittest.TestCase):
         resp = self._request("/api/platform/users")
         self.assertEqual(resp.status, "401 Unauthorized")
 
+    def test_a_browser_navigation_can_still_load_the_console_shell(self):
+        """The SPA shell is a document, not tenant data.
+
+        A top-level browser navigation cannot send ``X-Tenant-ID``, so the gate
+        must not demand a selection for ``GET /chat`` / ``GET /admin``: doing so
+        returned 400 to every browser visit (``/`` redirects to ``/chat``) and
+        the login UI never rendered. The shell carries no tenant data — every
+        data API behind it keeps its own ``tenant``/``platform`` policy.
+        """
+        self._patch_db()
+        for path in ("/chat", "/admin"):
+            with self.subTest(path=path):
+                resp = self._request(path, headers={
+                    "Accept": "text/html,application/xhtml+xml"})
+                self.assertEqual(resp.status, "200 OK")
+                self.assertIn("text/html", resp.headers.get("Content-Type", ""))
+
+    def test_the_shell_is_still_served_to_an_authenticated_browser(self):
+        self._patch_db()
+        resp = self._request("/chat", headers={
+            "Accept": "text/html", "Cookie": f"cow_session={self.token}"})
+        self.assertEqual(resp.status, "200 OK")
+
     def test_gate_does_not_replace_object_level_ownership_checks(self):
         """A valid context is not an authorization to any object.
 

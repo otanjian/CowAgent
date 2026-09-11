@@ -183,3 +183,13 @@
 # Declared in ROUTE_POLICY but NOT implemented by any handler (dead entry; the
 # gate let the request through and web.py answered 405):
 /api/sessions/(.*)	GET	REMOVED	-
+
+# --- Revised by browser verification (task 10.1) ---
+# A top-level document navigation cannot send X-Tenant-ID. With the gate now
+# enforcing the table, `/` -> `/chat` answered 400 missing_tenant before the
+# handler on every browser visit, so the login UI never rendered. The shell is
+# not tenant data: it is a document, and every data API it loads keeps its own
+# tenant/platform policy (the gate's purpose). Both are therefore public, which
+# is also the pre-change effective behavior (the gate was a no-op for them).
+/chat	GET	public	-
+/admin	GET	public	-

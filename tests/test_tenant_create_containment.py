@@ -22,6 +22,7 @@ from unittest.mock import patch
 
 from auth.service import IdentityService, IdentityServiceError
 from agent.registry import AgentProfile, AgentRegistry, set_agent_registry
+from config import conf
 
 
 class TenantCreateContainmentTests(unittest.TestCase):
@@ -63,9 +64,14 @@ class TenantCreateContainmentTests(unittest.TestCase):
         """No configured base and workspace == default root: refuse to derive
         a nested root (503 config_error), persist nothing."""
         # Force the "no controlled base" condition regardless of ambient state:
-        # another test may have left COW_TENANT_BASE behind, which would make
-        # this test silently exercise the configured-base path instead.
-        with patch.dict(os.environ, {"COW_TENANT_BASE": ""}, clear=False):
+        # another test may have left COW_TENANT_BASE behind, or -- since
+        # ``get_tenant_shared_base()`` falls back to the config key once the env
+        # var is empty -- a test that called ``load_config()`` may have pulled a
+        # ``tenant_shared_base`` out of a checked-in ``config.json``. Patch both
+        # channels, so this test always exercises the "nothing configured" path
+        # instead of silently deriving a root from an ambient base.
+        with patch.dict(os.environ, {"COW_TENANT_BASE": ""}, clear=False), \
+                patch.dict(conf(), {"tenant_shared_base": ""}):
             with self.assertRaises(IdentityServiceError) as cm:
                 self._create("e2e-target")
         self.assertEqual(cm.exception.code, "config_error")

@@ -40,9 +40,12 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _BASELINE = os.path.join(_REPO_ROOT, "scripts", "route-baseline.txt")
 
 #: The five routes measured as registered in ``_WEB_URLS`` but absent from
-#: ``ROUTE_POLICY``, with the verified policy each now carries.
+#: ``ROUTE_POLICY``, with the verified policy each now carries (``/admin`` was
+#: later revised from ``tenant`` to ``public`` by browser verification: a
+#: document navigation cannot send ``X-Tenant-ID``, so a ``tenant`` shell route
+#: answered 400 to every browser visit — see ``scripts/route-baseline.txt``).
 _GAP_ROUTES = (
-    ("/admin", "GET", "tenant"),
+    ("/admin", "GET", "public"),
     ("/api/identity/administered-tenants", "GET", "personal"),
     ("/api/scenes", "GET", "tenant"),
     ("/api/scenes/activate", "POST", "tenant"),
