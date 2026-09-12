@@ -10,6 +10,8 @@
 3. **不使用 `color-mix`**。仓库内只有 Desktop 用了该特性，Web 控制台未使用，为避免扩大浏览器基线，分隔线与边框继续走 `--web-border`。
 4. **提示行内化用 flex 而非绝对定位**。控制区行内把工具组改为 `flex: 0 1 auto`、提示改 `flex: 1 1 auto`，提示自然占据中间空隙；窄屏 `flex-basis: 100%` 独占一行。避免绝对定位在窄屏与换行时的重叠。
 5. **分隔线通栏用内边距变量反算**。卡片横向内边距抽成 `--composer-pad-x`，分隔线取 `margin: 0 calc(-1 * var(--composer-pad-x))`，窄屏只改一处变量即可保持通栏对齐。
+6. **账号卡片不改成两行，层级改由字重与头像描边承担**。`sidebar-account-menu` 明确要求按钮是「紧凑的单行」，并写明 `@用户名` 不要求在按钮里另占一行；因此把 `.sidebar-account-subtitle` 从视觉隐藏改为可见会直接反向修改该 requirement。本 change 改为在单行内建立层级：姓名提到 600 字重，28px 头像（规范固定值）加一层取 `--web-sidebar-border` 的 inset 描边，描边颜色随配色走而不是固定色。这样既满足 brief 的「优化排版层级」，又不触碰账号身份与菜单的既有契约。
+7. **待办角标只改呈现，不改数量口径**。数量文本由 `todos.js` 的 `applySummaryBadge()` 依据 `todo-workbench` 既有 summary（0 隐藏、逾期走 `bg-red-500`）写入，本 change 只补 CSS：数字与背景对比度不低于 4.5:1，默认态加 `--web-sidebar-border` 描边以便在浅色侧栏上成形，逾期态保留危险色但持续以数字表达。因此不新增 `todo-workbench` delta。
 
 ## 分阶段门槛
 
@@ -21,8 +23,9 @@
 
 ## 未决实施参数
 
-- 输入框圆角 20px 与「大容器统一 12px 圆角」的 brief 冲突，待圆角体系定稿。
-- `test_appearance_browser.cjs` 的 `button.example-card` 计数断言（3）与实现及新规范的六个不一致，需产品确认后单独修正；该文件当前因缺 Playwright 无法运行。
+- 输入框圆角 20px 与「大容器统一 12px 圆角」的 brief 冲突，待圆角体系定稿。本 change 内按附图 2 取 20px。
+- `test_appearance_browser.cjs` 的 `button.example-card` 计数断言已由 3 改为 6 以对齐实现与新规范，但该文件因缺 Playwright 无法在本环境运行，仅以 `node --check` 确认语法。
+- 附图 2 的账号区含 `@用户名/租户` 副标题；因 `sidebar-account-menu` 明令单行，副标题未启用。若产品确需副标题，须先修改该 requirement 再实施。
 
 ## 冲突基线覆盖
 

@@ -61,3 +61,27 @@
 #### Scenario: Short or narrow viewport
 - **WHEN** 首页显示在 375px 窄屏或 1280×720 视口
 - **THEN** 首页整体可滚动，输入、快捷入口与关闭操作可达，无横向溢出；输入区提示在放不下时独占一行完整可读，消息态保留独立消息滚动
+
+## ADDED Requirements
+
+### Requirement: Legible sidebar status and identity details
+
+侧栏待办角标与账号卡片 SHALL 在既有三套配色与明暗组合下保持可读。待办角标 SHALL 呈现在 `todo-workbench` 中已定义的本人未完成数量文本（数量为 0 时隐藏，超过 99 时显示 `99+`），其数字与自身背景的前景对比度 SHALL 不低于 4.5:1，并 SHALL 以环形描边与侧栏背景分离。默认状态与逾期状态 SHALL 可区分，且逾期 MUST NOT 仅依靠颜色表达。角标在桌面侧栏收起为图标列时 SHALL 不遮挡或挤压导航图标。
+
+账号卡片 SHALL 保持 `sidebar-account-menu` 已定义的单行紧凑契约：普通指针设备最小高度为 40px，头像保持 28px 圆角，姓名保持单行省略。`@用户名` SHALL 继续保留在悬停提示、辅助技术可读内容及展开菜单中，MUST NOT 因本能力在按钮内新增第二行。信息层级 SHALL 通过姓名文字权重与头像描边等视觉手段建立，头像描边 SHALL 取当前配色下的侧栏边界色，MUST NOT 使用固定颜色。
+
+#### Scenario: Read the todo count under every palette
+- **WHEN** 用户在商务青蓝、深蓝侧栏或经典配色的浅色与深色下存在未完成待办
+- **THEN** 侧栏待办项显示未完成数量文本，数字与角标背景对比度不低于 4.5:1，且数字清晰可辨
+
+#### Scenario: Overdue count is not expressed by color alone
+- **WHEN** 存在逾期未完成待办
+- **THEN** 角标除使用危险色提示外仍以数量文本表达，不出现仅靠颜色区分逾期与正常的情形
+
+#### Scenario: Account card stays single-line
+- **WHEN** 账号显示名很长，或用户在粗指针设备与折叠侧栏下查看账号区
+- **THEN** 按钮保持紧凑单行且姓名省略显示，头像保持 28px 与配色描边，完整账号信息仍可在悬停提示与展开菜单中读取
+
+#### Scenario: Collapsed sidebar keeps the count out of the way
+- **WHEN** 桌面侧栏收起为图标列
+- **THEN** 待办数量角标不覆盖或挤压导航图标，账号区保留居中的头像入口

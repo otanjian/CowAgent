@@ -28,5 +28,14 @@
 - [x] 4.4 浏览器实测窄屏：375px 下为单列、`documentElement.scrollWidth === innerWidth === 375`、无越界元素，提示独占一行且未截断
 - [x] 4.5 浏览器实测配色：商务青蓝浅色、深色、深蓝侧栏浅色三种组合下分类色调归属一致且可辨
 - [x] 4.6 回归：`test_fork_fragments`、`test_execution_permission_ui`、`test_nav_area_frontend`、`test_channel_scope_nav_frontend`、`test_workbench_menu_grant_frontend`、`test_forced_password_gate`、`test_admin_home_frontend`、`test_composer_agents_frontend`、`test_agent_workbench_frontend` 与三个 i18n 键测试全部通过；两个既有失败项用 `git stash` 对照干净工作树确认失败数不变
-- [ ] 4.7 待产品确认：`test_appearance_browser.cjs` 中 `button.example-card` 计数断言为 3，与实现（六个）及本 change 后的规范（六个）不一致；该文件因缺 Playwright 无法在本环境运行，计数语义待确认后单独修正
-- [ ] 4.8 待统一：输入框 20px 圆角与「视觉设计优化」brief 中「大容器统一 12px 圆角」不一致，等圆角体系定稿后收敛
+- [x] 4.7 修正契约断言：`test_appearance_browser.cjs` 中三处 `button.example-card` 计数由 3 改为 6，与实现及本 change 后的规范一致；该文件在本环境仍因缺 Playwright 无法运行，已用 `node --check` 确认语法有效
+- [x] 4.8 记录圆角决策：`交付附图 2` 的输入框 20px 圆角与 `视觉设计优化` brief 中「大容器统一 12px 圆角」不一致，本 change 按附图 2 取 20px，待统一圆角规范定稿后再收敛
+
+## 5. 细节补全
+
+- [x] 5.1 `appearance.css`：待办角标补齐数字呈现（`todos.js` 已写入 `summary.open`），数字与角标背景对比度不低于 4.5:1，并以环形描边与侧栏背景分离
+- [x] 5.2 `appearance.css`：逾期角标除 `bg-red-500` 危险色外仍以数量文本表达，不使用颜色作为唯一区分
+- [x] 5.3 `appearance.css`：账号卡片保持单行紧凑契约（最小高度 40px、28px 头像、姓名单行省略），层级改由姓名 600 字重与配色描边的头像建立；`@用户名` 继续留在悬停提示与展开菜单，不在按钮内新增第二行
+- [x] 5.4 浏览器实测（`:9899/chat`）：商务青蓝/深蓝侧栏/经典 × 浅色/深色六种组合下账号卡片均为 40px 单行，28×28 头像带配色 inset 描边，姓名对比度 13.74 / 14.24 / 18.07 均高于 4.5:1
+- [x] 5.5 浏览器实测：待办数量为 0 时角标 `0×0` 且文本为空（符合 `todo-workbench` 的 0 隐藏口径），逾期态 `bg-red-500` 与默认态前景对比分别为 12.53 / 11.07 / 14.61 且均可区分
+- [x] 5.6 复核规范边界：账号卡片单行契约属 `sidebar-account-menu`、角标数量口径属 `todo-workbench`，两者既有 requirement 均未改动，本 change 只改视觉呈现，故 delta 仍收在 `workbench-appearance-preferences`

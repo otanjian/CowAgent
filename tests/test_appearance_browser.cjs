@@ -335,7 +335,7 @@ const panelAuditSelectors = [
         const page = await open(ctx);
         await state(page, { palette: 'business', mode: 'system', resolved: 'light', storageFailed: false });
         assert.deepEqual(await page.evaluate(() => [localStorage.getItem('cow_theme'), localStorage.getItem('cow_web_palette')]), [null, null]);
-        assert.equal(await page.locator('button.example-card').count(), 3);
+        assert.equal(await page.locator('button.example-card').count(), 6);
         assert.equal(await page.locator('#app header #chat-agent-identity').count(), 1);
         assert.equal(await page.locator('#app header').count(), 1);
         await panel(page);
@@ -644,7 +644,7 @@ const panelAuditSelectors = [
         const activeBeforeNewChat = await page.evaluate(() => ({ agent: activeAgentId, attachments: JSON.stringify(pendingAttachments) }));
         await page.locator('#sidebar-new-chat').click();
         await page.locator('#welcome-screen').waitFor({ state: 'attached' });
-        assert.equal(await page.locator('button.example-card').count(), 3);
+        assert.equal(await page.locator('button.example-card').count(), 6);
         assert.notEqual(await page.evaluate(() => sessionId), firstSession);
         assert.equal(await page.evaluate(() => window.__originalComposer === document.getElementById('chat-input')), true);
         assert.equal(await page.locator('#chat-input').inputValue(), 'Draft carried into new chat');
@@ -928,10 +928,10 @@ const panelAuditSelectors = [
             || v.geometry.dialogRect.left < 0 || v.geometry.dialogRect.right > v.width + 1
             || v.geometry.dialogRect.top < 0 || v.geometry.dialogRect.bottom > v.height + 1
             || !v.geometry.resetVisible || !v.geometry.closeVisible
-            || v.geometry.cardCount !== 3 || v.geometry.topHeaderHeight <= 0 || v.geometry.headerCount !== 1 || !v.geometry.agentInsideHeader);
+            || v.geometry.cardCount !== 6 || v.geometry.topHeaderHeight <= 0 || v.geometry.headerCount !== 1 || !v.geometry.agentInsideHeader);
         report.contrastFailures = badContrast;
         report.geometryFailures = badGeometry;
-        assert.deepEqual(badGeometry, [], 'Visual geometry must fit the viewport and use one header and three task buttons');
+        assert.deepEqual(badGeometry, [], 'Visual geometry must fit the viewport and use one header and six task buttons');
         assert.deepEqual(badContrast, [], 'In-scope normal text must have at least 4.5:1 contrast');
     });
 
