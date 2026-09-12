@@ -680,12 +680,12 @@
                             <section class="home-suggestions" aria-labelledby="home-suggestions-title">
                                 <h2 id="home-suggestions-title" data-i18n="home_suggestions">也可以从这里开始</h2>
                                 <div class="home-suggestions-list">
-                                    <button type="button" class="example-card" data-prompt-key="home_workspace_prompt"><i class="far fa-folder-open" aria-hidden="true"></i><div><span data-i18n="home_workspace_title">查看工作空间</span><p data-i18n="home_workspace_text">快速了解文件与目录</p></div></button>
-                                    <button type="button" class="example-card" data-prompt-key="home_reminder_prompt"><i class="far fa-clock" aria-hidden="true"></i><div><span data-i18n="home_reminder_title">设置定时提醒</span><p data-i18n="home_reminder_text">把待办交给 AI 安排</p></div></button>
-                                    <button type="button" class="example-card" data-prompt-key="home_research_prompt"><i class="far fa-file-lines" aria-hidden="true"></i><div><span data-i18n="home_research_title">搜索并整理资料</span><p data-i18n="home_research_text">汇总信息，生成报告</p></div></button>
-                                    <button type="button" class="example-card" data-prompt-key="home_knowledge_prompt"><i class="fas fa-book" aria-hidden="true"></i><div><span data-i18n="home_knowledge_title">让 AI 梳理知识库</span><p data-i18n="home_knowledge_text">填写草稿，整理知识库内容</p></div></button>
-                                    <button type="button" class="example-card" data-prompt-key="home_skills_prompt"><i class="fas fa-puzzle-piece" aria-hidden="true"></i><div><span data-i18n="home_skills_title">探索工具与技能</span><p data-i18n="home_skills_text">发现 AI 可以帮你做什么</p></div></button>
-                                    <button type="button" class="example-card" data-prompt-key="home_commands_prompt"><i class="fas fa-terminal" aria-hidden="true"></i><div><span data-i18n="home_commands_title">指令中心</span><p data-i18n="home_commands_text">查看可用命令与使用方法</p></div></button>
+                                    <button type="button" class="example-card" data-hue="blue" data-prompt-key="home_workspace_prompt"><i class="far fa-folder-open example-card-icon" aria-hidden="true"></i><div><span data-i18n="home_workspace_title">查看工作空间</span><p data-i18n="home_workspace_text">快速了解文件与目录</p></div></button>
+                                    <button type="button" class="example-card" data-hue="green" data-prompt-key="home_reminder_prompt"><i class="far fa-clock example-card-icon" aria-hidden="true"></i><div><span data-i18n="home_reminder_title">设置定时提醒</span><p data-i18n="home_reminder_text">把待办交给 AI 安排</p></div></button>
+                                    <button type="button" class="example-card" data-hue="violet" data-prompt-key="home_research_prompt"><i class="far fa-file-lines example-card-icon" aria-hidden="true"></i><div><span data-i18n="home_research_title">搜索并整理资料</span><p data-i18n="home_research_text">汇总信息，生成报告</p></div></button>
+                                    <button type="button" class="example-card" data-hue="orange" data-prompt-key="home_knowledge_prompt"><i class="fas fa-book example-card-icon" aria-hidden="true"></i><div><span data-i18n="home_knowledge_title">让 AI 梳理知识库</span><p data-i18n="home_knowledge_text">填写草稿，整理知识库内容</p></div></button>
+                                    <button type="button" class="example-card" data-hue="cyan" data-prompt-key="home_skills_prompt"><i class="fas fa-puzzle-piece example-card-icon" aria-hidden="true"></i><div><span data-i18n="home_skills_title">探索工具与技能</span><p data-i18n="home_skills_text">发现 AI 可以帮你做什么</p></div></button>
+                                    <button type="button" class="example-card" data-hue="pink" data-prompt-key="home_commands_prompt"><i class="fas fa-terminal example-card-icon" aria-hidden="true"></i><div><span data-i18n="home_commands_title">指令中心</span><p data-i18n="home_commands_text">查看可用命令与使用方法</p></div></button>
                                 </div>
                             </section>
                             <p class="home-footer" data-i18n="home_footer">清晰描述目标，让每一次对话更有成果</p>
@@ -720,7 +720,7 @@
                                               placeholder="描述你的任务，或直接提问…"></textarea>
                                 </div>
 
-                                <p class="composer-hint" data-i18n="home_composer_hint">/ 使用指令 · @ 引用智能体或文件</p>
+                                <div class="composer-toolbar-rule" aria-hidden="true"></div>
                                 <div class="composer-toolbar">
                                     <div class="composer-group">
                                         <button id="new-chat-btn" type="button" class="composer-icon-btn"
@@ -746,6 +746,8 @@
                                             <i class="fas fa-chevron-down composer-chip-caret"></i>
                                         </button>
                                     </div>
+
+                                    <p class="composer-hint" data-i18n="home_composer_hint">/ 使用指令 · @ 引用智能体或文件</p>
 
                                     <div class="composer-group composer-group-end">
                                         <button id="model-selector-btn" type="button" class="composer-chip"

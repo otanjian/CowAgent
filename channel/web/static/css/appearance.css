@@ -536,10 +536,9 @@ html[data-web-palette] #composer-card .ws-sel-input-row button:hover { backgroun
 }
 
 /* Approved workbench home: a quiet navigation rail, one context header and a
-   left-aligned task composer. The real composer remains in place in the DOM;
+   centered task composer. The real composer remains in place in the DOM;
    display:contents and order only rearrange the empty conversation visually. */
-:root { --web-home-bg: #ffffff; --web-home-width: 920px; }
-:root.dark { --web-home-bg: var(--web-content-bg); }
+:root { --web-home-bg: var(--web-content-bg); --web-home-width: 920px; }
 
 html[data-web-palette] #sidebar {
     width: 240px;
@@ -743,8 +742,22 @@ html[data-web-palette] #chat-main.chat-home {
     margin-left: auto;
     margin-right: auto;
 }
-#chat-main.chat-home .home-intro { order: 1; margin-top: clamp(40px, 6.5vh, 80px); margin-bottom: 28px; }
-.home-intro .home-eyebrow { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-bottom: 18px; }
+/* Centered hero: the greeting, its supporting line and the composer share one
+   optical axis, with the vertical rhythm widening as the type scale grows. */
+#chat-main.chat-home .home-intro {
+    order: 1;
+    margin-top: clamp(36px, 6vh, 72px);
+    margin-bottom: clamp(28px, 3.6vh, 44px);
+    text-align: center;
+}
+.home-intro .home-eyebrow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    margin-bottom: 16px;
+}
 .home-intro #welcome-title { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 html[data-web-palette] .home-intro #welcome-title,
 html[data-web-palette] .home-intro #welcome-title .brand-ai {
@@ -757,22 +770,22 @@ html[data-web-palette] .home-intro #welcome-title .brand-ai {
 }
 html[data-web-palette] .home-intro .home-eyebrow { color: var(--web-accent-text); font-size: 14px; line-height: 1.6; }
 html[data-web-palette] .home-intro .home-greeting {
-    margin: 16px 0 14px;
+    margin: 0 auto 16px;
     color: var(--web-text-main);
-    font-size: clamp(27px, 2.6vw, 36px);
-    font-weight: 650;
-    line-height: 1.4;
+    font-size: clamp(30px, 3vw, 38px);
+    font-weight: 700;
+    line-height: 1.34;
     letter-spacing: -.035em;
     text-wrap: balance;
 }
 html[data-web-palette] .home-intro .home-description {
-    max-width: 760px;
-    margin: 0;
+    max-width: 660px;
+    margin: 0 auto;
     color: var(--web-text-muted);
-    font-size: 15px;
-    line-height: 1.85;
+    font-size: 16px;
+    line-height: 1.8;
 }
-html[data-web-palette] .home-intro .home-brand-description { margin-top: 8px; color: var(--web-text-muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+html[data-web-palette] .home-intro .home-brand-description { max-width: 660px; margin: 10px auto 0; color: var(--web-text-muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 html[data-web-palette] #chat-main.chat-home #chat-input-area {
     order: 2;
     padding: 0;
@@ -781,22 +794,45 @@ html[data-web-palette] #chat-main.chat-home #chat-input-area {
 }
 #chat-main.chat-home #chat-input-area > div { max-width: none; }
 html[data-web-palette] #chat-main.chat-home #composer-card {
-    min-height: 180px;
-    gap: 12px;
-    padding: 20px 18px 14px;
+    --composer-pad-x: 20px;
+    min-height: 200px;
+    gap: 14px;
+    padding: 20px var(--composer-pad-x) 14px;
     border: 1px solid var(--web-border);
     border-radius: 20px;
     background: var(--web-surface-bg);
-    box-shadow: 0 4px 24px rgba(15, 23, 42, .025);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 8px 28px rgba(15, 23, 42, .04);
 }
 html[data-web-palette] #chat-main.chat-home #composer-card:focus-within {
     border-color: var(--web-accent);
-    box-shadow: 0 0 0 3px var(--web-focus-ring), 0 6px 24px rgba(15, 23, 42, .04);
+    box-shadow: 0 0 0 3px var(--web-focus-ring), 0 10px 30px rgba(15, 23, 42, .05);
 }
 #chat-main.chat-home .composer-identity-row { flex: 1; }
 #chat-main.chat-home #chat-input { min-height: 92px; padding: 1px 4px; font-size: 16px; line-height: 1.75; }
+/* Hairline above the control row. Full-bleed inside the card, so the text zone
+   and the controls read as two stacked bands rather than one crowded block. */
+#chat-main.chat-home .composer-toolbar-rule {
+    flex-shrink: 0;
+    height: 1px;
+    margin: 0 calc(-1 * var(--composer-pad-x, 0px));
+    background: var(--web-border);
+    opacity: .65;
+}
+#chat-main:not(.chat-home) .composer-toolbar-rule { display: none; }
 html[data-web-palette] #composer-card .composer-hint { margin: 0; padding: 0 4px; color: var(--web-text-muted); font-size: 12px; line-height: 1.6; }
 #chat-main:not(.chat-home) .composer-hint { display: none; }
+/* Home only: the hint moves up into the control row and takes the free space
+   between the tool group and the model group. */
+#chat-main.chat-home .composer-toolbar > .composer-group:first-child { flex: 0 1 auto; }
+#chat-main.chat-home .composer-hint {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0 20px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+}
 #chat-main.chat-home .composer-toolbar { gap: 10px; }
 #chat-main.chat-home .composer-send-btn { width: 36px; height: 36px; border-radius: 11px; }
 /* Empty-home popovers open below the composer: long command/model lists must
@@ -805,56 +841,77 @@ html[data-web-palette] #composer-card .composer-hint { margin: 0; padding: 0 4px
     top: calc(100% + 8px);
     bottom: auto;
 }
-#chat-main.chat-home .home-suggestions { order: 3; margin-top: 20px; }
+#chat-main.chat-home .home-suggestions { order: 3; margin-top: clamp(32px, 4.4vh, 52px); }
 html[data-web-palette] .home-suggestions > :is(h2, h3, p, .home-suggestions-title) {
-    margin: 0 0 10px;
+    margin: 0 0 20px;
     color: var(--web-text-muted);
     font-size: 14px;
     font-weight: 400;
     line-height: 1.5;
+    text-align: center;
 }
 .home-suggestions :is(.home-suggestion-list, .home-suggestions-list) {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
-    gap: 10px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
 }
+/* Cards stack a tinted icon tile over the title and its supporting line, so the
+   icon anchors the card and the copy keeps a single strong focal level. */
 html[data-web-palette] #welcome-screen .home-suggestions .example-card {
     display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 12px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
     width: 100%;
     min-width: 0;
-    min-height: 74px;
-    padding: 14px;
+    min-height: 138px;
+    padding: 20px;
     border: 1px solid var(--web-border);
-    border-radius: 13px;
+    border-radius: 16px;
     background: var(--web-surface-bg);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 4px 12px rgba(15, 23, 42, .04);
     text-align: left;
     cursor: pointer;
-    transition: border-color .15s ease, background-color .15s ease, box-shadow .15s ease;
+    transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
 }
 html[data-web-palette] #welcome-screen .home-suggestions .example-card:hover {
-    background: var(--web-accent-soft);
     border-color: var(--web-accent);
-    box-shadow: 0 3px 12px rgba(15, 23, 42, .035);
+    box-shadow: 0 2px 4px rgba(15, 23, 42, .05), 0 12px 28px rgba(15, 23, 42, .09);
+    transform: translateY(-2px);
 }
-html[data-web-palette] .home-suggestions .example-card > :is(i, .home-suggestion-icon) {
+/* Category hues are decoration only: they never encode state, so the palette
+   stays reserved for selection, primary actions and key icons. Hue and the two
+   lightness ramps keep all six tiles in one family across light and dark. */
+#welcome-screen .example-card[data-hue="blue"] { --tile-h: 217; }
+#welcome-screen .example-card[data-hue="green"] { --tile-h: 142; }
+#welcome-screen .example-card[data-hue="violet"] { --tile-h: 271; }
+#welcome-screen .example-card[data-hue="orange"] { --tile-h: 25; }
+#welcome-screen .example-card[data-hue="cyan"] { --tile-h: 189; }
+#welcome-screen .example-card[data-hue="pink"] { --tile-h: 330; }
+html[data-web-palette] .home-suggestions .example-card .example-card-icon {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 22px;
-    height: 24px;
-    margin-top: 0;
     flex-shrink: 0;
-    color: var(--web-accent-text);
-    font-size: 18px;
+    width: 40px;
+    height: 40px;
+    margin: 0;
+    border-radius: 12px;
+    background: hsl(var(--tile-h, 217) 82% 96%);
+    color: hsl(var(--tile-h, 217) 74% 46%);
+    font-size: 17px;
+    transition: transform .18s ease;
 }
-.home-suggestions :is(.home-suggestion-copy, .example-card > div) { display: flex; min-width: 0; flex-direction: column; gap: 3px; overflow-wrap: anywhere; }
+html.dark[data-web-palette] .home-suggestions .example-card .example-card-icon {
+    background: hsl(var(--tile-h, 217) 42% 20%);
+    color: hsl(var(--tile-h, 217) 78% 68%);
+}
+html[data-web-palette] #welcome-screen .home-suggestions .example-card:hover .example-card-icon { transform: scale(1.06); }
+.home-suggestions :is(.home-suggestion-copy, .example-card > div) { display: flex; min-width: 0; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }
 html[data-web-palette] .home-suggestions .example-card :is(strong, h3, .home-suggestion-title, div > span) {
     margin: 0;
     color: var(--web-text-main);
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 600;
     line-height: 1.5;
 }
@@ -868,9 +925,12 @@ html[data-web-palette] #welcome-screen .home-suggestions .example-card :is(p, sm
     line-height: 1.6;
     -webkit-line-clamp: unset;
 }
+/* The footer settles against the bottom of the empty state, and keeps a minimum
+   gap so it never crowds the cards once the content overflows. */
 html[data-web-palette] #chat-main.chat-home .home-footer {
     order: 4;
-    margin-top: 18px;
+    margin-top: auto;
+    padding-top: 40px;
     margin-bottom: 24px;
     color: var(--web-text-muted);
     font-size: 12px;
@@ -916,6 +976,7 @@ html[data-web-palette] #composer-card #optimize-btn.text-primary-500 { color: va
     #sidebar.open { transform: translateX(0); }
     html[data-web-palette] #main-content > .workbench-header { padding: 0 20px; gap: 12px; }
     #chat-main.chat-home :is(.home-intro, #chat-input-area, .home-suggestions, .home-footer) { width: min(var(--web-home-width), calc(100% - 48px)); }
+    .home-suggestions :is(.home-suggestion-list, .home-suggestions-list) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 767px) {
     .workbench-header .lang-label-full { display: none; }
@@ -939,22 +1000,30 @@ html[data-web-palette] #composer-card #optimize-btn.text-primary-500 { color: va
     .workbench-header #lang-toggle { padding-left: 6px; padding-right: 6px; font-size: 12px; }
     #chat-main.chat-home :is(.home-intro, #chat-input-area, .home-suggestions, .home-footer) { width: calc(100% - 36px); }
     #chat-main.chat-home .home-intro { margin-top: 32px; margin-bottom: 24px; }
-    html[data-web-palette] .home-intro .home-greeting { margin-top: 14px; margin-bottom: 12px; font-size: 27px; line-height: 1.45; }
+    html[data-web-palette] .home-intro .home-greeting { margin-bottom: 12px; font-size: 27px; line-height: 1.45; }
     html[data-web-palette] .home-intro .home-description { font-size: 14px; line-height: 1.8; }
-    html[data-web-palette] #chat-main.chat-home #composer-card { padding: 16px 10px 10px; min-height: 184px; border-radius: 17px; }
+    html[data-web-palette] #chat-main.chat-home #composer-card { --composer-pad-x: 16px; padding: 16px var(--composer-pad-x) 10px; min-height: 184px; border-radius: 17px; }
     #chat-main.chat-home #chat-input { font-size: 15px; min-height: 90px; }
     #chat-main.chat-home .composer-toolbar { flex-wrap: wrap; row-gap: 8px; column-gap: 6px; }
+    /* The hint would be truncated in the tool row, so give it its own line. */
+    #chat-main.chat-home .composer-hint { order: -1; flex: 1 1 100%; padding: 0; }
     #chat-main.chat-home .composer-group { gap: 1px; }
     #chat-main.chat-home .composer-group-end { margin-left: auto; }
-    #chat-main.chat-home .home-suggestions { margin-top: 20px; }
-    .home-suggestions :is(.home-suggestion-list, .home-suggestions-list) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    html[data-web-palette] #welcome-screen .home-suggestions .example-card { flex-direction: column; align-items: flex-start; min-height: 0; padding: 12px; gap: 8px; }
+    #chat-main.chat-home .home-suggestions { margin-top: 28px; }
+    html[data-web-palette] #welcome-screen .home-suggestions .example-card { min-height: 0; padding: 16px; gap: 12px; }
     #chat-main.chat-home #composer-card :is(.composer-menu, .attach-menu, .workspace-selector-menu) { max-width: calc(100vw - 44px); }
-    #chat-main.chat-home .home-footer { margin-top: 18px; margin-bottom: 24px; }
+    #chat-main.chat-home .home-footer { padding-top: 24px; margin-bottom: 24px; }
+}
+@media (max-width: 560px) {
+    /* Two 40px-tile cards stop being readable below roughly this width. */
+    .home-suggestions :is(.home-suggestion-list, .home-suggestions-list) { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) {
     html[data-web-palette] #sidebar,
     html[data-web-palette] #sidebar-nav .sidebar-item,
     html[data-web-palette] #sidebar-resources > summary::after,
-    html[data-web-palette] #welcome-screen .home-suggestions .example-card { transition: none; }
+    html[data-web-palette] #welcome-screen .home-suggestions .example-card,
+    html[data-web-palette] #welcome-screen .home-suggestions .example-card .example-card-icon { transition: none; }
+    html[data-web-palette] #welcome-screen .home-suggestions .example-card:hover { transform: none; }
+    html[data-web-palette] #welcome-screen .home-suggestions .example-card:hover .example-card-icon { transform: none; }
 }
