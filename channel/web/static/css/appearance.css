@@ -764,6 +764,17 @@ html[data-web-palette] #chat-main.chat-home {
     overflow-y: auto;
     overscroll-behavior-y: contain;
     background: var(--web-home-bg);
+    /* Center the hero (greeting + composer) on the viewport's vertical axis. The
+       cards and footer stay in flow below it, so pushing the hero to the middle
+       makes the page scroll instead of shrinking anything. --home-hero-h is
+       filled in by syncHomeHeroOffset() because the brand line and the
+       narrow-screen type scale both change the hero height; 402px is only the
+       fallback until that measurement runs. The 24px floor keeps a short
+       viewport from scrolling straight into the middle of the hero. */
+    --home-header-h: 64px;
+    --home-hero-h: 402px;
+    --home-hero-offset: max(24px, calc(50dvh - (var(--home-header-h) + var(--home-hero-h)) / 2));
+    padding-top: var(--home-hero-offset);
 }
 #chat-main.chat-home #chat-messages,
 #chat-main.chat-home #welcome-screen { display: contents; }
@@ -776,10 +787,11 @@ html[data-web-palette] #chat-main.chat-home {
     margin-right: auto;
 }
 /* Centered hero: the greeting, its supporting line and the composer share one
-   optical axis, with the vertical rhythm widening as the type scale grows. */
+   optical axis. The container's padding-top owns the distance from the top bar,
+   so the intro starts flush and the two stay centred as one block. */
 #chat-main.chat-home .home-intro {
     order: 1;
-    margin-top: clamp(36px, 6vh, 72px);
+    margin-top: 0;
     margin-bottom: clamp(28px, 3.6vh, 44px);
     text-align: center;
 }
@@ -869,10 +881,15 @@ html[data-web-palette] #composer-card .composer-hint { margin: 0; padding: 0 4px
 #chat-main.chat-home .composer-toolbar { gap: 10px; }
 #chat-main.chat-home .composer-send-btn { width: 36px; height: 36px; border-radius: 11px; }
 /* Empty-home popovers open below the composer: long command/model lists must
-   not be clipped against the top of the scrollable welcome area. */
+   not be clipped against the top of the scrollable welcome area. Because the
+   hero is centred, the room left above and below it is the same, roughly
+   (viewport - header - hero) / 2, so cap the list there and let it scroll
+   inside rather than be cut off by the container's overflow. The floor only
+   applies once the window is too short to honour the exact value. */
 #chat-main.chat-home :is(#attach-menu, #slash-menu, #mention-menu, #workspace-selector-menu, #model-selector-menu, #composer-agent-menu) {
     top: calc(100% + 8px);
     bottom: auto;
+    max-height: max(96px, calc(100dvh - var(--home-header-h) - var(--home-hero-offset) - var(--home-hero-h) - 24px));
 }
 #chat-main.chat-home .home-suggestions { order: 3; margin-top: clamp(32px, 4.4vh, 52px); }
 html[data-web-palette] .home-suggestions > :is(h2, h3, p, .home-suggestions-title) {
@@ -1032,7 +1049,7 @@ html[data-web-palette] #composer-card #optimize-btn.text-primary-500 { color: va
     .workbench-context { gap: 10px; }
     .workbench-header #lang-toggle { padding-left: 6px; padding-right: 6px; font-size: 12px; }
     #chat-main.chat-home :is(.home-intro, #chat-input-area, .home-suggestions, .home-footer) { width: calc(100% - 36px); }
-    #chat-main.chat-home .home-intro { margin-top: 32px; margin-bottom: 24px; }
+    #chat-main.chat-home .home-intro { margin-bottom: 24px; }
     html[data-web-palette] .home-intro .home-greeting { margin-bottom: 12px; font-size: 27px; line-height: 1.45; }
     html[data-web-palette] .home-intro .home-description { font-size: 14px; line-height: 1.8; }
     html[data-web-palette] #chat-main.chat-home #composer-card { --composer-pad-x: 16px; padding: 16px var(--composer-pad-x) 10px; min-height: 184px; border-radius: 17px; }

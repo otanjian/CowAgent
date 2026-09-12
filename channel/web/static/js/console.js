@@ -4263,6 +4263,39 @@ function syncChatHomeLayout() {
     const changed = home !== main.classList.contains('chat-home');
     main.classList.toggle('chat-home', home);
     if (changed) main.scrollTop = 0;
+    syncHomeHeroOffset();
+    watchHomeHero(main);
+}
+// The empty-home hero is centred on the vertical axis, which needs its real
+// height: the brand line and the narrow-screen type scale both move it, so
+// nothing here is assumed. Re-reading is safe because the offset translates the
+// hero rigidly instead of resizing it, so the measurement does not depend on
+// the offset it produces.
+function syncHomeHeroOffset() {
+    const main = document.getElementById('chat-main');
+    if (!main || !main.classList.contains('chat-home')) return;
+    const intro = main.querySelector('.home-intro');
+    const composer = main.querySelector('#chat-input-area');
+    if (!intro || !composer) return;
+    const span = Math.round(composer.getBoundingClientRect().bottom
+        - intro.getBoundingClientRect().top);
+    if (span > 0) main.style.setProperty('--home-hero-h', `${span}px`);
+}
+// Watch the hero itself so every cause of a height change is covered — the brand
+// line appearing, a late font swap, or the copy rewrapping — instead of hooking
+// each path that can repaint the brand. Only the intro is observed: the composer
+// grows as the user types, and re-centring then would move the box under the
+// caret. A rebind is needed because the welcome screen is rebuilt on re-render.
+let homeHeroWatcher = null;
+let homeHeroWatched = null;
+function watchHomeHero(main) {
+    if (typeof ResizeObserver === 'undefined') return;
+    const intro = main.classList.contains('chat-home') ? main.querySelector('.home-intro') : null;
+    if (!intro || intro === homeHeroWatched) return;
+    if (homeHeroWatcher) homeHeroWatcher.disconnect();
+    homeHeroWatched = intro;
+    homeHeroWatcher = new ResizeObserver(syncHomeHeroOffset);
+    homeHeroWatcher.observe(intro);
 }
 function bindWelcomeSuggestions(root) {
     root.querySelectorAll('.example-card').forEach(card => {
@@ -4287,6 +4320,17 @@ function renderWelcomeScreen() {
 }
 if (typeof MutationObserver !== 'undefined') new MutationObserver(syncChatHomeLayout).observe(messagesDiv, { childList: true });
 syncChatHomeLayout();
+// The console stays hidden behind the auth gate until the session resolves, so
+// the first measurement lands while nothing is laid out and has to be skipped.
+// The gate lifts by toggling #app's class, so watch that attribute: mutation
+// callbacks are queued on the microtask queue and therefore still run when the
+// page is not being painted, unlike requestAnimationFrame or a ResizeObserver.
+// Resizing is measured synchronously for the same reason.
+window.addEventListener('resize', syncHomeHeroOffset);
+const homeHeroGateEl = document.getElementById('app');
+if (homeHeroGateEl && typeof MutationObserver !== 'undefined') {
+    new MutationObserver(syncHomeHeroOffset).observe(homeHeroGateEl, { attributes: true, attributeFilter: ['class'] });
+}
 const fileInput = document.getElementById('file-input');
 const folderInput = document.getElementById('folder-input');
 const attachBtn = document.getElementById('attach-btn');

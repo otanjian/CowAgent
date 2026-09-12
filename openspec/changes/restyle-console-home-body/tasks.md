@@ -39,3 +39,14 @@
 - [x] 5.4 浏览器实测（`:9899/chat`）：商务青蓝/深蓝侧栏/经典 × 浅色/深色六种组合下账号卡片均为 40px 单行，28×28 头像带配色 inset 描边，姓名对比度 13.74 / 14.24 / 18.07 均高于 4.5:1
 - [x] 5.5 浏览器实测：待办数量为 0 时角标 `0×0` 且文本为空（符合 `todo-workbench` 的 0 隐藏口径），逾期态 `bg-red-500` 与默认态前景对比分别为 12.53 / 11.07 / 14.61 且均可区分
 - [x] 5.6 复核规范边界：账号卡片单行契约属 `sidebar-account-menu`、角标数量口径属 `todo-workbench`，两者既有 requirement 均未改动，本 change 只改视觉呈现，故 delta 仍收在 `workbench-appearance-preferences`
+
+## 6. 欢迎组纵向居中
+
+- [x] 6.1 `appearance.css`：`#chat-main.chat-home` 用 `padding-top` 把「欢迎介绍 + 输入框」整体推到可视区纵向正中，偏移取 `max(24px, (100dvh - 顶栏 - 输入组) / 2)`；`--home-header-h`、`--home-hero-h` 承载两个高度，其中偏移抽成 `--home-hero-offset` 供弹层复用；短视口以 24px 兜底，避免开屏即滚到输入组中间
+- [x] 6.2 `appearance.css`：`.home-intro` 的 `margin-top`（含 640px 断点的 32px 覆盖）改为 0，把顶距交还给容器，避免两处偏移叠加使居中失效
+- [x] 6.3 `console.js`：新增 `syncHomeHeroOffset()`，实测`.home-intro` 顶到 `#chat-input-area` 底的跨度写入 `--home-hero-h`（品牌说明行与窄屏字号梯度都会改变该高度，故不写死）；因偏移对输入组是刚性平移，测量与结果不构成回环
+- [x] 6.8 触发方式修正：测量曾只在 `syncChatHomeLayout()`、`applyBrandToDocument()` 与 rAF 合并的 `resize` 上触发，实测存在两个静默失效——启动时控制台仍被认证遮罩藏在 `hidden` 后，`getBoundingClientRect()` 全为 0 故被跳过；而 rAF 与 `ResizeObserver` 在被遮挡的 webview 中不回调。改为：`resize` 同步测量（不再合并到 rAF），并用 `MutationObserver` 监听 `#app` 的 class（认证通过时 `_accountHidden('app', false)` 切换该 class）触发重测——mutation 回调走微任务队列，不依赖渲染；`.home-intro` 的 `ResizeObserver` 仅作内容高度变化（品牌行、字体替换、文案换行）的补充。实测刷新后无需任何手动调用即写入 388px 且 `offsetPx = 0`
+- [x] 6.4 `appearance.css`：首页折叠菜单补 `max-height`，取输入组下方实际可显示空间并在内部滚动。居中后输入组上下余量相等（约 `(视口 - 顶栏 - 输入组) / 2`），不足以容纳 320px 的既有上限，必须收敛否则被 `#chat-main` 的 `overflow: hidden auto` 裁掉
+- [x] 6.5 浏览器实测居中精度：`offsetPx = 0` 于 660×994、1440×900、1280×720、375×812 四个视口；`node --check` 通过
+- [x] 6.6 浏览器实测弹层：四个视口下指令/附件/工作空间/模型/智能体菜单底边均不出可视区（如 1280×720 收敛至 108.5px 底部 703 < 720）；修复前 660×994 下指令菜单底部 1050 > 994 且 `#chat-main` 的 `scrollHeight` 不增长，即被裁掉而非可滚动
+- [x] 6.7 浏览器实测无回归：非首页 `padding-top` 为 0px、消息态不受影响；`intro.bottom <= composer.top`、`composer.bottom <= suggestions.top` 成立；`documentElement.scrollWidth <= innerWidth` 于各视口成立
