@@ -160,7 +160,9 @@ database 身份模式下，标记为 `tenant` 或 `platform` 的路由 SHALL 在
 
 解析出的上下文 SHALL 在执行 handler 期间发布为请求作用域身份并由 handler 复用，使门禁与 handler 不会对同一请求得出不同身份，且不重复读取身份库。门禁职责 SHALL 限定为「上下文存在性 + 身份域 + 该路由声明的 permission」；对象级属主与资源校验 SHALL 仍由 handler 负责，其所需上下文由门禁保证存在。
 
-`public`/`personal`/`closed` 路由 MUST NOT 触发上下文解析，legacy 身份模式下门禁 SHALL 保持空操作。租户确实无法由请求头给出的路由（如原生 `EventSource` 发起的流式重连）SHALL 在权威清单中以显式标记声明「租户由被寻址资源派生」，不得在门禁中以路径特例隐藏该豁免；此类路由仍 SHALL 要求有效凭据。
+`public`/`personal`/`closed` 路由 MUST NOT 触发上下文解析，legacy 身份模式下门禁 SHALL 保持空操作。租户确实无法由请求头给出的路由 SHALL 在权威清单中以显式标记声明「租户由被寻址资源派生」，不得在门禁中以路径特例隐藏该豁免；此类路由仍 SHALL 要求有效凭据。这类路由至少包含两类：浏览器原生协议发起的请求（如 `EventSource` 流式重连 `GET /stream`），以及被浏览器当作子资源或导航读取、结构上无法附加自定义请求头的响应——至少包括聊天附件缩略图的 `GET /uploads/(.*)`（由 `<img>`/`<audio>` 直接寻址）与文件下载/内联读取的 `GET /api/file`（由 `<a download>` 导航、`<img>` 等子资源直接寻址）。
+
+对资源派生租户的路由，其租户 SHALL 由被寻址资源自身（记录的属主、绑定的智能体，或文件所在的工作区）解析，并 SHALL 仍校验调用者对该租户的有效成员资格；若同时提供了显式租户选择（请求头或查询参数），其值 MUST 与资源派生租户一致，冲突时返回 400。无法由被寻址资源解析出租户时 SHALL 返回 404，不泄漏资源存在性。
 
 对身份解析的**确定性**失败（缺租户/缺凭据/无成员关系/非管理员/缺 permission）SHALL 立即拒绝。对**非预期**失败（身份库不可达等）SHALL 先告警并放行至 handler 观察，且 SHALL 提供显式开关切换为拒绝（fail-closed）；该观察窗口 MUST NOT 使确定性失败降级。
 
@@ -183,6 +185,21 @@ database 身份模式下，标记为 `tenant` 或 `platform` 的路由 SHALL 在
 
 - **WHEN** 原生 `EventSource` 重连 `GET /stream` 且无法提供租户选择头
 - **THEN** 门禁仍要求有效凭据并放行，由 handler 依据被寻址请求的属主与租户完成校验
+
+#### Scenario: 由资源派生租户的子资源读取
+
+- **WHEN** 浏览器以 `<img>`/`<audio>` 读取 `GET /uploads/(.*)`，无法附加租户选择头
+- **THEN** 门禁仍要求有效凭据并放行，handler 由被寻址智能体的绑定解析租户，并校验调用者对该租户的成员资格与智能体读取授权
+
+#### Scenario: 由资源派生租户的文件下载与内联读取
+
+- **WHEN** 已登录且获权的成员以 `<a download>` 导航或 `<img>` 子资源读取 `GET /api/file?path=...`，无法附加租户选择头
+- **THEN** 门禁仍要求有效凭据并放行，handler 由文件自身所属工作区解析租户并校验成员资格；文件不属于调用者可访问的租户、或不属于任何已知工作区时返回 403/404，MUST NOT 返回文件内容
+
+#### Scenario: 资源派生租户与显式选择冲突
+
+- **WHEN** 请求同时给出与资源派生租户不一致的租户选择（请求头或查询参数）
+- **THEN** 系统返回 400，不按任一方读取资源
 
 #### Scenario: 门禁不替代对象级校验
 
@@ -214,27 +231,37 @@ database 身份模式下，标记为 `tenant` 或 `platform` 的路由 SHALL 在
 
 ### Requirement: 管理写统一来源与 CSRF 校验
 
-所有改变状态的管理写请求（平台控制台与租户控制台的写接口、场景激活/导入等）SHALL 经由同一处来源校验入口（`channel/web/auth_handlers.py` 的 `require_management_write`），MUST NOT 由各接口自行判定或默认放行。校验 SHALL 在任何上下文解析与写入之前执行。
+所有改变状态的管理写请求（平台控制台与租户控制台的写接口、场景激活/导入、控制台工作区文件保存 `POST /api/workspace/write` 等）SHALL 经由同一处来源校验入口（`channel/web/auth_handlers.py` 的 `require_management_write`），MUST NOT 由各接口自行判定或默认放行。校验 SHALL 在任何上下文解析与写入之前执行。
 
 规则：以 cookie 会话认证的写请求 SHALL 提供与请求 `Host` 同源的 `Origin` 或 `Referer`；缺失来源 SHALL 被拒绝（这些接口没有独立的 CSRF token 流程，因此以缺失即拒为默认）。以 bearer 凭据认证的写请求 SHALL 在 bearer 真实认证时豁免来源校验，以支持来源永不匹配的原生客户端；裸的、格式非法的或与 cookie 同值的重复凭据 MUST NOT 获得豁免。legacy 模式的写路径 SHALL 保持既有行为不变。
 
 #### Scenario: 无来源的 cookie 写请求
+
 - **WHEN** cookie 会话发起管理写请求但不带 `Origin`/`Referer`
 - **THEN** 返回 403（`csrf_failed`），且不产生任何写入
 
 #### Scenario: 跨来源的 cookie 写请求
+
 - **WHEN** cookie 会话发起管理写请求，`Origin` 与请求 `Host` 不同源
 - **THEN** 返回 403（`csrf_failed`），且不产生任何写入
 
 #### Scenario: 同来源的 cookie 写请求
+
 - **WHEN** cookie 会话发起管理写请求，`Origin` 或 `Referer` 与请求 `Host` 同源
 - **THEN** 请求按既有业务规则继续处理
 
 #### Scenario: bearer 客户端写请求
+
 - **WHEN** 请求以真实有效的 bearer 凭据认证（无 cookie），即使来源与 `Host` 不同源
 - **THEN** 来源校验豁免，请求按既有业务规则继续处理
 
 #### Scenario: 伪造或不一致的凭据不获得豁免
+
 - **WHEN** 请求同时携带 cookie 与无效 bearer，或 bearer 与 cookie 同值
 - **THEN** 仍按 cookie 规则校验来源；不满足时返回 403 且不产生写入
+
+#### Scenario: 控制台工作区文件保存被来源校验覆盖
+
+- **WHEN** 控制台以 cookie 会话提交 `POST /api/workspace/write`，但 `Origin`/`Referer` 缺失或与 `Host` 不同源
+- **THEN** 返回 403（`csrf_failed`），文件内容不被写入；同源请求按工作区边界规则继续处理
 
