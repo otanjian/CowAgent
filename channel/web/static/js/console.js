@@ -2008,16 +2008,61 @@ function _wbContext() {
         sessionStorage.getItem('cow_tenant_id'), _identityMode()].join('|');
 }
 
+// Stable, localizable names for the ways the read can end badly. A single
+// «加载失败» stood in for all of them, which told the reader nothing they could
+// act on: a permission denial and an unselected tenant are both recoverable,
+// and one of them (nothing selected yet) is not even a fault.
+function _wbFailureKey(status, code) {
+    if (code === 'missing_tenant') return 'agent_workbench_no_tenant';
+    if (status === 403 || code === 'forbidden') return 'agent_workbench_no_permission';
+    if (status === 401 || code === 'unauthorized') return 'agent_workbench_signed_out';
+    return 'agent_workbench_failed';
+}
+
+// A failed read carries its own evidence: `wbKey` is what the user is told,
+// `wbTransient` says whether another attempt could plausibly differ, and
+// `wbDetail` is the raw status/code kept for the console so a report like
+//「加载失败」can be traced without reproducing it live.
+function _wbFailure(wbKey, wbTransient, wbDetail) {
+    const err = new Error(t(wbKey));
+    err.wbKey = wbKey;
+    err.wbTransient = !!wbTransient;
+    err.wbDetail = wbDetail || wbKey;
+    return err;
+}
+
 async function fetchAgentWorkbench() {
-    const res = await fetch('/api/agents?view=workbench', { cache: 'no-store' });
-    const data = await res.json();
+    let res;
+    try {
+        res = await fetch('/api/agents?view=workbench', { cache: 'no-store' });
+    } catch (err) {
+        // No response at all: the transport itself failed, so a retry can differ.
+        throw _wbFailure('agent_workbench_failed', true,
+            `transport: ${(err && err.message) || err}`);
+    }
+    let data = null;
+    try {
+        data = await res.json();
+    } catch (_) {
+        data = null;
+    }
+    const status = res.status || 0;
+    const code = (data && data.code) || '';
+    if (!res.ok || !data || data.status !== 'success' || !Array.isArray(data.agents)) {
+        const message = (data && data.message) || '';
+        throw _wbFailure(_wbFailureKey(status, code), !res.ok && status >= 500,
+            `http ${status}${code ? ` ${code}` : ''}${message ? ` ${message}` : ''}`
+                + (data ? '' : ' (non-JSON body)'));
+    }
     // An old backend may ignore `view` and return the management snapshot.
     // Fail visibly instead of treating missing capability flags as an empty list.
-    if (!res.ok || data.status !== 'success' || !Array.isArray(data.agents)
-        || 'channel_instances' in data || 'revision' in data
+    if ('channel_instances' in data || 'revision' in data
         || data.agents.some(a => typeof a.id !== 'string' || !a.id
             || typeof a.can_chat !== 'boolean' || typeof a.is_default !== 'boolean')) {
-        throw new Error(t('agent_workbench_failed'));
+        // A wrong shape is deterministic: a second identical request cannot
+        // heal it, so it is reported as the generic failure, never retried.
+        throw _wbFailure('agent_workbench_failed', false,
+            'workbench projection missing: management snapshot returned');
     }
     return data.agents.map(a => ({
         id: a.id,
@@ -2101,9 +2146,9 @@ function renderAgentWorkbench() {
         return;
     }
     if (_wbLoadedError) {
-        setWbError(t('agent_workbench_failed'));
+        setWbError(t(_wbErrorKey || 'agent_workbench_failed'));
         grid.innerHTML = `<div class="col-span-full text-sm text-slate-400 py-16 text-center">
-            <p>${escapeHtml(t('agent_workbench_failed'))}</p>
+            <p>${escapeHtml(t(_wbErrorKey || 'agent_workbench_failed'))}</p>
             <button type="button" class="agent-wb-retry"
                 onclick="loadAgentWorkbench(true)">${escapeHtml(t('agent_workbench_retry'))}</button>
         </div>`;
@@ -2141,6 +2186,21 @@ function setWbError(text) {
 }
 
 let _wbLoadedError = false;
+// Which failure the last read ended on, as an i18n key rather than a boolean,
+// so an actionable cause is reported as itself instead of as「加载失败」.
+let _wbErrorKey = '';
+
+// Paint the current state without letting a rendering fault masquerade as a
+// failed read. Rendering used to run inside the load chain's `then`, so any UI
+// exception was caught by the load handler and displayed as「加载失败」: a real
+// defect reported as a different one is worse than no report at all.
+function paintAgentWorkbench() {
+    try {
+        renderAgentWorkbench();
+    } catch (err) {
+        try { console.error('[agent-workbench] render failed:', err); } catch (_) {}
+    }
+}
 
 function loadAgentWorkbench(manualRefresh = false) {
     const grid = document.getElementById('agent-workbench-grid');
@@ -2148,27 +2208,48 @@ function loadAgentWorkbench(manualRefresh = false) {
     // Suppress a spurious "loading" flash when returning to a filled list.
     agentWorkbenchLoading = true;
     _wbLoadedError = false;
+    _wbErrorKey = '';
     _wbNoticeKey = '';
-    renderAgentWorkbench();
+    // Even the first paint goes through the isolating wrapper: a fault raised
+    // while drawing the loading state must not escape as a synchronous throw,
+    // which would break the promise contract callers rely on.
+    paintAgentWorkbench();
     // A request-seq + context guard so a late response from an earlier read
     // (or one started under a different Agent / view) is dropped instead of
     // repainting stale cards over a fresher result.
     const seq = ++agentWorkbenchSeq;
     const ctx = _wbContext();
-    return fetchAgentWorkbench()
+    const current = () => seq === agentWorkbenchSeq && ctx === _wbContext();
+    // One silent second attempt for a fault that another attempt could
+    // plausibly differ on — a dropped transport, a restarting server, a 5xx.
+    // A refusal or a wrong response shape is deterministic and is not retried:
+    // a second identical request would only delay the report.
+    const attempt = retriesLeft => fetchAgentWorkbench().catch(err => {
+        if (retriesLeft > 0 && err && err.wbTransient && current()) return attempt(retriesLeft - 1);
+        throw err;
+    });
+    return attempt(1)
         .then(agents => {
-            if (seq !== agentWorkbenchSeq || ctx !== _wbContext()) return null;
+            if (!current()) return null;
             applyAgentWorkbench(agents);
             agentWorkbenchLoading = false;
             _wbLoadedError = false;
-            renderAgentWorkbench();
+            _wbErrorKey = '';
+            paintAgentWorkbench();
             return agents;
         })
         .catch(err => {
-            if (seq !== agentWorkbenchSeq || ctx !== _wbContext()) return null;
+            if (!current()) return null;
             agentWorkbenchLoading = false;
             _wbLoadedError = true;
-            renderAgentWorkbench();
+            _wbErrorKey = (err && err.wbKey) || 'agent_workbench_failed';
+            // Keep the raw evidence in the console. The visible message is
+            // deliberately short, so without this a report of「加载失败」cannot
+            // be traced to a status, a code or a transport error afterwards.
+            try {
+                console.error('[agent-workbench] list read failed:', (err && err.wbDetail) || err);
+            } catch (_) {}
+            paintAgentWorkbench();
         });
 }
 

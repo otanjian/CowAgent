@@ -43,8 +43,14 @@ function setup(fetchImpl = async () => response([agent('B')])) {
     const nodes = new Map();
     const events = [];
     const storage = new Map();
+    // Capture rather than print: several cases deliberately drive the failure
+    // path, and a test run must not look like it reported errors itself.
+    const logs = [];
+    const record = kind => (...parts) => logs.push(`${kind} ${parts.map(String).join(' ')}`);
+    const silentConsole = { log: record('log'), info: record('info'), warn: record('warn'),
+        error: record('error'), debug: record('debug') };
     const ctx = {
-        console, Date, activeAgentId: 'A', sessionId: 'old-session', currentView: 'agent-workbench',
+        console: silentConsole, Date, activeAgentId: 'A', sessionId: 'old-session', currentView: 'agent-workbench',
         agentNavigationVersion: 0, defaultAgentId: 'A', avatarVersions: {},
         agentCatalog: [{ ...agent('A'), enabled: true }],
         _identityMode: () => 'legacy', sessionStorage: { getItem: k => storage.get(k) || '' },
@@ -75,7 +81,7 @@ function setup(fetchImpl = async () => response([agent('B')])) {
         this.state = () => ({agents: agentWorkbench, loading: agentWorkbenchLoading,
             error: _wbLoadedError, notice: _wbNoticeKey, busy: !!_agentStartInFlight,
             settings: _sessCfg, workspace: _wsSelState});`, ctx);
-    return { ctx, nodes, events, storage, node: id => ctx.document.getElementById(id) };
+    return { ctx, nodes, events, storage, logs, node: id => ctx.document.getElementById(id) };
 }
 
 test('fresh workbench Agent starts even when absent from management cache', async () => {
@@ -196,6 +202,84 @@ test('empty state is visible and full management fallback is rejected', async ()
     await ctx.loadAgentWorkbench();
     assert.equal(ctx.state().error, true);
     assert.match(node('agent-workbench-grid').innerHTML, /agent_workbench_retry/);
+});
+
+test('a transient read failure is retried once instead of showing a dead page', async () => {
+    // A momentary transport or 5xx fault is exactly what a second attempt
+    // repairs, so the page must not present it as a terminal「加载失败」before
+    // trying again: that is the difference between a blip and a broken page.
+    let calls = 0;
+    const { ctx, node } = setup(async () => {
+        calls++;
+        if (calls === 1) throw Error('offline');
+        return response([agent('B')]);
+    });
+    await ctx.loadAgentWorkbench();
+    assert.equal(calls, 2, 'a transient read is retried once');
+    assert.equal(ctx.state().error, false, 'a repaired read is not a failure state');
+    assert.deepEqual(ctx.state().agents.map(a => a.id), ['B']);
+    assert.doesNotMatch(node('agent-workbench-grid').innerHTML, /agent_workbench_retry/);
+});
+
+test('a persistent refusal names its cause instead of a generic failure', async () => {
+    //「加载失败」cannot be acted on. A permission denial and a missing tenant
+    // selection are recoverable, so the failure state must say which one it is
+    // rather than sending the user hunting for a problem they cannot see.
+    let calls = 0;
+    const { ctx, node, logs } = setup(async () => {
+        calls++;
+        return { ok: false, status: 403, json: async () => ({ status: 'error', message: 'forbidden', code: 'forbidden' }) };
+    });
+    await ctx.loadAgentWorkbench();
+    assert.equal(calls, 1, 'a deterministic denial is not retried');
+    assert.equal(ctx.state().error, true);
+    assert.equal(node('agent-workbench-status').textContent, 'agent_workbench_no_permission');
+    assert.match(node('agent-workbench-grid').innerHTML, /agent_workbench_retry/);
+    assert.ok(logs.some(line => /forbidden/.test(line)),
+        'the underlying cause is logged so a report can be diagnosed');
+});
+
+test('an unselected tenant is reported as such, not as a generic failure', async () => {
+    const { ctx, node } = setup(async () => ({
+        ok: false, status: 400,
+        json: async () => ({ status: 'error', message: 'tenant selection required', code: 'missing_tenant' }),
+    }));
+    await ctx.loadAgentWorkbench();
+    assert.equal(node('agent-workbench-status').textContent, 'agent_workbench_no_tenant');
+});
+
+test('a render fault is not reported as a load failure', async () => {
+    // The success path used to render inside the load chain's .then, so any
+    // rendering exception was caught by the load handler and displayed as
+    //「加载失败」. A UI defect therefore arrived as a dead read and could not be
+    // told apart from a real one; keep the two failures distinguishable.
+    const { ctx, node, logs } = setup(async () => response([agent('B')]));
+    ctx.agentAvatarHTML = () => { throw Error('render exploded'); };
+    await ctx.loadAgentWorkbench();
+    assert.equal(ctx.state().error, false, 'the read succeeded, so it is not a load failure');
+    assert.deepEqual(ctx.state().agents.map(a => a.id), ['B']);
+    assert.notEqual(node('agent-workbench-status').textContent, 'agent_workbench_failed');
+    assert.ok(logs.some(line => /render exploded/.test(line)), 'the render fault is logged');
+});
+
+test('a render fault while painting the loading state cannot escape the loader', async () => {
+    // The first paint happens before the read resolves. A fault raised there
+    // used to escape loadAgentWorkbench synchronously, so a caller awaiting the
+    // returned promise got an exception instead of a rejection, and the fault
+    // was neither logged nor kept out of the read's own result.
+    const { ctx, logs } = setup(async () => response([agent('B')]));
+    ctx.setWbStatus = () => { throw Error('paint exploded'); };
+    let returned;
+    try {
+        returned = ctx.loadAgentWorkbench();
+    } catch (err) {
+        assert.fail(`a paint fault must not escape the loader: ${err.message}`);
+    }
+    assert.equal(typeof returned.then, 'function', 'the loader still returns its promise');
+    await returned;
+    assert.equal(ctx.state().error, false, 'a paint fault is not a load failure');
+    assert.deepEqual(ctx.state().agents.map(a => a.id), ['B'], 'the read still applies');
+    assert.ok(logs.some(line => /paint exploded/.test(line)), 'the paint fault is logged');
 });
 
 test('default card leads even when its ID sorts last', async () => {
