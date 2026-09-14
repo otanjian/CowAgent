@@ -596,7 +596,44 @@ class WecomBotChannel(ChatChannel):
         )
         if not context:
             return None
+        self._stamp_external_identity(context, wecom_msg)
         return context, wecom_msg
+
+    def _stamp_external_identity(self, context: Context, wecom_msg: WecomBotMessage):
+        """Attach the author's external identity triple (database identity mode).
+
+        ``chat_channel`` maps this triple to a tenant member before anything
+        runs. Without it the inbound gate refuses the message as "channel not
+        open in database mode" *before* it looks up any binding, so a bot that
+        never stamps can never be made to work by binding its users.
+
+        ``issuer`` is the bot the message arrived on — ``aibotid`` per message,
+        falling back to this instance's configured ``wecom_bot_id`` (the webhook
+        transport sets no ``bot_id``, and in websocket mode both carry the same
+        value). ``subject`` is the author's WeCom user id.
+
+        An empty issuer is deliberately NOT stamped: the triple is the global
+        unique key of a binding, so two bots writing the same subject under one
+        empty issuer would merge into a single row and resolve to whichever
+        account was bound first. Such a message stays unstamped and is refused
+        by the gate instead.
+        """
+        issuer = str(wecom_msg.to_user_id or self.bot_id or "").strip()
+        if not issuer:
+            logger.warning(
+                f"[WecomBot] cannot stamp external identity: message carries no "
+                f"aibotid and instance has no wecom_bot_id "
+                f"instance={getattr(self, 'instance_id', '')}, msg_id={wecom_msg.msg_id}"
+            )
+            return
+        from channel.external_identity import stamp_external_identity
+
+        stamp_external_identity(
+            context,
+            provider="wecom_bot",
+            issuer=issuer,
+            subject=wecom_msg.actual_user_id or wecom_msg.from_user_id or "",
+        )
 
     # ------------------------------------------------------------------
     # Event callback
