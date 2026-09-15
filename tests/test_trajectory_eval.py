@@ -42,13 +42,31 @@ class _TestAgent:
 
 
 @pytest.fixture(autouse=True)
-def _legacy_permission_chain(monkeypatch):
-    """These scenarios exercise the agent loop, not authorization. Pin the
-    deployment to legacy mode so the ambient ``identity_mode`` (a process-wide
-    config that other tests mutate) cannot turn the gate on underneath them."""
-    import agent.permission.isolation as isolation
+def _authorized_caller(monkeypatch):
+    """Run these scenarios as a real caller.
 
-    monkeypatch.setattr(isolation, "database_mode", lambda: False)
+    The scenarios exercise the agent loop, not authorization, but the execution
+    boundary is fail-closed: with no identity context the isolation gate refuses
+    every tool call. Pretending the deployment is in legacy mode no longer turns
+    that off -- ``isolation.database_mode()`` has been hard-wired True since
+    legacy identity mode was retired, and the gate no longer consults it (nor
+    ``identity_mode``), so the old patch was a silent no-op. Installing an
+    identity is what production does; a permissive service stands in for the
+    grants this scenario does not mean to test.
+    """
+    from auth import service as auth_service
+    from common.runtime_identity import RuntimeIdentity, use_identity
+
+    class _AllowSvc:
+        def check_resource_action(self, *args, **kwargs):
+            return True
+
+        def tenant_admin_may_execute_tool(self, *args, **kwargs):
+            return False
+
+    monkeypatch.setattr(auth_service, "get_identity_service", lambda: _AllowSvc())
+    with use_identity(RuntimeIdentity(user_id="u_eval", tenant_id="t_eval")):
+        yield
 
 
 class _ScriptedExecutor(AgentStreamExecutor):

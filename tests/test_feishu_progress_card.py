@@ -1,9 +1,27 @@
+import pytest
+
 from channel.feishu.feishu_progress_card import FeishuProgressState
 from common import i18n
 
-# Card text is localized via i18n.t; lock English so assertions are stable
-# regardless of the host machine locale.
-i18n.set_language("en")
+
+@pytest.fixture(autouse=True)
+def english_cards():
+    """Force English for every case here, and hand the previous value back.
+
+    Card text is localized through ``i18n.t``, so the assertions need a known
+    language. Setting it once at import time was not enough: ``i18n`` caches one
+    process-global language and any later ``resolve_language()`` -- every config
+    load runs it, with the developer's own ``cow_lang`` -- silently overwrites it,
+    so the English cases failed as soon as some other module loaded config first.
+    Saving and restoring per test also stops this module from deciding the
+    language for whatever runs after it.
+    """
+    previous = i18n.get_language()
+    i18n.set_language("en")
+    try:
+        yield
+    finally:
+        i18n.set_language(previous)
 
 
 def _panels(card):

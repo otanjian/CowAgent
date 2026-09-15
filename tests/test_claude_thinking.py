@@ -64,8 +64,26 @@ def test_legacy_budget_is_capped(monkeypatch):
     assert captured["request"]["thinking"]["budget_tokens"] == 16000
 
 
-def test_thinking_disabled_is_sent_through(monkeypatch):
+def test_adaptive_model_omits_thinking_when_disabled(monkeypatch):
+    """An adaptive-only model has no way to express "off", so nothing is sent.
+
+    The 4.6-generation and newer models accept ``adaptive`` and reject every
+    other ``thinking.type`` -- ``enabled`` *and* ``disabled`` are both 400s -- so
+    forwarding ``{"type": "disabled"}`` would fail the whole request instead of
+    turning thinking off. Omitting the field is the only shape that keeps the
+    call working. (The earlier expectation that ``disabled`` is sent through
+    predates that constraint.)
+    """
     bot, captured = _bot_with_capture(monkeypatch, "claude-sonnet-5")
+
+    _call(bot, thinking={"type": "disabled"})
+
+    assert "thinking" not in captured["request"]
+
+
+def test_legacy_model_still_sends_disabled_through(monkeypatch):
+    """Budget models do accept ``disabled``, so it must not be dropped there."""
+    bot, captured = _bot_with_capture(monkeypatch, "claude-sonnet-4-5")
 
     _call(bot, thinking={"type": "disabled"})
 

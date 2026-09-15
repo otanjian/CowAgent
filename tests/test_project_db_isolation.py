@@ -23,7 +23,7 @@ def test_user_b_cannot_bind_user_a_project(monkeypatch, tmp_path):
     user_a = "u_a"
     user_b = "u_b"
     fake_shared = tmp_path / "shared"
-    monkeypatch.setattr(sd, "shared_root", lambda: fake_shared)
+    monkeypatch.setattr(sd, "shared_root", lambda *args, **kwargs: fake_shared)
 
     a_root = _user_root(fake_shared, user_a) / "projects"
     a_root.mkdir(parents=True)
@@ -46,7 +46,7 @@ def test_user_b_cannot_rename_or_delete_user_a_project(monkeypatch, tmp_path):
     user_a = "u_a"
     user_b = "u_b"
     fake_shared = tmp_path / "shared"
-    monkeypatch.setattr(sd, "shared_root", lambda: fake_shared)
+    monkeypatch.setattr(sd, "shared_root", lambda *args, **kwargs: fake_shared)
 
     a_root = _user_root(fake_shared, user_a) / "projects"
     a_root.mkdir(parents=True)

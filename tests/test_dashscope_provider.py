@@ -19,12 +19,21 @@ class TestDashscopeConst(unittest.TestCase):
 
     def test_qwen37_plus_before_qwen37_max_in_model_list(self):
         from common import const
-        qwen_models = [m for m in const.MODEL_LIST if str(m).startswith("qwen")]
+        qwen_models = [str(m) for m in const.MODEL_LIST if str(m).startswith("qwen")]
         self.assertGreater(
             len(qwen_models),
             1,
         )
-        self.assertEqual(qwen_models[0], "qwen3.7-plus")
+        # The invariant is the ordering of the two 3.7 models -- plus is the
+        # recommended default, so it is listed before max. Asserting *position 0*
+        # instead tied the test to "no newer qwen model exists", so adding a
+        # later generation above it broke the case without anything regressing.
+        self.assertIn("qwen3.7-plus", qwen_models)
+        self.assertIn("qwen3.7-max", qwen_models)
+        self.assertLess(
+            qwen_models.index("qwen3.7-plus"),
+            qwen_models.index("qwen3.7-max"),
+        )
 
 
 class TestDashscopeBotDefaultModel(unittest.TestCase):

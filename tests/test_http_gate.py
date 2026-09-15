@@ -73,12 +73,18 @@ def _status_and_code(result):
     return status, code
 
 
-def _run_gate(path, method, *, db_mode=True, resolve=None, settings=None):
+def _run_gate(path, method, *, db_mode=True, resolve=None, settings=None,
+              policy_override=None):
     """Invoke the processor with a spy handler; return ``(result, events)``.
 
     ``resolve`` is called with the ``require_tenant`` flag the gate used. When it
     is ``None`` the gate must not resolve at all, and the patched resolver raises
     to prove it.
+
+    ``policy_override`` forces the matched route entry to a literal policy, which
+    is how the ``closed`` branch is covered now that no registered route declares
+    it (the recovered slices are all open). Without it a test of that branch would
+    depend on a deferred consumer still existing.
     """
     events = []
 
@@ -105,6 +111,10 @@ def _run_gate(path, method, *, db_mode=True, resolve=None, settings=None):
         patch("channel.web.auth_handlers._require_context", side_effect=resolve_ctx),
         patch.object(config, "conf", return_value=merged),
     ]
+    if policy_override is not None:
+        patchers.append(patch.object(
+            http_policy, "_match_policy",
+            return_value=({"policy": policy_override}, True)))
     for p in patchers:
         p.start()
     try:
@@ -235,8 +245,16 @@ class GateScopeTests(unittest.TestCase):
         self.assertEqual(events, ["handler"])
 
     def test_closed_route_in_database_never_resolves_or_runs_the_handler(self):
-        result, events = _run_gate("/api/scheduler", "GET", resolve=None)
-        self.assertEqual(_status_and_code(result)[0], 503)
+        """A ``closed`` declaration is refused before resolution and the handler.
+
+        No route in the current registry declares ``closed`` any more: the
+        recovered consumers were adapted and their slices opened. The guarantee
+        still has to be covered, so the entry is declared closed here rather than
+        relying on a live deferred route to keep this branch exercised.
+        """
+        result, events = _run_gate("/api/scheduler", "GET", resolve=None,
+                                   policy_override="closed")
+        self.assertEqual(_status_and_code(result), (503, "database_unavailable"))
         self.assertNotIn("handler", events)
 
     def test_legacy_mode_is_a_no_op(self):

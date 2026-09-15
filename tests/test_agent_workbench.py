@@ -198,9 +198,17 @@ class TestWorkbenchProjection(unittest.TestCase):
             data = _call_get(AgentsHandler, view="workbench")
         self.assertEqual([a["id"] for a in data["agents"]], ["primary", "aaa"])
 
-    def test_readiness_defaults_to_runnable_in_legacy(self):
+    def test_readiness_fails_closed_without_a_context(self):
+        """The retired legacy consumer must not be advertised as runnable.
+
+        With ``ctx is None`` there is no caller to authorize, and the legacy
+        path that used to be open went away with legacy identity mode. The card
+        reports ``unauthorized`` rather than promising a chat the send path would
+        refuse.
+        """
         from channel.web.web_channel import _workbench_chat_readiness
-        self.assertEqual(_workbench_chat_readiness(None, "any-agent"), (True, None))
+        self.assertEqual(_workbench_chat_readiness(None, "any-agent"),
+                         (False, "unauthorized"))
 
     def test_readiness_database_requires_permission(self):
         """Database mode: read-only caller gets a permission reason, never the

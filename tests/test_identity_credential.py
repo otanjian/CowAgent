@@ -17,6 +17,7 @@ import web
 from auth.credential import select_credential, bearer_token_from_header
 from auth.service import IdentityService
 from channel.web import web_channel, auth_handlers, admin_handlers
+from tests._helpers import cookie_value
 
 
 class CredentialSelectionTests(unittest.TestCase):
@@ -152,14 +153,25 @@ class CredentialRouteTests(unittest.TestCase):
         self.assertEqual(resp.status, "403")
         self.assertEqual(self._json(resp)["code"], "cross_origin")
 
-    def test_web_login_returns_token_for_desktop_bearer(self):
+    def test_web_login_sets_a_cookie_and_returns_no_reusable_token(self):
+        """Login establishes the session with a Cookie only.
+
+        ``enterprise-access-enforcement`` / ``identity-session``: the Web
+        ``/auth/login`` response keeps the compatibility ``token`` field but it
+        must be empty, so a readable login response can never be replayed as a
+        native Bearer credential. Desktop obtains its own AuthSession through the
+        authorization-code + PKCE exchange (``/auth/desktop/authorize`` ->
+        ``/auth/desktop/token``) instead of being handed one here.
+        """
         resp = self._request("/auth/login", method="POST",
                              data=json.dumps({"username": "root",
                                               "password": "Str0ngAdminPass"}),
                              origin="http://localhost:9899")
         data = self._json(resp)
         self.assertEqual(data["status"], "success")
-        self.assertTrue(data.get("token"))
+        self.assertEqual(data.get("token"), "")
+        self.assertTrue(cookie_value(resp, "cow_session"),
+                        "login must set the session Cookie")
 
     def test_invalid_cookie_no_fallback_to_bearer(self):
         # A malformed cookie plus an unrelated bearer are DIFFERENT values ->

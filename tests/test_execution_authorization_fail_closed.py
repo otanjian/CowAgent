@@ -7,8 +7,10 @@ let the call run, and any unexpected error in the composite permission gate fell
 through to the historical unrestricted behaviour. In a database-mode deployment
 that turns an identity outage into a blanket authorization bypass.
 
-These tests pin the fail-closed contract for database mode while keeping legacy
-installs (which have no identity system at all) unrestricted.
+These tests pin the fail-closed contract. After ``retire-legacy-identity-mode``
+there is no legacy install left to exempt: ``database_mode()`` is hard-wired True,
+so an unresolvable identity is refused in every supported configuration and no
+setting turns either gate back into a bypass.
 """
 
 import unittest
@@ -77,11 +79,19 @@ class ResourceToolDenialFailClosedTest(unittest.TestCase):
             denial = executor._resource_tool_denial("gated_probe")
         self.assertIsNotNone(denial)
 
-    def test_missing_identity_in_legacy_mode_stays_unrestricted(self):
+    def test_legacy_mode_no_longer_relaxes_the_gate(self):
+        """Patching ``database_mode`` off must not reopen the bypass.
+
+        ``retire-legacy-identity-mode`` made ``database_mode()`` hard-wired True
+        and dropped its branch from this gate, so the pre-retirement "legacy
+        installs run unrestricted" contract no longer exists. The refusal has to
+        stand whatever the patch claims, because there is no supported
+        configuration left that lacks an identity system.
+        """
         executor = _executor([_GatedTool()])
         with patch("agent.permission.isolation.database_mode",
                    return_value=False):
-            self.assertIsNone(executor._resource_tool_denial("gated_probe"))
+            self.assertIsNotNone(executor._resource_tool_denial("gated_probe"))
 
     def test_self_authorized_tools_still_skip_the_gate(self):
         from agent.tools.todo.todo_tool import TodoTool
@@ -112,7 +122,13 @@ class PermissionDenialFailClosedTest(unittest.TestCase):
                 denial = executor._permission_denial("gated_probe", {})
         self.assertIsNotNone(denial)
 
-    def test_unexpected_error_in_legacy_mode_stays_unrestricted(self):
+    def test_legacy_mode_no_longer_relaxes_the_gate(self):
+        """The composite gate refuses on an unexpected error, with no opt-out.
+
+        Same retirement as the resource gate above: the historical
+        "fall through to unrestricted" branch is gone, so an exploding gate
+        refuses the call instead of running it.
+        """
         executor = _executor([_GatedTool()])
         executor.agent = _AgentStub()
         with patch("agent.permission.isolation.database_mode",
@@ -120,7 +136,7 @@ class PermissionDenialFailClosedTest(unittest.TestCase):
             with patch("agent.permission.isolation.isolation_decision",
                        side_effect=RuntimeError("gate exploded")):
                 denial = executor._permission_denial("gated_probe", {})
-        self.assertIsNone(denial)
+        self.assertIsNotNone(denial)
 
 
 if __name__ == "__main__":

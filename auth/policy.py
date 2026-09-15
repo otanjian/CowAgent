@@ -499,6 +499,10 @@ BUILTIN_MENU_DEFAULTS: Dict[str, Tuple[str, ...]] = {
         "personal.agents", "personal.channels", "personal.memory",
         "personal.tools", "personal.skills",
         "workbench.agents", "workbench.history", "workbench.knowledge",
+        # Self-scoped and reachable before the defaults existed (the compat rule
+        # left it open), so seeding the defaults must keep it open: the member
+        # manages its own scheduled tasks in the current tenant.
+        "workbench.schedules",
         "workbench.todos",
         "admin.agents", "admin.memory",
     )),
@@ -506,6 +510,7 @@ BUILTIN_MENU_DEFAULTS: Dict[str, Tuple[str, ...]] = {
         "personal.agents", "personal.channels", "personal.memory",
         "personal.tools", "personal.skills",
         "workbench.agents", "workbench.history", "workbench.knowledge",
+        "workbench.schedules",
         "workbench.todos",
         "admin.agents", "admin.memory",
         "admin.channels", "admin.members", "admin.organization",

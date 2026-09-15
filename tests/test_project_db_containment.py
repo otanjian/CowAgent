@@ -24,7 +24,10 @@ def test_store_file_uses_user_root_in_database(monkeypatch, tmp_path):
     import common.state_dir as sd
     user = "u_alice"
     fake_shared = tmp_path / "shared"
-    monkeypatch.setattr(sd, "shared_root", lambda: fake_shared)
+    # ``shared_root`` takes the caller's identity since tenant-scoped shared
+    # roots landed; the stub accepts (and ignores) it so ``user_root`` can pass
+    # the ambient identity through as it does in production.
+    monkeypatch.setattr(sd, "shared_root", lambda *args, **kwargs: fake_shared)
     ident = RuntimeIdentity(tenant_id="t1", user_id=user)
     with use_identity(ident):
         path = project_store._store_file()
@@ -37,7 +40,7 @@ def test_projects_root_ignores_configured_root_in_database(monkeypatch, tmp_path
     import config
     user = "u_bob"
     fake_shared = tmp_path / "shared"
-    monkeypatch.setattr(sd, "shared_root", lambda: fake_shared)
+    monkeypatch.setattr(sd, "shared_root", lambda *args, **kwargs: fake_shared)
     monkeypatch.setattr(config, "conf", lambda: {"project_workspace_root": "/etc/evil"})
     with use_identity(RuntimeIdentity(tenant_id="t1", user_id=user)):
         root = project_store.projects_root()
@@ -49,7 +52,7 @@ def test_create_rejects_separators(monkeypatch, tmp_path):
     import common.state_dir as sd
     user = "u_carol"
     fake_shared = tmp_path / "shared"
-    monkeypatch.setattr(sd, "shared_root", lambda: fake_shared)
+    monkeypatch.setattr(sd, "shared_root", lambda *args, **kwargs: fake_shared)
     with use_identity(RuntimeIdentity(tenant_id="t1", user_id=user)):
         with pytest.raises(ValueError):
             project_store.create_project("a/b")
@@ -61,7 +64,7 @@ def test_set_project_dir_rejects_outside_user_root(monkeypatch, tmp_path):
     import common.state_dir as sd
     user = "u_dave"
     fake_shared = tmp_path / "shared"
-    monkeypatch.setattr(sd, "shared_root", lambda: fake_shared)
+    monkeypatch.setattr(sd, "shared_root", lambda *args, **kwargs: fake_shared)
     outside = tmp_path / "outside"
     outside.mkdir()
     with use_identity(RuntimeIdentity(tenant_id="t1", user_id=user)):
