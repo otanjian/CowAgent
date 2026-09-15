@@ -45,6 +45,7 @@ return [
         'features.php'     => 'meta.title_features',
         'enterprise.php'   => 'meta.title_enterprise',
         'quickstart.php'   => 'meta.title_quickstart',
+        'manual.php'       => 'manual.title',
         'architecture.php' => 'meta.title_architecture',
         'about.php'        => 'meta.title_about',
     ],

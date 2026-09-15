@@ -102,6 +102,16 @@ function t_exists(string $key): bool
     return t($key, "\0") !== "\0";
 }
 
+/**
+ * 取可选文案：键不存在或为空时返回空串。
+ * t() 在键缺失时会回退为键名，因此「有没有配置这段文案」必须用 t_exists() 判断，
+ * 可选段落（如手册章节里可省略的注意事项）一律走本函数，避免把键名渲染到页面上。
+ */
+function t_opt(string $key): string
+{
+    return t_exists($key) ? t($key) : '';
+}
+
 /** 取数组型文案（如要点列表），始终返回数组 */
 function t_list(string $key): array
 {

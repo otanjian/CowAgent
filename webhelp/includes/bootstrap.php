@@ -610,3 +610,203 @@ function section_heading(string $titleKey, string $subtitleKey = '', bool $left 
     <?php endif; ?>
     <?php
 }
+
+// ---------------------------------------------------------------------------
+// 产品使用手册（manual.php）
+// 结构见 content.php 的 manual_parts / manual_sections，文案见 lang/*.php 的 manual.*
+// ---------------------------------------------------------------------------
+
+/** 手册章节导航：按手册分组渲染（桌面端 sticky 侧栏，窄屏由 .doc-layout 退化） */
+function manual_nav(): string
+{
+    $sections = (array) content('manual_sections', []);
+    $byPart   = [];
+    foreach ($sections as $index => $item) {
+        $byPart[(string) ($item['part'] ?? 'start')][] = [$index, $item];
+    }
+
+    $out = '<p class="doc-aside-title">' . e(t('manual.toc')) . '</p>';
+    foreach ((array) content('manual_parts', []) as $part) {
+        $id = (string) $part['id'];
+        if (!isset($byPart[$id])) {
+            continue;
+        }
+
+        $out .= '<p class="doc-aside-section">' . e(t('manual.parts.' . $id)) . '</p>'
+            . '<ul class="doc-aside-list">';
+        foreach ($byPart[$id] as [$index, $item]) {
+            $sid = (string) $item['id'];
+            $out .= '<li>'
+                . '<a class="doc-aside-link" href="#manual-' . e($sid) . '">'
+                . e((string) ($index + 1)) . '. ' . e(t('manual.sections.' . $sid . '.nav'))
+                . '</a></li>';
+        }
+        $out .= '</ul>';
+    }
+
+    return $out;
+}
+
+/**
+ * 章节内的一个内容块：标题 + 操作步骤 + 字段说明 + 注意事项。
+ * 块的 id 由 content.php 声明，文案按 manual.sections.<章节>.<块> 取。
+ */
+function manual_block(string $sectionId, string $blockId): string
+{
+    $key     = 'manual.sections.' . $sectionId . '.blocks.' . $blockId;
+    $title   = trim(t_opt($key . '.title'));
+    $steps   = t_list($key . '.steps');
+    $fields  = t_list($key . '.fields');
+    $note    = trim(t_opt($key . '.note'));
+    $items   = t_list($key . '.items');
+
+    $out = '<div class="manual-block" id="manual-' . e($sectionId) . '-' . e($blockId) . '">';
+    if ($title !== '') {
+        $out .= '<h3 class="manual-subtitle">' . e($title) . '</h3>';
+    }
+
+    if ($steps !== []) {
+        $out .= '<ol class="manual-steps">';
+        foreach ($steps as $step) {
+            $out .= '<li>' . e((string) $step) . '</li>';
+        }
+        $out .= '</ol>';
+    }
+
+    if ($fields !== []) {
+        $out .= '<div class="manual-fields">';
+        foreach ($fields as $field) {
+            $out .= '<div class="manual-field">'
+                . '<span class="manual-field-name">' . e((string) ($field['name'] ?? '')) . '</span>'
+                . '<span class="manual-field-desc">' . e((string) ($field['desc'] ?? '')) . '</span>'
+                . '</div>';
+        }
+        $out .= '</div>';
+    }
+
+    if ($items !== []) {
+        $out .= manual_issues($items);
+    }
+
+    if ($note !== '') {
+        $out .= '<div class="note">' . icon('shield') . '<span>' . e($note) . '</span></div>';
+    }
+
+    return $out . '</div>';
+}
+
+/** 故障排查条目：「现象 → 处理」逐条列出 */
+function manual_issues(array $rows): string
+{
+    $out = '<div class="manual-issues">';
+    foreach ($rows as $row) {
+        $out .= '<div class="manual-issue">'
+            . '<p class="manual-issue-ask">' . icon('x-circle')
+            . '<span>' . e((string) ($row['ask'] ?? '')) . '</span></p>'
+            . '<p class="manual-issue-answer">' . icon('check-circle')
+            . '<span>' . e((string) ($row['answer'] ?? '')) . '</span></p>'
+            . '</div>';
+    }
+
+    return $out . '</div>';
+}
+
+/**
+ * 章节末尾的深链：既有能力文档（docs/manifest.php 登记过的 slug）+ 既有站内页面。
+ * slug 未登记或页面 id 未映射时静默跳过，因此文档增删不会产生死链。
+ */
+function manual_refs(array $item): string
+{
+    $groups = [
+        'manual.docs_label'  => (array) ($item['docs'] ?? []),
+        'manual.pages_label' => (array) ($item['links'] ?? []),
+    ];
+    $pageLinks = (array) content('manual_page_links', []);
+
+    $out = '';
+    foreach ($groups as $labelKey => $refs) {
+        $links = '';
+
+        foreach ($refs as $ref) {
+            $ref = (string) $ref;
+            if ($labelKey === 'manual.docs_label') {
+                if (!doc_exists($ref)) {
+                    continue;
+                }
+                $href  = doc_url($ref);
+                $label = doc_title($ref);
+            } else {
+                if (!isset($pageLinks[$ref])) {
+                    continue;
+                }
+                $href  = url((string) $pageLinks[$ref]);
+                $label = t('manual.page_links.' . $ref, $ref);
+            }
+
+            $links .= '<a class="manual-ref" href="' . e($href) . '">' . e($label) . icon('arrow') . '</a>';
+        }
+
+        if ($links === '') {
+            continue;
+        }
+
+        $out .= '<div class="manual-refs">'
+            . '<span class="manual-refs-label">' . e(t($labelKey)) . '</span>'
+            . '<div class="manual-refs-list">' . $links . '</div>'
+            . '</div>';
+    }
+
+    return $out;
+}
+
+/** 两张命令表（终端命令 / 对话内命令），复用 content.php 里既有的命令清单 */
+function manual_commands(): string
+{
+    $tables = [
+        'cli'   => (array) content('cli_commands', []),
+        'slash' => (array) content('slash_commands', []),
+    ];
+    $titles = ['cli' => 'manual.cli_title', 'slash' => 'manual.slash_title'];
+    $prefix = ['cli' => 'cli.commands.', 'slash' => 'cli.slash.'];
+
+    $out = '';
+    foreach ($tables as $key => $rows) {
+        if ($rows === []) {
+            continue;
+        }
+
+        $items = '';
+        foreach ($rows as $row) {
+            $items .= '<div class="cmd-row">'
+                . '<code>' . e((string) ($row['cmd'] ?? '')) . '</code>'
+                . '<span>' . e(t($prefix[$key] . (string) ($row['id'] ?? ''))) . '</span>'
+                . '</div>';
+        }
+
+        $out .= '<h3 class="manual-subtitle">' . e(t($titles[$key])) . '</h3>'
+            . '<div class="cmd-list">' . $items . '</div>';
+    }
+
+    return $out;
+}
+
+/** 深入阅读：按既有分组列出全部能力文档入口 */
+function manual_all_docs(): string
+{
+    $out = '';
+    foreach (doc_grouped() as $section => $items) {
+        $links = '';
+        foreach ($items as $slug => $meta) {
+            $slug  = (string) $slug;
+            $links .= '<a class="manual-ref" href="' . e(doc_url($slug)) . '">'
+                . e(doc_title($slug)) . icon('arrow') . '</a>';
+        }
+
+        $out .= '<div class="manual-doc-group">'
+            . '<p class="manual-doc-group-title">' . e(t('doc.sections.' . $section, (string) $section)) . '</p>'
+            . '<div class="manual-refs-list">' . $links . '</div>'
+            . '</div>';
+    }
+
+    return $out;
+}

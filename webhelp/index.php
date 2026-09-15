@@ -19,8 +19,8 @@ require __DIR__ . '/includes/header.php';
       <p class="hero-desc"><?= e(t('hero.desc')) ?></p>
 
       <div class="hero-actions">
-        <a class="btn btn-primary" href="<?= e(url('quickstart.php')) ?>">
-          <?= icon('rocket') ?><span><?= e(t('cta.primary')) ?></span>
+        <a class="btn btn-primary" href="<?= e(url('manual.php')) ?>">
+          <?= icon('book') ?><span><?= e(t('cta.manual')) ?></span>
         </a>
         <a class="btn btn-cloud" href="<?= e(url('enterprise.php')) ?>">
           <?= icon('shield') ?><span><?= e(t('cta.enterprise')) ?></span>

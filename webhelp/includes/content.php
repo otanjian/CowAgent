@@ -155,6 +155,116 @@ return [
     // 关于页资源：原始外链已全部移除，站点不引用任何外部网站。
     'about_resources' => [],
 
+    // 产品使用手册（manual.php）
+    // 面向使用者的「应用操作手册」：讲怎么用，不讲怎么装（安装见 quickstart.php）。
+    // 章节顺序即页面与侧栏顺序：先工作台的日常使用，再管理控制台的配置与治理。
+    // 结构只声明 id / 分组 / 图标 / 块清单 / 引用的文档 slug 与站内页面；
+    // 文案全部在 lang/*.php 的 manual.* 下按同一 id 组织（语言包中按 id 索引，与顺序无关）。
+    // 每章由若干「块」组成，块内可有 title / goal / steps / fields / note。
+    'manual_parts' => [
+        ['id' => 'workbench'],
+        ['id' => 'console'],
+        ['id' => 'personal'],
+    ],
+
+    'manual_sections' => [
+        // ---- 工作台：日常使用 ----
+        [
+            'id' => 'start', 'part' => 'workbench', 'icon' => 'rocket',
+            'blocks' => ['login', 'navigate', 'preference'],
+            'docs' => [], 'links' => [],
+        ],
+        [
+            'id' => 'chat', 'part' => 'workbench', 'icon' => 'chat',
+            'blocks' => ['new', 'compose', 'attach', 'session', 'command'],
+            'docs' => [], 'links' => [],
+        ],
+        [
+            'id' => 'agents', 'part' => 'workbench', 'icon' => 'users',
+            'blocks' => ['browse'],
+            'docs' => [], 'links' => [],
+        ],
+        [
+            'id' => 'knowledge', 'part' => 'workbench', 'icon' => 'knowledge',
+            'blocks' => ['overview', 'category', 'document', 'import', 'bind'],
+            'docs' => ['knowledge'], 'links' => [],
+        ],
+        [
+            'id' => 'todo', 'part' => 'workbench', 'icon' => 'list',
+            'blocks' => ['todo', 'task-view', 'task-edit'],
+            'docs' => ['tools-scheduler'], 'links' => [],
+        ],
+
+        // ---- 管理控制台：配置与治理 ----
+        [
+            'id' => 'agents-admin', 'part' => 'console', 'icon' => 'users',
+            'blocks' => ['create', 'configure', 'capability', 'corefiles'],
+            'docs' => ['multiagent'], 'links' => [],
+        ],
+        [
+            'id' => 'memory', 'part' => 'console', 'icon' => 'memory',
+            'blocks' => ['view', 'dream', 'index'],
+            'docs' => ['memory'], 'links' => [],
+        ],
+        [
+            'id' => 'models', 'part' => 'console', 'icon' => 'models',
+            'blocks' => ['basic', 'vendor', 'capability'],
+            'docs' => ['models'], 'links' => [],
+        ],
+        [
+            'id' => 'channels', 'part' => 'console', 'icon' => 'channels',
+            'blocks' => ['scope', 'create', 'credentials', 'scan', 'bind'],
+            'docs' => ['channels'], 'links' => [],
+        ],
+        [
+            'id' => 'roles', 'part' => 'console', 'icon' => 'rbac',
+            'blocks' => ['list', 'editor', 'permissions', 'resources', 'assign', 'rules'],
+            'docs' => [], 'links' => [],
+        ],
+        [
+            'id' => 'members', 'part' => 'console', 'icon' => 'org',
+            'blocks' => ['create', 'edit', 'password', 'org'],
+            'docs' => [], 'links' => [],
+        ],
+        [
+            'id' => 'tenant', 'part' => 'console', 'icon' => 'tenant',
+            'blocks' => ['tenant', 'audit'],
+            'docs' => [], 'links' => [],
+        ],
+
+        // ---- 个人与参考 ----
+        [
+            'id' => 'account', 'part' => 'personal', 'icon' => 'key',
+            'blocks' => ['profile', 'password', 'prefs', 'tenant-switch'],
+            'docs' => [], 'links' => [],
+        ],
+        [
+            'id' => 'commands', 'part' => 'personal', 'icon' => 'terminal',
+            'blocks' => ['commands'],
+            'docs' => ['cli-skill'], 'links' => [],
+        ],
+        [
+            'id' => 'troubleshoot', 'part' => 'personal', 'icon' => 'x-circle',
+            'blocks' => ['issues'],
+            'docs' => [], 'links' => [],
+        ],
+        [
+            'id' => 'further', 'part' => 'personal', 'icon' => 'book',
+            'blocks' => ['docs'],
+            'docs' => [], 'links' => [
+                'architecture', 'quickstart', 'enterprise', 'features',
+            ],
+        ],
+    ],
+
+    // 手册引用的站内页面：id => 文件（文案键 manual.page_links.<id>）
+    'manual_page_links' => [
+        'quickstart'   => 'quickstart.php',
+        'features'     => 'features.php',
+        'enterprise'   => 'enterprise.php',
+        'architecture' => 'architecture.php',
+    ],
+
     // 注意：本地能力文档清单不在这里维护，而是由构建脚本生成到
     // docs/manifest.php（tools/build-docs.php 产出），避免与上游重复维护。
 ];

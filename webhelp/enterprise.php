@@ -105,14 +105,6 @@ require __DIR__ . '/includes/header.php';
   <!-- ===== 九大模块 ===== -->
   <section class="section section--soft">
     <div class="section-container">
-      <div class="enterprise-banner reveal">
-        <?= icon('shield') ?>
-        <div>
-          <h3><?= e(t('enterprise.banner_title')) ?></h3>
-          <p><?= e(t('enterprise.banner_desc')) ?></p>
-        </div>
-      </div>
-
       <div class="features-grid">
         <?php foreach ((array) content('enterprise', []) as $item): ?>
           <?= enterprise_card((array) $item) ?>

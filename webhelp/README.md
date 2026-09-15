@@ -25,11 +25,34 @@ php -S 127.0.0.1:8080 -t webhelp
 | `features.php` | 核心能力：九项能力详解、内置工具、终端/斜杠命令、FAQ |
 | `enterprise.php` | 企业级管控：页头承载权限体系标语与 4 张亮点卡、核心设计原则、三级权限管控架构、资源授权流转机制、关键规则、平台角色与职责、管控链路、九大管控模块、企业管控台、管控保障机制 |
 | `quickstart.php` | 快速开始：部署命令（Linux/macOS、Windows、Docker）、配置示例、企业身份初始化、命令速查 |
+| `manual.php` | 产品使用手册（应用操作手册）：按「先工作台、后管理控制台」分为三组共 16 章——工作台（开始使用 / 如何对话 / 选择智能体 / 设置知识库 / 待办与定时任务）、管理控制台（创建与配置智能体 / 记忆管理 / 模型服务 / 消息渠道 / 权限与角色设置 / 成员与组织 / 租户与审计）、个人与参考（个人账号设置 / 命令速查 / 故障排查 / 深入阅读）；按「界面字段怎么填、步骤怎么走」组织，原理细节深链既有能力文档 |
 | `architecture.php` | 系统架构：五层结构、一次请求的流转、设计原则 |
 | `doc.php` | 能力文档阅读页：`?p=<slug>` 渲染本地化能力文档（正文片段见 `docs/`） |
 | `about.php` | 关于：项目理念、与上游 CowAgent 的关系、免责声明 |
 
-> 导航栏保留 5 项（首页 / 核心能力 / 企业级管控 / 架构 / 关于）；`quickstart.php` 与 `doc.php` 不在导航内，分别由首页 Hero 按钮 / 各页 CTA，以及九张能力卡片进入。首页**不再内嵌部署命令区块**，部署命令只在 `quickstart.php` 出现，首页通过 Hero 按钮与底部 CTA 两处引导过去。
+> 导航栏保留 5 项（首页 / 核心能力 / 企业级管控 / 架构 / 关于）；`quickstart.php`、`manual.php` 与 `doc.php` 不在导航内，分别由各页 CTA（以及首页 Hero 的「查看使用手册」按钮）、九张能力卡片进入。首页**不再内嵌部署命令区块**，部署命令只在 `quickstart.php` 出现，首页通过 Hero 按钮与底部 CTA 两处引导过去。
+
+### 产品使用手册
+
+`manual.php` 是面向使用者的**应用操作手册**——讲「怎么用」，不讲「怎么装」（安装部署见 `quickstart.php`）；服务对象是控制台的使用者，重点覆盖如何对话、如何选择与创建智能体、如何设置知识库、如何配置权限等日常操作。
+
+章节顺序即阅读顺序：**先工作台的日常使用，再管理控制台的配置与治理**。手册正文不出现网址——需要指引时写界面路径（如「管理控制台 →『智能体管理』」）或链接站内页面，不写主机名、端口与 URL。
+
+结构分三层，都在 `includes/content.php`：
+
+- `manual_parts`：手册分组（顺序即侧栏分组顺序）：工作台（日常使用）/ 管理控制台（配置与治理）/ 个人与参考。
+- `manual_sections`：章节（id、`part` 分组、图标、`blocks` 块清单、引用的文档 slug 与站内页面 id）。**数组顺序即页面与侧栏顺序**；语言包中按 id 索引，与顺序无关。
+- `manual_page_links`：章节可引用的站内页面（id → 文件）。
+
+章节由若干「块」组成（`blocks` 里声明块 id，如 `manual_sections.chat.blocks = ['new','compose','attach','session','command']`），块内可有四种内容：编号步骤 `steps`、字段说明 `fields`（`['name' => 界面字段名, 'desc' => 填写口径]`）、排查条目 `items`（`['ask' => 现象, 'answer' => 处理]`）与注意事项 `note`。全部文案在 `lang/*.php` 的 `manual.sections.<章节>.blocks.<块>.*`，与 `content.php` 的 id 一一对应。
+
+同一个主题跨工作台与控制台时按界面归属拆章：例如 `agents`（工作台「智能体」页：浏览与开始对话）与 `agents-admin`（控制台「智能体管理」：创建与配置）是两章。
+
+渲染助手在 `includes/bootstrap.php`：`manual_nav()`（按分组渲染侧栏导航）、`manual_block()`（单块：标题 + 步骤 + 字段 + 注意事项）、`manual_refs()`（章节末尾的文档与页面深链）、`manual_commands()`（复用 `cli_commands` / `slash_commands` 的命令表）、`manual_all_docs()`（深入阅读章的全部文档入口）。
+
+手册只写操作指引，不复制既有文档正文：章节末尾的「相关文档 / 相关页面」由 slug 经 `doc_exists()` 过滤后渲染，因此文档增删不会产生死链；命令速查复用 `content.php` 的既有命令清单，不维护第二份。入口为首页 Hero 主按钮（文案键 `cta.manual`，与其它页面的 `cta.primary` 相互独立）。
+
+**改手册内容**：在 `content.php` 增删章节或块，再到 `lang/zh.php` 与 `lang/en.php` 补齐同名 id 的文案即可，无需改 HTML。改完跑一次 `php tools/check-manual.php` 校验「结构 ↔ 双语文案」是否对齐（缺章节、缺块、空块、未登记 slug 会直接报错）。
 
 ### 本地能力文档
 
@@ -67,10 +90,11 @@ php -S 127.0.0.1:8080 -t webhelp
 
 ```
 webhelp/
-├── index.php / features.php / enterprise.php / quickstart.php / architecture.php / about.php
+├── index.php / features.php / enterprise.php / quickstart.php / manual.php / architecture.php / about.php
 ├── doc.php             # 能力文档阅读页（?p=<slug>，slug 白名单校验）
 ├── tools/
-│   └── build-docs.php  # 文档本地化构建脚本（开发期联网工具，非站点运行时）
+│   ├── build-docs.php  # 文档本地化构建脚本（开发期联网工具，非站点运行时）
+│   └── check-manual.php # 手册结构与双语文案一致性校验（改手册后运行）
 ├── includes/
 │   ├── bootstrap.php   # 统一入口：配置、语言、内容、视图辅助函数 e()/t()/url()/asset()/icon()
 │   ├── config.php      # 品牌、站点地址、导航、部署命令、配置示例
@@ -135,7 +159,8 @@ webhelp/
 - **改品牌 / 站点地址 / 部署命令 / 配置示例**：编辑 `includes/config.php`。
 - **增删能力卡片、企业模块、命令、FAQ**：编辑 `includes/content.php`（结构与图标）+ 两个语言包（文案）；新增能力卡片时补上 `capabilities[].doc`，指向 `docs/manifest.php` 里的某个 slug。
 - **改文档分组标题**：编辑 `lang/*.php` 的 `doc.sections.*`（键为上游目录名：`intro` / `memory` / `knowledge` / `skills` / `tools` / `cli` / `models` / `channels` / `multi-agent`）。
-- **改样式**：编辑 `assets/css/style.css`，设计令牌集中在文件顶部的 `:root` 与 `[data-theme="light"]`；文档正文排版在文件末尾的「本地能力文档」段落，企业级权限管控区块在「核心功能一」段落。
+- **改样式**：编辑 `assets/css/style.css`，设计令牌集中在文件顶部的 `:root` 与 `[data-theme="light"]`；文档正文排版在「本地能力文档」段落，企业级权限管控区块在「核心功能一」段落，产品使用手册的 `.manual-*` 段在文件末尾。
+- **改产品使用手册**：分组在 `includes/content.php` 的 `manual_parts`，章节在 `manual_sections`（id、`part`、图标、`blocks` 块清单、`docs` / `links` 深链，**数组顺序即页面顺序**），块内文案在 `lang/*.php` 的 `manual.sections.<章节>.blocks.<块>`（`title` / `steps` / `fields` / `items` / `note`），分组与章节名在 `manual.parts.<id>` 与 `manual.sections.<id>.{nav,title,goal}`。增删章节或块只改 `content.php` 与两个语言包，无需动 HTML；`fields` 是「界面字段名 + 填写口径」的二元组，用于讲清表单怎么填。手册只写操作指引，原理细节一律深链既有文档，不要在手册里复制文档正文；正文不写网址（主机名、端口、URL 一律不出现），要指路就写界面路径或链站内页面。改完运行 `php tools/check-manual.php`。
 - **改权限管控区块**：结构在 `includes/content.php` 的 `perm_*` 键（`perm_principles` 四张原则卡、`perm_tiers` 三级架构、`perm_roles` 三类角色）；文案在 `lang/*.php` 的 `perm.*`。渲染由四个助手完成——`perm_stats()`（概览亮点卡）、`perm_tiers()`（三张并列卡 + 连接线）、`perm_flow_panel()`（深色授权流转面板）、`perm_roles()`（头部 + 三列短要点）。增删层级、原则或角色只需改 `content.php` 的条目并在 `lang/*.php` 补齐同名 id 的文案，无需改 HTML。
   - **区块概要提升为页头**：`perm.title` / `perm.lead` 与 `perm_stats()` 通过 `page_hero()` 的 `$opts` 注入页头，页内不再有独立的区块大标题（避免与页头重复）。`page_hero()` 的 `$opts` 支持 `breadcrumb`（面包屑末项，默认同标题；**传空字符串则不渲染面包屑**）、`eyebrow` + `eyebrow_icon`、`title_accent`（标题高亮词，语言键）、`extra`（导语下方的追加 HTML）；留空 `extra` 时不加 `page-hero--rich`，其余内页的页头不受影响。企业级管控页的页头**不使用面包屑与眉标**，标语直接作为首个元素；若日后要恢复「核心功能一 · 企业级权限管控」眉标，在 `lang/*.php` 的 `perm` 下加回 `eyebrow` 键并在 `page_hero()` 调用里补 `eyebrow` / `eyebrow_icon` 即可（`.perm-eyebrow` 样式仍在）。
   - **页头标题（标语）**：`perm.title` 就是标语，用 `\n` 分行渲染为 `<br>`（如 `"分级可控的\n企业级资源权限体系"`）；`perm.title_accent` 指定其中要高亮为品牌绿渐变的词（`hero_title_html()` 会包一层 `.hero-accent`，找不到该子串时按普通文本渲染）。英文分行时记得在上一行末尾留一个空格，否则两行拼起来会粘成一个词。
