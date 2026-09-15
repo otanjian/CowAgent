@@ -613,16 +613,17 @@ function section_heading(string $titleKey, string $subtitleKey = '', bool $left 
 
 // ---------------------------------------------------------------------------
 // 产品使用手册（manual.php）
-// 结构见 content.php 的 manual_parts / manual_sections，文案见 lang/*.php 的 manual.*
+// 形态是「视频为主的目录」：主题（一句话定位 + 若干视频条目），不写逐条界面步骤。
+// 结构见 content.php 的 manual_parts / manual_topics，文案见 lang/*.php 的 manual.*
 // ---------------------------------------------------------------------------
 
-/** 手册章节导航：按手册分组渲染（桌面端 sticky 侧栏，窄屏由 .doc-layout 退化） */
+/** 手册主题导航：按手册分组渲染（桌面端 sticky 侧栏，窄屏由 .doc-layout 退化） */
 function manual_nav(): string
 {
-    $sections = (array) content('manual_sections', []);
-    $byPart   = [];
-    foreach ($sections as $index => $item) {
-        $byPart[(string) ($item['part'] ?? 'start')][] = [$index, $item];
+    $topics = (array) content('manual_topics', []);
+    $byPart = [];
+    foreach ($topics as $index => $item) {
+        $byPart[(string) ($item['part'] ?? 'workbench')][] = [$index, $item];
     }
 
     $out = '<p class="doc-aside-title">' . e(t('manual.toc')) . '</p>';
@@ -635,10 +636,10 @@ function manual_nav(): string
         $out .= '<p class="doc-aside-section">' . e(t('manual.parts.' . $id)) . '</p>'
             . '<ul class="doc-aside-list">';
         foreach ($byPart[$id] as [$index, $item]) {
-            $sid = (string) $item['id'];
+            $tid = (string) $item['id'];
             $out .= '<li>'
-                . '<a class="doc-aside-link" href="#manual-' . e($sid) . '">'
-                . e((string) ($index + 1)) . '. ' . e(t('manual.sections.' . $sid . '.nav'))
+                . '<a class="doc-aside-link" href="#manual-' . e($tid) . '">'
+                . e((string) ($index + 1)) . '. ' . e(t('manual.topics.' . $tid . '.nav'))
                 . '</a></li>';
         }
         $out .= '</ul>';
@@ -648,51 +649,67 @@ function manual_nav(): string
 }
 
 /**
- * 章节内的一个内容块：标题 + 操作步骤 + 字段说明 + 注意事项。
- * 块的 id 由 content.php 声明，文案按 manual.sections.<章节>.<块> 取。
+ * 一个视频条目：视频位 + 标题（含时长）+ 内容要点。
+ * 视频 id 由 content.php 声明，文案按 manual.topics.<主题>.videos.<视频> 取。
+ * 声明了 src 时渲染可直接播放的播放器；未声明时渲染 16:9 占位并标明待录制，
+ * 避免使用者把尚未录制的条目误认为「加载失败」。
  */
-function manual_block(string $sectionId, string $blockId): string
+function manual_video(string $topicId, array $video): string
 {
-    $key     = 'manual.sections.' . $sectionId . '.blocks.' . $blockId;
+    $videoId = (string) ($video['id'] ?? '');
+    $key     = 'manual.topics.' . $topicId . '.videos.' . $videoId;
     $title   = trim(t_opt($key . '.title'));
-    $steps   = t_list($key . '.steps');
-    $fields  = t_list($key . '.fields');
-    $note    = trim(t_opt($key . '.note'));
-    $items   = t_list($key . '.items');
+    $covers  = t_list($key . '.covers');
+    $length  = trim((string) ($video['duration'] ?? ''));
+    $src     = trim((string) ($video['src'] ?? ''));
+    $poster  = trim((string) ($video['poster'] ?? ''));
 
-    $out = '<div class="manual-block" id="manual-' . e($sectionId) . '-' . e($blockId) . '">';
-    if ($title !== '') {
-        $out .= '<h3 class="manual-subtitle">' . e($title) . '</h3>';
+    $out = '<figure class="manual-video" id="manual-' . e($topicId) . '-' . e($videoId) . '">'
+        . '<div class="manual-video-frame">';
+
+    if ($src !== '') {
+        $out .= '<video class="manual-video-player" controls preload="metadata" playsinline'
+            . ($poster !== '' ? ' poster="' . e(asset($poster)) . '"' : '')
+            . ' src="' . e(asset($src)) . '">'
+            . e(t('manual.video_fallback'))
+            . '</video>';
+    } else {
+        $out .= '<div class="manual-video-placeholder" role="img"'
+            . ' aria-label="' . e($title . ' · ' . t('manual.video_pending')) . '">'
+            . '<span class="manual-video-play">' . icon('play') . '</span>'
+            . '<span class="manual-video-pending">' . e(t('manual.video_pending')) . '</span>'
+            . '</div>';
     }
 
-    if ($steps !== []) {
-        $out .= '<ol class="manual-steps">';
-        foreach ($steps as $step) {
-            $out .= '<li>' . e((string) $step) . '</li>';
+    $out .= '</div>'
+        . '<figcaption class="manual-video-body">'
+        . '<h3 class="manual-video-title">' . e($title);
+    if ($length !== '') {
+        $out .= '<span class="manual-video-duration">' . icon('clock') . e($length) . '</span>';
+    }
+    $out .= '</h3>';
+
+    if ($covers !== []) {
+        $out .= '<p class="manual-video-covers-label">' . e(t('manual.covers_label')) . '</p>'
+            . '<ul class="manual-video-covers">';
+        foreach ($covers as $cover) {
+            $out .= '<li>' . e((string) $cover) . '</li>';
         }
-        $out .= '</ol>';
+        $out .= '</ul>';
     }
 
-    if ($fields !== []) {
-        $out .= '<div class="manual-fields">';
-        foreach ($fields as $field) {
-            $out .= '<div class="manual-field">'
-                . '<span class="manual-field-name">' . e((string) ($field['name'] ?? '')) . '</span>'
-                . '<span class="manual-field-desc">' . e((string) ($field['desc'] ?? '')) . '</span>'
-                . '</div>';
-        }
-        $out .= '</div>';
-    }
+    return $out . '</figcaption></figure>';
+}
 
-    if ($items !== []) {
-        $out .= manual_issues($items);
-    }
+/**
+ * 主题的查阅型补充：`manual.topics.<主题>.items` 里声明的「现象 → 处理」条目。
+ * 视频讲流程，状态码与错误语义这类内容属于查阅型，视频不适用，故留在主题末尾作速查。
+ */
+function manual_faq(string $topicId): string
+{
+    $items = t_list('manual.topics.' . $topicId . '.items');
 
-    if ($note !== '') {
-        $out .= '<div class="note">' . icon('shield') . '<span>' . e($note) . '</span></div>';
-    }
-
-    return $out . '</div>';
+    return $items === [] ? '' : manual_issues($items);
 }
 
 /** 故障排查条目：「现象 → 处理」逐条列出 */

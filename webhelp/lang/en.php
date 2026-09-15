@@ -570,696 +570,525 @@ return [
 
     'manual' => [
         'title'        => 'Product Manual',
-        'title_accent' => 'Product Manual',
-        'lead'         => 'This is an application operation manual: from signing in and chatting, to choosing and creating agents, setting up knowledge bases, connecting messaging channels and configuring permissions — each step tells you where to click and what to fill in. When you need the underlying design or limits, jump to the matching capability document.',
-        'toc'          => 'Contents',
-        'goal_label'   => 'Goal',
-        'docs_label'   => 'Related documents',
-        'pages_label'  => 'Related pages',
-        'cli_title'    => 'Terminal commands',
-        'slash_title'  => 'In-chat commands',
+        'title_accent' => 'Manual',
+        'lead'         => 'This manual is built around demonstrations: every topic lists the videos to be recorded and what each video covers. Video slots are already in place — drop in a file and it plays. Jump to the matching capability docs whenever you need principles or edge cases.',
+        'toc'            => 'Contents',
+        'covers_label'   => 'This video covers',
+        'docs_label'     => 'Related docs',
+        'pages_label'    => 'Related pages',
+        'cli_title'      => 'Terminal commands',
+        'slash_title'    => 'In-chat commands',
+        'video_pending'  => 'Video coming soon',
+        'video_fallback' => 'Your browser cannot play embedded video. Open the video file directly to watch it.',
 
-        // Manual groups (order drives page and sidebar grouping)
+        // 手册分组（顺序即页面与侧栏的分组顺序）
         'parts' => [
             'workbench' => 'Workbench (daily use)',
-            'console'   => 'Admin console (configuration and governance)',
-            'personal'  => 'Account and reference',
+            'console'   => 'Admin Console (configuration and governance)',
+            'personal'  => 'Personal and reference',
         ],
 
-        // Titles of in-site pages referenced by chapters
+        // 主题引用的站内页面标题
         'page_links' => [
-            'quickstart'   => 'Install and deployment commands',
-            'features'     => 'Capabilities in depth',
+            'quickstart'   => 'Install and deploy commands',
+            'features'     => 'Core capabilities in depth',
             'enterprise'   => 'Enterprise governance overview',
             'architecture' => 'System architecture',
         ],
 
-        'sections' => [
-            // ===== Getting started (workbench) =====
+        // 主题：nav / title / lead 为文字定位，videos.<视频 id> 为一个视频条目
+        'topics' => [
+            // ===== 开始使用（工作台）=====
             'start' => [
                 'nav'   => 'Getting started',
                 'title' => 'Getting started: sign in and find your way around',
-                'goal'  => 'Sign in with your account and tell the workbench and the admin console apart. This manual covers workbench use first, then admin console configuration and governance.',
-                'blocks' => [
+                'lead'  => 'Sign in with your account and learn what the workbench and the admin console each own.',
+                'videos' => [
                     'login' => [
-                        'title' => 'Sign in',
-                        'steps' => [
-                            'Open the console and sign in with the account and password your administrator gave you.',
-                            'A first sign-in uses a time-limited temporary password (valid for 24 hours by default). You land in a restricted session that can only view a minimal slice of your own information, change your password, and sign out.',
-                            'Set a new password when prompted. After that the console is fully available; changing your password also invalidates your other signed-in sessions, so you sign in again.',
-                            'If you forget your password, ask an administrator to reset it; you will receive a new one-time temporary password.',
+                        'title'  => 'Signing in and the first password change',
+                        'covers' => [
+                            'Signing in with the account and password your admin assigned',
+                            'The temporary password on first sign-in and the forced password change',
+                            'What the restricted session can and cannot do before you change it',
+                            'How to get a new one-time temporary password when you forget yours',
                         ],
-                        'note' => 'Too many failed sign-in attempts return 429 and ask you to retry later. A nonexistent account and a wrong password return the same message, so the response never reveals whether an account exists.',
                     ],
                     'navigate' => [
-                        'title' => 'Two navigation areas',
-                        'steps' => [
-                            'The workbench is for daily use and has six pages: Chat, Agents, My Todos, Scheduled Tasks, Knowledge Base, and Scenes.',
-                            'The admin console is for configuration and governance. It is grouped into four sections — Agent development (Agents, Tools & Skills, Memory), Models & channels (Model Service, Messaging Channels), Organization & permissions (Members, Organization, Roles), and Platform operations (Tenants, System Settings, Branding, Runtime Logs, Audit) — with an overview page above them.',
-                            'Switch between the two areas from the entry at the top of the sidebar. If no admin console page is available to you, the entry does not appear at all.',
-                            'The account menu sits at the bottom of the sidebar: your identity, tenant switching, password, personal preferences, and sign-out.',
+                        'title'  => 'A tour of the two navigation areas',
+                        'covers' => [
+                            'The six workbench pages and what each one is for',
+                            'The four groups of the admin console and the pages in each',
+                            'How to switch between the two areas',
+                            'What the account menu at the bottom of the sidebar is for',
+                            'Menu visibility is decided by server-side authorization, not by hidden UI',
                         ],
-                        'note' => 'What you can see is decided by server-side authorization: only pages you may read and that are enabled are rendered, and empty groups are hidden. Hiding a menu is not access control — every request is re-checked on the server.',
-                    ],
-                    'preference' => [
-                        'title' => 'Theme and interface language',
-                        'steps' => [
-                            'Open the account menu at the bottom of the sidebar and choose "Preferences".',
-                            'Pick a theme (light or dark) and an interface language (Simplified Chinese, Traditional Chinese, or English). The change applies immediately.',
-                        ],
-                        'note' => 'Preferences are stored in your browser only. They are not written to the instance configuration and do not affect your colleagues.',
                     ],
                 ],
             ],
 
-            // ===== How to chat (workbench) =====
+            // ===== 如何对话（工作台）=====
             'chat' => [
-                'nav'   => 'How to chat',
-                'title' => 'How to chat: pick an agent, send a task, attach files',
-                'goal'  => 'Start a conversation, pick the right agent, and hand work over with attachments and commands.',
-                'blocks' => [
+                'nav'   => 'Chatting',
+                'title' => 'Chatting: pick an agent, send the task, attach files',
+                'lead'  => 'Start a conversation, choose the right agent, and hand over the task with attachments and commands.',
+                'videos' => [
                     'new' => [
-                        'title' => 'Start a conversation',
-                        'steps' => [
-                            'Click "New Chat" in the sidebar, or open the History page and click "New Chat".',
-                            'Click the caret next to "New Chat" to choose an agent: the menu lists the agents available to you, and clicking one starts a new session with it.',
-                            'For work that needs several agents, choose "Group chat" from the same menu, tick the participating agents, and click Start.',
-                            'You can also start from the workbench: on the Agents page, click "Start chat" on an agent card.',
-                            'Describe your goal in the input box ("Describe your task, or just ask…") and press Enter or click send.',
+                        'title'  => 'Starting a conversation and choosing an agent',
+                        'covers' => [
+                            'Starting a conversation from the sidebar or the history page',
+                            'Switching the agent used by this conversation above the input box',
+                            'Selecting several agents to run a multi-agent conversation',
+                            'Stating the task clearly: goal, scope and expected output',
                         ],
-                        'note' => 'In a group chat the first agent you tick is the session default: it receives messages and can delegate to the other members. When an agent cannot run, "Start chat" is blocked and the reason is shown instead (for example, chat is not enabled in this version, or you have no chat permission).',
                     ],
                     'compose' => [
-                        'title' => 'Every control in the composer',
-                        'fields' => [
-                            ['name' => 'Send / Cancel', 'desc' => 'Sends the message; while a run is active the button turns into Cancel and stops that run.'],
-                            ['name' => 'Session model', 'desc' => 'Chooses the model for this session: follow the global setting, follow the agent default, or name a specific model.'],
-                            ['name' => 'Optimize prompt', 'desc' => 'Rewrites a casual description into a clearer instruction before sending.'],
-                            ['name' => 'Voice input', 'desc' => 'Click the microphone to record, click again to stop; the audio is transcribed into text you can send as a question.'],
-                            ['name' => 'Clear Context', 'desc' => 'Clears the conversation context of the current session and continues from a clean slate.'],
-                            ['name' => 'Steer active task', 'desc' => 'Available while a run is active: add instructions or correct the direction without cancelling and starting over.'],
+                        'title'  => 'The input area, control by control',
+                        'covers' => [
+                            'Sending a message and stopping a running task',
+                            'Switching the model used by this session',
+                            'Smart input refinement and voice input',
+                            'Clearing the context and steering the current task',
+                            'Typing / for the command menu and @ to reference an agent or file',
                         ],
-                        'note' => 'To keep the context within limits, send /compact in the conversation to compress earlier turns, or /clear to empty it.',
                     ],
                     'attach' => [
-                        'title' => 'Upload files and folders',
-                        'steps' => [
-                            'Click the attachment button in the composer and choose "Upload File" or "Upload Folder". You can also drag files straight into the conversation or paste an image.',
-                            'Selected files appear above the input box and are submitted together with your next message.',
-                            'Supported: common images, documents (PDF, Word, Excel, PowerPoint), text and code files, and zip, rar, and 7z archives.',
-                            'The workspace panel on the right has a Preview and a Files tab where you can edit, save, download, copy the path of, or open a file in a new tab.',
+                        'title'  => 'Uploading files and folders',
+                        'covers' => [
+                            'Uploading a single file or an entire folder with the attach button',
+                            'Drag-and-drop and paste upload',
+                            'Confirming the attachment is submitted together with the message',
+                            'Finding the output under Preview and Files in the workspace',
                         ],
-                        'note' => 'An uploaded folder is stored in the workspace as a whole, so the agent can process all of its files in one go.',
                     ],
                     'session' => [
-                        'title' => 'Find and manage past conversations',
-                        'steps' => [
-                            'Open the History page to see past sessions across all agents, and search by title with "Search conversation titles".',
-                            'In the sidebar you can pin a frequent session, rename it, or archive it.',
-                            'Archived sessions are collected under the archived group; click Restore to bring one back.',
-                            'Deleting a session cannot be undone: once confirmed, every message in it is removed.',
+                        'title'  => 'Conversation history and everyday commands',
+                        'covers' => [
+                            'Searching the history page by title',
+                            'Pinning, renaming and archiving',
+                            'Restoring, continuing and deleting a conversation',
+                            'Common slash commands: /status, /context, /clear, /compact',
                         ],
-                    ],
-                    'command' => [
-                        'title' => 'Slash commands and @ references',
-                        'steps' => [
-                            'Type / in the composer to open the command menu — for example /status for runtime state, /context for the conversation context, /skill list for installed skills, and /knowledge for knowledge base statistics.',
-                            'Type @ to reference an agent or a file and pull it into your question.',
-                        ],
-                        'note' => 'The full command list is in the "Command reference" chapter of this manual.',
                     ],
                 ],
             ],
 
-            // ===== Agents (workbench) =====
+            // ===== 选择智能体（工作台）=====
             'agents' => [
-                'nav'   => 'Choose an agent',
-                'title' => 'Choose an agent in the workbench',
-                'goal'  => 'Browse the agents available to you on the workbench Agents page, see what each one does, and start chatting from its card.',
-                'blocks' => [
+                'nav'   => 'Choosing an agent',
+                'title' => 'Choosing an agent: pick one that can do the job',
+                'lead'  => 'Browse the available agents on the workbench Agents page, check them, then start chatting.',
+                'videos' => [
                     'browse' => [
-                        'title' => 'Browse agents and start chatting',
-                        'steps' => [
-                            'Open the Agents page in the workbench; cards list the agents you can use along with their availability.',
-                            'Each card shows the agent\'s name, responsibilities, and availability; click Refresh when you need the latest state.',
-                            'Click "Start chat" on a card to open a new session with that agent.',
-                            'To see an agent\'s full configuration first, open it under Agents in the admin console.',
+                        'title'  => 'Browsing agents and starting a conversation',
+                        'covers' => [
+                            'What each agent card shows',
+                            'How to tell whether an agent can be used for chat',
+                            'What each reason shown when an agent is unavailable actually means',
+                            'Refreshing the list and starting a conversation from a card',
                         ],
-                        'note' => 'The list only shows agents you are authorized to reach. When it is empty the page distinguishes "no agents available" from "no accessible agents — ask an administrator to check your authorization": the second is a permission problem, not missing data.',
                     ],
                 ],
             ],
 
-            // ===== Agents (admin console) =====
-            'agents-admin' => [
-                'nav'   => 'Create and configure agents',
-                'title' => 'Create and configure agents',
-                'goal'  => 'Create an agent under Agents in the admin console, then configure its profile, skills, and core files tab by tab.',
-                'blocks' => [
-                    'create' => [
-                        'title' => 'Create an agent',
-                        'steps' => [
-                            'Open the admin console, go to Agents, and click "New Agent".',
-                            'Fill in the name and responsibilities, and optionally set an avatar, an ID, and the knowledge mode.',
-                            'To start from an existing agent, pick one under "Copy from an existing agent": its configuration, skills, and knowledge are used as the starting point.',
-                            'Click "New Agent" to finish creating it; you can then continue configuring skills and core files in the detail panel.',
+            // ===== 设置知识库（工作台）=====
+            'knowledge' => [
+                'nav'   => 'Setting up knowledge',
+                'title' => 'Setting up knowledge: give the agent something to look up',
+                'lead'  => 'Knowledge is organized per agent: create a category, add documents, then let the agent use it.',
+                'videos' => [
+                    'overview' => [
+                        'title'  => 'Knowledge structure and creating a category',
+                        'covers' => [
+                            'Knowledge is split per agent, and how shared differs from independent',
+                            'Switching agents at the top, and reading page and capacity counts',
+                            'Who maintains tenant-level knowledge versus private knowledge',
+                            'Creating a category and using nested category paths',
                         ],
-                        'fields' => [
-                            ['name' => 'Name', 'desc' => 'The agent\'s display name. Required.'],
-                            ['name' => 'Avatar', 'desc' => 'Optional; upload an image.'],
-                            ['name' => 'ID', 'desc' => 'A unique identifier: lowercase letters, digits, and hyphens only, fixed once created. Left blank, it is derived from the name.'],
-                            ['name' => 'Responsibilities', 'desc' => 'What this agent handles and in what situations it is used. In group chats it drives task assignment.'],
-                            ['name' => 'Copy from an existing agent', 'desc' => 'Copies that agent\'s configuration, skills, and knowledge as a starting point; choose Blank to create a fresh agent.'],
-                            ['name' => 'Knowledge base', 'desc' => 'Shared means the agent reads and writes the same knowledge base as the team; Own gives it a dedicated knowledge base that does not affect the team.'],
+                    ],
+                    'document' => [
+                        'title'  => 'Creating and importing documents',
+                        'covers' => [
+                            'New document: target category, file name and content',
+                            'Import document: md and txt are supported, TXT becomes Markdown',
+                            'The index syncs automatically after saving or importing',
+                            'Editing, moving and deleting documents',
+                        ],
+                    ],
+                    'bind' => [
+                        'title'  => 'Letting an agent use the knowledge base',
+                        'covers' => [
+                            'When to use shared mode versus independent mode',
+                            'Switching the binding mode on the agent overview tab',
+                            'Using /knowledge in chat to inspect, toggle and search',
+                        ],
+                    ],
+                ],
+            ],
+
+            // ===== 待办与定时任务（工作台）=====
+            'todo' => [
+                'nav'   => 'Todos and scheduled tasks',
+                'title' => 'Todos and scheduled tasks: let the assistant remember for you',
+                'lead'  => 'Record things to follow up as todos, and hand anything recurring to scheduled tasks.',
+                'videos' => [
+                    'todo' => [
+                        'title'  => 'My todos',
+                        'covers' => [
+                            'Creating a todo: title, description, category, priority and due time',
+                            'Filtering by category and priority, plus overdue only',
+                            'Editing, completing and deleting',
+                            'Todos the assistant creates in chat land in the same list',
+                        ],
+                    ],
+                    'task' => [
+                        'title'  => 'Scheduled tasks',
+                        'covers' => [
+                            'The task list and the next run time',
+                            'Running immediately and the enable toggle',
+                            'Editing the schedule and the action',
+                            'Why this page has no New button',
+                        ],
+                    ],
+                ],
+            ],
+
+            // ===== 创建与配置智能体（管理控制台）=====
+            'agents-admin' => [
+                'nav'   => 'Creating and configuring agents',
+                'title' => 'Creating and configuring agents: from a card to a working agent',
+                'lead'  => 'Under agent management in the admin console: create an agent, then configure it tab by tab.',
+                'videos' => [
+                    'create' => [
+                        'title'  => 'Creating an agent',
+                        'covers' => [
+                            'Agent management, then Create agent',
+                            'How to fill in name, avatar, ID and responsibility',
+                            'Using copy from an existing agent to skip repeated configuration',
+                            'Choosing shared or independent knowledge',
                         ],
                     ],
                     'configure' => [
-                        'title' => 'Configure an agent: Profile',
-                        'steps' => [
-                            'Open an agent from the Agents list; it opens on the Profile tab.',
-                            'Add the position, category, tags, greeting, and persona summary, and link a scene if needed.',
-                            'Choose the agent\'s default model.',
-                            'Click Save when done, or go straight to "Start chat"; "Set as default" makes it the tenant default agent.',
+                        'title'  => 'Configuring the overview tab',
+                        'covers' => [
+                            'Position, category and tags',
+                            'Greeting and persona summary',
+                            'Related scenarios and the default model',
+                            'Save, start a conversation and set as default',
                         ],
-                        'fields' => [
-                            ['name' => 'Position', 'desc' => 'For example "Procurement Specialist" — the role this agent plays in the organization.'],
-                            ['name' => 'Category', 'desc' => 'Files the agent under a business category; shows "Uncategorized" when unset.'],
-                            ['name' => 'Tags', 'desc' => 'Comma-separated, for example "supplier, tender", to make the agent easier to find.'],
-                            ['name' => 'Greeting', 'desc' => 'The opening line used when a session with this agent starts.'],
-                            ['name' => 'Persona summary', 'desc' => 'A description of who this agent is, injected into its system prompt.'],
-                            ['name' => 'Default model', 'desc' => 'The model this agent uses by default. The default agent is locked to following the global configuration, which you change in Model Service.'],
-                        ],
-                        'note' => 'The default agent is marked as such, cannot be deleted, and its model and knowledge mode cannot be changed from the interface.',
                     ],
                     'capability' => [
-                        'title' => 'Configure an agent: Skills',
-                        'steps' => [
-                            'Open the Skills tab to decide which skills and tools this agent may use.',
-                            'For skills, either use every installed skill, or enable only the ones you tick.',
-                            'Manage tools as an allow list or a deny list: ticking Allow enables only the selected tools, while Deny removes tools from the available set. The two are mutually exclusive.',
-                            'To lock in a standard process, enter an SOP ID under SOPs and click Add.',
+                        'title'  => 'Configuring capabilities and core files',
+                        'covers' => [
+                            'Skills: enable all, or only the checked ones',
+                            'Tools: the allow list and the deny list',
+                            'What SOP flows are for',
+                            'Core files (agent profile, user info, workspace rules, long-term memory) and the Tasks tab',
                         ],
-                        'note' => 'With neither an allow list nor a deny list, the agent may use every installed tool. Prefer an allow list when narrowing the scope.',
-                    ],
-                    'corefiles' => [
-                        'title' => 'Configure an agent: Core files and Tasks',
-                        'steps' => [
-                            'The Core files tab edits the agent\'s long-term setup: the agent definition, user information, workspace rules, and long-term memory.',
-                            'Switch between edit and preview, then click Save.',
-                            'The Tasks tab lists the scheduled tasks that belong to this agent.',
-                        ],
-                        'note' => 'Core files are the agent\'s long-term setup; edits affect every future conversation with it, so keep them concise and accurate.',
                     ],
                 ],
-                'docs' => ['multiagent'],
             ],
 
-            // ===== Knowledge (workbench) =====
-            'knowledge' => [
-                'nav'   => 'Set up a knowledge base',
-                'title' => 'Set up a knowledge base: categories, documents, and agent binding',
-                'goal'  => 'Create categories and documents, then let a specific agent answer from them.',
-                'blocks' => [
-                    'overview' => [
-                        'title' => 'First, the structure: knowledge is per agent',
-                        'steps' => [
-                            'Open the Knowledge Base page in the workbench; the header shows the current page and size statistics.',
-                            'Use the selector at the top to switch agents: shared and dedicated knowledge bases do not affect each other.',
-                            'A tenant-level agent\'s knowledge base is maintained by tenant administrators; a private agent\'s is maintained by its owner.',
-                        ],
-                        'note' => 'Without read permission the page says so plainly instead of showing empty data. That is different from a genuinely empty knowledge base.',
-                    ],
-                    'category' => [
-                        'title' => 'New category',
-                        'steps' => [
-                            'Click "New" in the top right corner and choose "New category".',
-                            'Enter a category path; nesting is supported, for example research/ai.',
-                        ],
-                        'note' => 'A category becomes a directory under knowledge/. You need a category before you can create or import documents.',
-                    ],
-                    'document' => [
-                        'title' => 'New document',
-                        'steps' => [
-                            'Click "New" and choose "New document".',
-                            'Pick a target category, enter a file name and the content, then save.',
-                        ],
-                        'fields' => [
-                            ['name' => 'Target category', 'desc' => 'The knowledge directory the document goes into; create one first if none exists.'],
-                            ['name' => 'File name', 'desc' => 'The .md extension may be omitted; new documents are Markdown only.'],
-                            ['name' => 'Content', 'desc' => 'The document body. It cannot be empty, and a single document is capped at 10MB.'],
-                        ],
-                        'note' => 'Saving synchronizes the index automatically, after which agents can retrieve the document.',
-                    ],
-                    'import' => [
-                        'title' => 'Import existing documents',
-                        'steps' => [
-                            'Click "New" and choose "Import documents", then select local files (Markdown and TXT, multiple selection supported).',
-                            'Pick a target category and confirm the import.',
-                        ],
-                        'note' => 'TXT files are converted to Markdown. The index is synchronized automatically afterwards. When importing a large batch, sort the files into categories by topic first.',
-                    ],
-                    'bind' => [
-                        'title' => 'Let an agent use the knowledge base',
-                        'steps' => [
-                            'Choose the knowledge mode when creating or configuring an agent: Shared reads and writes the team knowledge base, Own gives the agent a dedicated one.',
-                            'You can review and switch that mode on the Profile tab in Agents (except for the default agent).',
-                            'Toggle knowledge in a conversation: /knowledge on enables it, /knowledge off disables it, /knowledge list shows the file tree, and /knowledge shows statistics.',
-                        ],
-                        'note' => 'Knowledge can also flow the other way: send the agent a document, a link, or a topic in chat and it will file it into the knowledge base for you.',
-                    ],
-                ],
-                'docs' => ['knowledge'],
-            ],
-
-            // ===== Memory (admin console) =====
+            // ===== 记忆管理（管理控制台）=====
             'memory' => [
                 'nav'   => 'Memory',
-                'title' => 'Review and consolidate agent memory',
-                'goal'  => 'Review what the agent has remembered, and trigger consolidation or an index rebuild when needed.',
-                'blocks' => [
+                'title' => 'Memory: inspect and tidy what the agent remembers',
+                'lead'  => 'Memory is stored per agent: see what exists, open it, then tidy it or rebuild the index when needed.',
+                'videos' => [
                     'view' => [
-                        'title' => 'Review memory contents',
-                        'steps' => [
-                            'Open the admin console, go to Memory, and pick an agent with the selector at the top.',
-                            'The "Memory Files" tab lists memory files by name, type, size, and last update.',
-                            'Click any row to open and read it.',
+                        'title'  => 'Inspecting memory and triggering a tidy-up',
+                        'covers' => [
+                            'Switching the agent with the agent selector',
+                            'The columns of the memory file list and what each memory type means',
+                            'Opening a memory file to read its content',
+                            'Two ways to trigger memory consolidation',
                         ],
-                        'note' => 'Type badges include Global, Daily, Dream (distillation output), and Evolution (self-evolution), which tell you where a memory came from.',
-                    ],
-                    'dream' => [
-                        'title' => 'Trigger memory consolidation',
-                        'steps' => [
-                            'Open the "Self-Evolution" tab to review evolution records.',
-                            'To consolidate manually, send /memory dream in a conversation; it accepts a day count (3 by default, 30 at most).',
-                        ],
-                        'note' => 'Distillation needs a working model to be configured. Without one the command reports that it cannot run rather than silently skipping.',
                     ],
                     'index' => [
-                        'title' => 'Rebuild the retrieval index',
-                        'steps' => [
-                            'Change the embedding model in Model Service, where the interface warns that existing indexes become invalid.',
-                            'Follow the prompt and send /memory rebuild-index in a conversation to rebuild them.',
-                            'Use /memory status to see the current embedding model, its dimensions, and the indexed chunk count.',
+                        'title'  => 'Rebuilding the retrieval index',
+                        'covers' => [
+                            'When the index needs to be rebuilt',
+                            '/memory rebuild-index and /memory status',
+                            'How long it takes and what it affects',
                         ],
-                        'note' => 'After switching embedding models you must rebuild the index, otherwise memory and knowledge retrieval return inaccurate results.',
                     ],
                 ],
-                'docs' => ['memory'],
             ],
 
-            // ===== Todos and tasks (workbench) =====
-            'todo' => [
-                'nav'   => 'Todos and tasks',
-                'title' => 'My todos and scheduled tasks',
-                'goal'  => 'Track the items you need to follow up, and manage the tasks that run on a schedule.',
-                'blocks' => [
-                    'todo' => [
-                        'title' => 'Create and manage todos',
-                        'steps' => [
-                            'Open "My Todos" in the workbench and click "New Todo".',
-                            'Fill in a title and description, choose a category, priority, and due time, then save.',
-                            'Use the filters at the top (all / open / pending / in progress / done / cancelled) and the overdue-only switch to focus, or search by keyword.',
-                        ],
-                        'fields' => [
-                            ['name' => 'Title', 'desc' => 'The name of the todo item.'],
-                            ['name' => 'Description', 'desc' => 'Additional context and requirements.'],
-                            ['name' => 'Category', 'desc' => 'General item, additional material, plan confirmation, or result acceptance.'],
-                            ['name' => 'Priority', 'desc' => 'Low, normal, or high.'],
-                            ['name' => 'Due time', 'desc' => 'Optional; clear it again if you set it by mistake.'],
-                        ],
-                        'note' => 'The agent also creates todos during conversations and synchronizes them here; the source field on an item shows whether you or the agent created it.',
-                    ],
-                    'task-view' => [
-                        'title' => 'Review and run scheduled tasks',
-                        'steps' => [
-                            'Open "Scheduled Tasks" in the workbench. Tasks are listed with their status, name, schedule, and next run time.',
-                            'Click Run now to execute a task immediately; because it sends content to the configured channels and recipients, you confirm first.',
-                            'Use the switch on a card to enable or disable a task, and click a card to open the edit dialog.',
-                        ],
-                        'note' => 'Scheduled tasks are created by the agent inside a conversation through the scheduler tool, and belong to that agent. This page is for reviewing, editing, running, enabling, and deleting them — it deliberately provides no "add task" entry.',
-                    ],
-                    'task-edit' => [
-                        'title' => 'Edit a scheduled task',
-                        'steps' => [
-                            'Open a task card, change its name, enabled state, schedule, and action, then save.',
-                            'The schedule can be a cron expression, a fixed interval (60 seconds minimum), or a one-off.',
-                            'The action can be "send a message" or an "AI task"; choose the channel it should use.',
-                            'For a task you no longer need, click Delete in the dialog; deletion cannot be undone.',
-                        ],
-                        'note' => 'The channel type of an existing task cannot be changed. If the task capability is unavailable, the page tells you to ask an administrator to enable it or finish the adaptation.',
-                    ],
-                ],
-                'docs' => ['tools-scheduler'],
-            ],
-
-            // ===== Model service (admin console) =====
+            // ===== 模型服务（管理控制台）=====
             'models' => [
-                'nav'   => 'Model service',
-                'title' => 'Configure models and provider credentials',
-                'goal'  => 'Connect usable providers and credentials, and decide which model each capability uses.',
-                'blocks' => [
+                'nav'   => 'Model services',
+                'title' => 'Model services: connect models and assign them per capability',
+                'lead'  => 'Configure the basics and vendor credentials first, then pick a model for each capability.',
+                'videos' => [
                     'basic' => [
-                        'title' => 'Basics',
-                        'steps' => [
-                            'Open the admin console, go to Model Service; it opens on the Basics tab.',
-                            'Under Model configuration choose a provider and model and save. With Custom, the endpoint must follow the OpenAI API protocol.',
-                            'Under Agent configuration tune the runtime parameters: maximum context tokens, maximum memory turns, maximum execution steps, deep thinking and its effort, sub-agents, and self-evolution.',
-                            'Under System set the interface language and task notifications, including the notification sound.',
+                        'title'  => 'Basic configuration',
+                        'covers' => [
+                            'Choosing a vendor and a model',
+                            'Agent settings: context length, dialogue turns, execution steps and deep thinking',
+                            'System language and task notifications',
                         ],
-                        'note' => 'The default execution permission shown under Security settings comes from the role resource grants your administrator assigned. It is read-only here and cannot be changed from within a conversation.',
                     ],
                     'vendor' => [
-                        'title' => 'Provider credentials',
-                        'steps' => [
-                            'Switch to the Models tab and click "Add Provider" under vendor credentials.',
-                            'Choose a provider and enter the API key. Put a self-hosted gateway or proxy address in API Base; leave it blank to use the official default.',
-                            'After saving, that provider\'s models become available in the capability cards and in role grants.',
-                            'For your own OpenAI-compatible service, use "Add custom provider" with a name, API Base, and API key.',
+                        'title'  => 'Vendor credentials',
+                        'covers' => [
+                            'The API Key and API Base to fill in when adding a vendor',
+                            'When to add a custom vendor',
+                            'Credentials are stored encrypted and never echoed back',
+                            'Confirmation when replacing or clearing credentials',
                         ],
-                        'note' => 'Credentials are stored encrypted and are never echoed back to the page. Clearing them disables the related capabilities immediately, so the interface asks for confirmation first. There is no "test connection" button: verify a new configuration with one real conversation.',
                     ],
                     'capability' => [
-                        'title' => 'Choose the model for each capability',
-                        'steps' => [
-                            'Assign models on the capability cards: main model, main-model fallback, vision, image generation, speech recognition, speech synthesis, embedding, and web search.',
-                            'The main model is what chat uses by default; with the fallback enabled, an unavailable main model switches over automatically.',
-                            'The embedding model drives memory and knowledge retrieval, so switching it requires an index rebuild.',
+                        'title'  => 'Picking a model for each capability',
+                        'covers' => [
+                            'How the primary and fallback models divide the work',
+                            'Image, speech, embedding and web search models',
+                            'Changing the embedding model requires rebuilding the index',
                         ],
-                        'note' => 'Which models a given role may actually use is decided by the grants on the Models tab of Roles. Here you only set instance-level defaults.',
                     ],
                 ],
-                'docs' => ['models'],
             ],
 
-            // ===== Messaging channels (admin console) =====
+            // ===== 消息渠道（管理控制台）=====
             'channels' => [
                 'nav'   => 'Messaging channels',
-                'title' => 'Connect messaging channels',
-                'goal'  => 'Connect the assistant to WeChat, Feishu, DingTalk and other channels, bound to the right agent.',
-                'blocks' => [
+                'title' => 'Messaging channels: reach the assistant where you already work',
+                'lead'  => 'Create a channel instance at platform or tenant scope, fill in the credentials, then enable it.',
+                'videos' => [
                     'scope' => [
-                        'title' => 'Know which scope you are configuring in',
-                        'steps' => [
-                            'Open the admin console, go to Messaging Channels. Depending on your permissions the page shows one of two scopes.',
-                            'Platform scope: manage the channels connected at instance level.',
-                            'Tenant scope: configure the channels belonging to this tenant; credentials are stored encrypted and never echoed back.',
+                        'title'  => 'The two configuration scopes and creating an instance',
+                        'covers' => [
+                            'How platform scope differs from tenant scope, and who maintains each',
+                            'Choosing the channel type and display name when adding a channel',
+                            'Binding agents, and what it means that the first binding is the default',
                         ],
-                        'note' => 'When you lack access or the feature is not open, the page says so explicitly rather than showing an empty list.',
-                    ],
-                    'create' => [
-                        'title' => 'Create a channel instance',
-                        'steps' => [
-                            'Click Connect in the top right corner and choose a channel type.',
-                            'Enter a display name and choose the agent to bind.',
-                            'Fill in the credential fields that channel type requires, then save.',
-                        ],
-                        'note' => 'You can bind several agents: the first is the default, receiving messages and delegating to the others. "Do not bind" is also allowed. Leaving a secret field blank keeps the existing value; saving takes effect immediately with no service restart.',
                     ],
                     'credentials' => [
-                        'title' => 'Credentials each channel needs',
-                        'fields' => [
-                            ['name' => 'Feishu', 'desc' => 'App ID and App Secret; optionally a verification token and bot name.'],
-                            ['name' => 'DingTalk', 'desc' => 'Client ID, Client Secret, and the robot code.'],
-                            ['name' => 'WeCom smart robot', 'desc' => 'Bot ID, Secret, Token, and EncodingAESKey.'],
-                            ['name' => 'WeChat', 'desc' => 'Token and callback base URL.'],
-                            ['name' => 'QQ bot', 'desc' => 'App ID and App Secret.'],
-                            ['name' => 'Telegram', 'desc' => 'Bot Token.'],
-                            ['name' => 'Slack', 'desc' => 'Bot Token (xoxb-) and App Token (xapp-).'],
-                            ['name' => 'Discord', 'desc' => 'Bot Token.'],
+                        'title'  => 'Credential fields per channel',
+                        'covers' => [
+                            'What to fill in for Feishu, DingTalk and WeCom',
+                            'What to fill in for WeChat, QQ, Telegram, Slack and Discord',
+                            'An empty secret field means the value stays unchanged',
+                            'Credentials are stored encrypted and never echoed back',
                         ],
-                        'note' => 'Secret fields render as password inputs and are never shown in clear text again after saving.',
                     ],
                     'scan' => [
-                        'title' => 'Scan a QR code instead of typing credentials',
-                        'steps' => [
-                            'WeChat: choose the WeChat scan sign-in option, scan the QR code in the card, and confirm on your phone — the channel starts automatically.',
-                            'WeCom smart robot: switch to the scan tab and scan with WeCom to create the smart robot in one step; manual entry remains available.',
-                            'Feishu: switch to the scan tab and scan with the Feishu app to create the application with permissions and event subscriptions preconfigured; manual entry remains available.',
+                        'title'  => 'Scan-to-connect, enabling and disconnecting',
+                        'covers' => [
+                            'WeChat sign-in by QR code and WeCom bot creation by QR code',
+                            'Creating a Feishu app by QR code',
+                            'QR code expiry and what to do when it times out',
+                            'Enable versus disconnect, and the extra password prompt for sensitive actions',
                         ],
-                        'note' => 'QR codes expire (about 2 minutes for WeChat; 10 minutes and a single scan for Feishu). Retry when prompted. After a successful scan the credentials are saved automatically and appear in the list.',
-                    ],
-                    'bind' => [
-                        'title' => 'Enable, disable, and disconnect',
-                        'steps' => [
-                            'Use the enable/disable control on the card to decide whether the channel runs.',
-                            'Confirm to apply; sensitive operations ask for your current account password again.',
-                            'Disconnect stops the channel while keeping its configuration, once confirmed.',
-                        ],
-                        'note' => 'Creating a channel instance is not the same as receiving messages: make sure the instance is enabled and bound to a usable agent.',
                     ],
                 ],
-                'docs' => ['channels'],
             ],
 
-            // ===== Roles and permissions (admin console) =====
+            // ===== 权限与角色设置（管理控制台）=====
             'roles' => [
                 'nav'   => 'Roles and permissions',
-                'title' => 'Permissions: combine them into roles and assign them',
-                'goal'  => 'Create or adjust a role, combine functional permissions with accessible resources, and assign it to members.',
-                'blocks' => [
-                    'list' => [
-                        'title' => 'The role list',
-                        'steps' => [
-                            'Open the admin console, go to Roles. The list shows each role\'s name, code, whether it is built in, and its permission labels.',
-                            'Click "New role" to create a custom role.',
-                            'To start from an existing role, click Copy; the new role is created with a "(copy)" suffix.',
-                            'Click Members to see who currently holds the role.',
-                        ],
-                        'note' => 'Built-in roles (Tenant Administrator, Member) are marked as such and offer no delete action, but their permissions and resource grants can still be edited.',
-                    ],
+                'title' => 'Roles and permissions: who gets which features and resources',
+                'lead'  => 'A role combines feature permissions and resource grants: configure it in the role editor, then assign it.',
+                'videos' => [
                     'editor' => [
-                        'title' => 'The six tabs of the role editor',
-                        'steps' => [
-                            'Click Edit, or create a new role, to open the editor: Basics, Menus, Skills, Tools, Agents, and Models, each with a count of what is selected.',
-                            'On Basics, set the code and name, then tick functional permissions from the catalog (searchable, and you can clear the selection).',
-                            'The other tabs are resource grants: tick the menus, skills, tools, agents, and models this role may access.',
-                            'Click Save when done.',
+                        'title'  => 'The role list and the role editor',
+                        'covers' => [
+                            'The columns of the role list and the built-in roles',
+                            'Creating a role and duplicating an existing one',
+                            'What each of the six editor tabs configures',
+                            'The code, name and permission points on the basics tab',
                         ],
-                        'note' => 'The code cannot be changed after creation. Switching tabs does not lose your draft, and leaving with unsaved changes asks for confirmation first.',
                     ],
                     'permissions' => [
-                        'title' => 'Assignable functional permissions',
-                        'fields' => [
-                            ['name' => 'Tenant', 'desc' => 'View tenant information, view members, view the organization.'],
-                            ['name' => 'Assets and sessions', 'desc' => 'View agents, view conversation history.'],
-                            ['name' => 'Knowledge / memory / todos', 'desc' => 'View knowledge, view memory, view todos, manage todos.'],
-                            ['name' => 'Skills', 'desc' => 'View skills, use skills, edit skills, enable or disable skills.'],
-                            ['name' => 'Tools', 'desc' => 'View tools, execute tools, configure tools.'],
-                            ['name' => 'Models', 'desc' => 'View models, use models.'],
-                            ['name' => 'Agents', 'desc' => 'Use agents, edit agents, enable or disable agents.'],
-                            ['name' => 'Chat', 'desc' => 'Use chat.'],
+                        'title'  => 'Feature permissions and resource grants',
+                        'covers' => [
+                            'Feature permissions are grouped in a fixed catalogue you only check',
+                            'Select all on this page, and how paging affects it',
+                            'Checking the assignable models first, then setting defaults',
+                            'Resources and permissions are isolated per tenant',
                         ],
-                        'note' => 'The permission catalog is fixed on the server; the interface can only tick entries from it and cannot invent new permissions. Anything not ticked is denied.',
-                    ],
-                    'resources' => [
-                        'title' => 'Resource grants and model defaults',
-                        'steps' => [
-                            'On the Menus, Skills, Tools, and Agents tabs, search for a resource and tick what this role may use ("Select this page" and paging are available).',
-                            'On the Models tab first tick the assignable models, then pick role default models for each connected capability under Model defaults.',
-                        ],
-                        'note' => 'Resource grants are tenant-scoped: only resources inside your tenant can be selected, and model defaults must come from the assigned models.',
                     ],
                     'assign' => [
-                        'title' => 'Assign a role to a member',
-                        'steps' => [
-                            'Open Members and find the Roles field in the create or edit member dialog.',
-                            'Tick the roles this member should hold (Member is ticked by default) and save; the change applies immediately.',
-                            'To confirm someone\'s effective permissions, ask them to open the account menu and check "Actual roles" under Profile.',
+                        'title'  => 'Assigning roles to members',
+                        'covers' => [
+                            'Checking roles for a member under member management',
+                            'Where to see the effective roles of a member',
+                            'When a permission change takes effect',
+                            'How platform admins and tenant owners bypass checks',
                         ],
-                        'note' => 'Role changes are re-resolved on the server, so a signed-in session picks up the new permissions without signing in again.',
-                    ],
-                    'rules' => [
-                        'title' => 'A few hard rules',
-                        'steps' => [
-                            'An instance always keeps at least one active administrator; the last one cannot be disabled or demoted.',
-                            'Editing a built-in role\'s permissions never changes administrator standing — administrator status and the permission set are independent.',
-                            'A platform administrator can see the tenant list, which does not grant membership or read access to that tenant\'s business data.',
-                        ],
-                        'note' => 'Every grant is checked independently at the server API layer and re-resolved on each request. Hiding a menu is only a visual affordance, not access control.',
                     ],
                 ],
             ],
 
-            // ===== Members and organization (admin console) =====
+            // ===== 成员与组织（管理控制台）=====
             'members' => [
-                'nav'   => 'Members and organization',
-                'title' => 'Manage member accounts and the organization',
-                'goal'  => 'Create and maintain member accounts, handle temporary passwords, and build the department structure.',
-                'blocks' => [
+                'nav'   => 'Members and org',
+                'title' => 'Members and org: bring people in and place them',
+                'lead'  => 'Create members, assign roles, maintain the department hierarchy and handle password resets.',
+                'videos' => [
                     'create' => [
-                        'title' => 'Create a member',
-                        'steps' => [
-                            'Open the admin console, go to Members, and click "New member".',
-                            'Under Tenants, choose the target tenants (multiple selection allowed).',
-                            'Under Account Information, fill in the username, display name, and temporary password, and optionally a department and position.',
-                            'Under Roles & Status, tick the roles and click Create.',
-                            'Hand the temporary password to the member; they must change it at first sign-in.',
+                        'title'  => 'Creating a member',
+                        'covers' => [
+                            'Selecting more than one target tenant',
+                            'Account, display name and temporary password',
+                            'Choosing department and position',
+                            'Assigning roles and handing the temporary password to the member',
                         ],
-                        'fields' => [
-                            ['name' => 'Target tenants', 'desc' => 'Which tenants to join. The first tenant gets a new account; the others join by binding that account.'],
-                            ['name' => 'Username', 'desc' => '3-64 characters from letters, digits, and . _ -'],
-                            ['name' => 'Display name', 'desc' => 'The name shown in the console and the organization. Required.'],
-                            ['name' => 'Temporary password', 'desc' => 'At least 8 characters; avoid common passwords. The member must change it at first sign-in.'],
-                            ['name' => 'Department', 'desc' => 'Optional; defaults to no department.'],
-                            ['name' => 'Position', 'desc' => 'Optional; the job title used inside the organization.'],
-                            ['name' => 'Roles', 'desc' => 'Decides the member\'s functional permissions and accessible resources. Member is the default.'],
-                        ],
-                        'note' => 'A global account and a tenant membership are separate things: the same account can hold an independent name, department, and set of roles in each tenant.',
-                    ],
-                    'edit' => [
-                        'title' => 'Edit a member and toggle access',
-                        'steps' => [
-                            'Click a member in the list to open the edit dialog, where you can change the display name, department, position, and roles.',
-                            'Use the enable switch to control whether the member is usable in the current tenant, then save.',
-                        ],
-                        'note' => 'The account itself cannot be changed. Disabling a member affects only the current tenant; their identity and history in other tenants are untouched.',
                     ],
                     'password' => [
-                        'title' => 'Reset a password',
-                        'steps' => [
-                            'Use the reset action on a member row; after confirmation the system generates a one-time temporary password.',
-                            'Give it to the member, who must set a new password at the next sign-in.',
+                        'title'  => 'Editing, disabling and resetting passwords',
+                        'covers' => [
+                            'Changing display name, department and position',
+                            'Using the enable toggle to disable and restore an account',
+                            'Resetting a password to issue a one-time temporary password',
+                            'The member must change it right after signing in',
                         ],
-                        'note' => 'A temporary password expires (24 hours by default). Once expired the member cannot sign in and the password must be reset again.',
                     ],
                     'org' => [
-                        'title' => 'Organization',
-                        'steps' => [
-                            'Open Organization and click "New department", then fill in the code, name, parent department, and sort order.',
-                            'To move a department, edit its parent department; the sort order is also changed in the edit dialog.',
-                            'Use the members action on a department row to see who is in it.',
+                        'title'  => 'Organization structure',
+                        'covers' => [
+                            'Creating a department: code, name, parent and order',
+                            'Adjusting the hierarchy by editing the parent',
+                            'Viewing the members of a department',
+                            'The rejection you get when parents form a cycle',
                         ],
-                        'note' => 'A department code cannot be changed after creation. A department still referenced by members or resources must be unreferenced before it can be deleted, and a cycle in the hierarchy is rejected outright.',
                     ],
                 ],
             ],
 
-            // ===== Tenants and audit (admin console) =====
+            // ===== 租户与审计（管理控制台）=====
             'tenant' => [
                 'nav'   => 'Tenants and audit',
-                'title' => 'Tenant management and identity audit',
-                'goal'  => 'Create and maintain tenants from the platform side, and review audit records as required.',
-                'blocks' => [
+                'title' => 'Tenants and audit: mind the boundaries and keep the trail',
+                'lead'  => 'On the platform side, maintain tenants and use identity audit to see who did what and when.',
+                'videos' => [
                     'tenant' => [
-                        'title' => 'Tenant management',
-                        'steps' => [
-                            'Platform administrators open Tenants and filter by status (not archived, active, disabled, archived); archived tenants are excluded from the list by default.',
-                            'Click "New tenant" to fill in the basics: on creation only the Basics tab can be submitted.',
-                            'Once inside an existing tenant, each of the five tabs is submitted separately.',
-                            'Disabling, archiving, and restoring all re-check that the tenant still has an active administrator.',
+                        'title'  => 'Tenant management',
+                        'covers' => [
+                            'Filtering by status and reading the list columns',
+                            'Why creating a tenant only asks for basic information',
+                            'The five tabs each submit their own changes',
+                            'The checks required before disabling, archiving and restoring',
                         ],
-                        'fields' => [
-                            ['name' => 'Basics', 'desc' => 'The tenant name, code, and other fundamentals. The code is globally unique and cannot be changed.'],
-                            ['name' => 'Model grants', 'desc' => 'The range of models this tenant may use.'],
-                            ['name' => 'Tool grants', 'desc' => 'The range of tools this tenant may use.'],
-                            ['name' => 'Agents', 'desc' => 'Agent-related configuration inside the tenant.'],
-                            ['name' => 'Tenant management', 'desc' => 'Designate or adjust this tenant\'s administrators.'],
-                        ],
-                        'note' => 'Creating a tenant generates its identifier, built-in roles, and organization root in a single transaction, and the response never echoes the initial administrator\'s temporary password. An archived tenant only offers Restore, and only once it has an active tenant administrator.',
                     ],
                     'audit' => [
-                        'title' => 'Identity audit',
-                        'steps' => [
-                            'Open Audit and search by actor or action, and filter by result (all, success, denied).',
-                            'Each record shows the action, result, actor, a localized timestamp, and a redacted summary of the change.',
+                        'title'  => 'Identity audit',
+                        'covers' => [
+                            'Searching by actor and action',
+                            'Filtering by result and time range',
+                            'The action, result and masked summary of one record',
+                            'What platform and tenant scopes each can see',
                         ],
-                        'note' => 'Platform administrators see every record; tenant administrators see only their own tenant\'s. Regular members have no audit entry at all.',
                     ],
                 ],
             ],
 
-            // ===== Your account (account and reference) =====
+            // ===== 个人账号设置（个人与参考）=====
             'account' => [
-                'nav'   => 'Your account',
-                'title' => 'Maintain your own account and preferences',
-                'goal'  => 'Manage your profile, password, interface preferences, and current tenant.',
-                'blocks' => [
+                'nav'   => 'Personal account',
+                'title' => 'Personal account: profile, password and preferences',
+                'lead'  => 'All in the account menu at the bottom of the sidebar: profile, password, preferences and tenant switching.',
+                'videos' => [
                     'profile' => [
-                        'title' => 'Profile',
-                        'steps' => [
-                            'Open the account menu at the bottom of the sidebar and choose "Profile".',
-                            'Review your name, sign-in account, platform identity, current tenant, member name, actual roles, department, and position.',
-                            'Click Edit to change your name and save; double-click the avatar to replace it.',
+                        'title'  => 'Personal profile',
+                        'covers' => [
+                            'The account menu, then Profile',
+                            'Changing the display name',
+                            'Changing the avatar',
+                            'Where to see your own effective roles',
                         ],
-                        'note' => '"Actual roles" is where your permissions come from, matching the roles configured on the Roles page. Check there first when permissions look wrong.',
                     ],
                     'password' => [
-                        'title' => 'Change your password',
-                        'steps' => [
-                            'In the account menu choose "Account security", enter your current and new password, and submit.',
+                        'title'  => 'Changing the password and personal preferences',
+                        'covers' => [
+                            'Filling in the current and new password under account security',
+                            'Other signed-in sessions stop working after a password change',
+                            'Theme and interface language under personal preferences',
+                            'Preferences are stored in the current browser only',
                         ],
-                        'note' => 'Your other signed-in sessions are invalidated once the change succeeds, so you sign in again with the new password.',
-                    ],
-                    'prefs' => [
-                        'title' => 'Preferences',
-                        'steps' => [
-                            'In the account menu choose "Preferences" and pick a theme (light or dark) and interface language (Simplified Chinese, Traditional Chinese, English).',
-                        ],
-                        'note' => 'Preferences apply to this browser only. They are not written to the instance configuration and do not affect others.',
                     ],
                     'tenant-switch' => [
-                        'title' => 'Switch tenant',
-                        'steps' => [
-                            'Use the tenant selector in the top bar to switch tenants; the current one is marked.',
-                            'The page reloads for the new tenant, and the agents, knowledge bases, members, and permission scope you see change accordingly.',
+                        'title'  => 'Switching tenants',
+                        'covers' => [
+                            'Using the tenant selector in the top bar',
+                            'The page reloads for the newly selected tenant',
+                            'What you see when you belong to no tenant',
                         ],
-                        'note' => 'If you belong to no tenant the selector says so; if the target tenant is no longer valid it asks you to choose again.',
                     ],
                 ],
             ],
 
-            // ===== Command reference (account and reference) =====
+            // ===== 命令速查（个人与参考）=====
             'commands' => [
                 'nav'   => 'Command reference',
                 'title' => 'Command reference',
-                'goal'  => 'Keep the most useful terminal and in-chat commands at hand.',
-                'blocks' => [
+                'lead'  => 'A quick look at terminal operations and in-chat commands; the two tables below are for lookup.',
+                'videos' => [
                     'commands' => [
-                        'title' => 'Terminal and in-chat commands',
-                        'note' => 'Start, stop, and restart run in a terminal only; every other command is sent from the composer by starting with /. Slash commands support custom aliases through command_aliases in config.json.',
-                    ],
-                ],
-            ],
-
-            // ===== Troubleshooting (account and reference) =====
-            'troubleshoot' => [
-                'nav'   => 'Troubleshooting',
-                'title' => 'Common problems and what to do',
-                'goal'  => 'Match a symptom to its cause, and understand why the system answers the way it does.',
-                'blocks' => [
-                    'issues' => [
-                        'title' => 'Common problems',
-                        'items' => [
-                            ['ask' => 'After signing in I only see the change-password page', 'answer' => 'You are in the forced-password-change restricted session (temporary password sign-in, or an administrator just reset your password). A restricted session may only view a minimal slice of its own information, change the password, and sign out. Finish the change to continue — administrator status is no exception.'],
-                            ['ask' => '"Start chat" on an agent card does nothing or reports no permission', 'answer' => 'Either the agent cannot run right now or your role lacks chat permission. The page names the reason (for example "chat is not enabled in this version" or "no chat permission — ask an administrator"), so follow the message.'],
-                            ['ask' => 'Creating a member reports the temporary password is invalid', 'answer' => 'A temporary password needs at least 8 characters and must not match the common-password blocklist. The form returns a structured validation error naming the reason; change it and retry.'],
-                            ['ask' => 'I uploaded a file but the agent cannot see it', 'answer' => 'Attachments only count once they are submitted with a message: confirm the file appears above the input box, then send that message. Dragging a file into the conversation works too.'],
-                            ['ask' => 'A document I just added is missing from the knowledge base', 'answer' => 'First confirm the correct agent is selected at the top — knowledge is per agent, and shared and dedicated knowledge bases do not affect each other — then confirm the document\'s category is not filtered out. Saving or importing synchronizes the index automatically.'],
-                            ['ask' => 'The channel is configured but no messages arrive', 'answer' => 'Configuring an instance and receiving messages are two different things: check that the instance is enabled and bound to a usable agent. Personal channel runtimes are off by default in enterprise deployments.'],
-                            ['ask' => 'I forgot my password', 'answer' => 'Ask an administrator to reset it under Members. You receive a one-time temporary password and must set a new one immediately after signing in.'],
-                            ['ask' => 'Sign-in says to retry later (429)', 'answer' => 'Too many failed attempts triggered rate limiting; retry shortly. The system returns the same message for a nonexistent account and a wrong password so it never reveals whether an account exists.'],
-                            ['ask' => 'An API call returns 401', 'answer' => 'The request has no valid session, or the credential expired. Sign in again and retry. If two credentials from different sources are sent together the server rejects them with 400 mixed_credentials — keep exactly one.'],
-                            ['ask' => 'An API call returns 403', 'answer' => 'Your identity lacks the required qualification or permission. Note that when a target resource is not visible to you the server returns 404 rather than 403, so a status code cannot be used to probe whether a resource exists.'],
-                            ['ask' => 'An API call returns 503', 'answer' => 'The identity store is unavailable. The system never falls back to a default identity or a shared password, so the store must be restored first. Explicitly disabled consumers are also rejected with 503 and trigger no downstream side effects.'],
-                            ['ask' => 'A skill or command execution is denied', 'answer' => 'In multi-tenant mode code execution is confined to an isolation boundary: path traversal, symlink escapes, and cross-tenant directory references are rejected outright, and arbitrary code execution is denied by default until the execution-isolation slice passes acceptance. Raising the permission mode still never crosses the tenant boundary.'],
-                            ['ask' => 'Usage is rejected as over the limit', 'answer' => 'A hard quota limit was reached. Quotas are metered per tenant and per identity; lowering one re-checks queued tasks before they run and rejects them, so either raise the quota or reduce usage.'],
-                            ['ask' => 'Backup or restore fails', 'answer' => 'Restore requires the service to be stopped first (cow stop), otherwise it is refused. Backup archives contain API keys and personal data — treat them as sensitive files.'],
-                            ['ask' => 'Port 9899 is taken and the service will not start', 'answer' => 'Find the process holding it: lsof -nP -i :9899 | grep LISTEN. Either stop that process or use another port via web_port in config.json or the COW_WEB_PORT environment variable.'],
-                            ['ask' => 'The process refuses to start and the log mentions the identity mode', 'answer' => 'Check identity_mode in config.json. Only database is supported: explicitly configuring the old shared-password mode is refused at startup and never falls back to a default identity.'],
+                        'title'  => 'Terminal and in-chat commands in practice',
+                        'covers' => [
+                            'Terminal: start, stop, restart and check status',
+                            'In chat: /status, /context, /clear, /compact',
+                            'Skills and knowledge: /skill, /knowledge',
+                            'Memory and configuration: /memory, /config',
+                            'Run control: /cancel, /steer, /logs',
+                            'Slash command aliases can be customized',
                         ],
                     ],
                 ],
             ],
 
-            // ===== Further reading (account and reference) =====
+            // ===== 故障排查（个人与参考）=====
+            'troubleshoot' => [
+                'nav'   => 'Troubleshooting',
+                'title' => 'Troubleshooting: common symptoms and what to do',
+                'lead'  => 'Watch the walkthrough for the common symptoms, then match the exact cause against the reference below.',
+                'videos' => [
+                    'issues' => [
+                        'title'  => 'Troubleshooting walkthrough',
+                        'covers' => [
+                            'After signing in you only see the change password page',
+                            'Start conversation is unavailable or reports no permission',
+                            'You uploaded a file but the assistant cannot see it',
+                            'A document you just added is missing from the knowledge base',
+                            'A channel is configured but no messages arrive',
+                            'A forgotten password and sign-in rate limiting',
+                            'What a 401, 403 or 503 response actually means',
+                        ],
+                    ],
+                ],
+                'items' => [
+                    ['ask' => 'After signing in I only see the change password page', 'answer' => 'This is a restricted session that must change its password (a temporary password was used, or an admin just reset it). It can only view minimal self information, change the password and sign out. Finish the change and everything works normally; admin status is no exception.'],
+                    ['ask' => 'The Start conversation button on an agent card does nothing or reports no permission', 'answer' => 'That agent is currently not runnable, or your role cannot chat. The page states the concrete reason (for example, chatting is not available yet in this version, or you have no chat permission and should contact an admin).'],
+                    ['ask' => 'Creating a member is rejected because the temporary password is not acceptable', 'answer' => 'A temporary password needs at least 8 characters and must not be in the common password blocklist. The form returns structured validation errors naming the reason; change it and retry.'],
+                    ['ask' => 'I uploaded a file but the assistant cannot see it', 'answer' => 'Attachments only count when submitted with the message: after selecting the file, confirm it appears above the input box, then send that message. You can also drag the file straight into the conversation.'],
+                    ['ask' => 'A document I just added is missing from the knowledge base', 'answer' => 'First confirm the agent selected at the top left is the right one, since knowledge is split per agent and shared and independent stores are separate. Then check that the category you are looking at is not filtered out. Saving or importing syncs the index automatically.'],
+                    ['ask' => 'A channel is configured but no messages arrive', 'answer' => 'Configuring an instance and actually receiving messages are two different things: confirm the instance is enabled and that a usable agent is bound to it. Personal channels are off by default in enterprise deployments.'],
+                    ['ask' => 'I forgot my password', 'answer' => 'Ask an admin to reset it under member management. You receive a one-time temporary password and must set a new password immediately after signing in.'],
+                    ['ask' => 'Sign-in says to try again later (429)', 'answer' => 'Failed sign-in attempts passed the threshold and triggered rate limiting; retry later. The system returns the same message for an unknown account and a wrong password so that account existence is not disclosed.'],
+                    ['ask' => 'The API returns 401', 'answer' => 'The request has no valid session, or the credential expired. Sign in again and retry. If two credentials from different sources are sent together the server rejects the request with 400 mixed_credentials, so keep only one.'],
+                    ['ask' => 'The API returns 403', 'answer' => 'The current identity lacks the required eligibility or permission. When a resource is not visible to you the server returns 404 rather than 403, so that a status code cannot reveal whether the resource exists.'],
+                    ['ask' => 'The API returns 503', 'answer' => 'The identity store is unavailable. The system does not fall back to a default identity or a shared password; restore the identity store first. Consumers that are explicitly not enabled are also rejected with 503 without triggering downstream side effects.'],
+                    ['ask' => 'A skill or command execution is rejected', 'answer' => 'Under multi-tenancy, code execution is confined to an isolation boundary: path traversal, symlink escapes and cross-tenant directory references are all rejected. Until execution isolation is accepted, arbitrary code execution is denied by default, and enabling a higher privilege mode never breaks tenant isolation.'],
+                    ['ask' => 'Usage is rejected as over the limit', 'answer' => 'A quota hard limit was reached. Quotas are metered per tenant and identity; after a quota is lowered, already queued tasks are re-checked before they trigger and are rejected. Adjust the quota or reduce usage.'],
+                    ['ask' => 'Backup or restore fails', 'answer' => 'The service must be stopped before restoring (cow stop) or the restore is rejected. Backup archives contain API keys and personal data, so store them as sensitive files.'],
+                    ['ask' => 'Port 9899 is in use and the service will not start', 'answer' => 'Find the process holding it first: lsof -nP -i :9899 | grep LISTEN. Stop that process, or use another port (web_port in config.json, or the COW_WEB_PORT environment variable).'],
+                    ['ask' => 'The process refuses to start and the log mentions the identity mode', 'answer' => 'Check identity_mode in config.json. Only database is supported; explicitly configuring the old shared password mode makes startup fail and the system will not fall back to a default identity.'],
+                ],
+            ],
+
+            // ===== 深入阅读（个人与参考）=====
             'further' => [
                 'nav'   => 'Further reading',
-                'title' => 'Read the full documentation by topic',
-                'goal'  => 'When you need the underlying design, parameters, or limits, start from the group below.',
-                'blocks' => [
+                'title' => 'Further reading: the complete docs by topic',
+                'lead'  => 'When you need principles, parameters or edge cases, enter the matching capability docs from the groups below.',
+                'videos' => [
                     'docs' => [
-                        'title' => 'All capability documents',
-                        'note' => 'Every document is a localized offline copy; the site references no external websites.',
+                        'title'  => 'How to read the full capability docs',
+                        'covers' => [
+                            'Entering the matching capability doc by topic',
+                            'What the docs hold: principles, parameters and boundaries',
+                            'Every doc is a localized offline copy, so you never leave the site',
+                        ],
                     ],
                 ],
             ],

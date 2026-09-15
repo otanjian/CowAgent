@@ -157,100 +157,158 @@ return [
 
     // 产品使用手册（manual.php）
     // 面向使用者的「应用操作手册」：讲怎么用，不讲怎么装（安装见 quickstart.php）。
-    // 章节顺序即页面与侧栏顺序：先工作台的日常使用，再管理控制台的配置与治理。
-    // 结构只声明 id / 分组 / 图标 / 块清单 / 引用的文档 slug 与站内页面；
+    // 形态是**视频为主的目录**：每个主题一句话定位 + 若干视频条目（标题、时长、内容要点、视频位）。
+    // 文字只做主题定位与视频内容概览，不写逐条界面步骤与字段口径——细节由视频承载或深链能力文档。
+    // 主题顺序即页面与侧栏顺序：先工作台的日常使用，再管理控制台的配置与治理。
+    // 结构只声明 id / 分组 / 图标 / 视频清单（id、时长、可选视频源）/ 引用的文档 slug 与站内页面；
     // 文案全部在 lang/*.php 的 manual.* 下按同一 id 组织（语言包中按 id 索引，与顺序无关）。
-    // 每章由若干「块」组成，块内可有 title / goal / steps / fields / note。
+    //
+    // 补片方式：录制完成后在对应视频里加 'src' => 'assets/video/<文件名>.mp4'
+    // （可选 'poster' => 'assets/video/<文件名>.jpg'），页面即由占位切换为播放器，无需改模板。
+    // src 是相对路径，不是网址，因此仍满足「正文不出现网址」。
     'manual_parts' => [
         ['id' => 'workbench'],
         ['id' => 'console'],
         ['id' => 'personal'],
     ],
 
-    'manual_sections' => [
+    'manual_topics' => [
         // ---- 工作台：日常使用 ----
         [
             'id' => 'start', 'part' => 'workbench', 'icon' => 'rocket',
-            'blocks' => ['login', 'navigate', 'preference'],
+            'videos' => [
+                ['id' => 'login', 'duration' => '2:40'],
+                ['id' => 'navigate', 'duration' => '3:20'],
+            ],
             'docs' => [], 'links' => [],
         ],
         [
             'id' => 'chat', 'part' => 'workbench', 'icon' => 'chat',
-            'blocks' => ['new', 'compose', 'attach', 'session', 'command'],
+            'videos' => [
+                ['id' => 'new', 'duration' => '2:30'],
+                ['id' => 'compose', 'duration' => '3:10'],
+                ['id' => 'attach', 'duration' => '2:20'],
+                ['id' => 'session', 'duration' => '2:50'],
+            ],
             'docs' => [], 'links' => [],
         ],
         [
             'id' => 'agents', 'part' => 'workbench', 'icon' => 'users',
-            'blocks' => ['browse'],
+            'videos' => [
+                ['id' => 'browse', 'duration' => '2:40'],
+            ],
             'docs' => [], 'links' => [],
         ],
         [
             'id' => 'knowledge', 'part' => 'workbench', 'icon' => 'knowledge',
-            'blocks' => ['overview', 'category', 'document', 'import', 'bind'],
+            'videos' => [
+                ['id' => 'overview', 'duration' => '2:30'],
+                ['id' => 'document', 'duration' => '3:30'],
+                ['id' => 'bind', 'duration' => '2:20'],
+            ],
             'docs' => ['knowledge'], 'links' => [],
         ],
         [
             'id' => 'todo', 'part' => 'workbench', 'icon' => 'list',
-            'blocks' => ['todo', 'task-view', 'task-edit'],
+            'videos' => [
+                ['id' => 'todo', 'duration' => '2:40'],
+                ['id' => 'task', 'duration' => '3:00'],
+            ],
             'docs' => ['tools-scheduler'], 'links' => [],
         ],
 
         // ---- 管理控制台：配置与治理 ----
         [
             'id' => 'agents-admin', 'part' => 'console', 'icon' => 'users',
-            'blocks' => ['create', 'configure', 'capability', 'corefiles'],
+            'videos' => [
+                ['id' => 'create', 'duration' => '3:20'],
+                ['id' => 'configure', 'duration' => '3:40'],
+                ['id' => 'capability', 'duration' => '3:10'],
+            ],
             'docs' => ['multiagent'], 'links' => [],
         ],
         [
             'id' => 'memory', 'part' => 'console', 'icon' => 'memory',
-            'blocks' => ['view', 'dream', 'index'],
+            'videos' => [
+                ['id' => 'view', 'duration' => '2:40'],
+                ['id' => 'index', 'duration' => '2:10'],
+            ],
             'docs' => ['memory'], 'links' => [],
         ],
         [
             'id' => 'models', 'part' => 'console', 'icon' => 'models',
-            'blocks' => ['basic', 'vendor', 'capability'],
+            'videos' => [
+                ['id' => 'basic', 'duration' => '3:00'],
+                ['id' => 'vendor', 'duration' => '2:40'],
+                ['id' => 'capability', 'duration' => '2:50'],
+            ],
             'docs' => ['models'], 'links' => [],
         ],
         [
             'id' => 'channels', 'part' => 'console', 'icon' => 'channels',
-            'blocks' => ['scope', 'create', 'credentials', 'scan', 'bind'],
+            'videos' => [
+                ['id' => 'scope', 'duration' => '2:20'],
+                ['id' => 'credentials', 'duration' => '3:30'],
+                ['id' => 'scan', 'duration' => '3:20'],
+            ],
             'docs' => ['channels'], 'links' => [],
         ],
         [
             'id' => 'roles', 'part' => 'console', 'icon' => 'rbac',
-            'blocks' => ['list', 'editor', 'permissions', 'resources', 'assign', 'rules'],
+            'videos' => [
+                ['id' => 'editor', 'duration' => '3:30'],
+                ['id' => 'permissions', 'duration' => '3:00'],
+                ['id' => 'assign', 'duration' => '2:40'],
+            ],
             'docs' => [], 'links' => [],
         ],
         [
             'id' => 'members', 'part' => 'console', 'icon' => 'org',
-            'blocks' => ['create', 'edit', 'password', 'org'],
+            'videos' => [
+                ['id' => 'create', 'duration' => '2:50'],
+                ['id' => 'password', 'duration' => '2:30'],
+                ['id' => 'org', 'duration' => '2:40'],
+            ],
             'docs' => [], 'links' => [],
         ],
         [
             'id' => 'tenant', 'part' => 'console', 'icon' => 'tenant',
-            'blocks' => ['tenant', 'audit'],
+            'videos' => [
+                ['id' => 'tenant', 'duration' => '3:10'],
+                ['id' => 'audit', 'duration' => '2:40'],
+            ],
             'docs' => [], 'links' => [],
         ],
 
         // ---- 个人与参考 ----
         [
             'id' => 'account', 'part' => 'personal', 'icon' => 'key',
-            'blocks' => ['profile', 'password', 'prefs', 'tenant-switch'],
+            'videos' => [
+                ['id' => 'profile', 'duration' => '2:10'],
+                ['id' => 'password', 'duration' => '2:20'],
+                ['id' => 'tenant-switch', 'duration' => '1:50'],
+            ],
             'docs' => [], 'links' => [],
         ],
         [
             'id' => 'commands', 'part' => 'personal', 'icon' => 'terminal',
-            'blocks' => ['commands'],
+            'videos' => [
+                ['id' => 'commands', 'duration' => '4:00'],
+            ],
             'docs' => ['cli-skill'], 'links' => [],
         ],
         [
             'id' => 'troubleshoot', 'part' => 'personal', 'icon' => 'x-circle',
-            'blocks' => ['issues'],
+            'videos' => [
+                ['id' => 'issues', 'duration' => '4:30'],
+            ],
             'docs' => [], 'links' => [],
         ],
         [
             'id' => 'further', 'part' => 'personal', 'icon' => 'book',
-            'blocks' => ['docs'],
+            'videos' => [
+                ['id' => 'docs', 'duration' => '2:00'],
+            ],
             'docs' => [], 'links' => [
                 'architecture', 'quickstart', 'enterprise', 'features',
             ],

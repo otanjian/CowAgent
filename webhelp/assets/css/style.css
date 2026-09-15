@@ -1500,11 +1500,11 @@ code, pre { font-family: var(--font-mono); }
 }
 
 /* ===== 产品使用手册（manual.php） ===== */
-/* 章节导航复用 .doc-aside；正文段落与前后的间距按章节块拉开 */
+/* 主题导航复用 .doc-aside；正文按主题拉开间距 */
 .manual-article { display: flex; flex-direction: column; gap: 56px; }
 
-.manual-section { scroll-margin-top: 100px; }
-.manual-section > *:last-child { margin-bottom: 0; }
+.manual-topic { scroll-margin-top: 100px; }
+.manual-topic > *:last-child { margin-bottom: 0; }
 
 .manual-title {
   display: flex;
@@ -1543,52 +1543,119 @@ code, pre { font-family: var(--font-mono); }
   font-variant-numeric: tabular-nums;
 }
 
-.manual-goal {
-  margin: 0 0 22px;
-  padding: 14px 18px;
-  border-radius: var(--radius-md);
-  border: 1px dashed var(--color-border-light);
-  background: var(--color-bg-card);
-  font-size: 14px;
-  line-height: 1.75;
+.manual-lead {
+  margin: 0 0 28px;
+  font-size: 15px;
+  line-height: 1.8;
   color: var(--color-text-secondary);
 }
-.manual-block-label {
+
+/* 主题内的视频条目 */
+.manual-videos { display: flex; flex-direction: column; gap: 34px; }
+
+/* 视频位：固定 16:9，未提供视频源时是明确的占位而非空白 */
+.manual-video { margin: 0; }
+.manual-video-frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  overflow: hidden;
+}
+.manual-video-player {
   display: block;
-  margin-bottom: 4px;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+.manual-video-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(160deg, var(--color-bg-secondary), var(--color-bg-card));
+}
+.manual-video-play {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  border: 1px dashed var(--color-primary-border);
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+}
+.manual-video-play svg { width: 24px; height: 24px; }
+.manual-video-pending {
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+.manual-video-body { display: block; margin-top: 14px; }
+.manual-video-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+  font-size: 16px;
+  color: var(--color-text);
+}
+.manual-video-duration {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-card);
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+.manual-video-duration svg { width: 13px; height: 13px; }
+
+.manual-video-covers-label {
+  margin: 14px 0 8px;
   font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--color-text-muted);
 }
-
-/* 章节内的内容块：块之间拉开间距，块首标题不吃额外上边距 */
-.manual-block + .manual-block { margin-top: 32px; }
-.manual-block > .manual-subtitle:first-child { margin-top: 0; }
-.manual-block > *:last-child { margin-bottom: 0; }
-
-/* 字段说明：左侧为界面上的字段名，右侧为填写口径 */
-.manual-fields {
-  display: flex;
-  flex-direction: column;
-  margin: 0 0 24px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  overflow: hidden;
+.manual-video-covers {
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
-.manual-field {
-  display: grid;
-  grid-template-columns: minmax(120px, 190px) 1fr;
-  gap: 4px 20px;
-  padding: 13px 18px;
+.manual-video-covers li {
+  position: relative;
+  padding-left: 20px;
+  margin-bottom: 7px;
   font-size: 14px;
   line-height: 1.75;
-  background: var(--color-bg-card);
+  color: var(--color-text-secondary);
 }
-.manual-field + .manual-field { border-top: 1px solid var(--color-border-light); }
-.manual-field-name { font-weight: 600; color: var(--color-text); }
-.manual-field-desc { color: var(--color-text-secondary); }
+.manual-video-covers li::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 11px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  opacity: 0.55;
+}
+.manual-video-covers li:last-child { margin-bottom: 0; }
 
 .manual-subtitle {
   margin: 28px 0 14px;
@@ -1596,43 +1663,9 @@ code, pre { font-family: var(--font-mono); }
   color: var(--color-text);
 }
 
-.manual-steps {
-  margin: 0 0 24px;
-  padding: 0;
-  list-style: none;
-  counter-reset: manual-step;
-}
-.manual-steps li {
-  position: relative;
-  counter-increment: manual-step;
-  padding: 0 0 0 42px;
-  margin-bottom: 14px;
-  font-size: 14.5px;
-  line-height: 1.8;
-  color: var(--color-text-secondary);
-}
-.manual-steps li::before {
-  content: counter(manual-step);
-  position: absolute;
-  left: 0;
-  top: 3px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  border: 1px solid var(--color-primary-border);
-  background: var(--color-primary-bg);
-  color: var(--color-primary);
-  font-size: 12px;
-  font-weight: 600;
-}
-.manual-steps li:last-child { margin-bottom: 0; }
-
-/* 章节内的代码块与注意事项沿用站点既有样式，只补上下间距 */
-.manual-section .code-block { margin: 10px 0 26px; }
-.manual-section .note { margin: 0 0 26px; }
+/* 主题内的代码块与速查表沿用站点既有样式，只补上下间距 */
+.manual-topic .code-block { margin: 10px 0 26px; }
+.manual-topic .note { margin: 0 0 26px; }
 
 /* 故障排查：现象 → 处理 */
 .manual-issues { display: flex; flex-direction: column; gap: 14px; margin-bottom: 26px; }
@@ -1694,7 +1727,9 @@ code, pre { font-family: var(--font-mono); }
   .manual-title-num { min-width: 26px; height: 26px; font-size: 12.5px; }
   .manual-title-icon { width: 32px; height: 32px; }
   .manual-title-icon svg { width: 17px; height: 17px; }
-  .manual-steps li { padding-left: 36px; }
-  .manual-steps li::before { width: 23px; height: 23px; font-size: 11px; }
-  .manual-field { grid-template-columns: 1fr; gap: 2px; }
+  .manual-videos { gap: 28px; }
+  .manual-video-play { width: 48px; height: 48px; }
+  .manual-video-play svg { width: 20px; height: 20px; }
+  .manual-video-title { font-size: 15px; }
+  .manual-video-covers li { font-size: 13.5px; }
 }
