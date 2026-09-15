@@ -64,7 +64,23 @@ php -S 127.0.0.1:8080 -t webhelp
 
 手册不复制既有文档正文：主题末尾的「相关文档 / 相关页面」由 slug 经 `doc_exists()` 过滤后渲染，因此文档增删不会产生死链；命令速查复用 `content.php` 的既有命令清单，不维护第二份。入口为首页 Hero 主按钮（文案键 `cta.manual`，与其它页面的 `cta.primary` 相互独立）。
 
-**改手册内容**：在 `content.php` 增删主题或视频，再到 `lang/zh.php` 与 `lang/en.php` 补齐同名 id 的文案即可，无需改 HTML。改完跑一次 `php tools/check-manual.php` 校验「结构 ↔ 双语文案」是否对齐（缺主题、缺视频、无标题、无内容要点、声明了 `src` 却缺标题或时长、未登记 slug 会直接报错并列出问题项）。
+**改手册内容**：在 `content.php` 增删主题或视频，再到 `lang/zh.php` 与 `lang/en.php` 补齐同名 id 的文案即可，无需改 HTML。改完跑一次 `php tools/check-manual.php` 校验「结构 ↔ 双语文案 ↔ 录屏脚本」是否对齐（缺主题、缺视频、无标题、无内容要点、声明了 `src` 却缺标题或时长、未登记 slug、缺脚本或脚本漂移，都会直接报错并列出问题项）。
+
+### 手册的录屏脚本
+
+37 份录屏脚本在 **`manual-video-scripts.md`**（与手册内容同目录）：每份含「开拍前准备 / 操作序列 / 旁白 / 录制注意」，标题格式 `### \`<主题>.<视频>\` · 标题 · 时长`，其中标识与 `includes/content.php` 的 `manual_topics` 一一对应。
+
+脚本是仓库内部的录制材料，页面不渲染它、也不链接它；它与手册放在一起，是为了改手册时不容易漏掉脚本。演示一律用测试账号与假数据。
+
+录完之后在 `content.php` 的对应视频条目补 `src`（可选 `poster`）即由占位切换为播放器，不需改模板：
+
+```php
+['id' => 'login', 'duration' => '2:40',
+ 'src' => 'assets/video/manual-start-login.mp4',
+ 'poster' => 'assets/video/manual-start-login.jpg'],
+```
+
+`php tools/check-manual.php` 会断言「每个视频都有脚本、没有多余脚本、脚本记录的标题与时长与站点一致」，所以新增视频后忘了写脚本会立刻暴露。
 
 ### 本地能力文档
 
@@ -173,6 +189,7 @@ webhelp/
 - **改文档分组标题**：编辑 `lang/*.php` 的 `doc.sections.*`（键为上游目录名：`intro` / `memory` / `knowledge` / `skills` / `tools` / `cli` / `models` / `channels` / `multi-agent`）。
 - **改样式**：编辑 `assets/css/style.css`，设计令牌集中在文件顶部的 `:root` 与 `[data-theme="light"]`；文档正文排版在「本地能力文档」段落，企业级权限管控区块在「核心功能一」段落，产品使用手册的 `.manual-*` 段在文件末尾。
 - **改产品使用手册**：分组在 `includes/content.php` 的 `manual_parts`，主题在 `manual_topics`（id、`part`、图标、`videos` 视频清单、`docs` / `links` 深链，**数组顺序即页面顺序**）；主题定位在 `lang/*.php` 的 `manual.topics.<主题>.{nav,title,lead}`，视频文案在 `manual.topics.<主题>.videos.<视频>.{title,covers}`。增删主题或视频只改 `content.php` 与两个语言包，无需动 HTML。视频位默认是 16:9 占位（标明「视频待录制」），录好后在对应条目补 `src`（可选 `poster`）即自动变成播放器。手册文字只写主题定位与「这个视频会讲到什么」，**不要再把逐条界面步骤或字段口径写回来**——那类内容交给视频，原理细节一律深链既有文档；正文不写网址（主机名、端口、URL 一律不出现），要指路就写界面路径或链站内页面。改完运行 `php tools/check-manual.php`。
+- **改录屏脚本**：脚本在 `manual-video-scripts.md`（与手册同目录，见上一节）。增删视频时同步增删脚本小节，标题格式 `### \`<主题>.<视频>\` · 标题 · 时长`；标题与时长必须与站点文案一致，否则 `php tools/check-manual.php` 会报错。脚本只给录制者看，不要把它复制成手册正文。
 - **改权限管控区块**：结构在 `includes/content.php` 的 `perm_*` 键（`perm_principles` 四张原则卡、`perm_tiers` 三级架构、`perm_roles` 三类角色）；文案在 `lang/*.php` 的 `perm.*`。渲染由四个助手完成——`perm_stats()`（概览亮点卡）、`perm_tiers()`（三张并列卡 + 连接线）、`perm_flow_panel()`（深色授权流转面板）、`perm_roles()`（头部 + 三列短要点）。增删层级、原则或角色只需改 `content.php` 的条目并在 `lang/*.php` 补齐同名 id 的文案，无需改 HTML。
   - **区块概要提升为页头**：`perm.title` / `perm.lead` 与 `perm_stats()` 通过 `page_hero()` 的 `$opts` 注入页头，页内不再有独立的区块大标题（避免与页头重复）。`page_hero()` 的 `$opts` 支持 `breadcrumb`（面包屑末项，默认同标题；**传空字符串则不渲染面包屑**）、`eyebrow` + `eyebrow_icon`、`title_accent`（标题高亮词，语言键）、`extra`（导语下方的追加 HTML）；留空 `extra` 时不加 `page-hero--rich`，其余内页的页头不受影响。企业级管控页的页头**不使用面包屑与眉标**，标语直接作为首个元素；若日后要恢复「核心功能一 · 企业级权限管控」眉标，在 `lang/*.php` 的 `perm` 下加回 `eyebrow` 键并在 `page_hero()` 调用里补 `eyebrow` / `eyebrow_icon` 即可（`.perm-eyebrow` 样式仍在）。
   - **页头标题（标语）**：`perm.title` 就是标语，用 `\n` 分行渲染为 `<br>`（如 `"分级可控的\n企业级资源权限体系"`）；`perm.title_accent` 指定其中要高亮为品牌绿渐变的词（`hero_title_html()` 会包一层 `.hero-accent`，找不到该子串时按普通文本渲染）。英文分行时记得在上一行末尾留一个空格，否则两行拼起来会粘成一个词。
