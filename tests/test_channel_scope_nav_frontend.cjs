@@ -56,6 +56,11 @@ function boot({ mode = 'database', ctx = null, isPlatformAdmin = false, items = 
         '#sidebar-nav .sidebar-item[data-view]': items,
         '.sidebar-item[data-view="platform"]': [platformItem],
     };
+    // The five 「我的」 entries moved out of #sidebar-nav into the account panel,
+    // so the per-item gate asks the account-panel section to recompute them from
+    // the same projection. That section is exercised on its own in
+    // test_sidebar_account_frontend.cjs; here it is only observed.
+    const personalRecomputes = [];
     const sandbox = {
         VIEW_META: { channels: { console: 'admin.channels' } },
         document: {
@@ -71,12 +76,14 @@ function boot({ mode = 'database', ctx = null, isPlatformAdmin = false, items = 
         _navAreaFromPath: () => area,
         _qualifyAdminConsoleEntry: ({ isPlatformAdmin: p, isTenantAdmin: t }) => !!(p || t),
         _openNavArea() {},
+        _renderAccountResources() { personalRecomputes.push('render'); },
+        _syncAccountPersonalCurrent() { personalRecomputes.push('marker'); },
     };
     vm.runInNewContext(
         [fnSource('_consolePageForView'), fnSource('_viewNavDenied'),
          fnSource('_applySidebarPermissions')].join('\n'),
         sandbox);
-    return { sandbox, channelItem: items[0], adminAreaEls, platformScopeEls, navOpenAdmin };
+    return { sandbox, channelItem: items[0], adminAreaEls, platformScopeEls, navOpenAdmin, personalRecomputes };
 }
 
 const TENANT_PAGE = { available: true, read_allowed: true, scope: 'tenant', reason: '', actions: { create: true, update: true } };
@@ -140,6 +147,16 @@ test('legacy mode and platform "all" mode are never blocked by the projection', 
     assert.equal(legacy.sandbox._viewNavDenied('channels'), null);
     const all = boot({ ctx: { console_pages: {}, authorization_mode: 'all' } });
     assert.equal(all.sandbox._viewNavDenied('channels'), null);
+});
+
+test('the account panel recomputes the personal entries from the same projection', () => {
+    const { sandbox, personalRecomputes } = boot({
+        ctx: { console_pages: {}, is_tenant_admin: true, authorization_mode: 'role' },
+    });
+    sandbox._applySidebarPermissions();
+    // One owner for the projection: the sidebar gate hands the verdict to the
+    // account panel instead of keeping a second copy of the personal entries.
+    assert.deepEqual(personalRecomputes, ['render', 'marker']);
 });
 
 test('the sidebar entry still exists in chat.html for both admin scopes', () => {

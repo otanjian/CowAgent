@@ -1,6 +1,41 @@
+import contextlib
 import json
 from pathlib import Path
 from unittest.mock import patch
+
+
+@contextlib.contextmanager
+def _null_scope():
+    """Stub for ``_db_scope`` in direct-handler unit tests (no HTTP context)."""
+    yield None
+
+
+@contextlib.contextmanager
+def _authorized_write_scope(tmp_path):
+    """Stub the database authorization chain for knowledge write handlers.
+
+    ``KnowledgeActionHandler``/``KnowledgeImportHandler`` no longer gate on
+    ``_guard_not_database``; they resolve a tenant context and authorize the
+    write (by data root + Agent ownership, see
+    ``channel/web/web_channel.py::_knowledge_write_authorized``). These unit
+    tests exercise the delegation contract only, so the identity layer is
+    stubbed here (route-level authorization is covered by
+    ``tests/test_knowledge_console_database.py``).
+
+    ``_knowledge_workspace_root`` is the seam the handlers resolve their base
+    through (the Agent's own ``knowledge/`` if it has one, else the tenant
+    shared copy); stubbing it keeps this contract test off the Agent roster.
+    """
+    (tmp_path / "knowledge").mkdir(exist_ok=True)
+    with patch("channel.web.web_channel._db_scope", _null_scope), \
+            patch("channel.web.web_channel._require_knowledge_write",
+                  lambda ctx, agent_id: None), \
+            patch("channel.web.web_channel._require_tenant_agent_binding",
+                  lambda ctx, agent_id: agent_id), \
+            patch("channel.web.web_channel._require_private_owner", lambda ctx, agent_id: None), \
+            patch("channel.web.web_channel._knowledge_workspace_root",
+                  return_value=str(tmp_path)):
+        yield
 
 
 def test_knowledge_action_handler_delegates_to_dispatch(tmp_path):
@@ -10,10 +45,9 @@ def test_knowledge_action_handler_delegates_to_dispatch(tmp_path):
     dispatched = {"action": "create_category", "code": 200, "message": "success",
                   "payload": {"path": "research", "created": True}}
 
-    with patch("channel.web.web_channel._guard_not_database"), \
+    with _authorized_write_scope(tmp_path), \
          patch("channel.web.web_channel.web.header"), \
          patch("channel.web.web_channel.web.data", return_value=json.dumps(request).encode()), \
-         patch("channel.web.web_channel._get_workspace_root", return_value=str(tmp_path)), \
          patch("agent.knowledge.service.KnowledgeService.dispatch", return_value=dispatched) as dispatch:
         response = json.loads(KnowledgeActionHandler().POST())
 
@@ -29,10 +63,9 @@ def test_knowledge_action_handler_preserves_dispatch_error(tmp_path):
                   "message": "protected knowledge file: index.md", "payload": None}
     request = {"action": "delete_documents", "payload": {"paths": ["index.md"]}}
 
-    with patch("channel.web.web_channel._guard_not_database"), \
+    with _authorized_write_scope(tmp_path), \
          patch("channel.web.web_channel.web.header"), \
          patch("channel.web.web_channel.web.data", return_value=json.dumps(request).encode()), \
-         patch("channel.web.web_channel._get_workspace_root", return_value=str(tmp_path)), \
          patch("agent.knowledge.service.KnowledgeService.dispatch", return_value=dispatched):
         response = json.loads(KnowledgeActionHandler().POST())
 
@@ -94,10 +127,9 @@ def test_knowledge_import_handler_delegates_to_dispatch(tmp_path):
         "files": [UploadedFile("a.md", b"# A"), UploadedFile("b.txt", b"B")],
     }
 
-    with patch("channel.web.web_channel._guard_not_database"), \
+    with _authorized_write_scope(tmp_path), \
          patch("channel.web.web_channel.web.header"), \
          patch("channel.web.web_channel._raw_web_input", return_value=params), \
-         patch("channel.web.web_channel._get_workspace_root", return_value=str(tmp_path)), \
          patch("agent.knowledge.service.KnowledgeService.dispatch", return_value=dispatched) as dispatch:
         response = json.loads(KnowledgeImportHandler().POST())
 
@@ -116,8 +148,9 @@ def test_knowledge_import_handler_rejects_large_content_length(tmp_path):
     from agent.knowledge.service import KnowledgeService
     assert KnowledgeService.MAX_IMPORT_TOTAL_SIZE == 200 * 1024 * 1024
 
-    with patch("channel.web.web_channel._guard_not_database"), \
-         patch("channel.web.web_channel.web.header"), \
+    # The batch-size guard runs before identity resolution, so no auth stub is
+    # needed here: an oversized body is refused outright.
+    with patch("channel.web.web_channel.web.header"), \
          patch("channel.web.web_channel.web.ctx") as ctx:
         ctx.env = {"CONTENT_LENGTH": str(KnowledgeService.MAX_IMPORT_TOTAL_SIZE + 1)}
         response = json.loads(KnowledgeImportHandler().POST())

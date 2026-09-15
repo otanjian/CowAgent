@@ -5,7 +5,12 @@ A scheduled task is created by a tenant member under chat.use + the Agent's
 ``agent.use`` grant and fires later on a timer. These tests pin down that the
 creator is snapshotted onto the task and that a fire is skipped (with the
 reason persisted) once the member's membership or grants are gone — before
-anything reaches the model/channel. Legacy tasks without an owner are untouched.
+anything reaches the model/channel. A task with no member owner is skipped as
+``unattributed`` while the deployment is on database identity (task 4.2 of
+``complete-database-capability-parity``): executing it would run under the
+Agent's own identity, which is the default-owner path that change removes. Only
+a deployment that is not on database identity keeps the no-owner/no-gate
+behaviour, and that branch is pinned separately.
 """
 
 import os
@@ -15,7 +20,7 @@ import pytest
 from agent.tools.scheduler import identity as sid
 from agent.tools.scheduler.identity import (
     AGENT_DENIED, AGENT_UNBOUND, CHAT_DENIED, NOT_MEMBER,
-    PASSWORD_CHANGE_REQUIRED, owner_snapshot, revalidate_owner,
+    PASSWORD_CHANGE_REQUIRED, UNATTRIBUTED, owner_snapshot, revalidate_owner,
 )
 
 
@@ -79,9 +84,29 @@ def _task(svc, **overrides):
     return task
 
 
-def test_legacy_task_without_owner_always_passes(svc):
+def test_an_ownerless_task_is_not_executed_in_database_mode(svc):
+    """Task 4.2: the database runtime has no default-owner execution path.
+
+    A task with neither a member owner nor an explicit public scope proves
+    nothing about who asked for it, so it must be skipped instead of firing as
+    the Agent — the "default owner" branch this change removes. It is reported
+    with a stable reason so the console can explain and the migration can
+    quarantine it.
+    """
+    assert revalidate_owner(_task(svc, owner=None)) == UNATTRIBUTED
+    assert revalidate_owner(_task(svc, owner={})) == UNATTRIBUTED
+    assert revalidate_owner({}) == UNATTRIBUTED
+
+
+def test_a_legacy_deployment_still_passes_ownerless_tasks(svc, monkeypatch):
+    """The historical behaviour stays expressible, and is pinned here.
+
+    Only a deployment that is not on database identity keeps the no-owner/no-gate
+    behaviour; the branch exists so the difference is a declared switch rather
+    than an accident of which caller wrote the task.
+    """
+    monkeypatch.setattr(sid, "database_identity_enforced", lambda: False)
     assert revalidate_owner(_task(svc, owner=None)) is None
-    assert revalidate_owner(_task(svc, owner={})) is None
     assert revalidate_owner({}) is None
 
 
@@ -137,7 +162,13 @@ def test_member_of_other_tenant_not_member(svc):
 
 
 def test_missing_chat_use_reason(svc):
-    plain = _ready_member(svc["service"], svc["root"], svc["tenant"], "plain", ["member"])
+    # The built-in ``member`` now carries chat.use, so a member without the
+    # functional chat permission is created with a zero-permission role.
+    no_chat = svc["service"].create_role(
+        actor_user_id=svc["root"], tenant_id=svc["tenant"],
+        code="no-chat", name="No chat", permissions=[])
+    plain = _ready_member(svc["service"], svc["root"], svc["tenant"], "plain",
+                          [no_chat["code"]])
     task = _task(svc, owner=_owner(svc, plain))
     assert revalidate_owner(task) == CHAT_DENIED
 

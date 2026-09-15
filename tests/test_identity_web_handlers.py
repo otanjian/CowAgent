@@ -60,6 +60,7 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
                 "/api/tenant/members", "TenantMembersHandler",
                 "/api/tenant/members/([^/]+)", "TenantMemberHandler",
                 "/api/tenant/roles", "TenantRolesHandler",
+                "/api/tenant/roles/([^/]+)", "TenantRoleHandler",
                 "/api/tenant/permissions", "TenantPermissionsHandler",
                 "/api/tenant/departments", "TenantDepartmentsHandler",
                 "/api/tenant/departments/([^/]+)", "TenantDepartmentHandler",
@@ -100,8 +101,12 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
             data=json.dumps({"username": "root", "password": "Str0ngAdminPass"}))
         data = self._json(resp)
         self.assertEqual(data["status"], "success")
-        # Cookie for the web console; token also returned for Desktop Bearer.
-        self.assertTrue(data.get("token"))
+        # Design D8: the Web login response is not an authorization grant for a
+        # native session. The compatibility ``token`` field stays in the payload
+        # but is always empty; the Cookie is the only credential issued here, and
+        # Desktop obtains its own session through /auth/desktop/token (PKCE S256).
+        self.assertIn("token", data)
+        self.assertEqual(data["token"], "")
         self.assertGreaterEqual(len(data["tenants"]), 1)
         # cookie was set in the Set-Cookie header
         self.assertIn("cow_session", str(getattr(resp, "headers", {})))
@@ -137,6 +142,24 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
         data = self._json(resp)
         self.assertEqual(data["status"], "success")
 
+    def test_member_create_short_password_is_json_4xx_not_500(self):
+        # Regression: a <8-char temporary password raised auth.password.PasswordError
+        # out of create_member. The handler only translated IdentityServiceError,
+        # so it surfaced as a 500 with an HTML body — which the console could not
+        # parse and reported as the generic "load-failed".
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        resp = self._request(
+            "/api/tenant/members", method="POST", token=token, tenant=self.tid,
+            data=json.dumps({
+                "operation": "create-new", "username": "shorty",
+                "display_name": "Shorty", "temporary_password": "123456",
+                "roles": ["member"]}))
+        self.assertTrue(str(getattr(resp, "status", "")).startswith("4"),
+                        (resp.status, resp.data))
+        data = self._json(resp)
+        self.assertEqual(data["status"], "error")
+        self.assertEqual(data["code"], "weak_password")
+
     def test_permission_catalog_with_tenant_ok(self):
         token = self.svc.login("root", "Str0ngAdminPass").token
         resp = self._request("/api/tenant/permissions", token=token, tenant=self.tid)
@@ -162,6 +185,74 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
         resp = self._request("/api/tenant/permissions", token=token)
         self.assertTrue(str(resp.status).startswith("400"))
         self.assertEqual(self._json(resp)["code"], "missing_tenant")
+
+    def _role_by_code(self, token, code):
+        roles = self._json(self._request(
+            "/api/tenant/roles", token=token, tenant=self.tid))["items"]
+        return next(r for r in roles if r["code"] == code)
+
+    def test_builtin_member_role_is_editable_over_http(self):
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        member = self._role_by_code(token, "member")
+        self.assertEqual(int(member["builtin"]), 1)
+        wanted = sorted(set(member["permissions"]) | {"tenant.members.read"})
+        resp = self._request(
+            "/api/tenant/roles/%s" % member["id"], method="POST", token=token,
+            tenant=self.tid,
+            data=json.dumps({
+                "name": member["name"],
+                "permissions": wanted,
+                "expected_version": member["version"],
+            }))
+        self.assertTrue(str(resp.status).startswith("200"))
+        self.assertEqual(
+            sorted(self._json(resp)["role"]["permissions"]), wanted)
+
+    def test_builtin_tenant_admin_self_lock_is_rejected_over_http(self):
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        admin = self._role_by_code(token, "tenant_admin")
+        resp = self._request(
+            "/api/tenant/roles/%s" % admin["id"], method="POST", token=token,
+            tenant=self.tid,
+            data=json.dumps({
+                "name": admin["name"],
+                "permissions": ["tenant.info.read"],
+                "expected_version": admin["version"],
+            }))
+        self.assertTrue(str(resp.status).startswith("409"))
+        self.assertEqual(
+            self._json(resp)["code"], "builtin_minimum_permissions")
+
+    def test_builtin_role_delete_is_still_rejected_over_http(self):
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        member = self._role_by_code(token, "member")
+        resp = self._request(
+            "/api/tenant/roles/%s" % member["id"], method="DELETE", token=token,
+            tenant=self.tid)
+        self.assertTrue(str(resp.status).startswith("4"))
+        self.assertEqual(
+            self._role_by_code(token, "member")["id"], member["id"])
+
+    def test_custom_role_with_grants_deletes_over_http(self):
+        # Regression: a custom role carrying resource grants could not be
+        # deleted. The composite FK from ``role_resource_grants`` blocked the
+        # DELETE, the handler only translated ``IdentityServiceError``, and the
+        # raw IntegrityError surfaced as a 500 with a non-JSON body — which the
+        # console rendered as the generic "load-failed".
+        token = self.svc.login("root", "Str0ngAdminPass").token
+        role = self.svc.create_role(
+            actor_user_id=self.root["id"], tenant_id=self.tid,
+            code="buyer", name="采购员", permissions=["skill.read"],
+            resource_grants=[{"resource_kind": "skill",
+                              "resource_id": "builtin:web-fetch", "action": "read"}])
+        resp = self._request(
+            "/api/tenant/roles/%s" % role["id"], method="DELETE", token=token,
+            tenant=self.tid)
+        data = self._json(resp)
+        self.assertEqual(data["status"], "success")
+        self.assertTrue(data["deleted"])
+        self.assertEqual(
+            [r for r in self.svc.list_roles(self.tid) if r["code"] == "buyer"], [])
 
     def test_audit_query_scoped(self):
         token = self.svc.login("root", "Str0ngAdminPass").token
@@ -330,7 +421,10 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
             data=json.dumps({"username": "root", "password": "Str0ngAdminPass"}))
         data = self._json(resp)
         self.assertEqual(data["status"], "success")
-        self.assertTrue(data["token"])
+        # Design D8: the compatibility ``token`` field is always empty; the
+        # Cookie is the only credential the Web login response issues.
+        self.assertIn("token", data)
+        self.assertEqual(data["token"], "")
         # database-mode cookie is cow_session, not the legacy cow_auth_token
         self.assertIn("cow_session", str(getattr(resp, "headers", {})))
         self.assertNotIn("cow_auth_token", str(getattr(resp, "headers", {})))
@@ -1038,11 +1132,19 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
     # --- tools/skills console read gating (platform admin vs member) ------
 
     def _member_token_without_catalog_grants(self):
-        """Login a plain member that holds neither tool.read nor skill.read."""
+        """Login a member holding a role with neither tool.read nor skill.read.
+
+        The built-in ``member`` role now carries the use/create tier, including
+        ``tool.read``/``skill.read``, so the functional catalog-read gate is
+        exercised with a zero-permission custom role instead.
+        """
+        self.svc.create_role(
+            actor_user_id=self.root["id"], tenant_id=self.tid,
+            code="no_catalog", name="No Catalog", permissions=[])
         self.svc.create_member(
             actor_user_id=self.root["id"], tenant_id=self.tid, operation="create-new",
             username="tools-alice", display_name="Alice",
-            temporary_password="Str0ngPassTmp", roles=["member"])
+            temporary_password="Str0ngPassTmp", roles=["no_catalog"])
         with self.svc._tx() as con:
             con.execute(
                 "UPDATE users SET must_change_password=0 WHERE username='tools-alice'")

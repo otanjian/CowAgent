@@ -108,13 +108,13 @@ class DatabaseFileServeScopeTests(unittest.TestCase):
             self.addCleanup(p.stop)
 
     def _ctx(self, *, user_id, username, tenant_id, is_platform_admin=False,
-             permissions=None):
+             is_tenant_admin=False, permissions=None):
         return SimpleNamespace(
             user_id=user_id,
             username=username,
             tenant_id=tenant_id,
             is_platform_admin=is_platform_admin,
-            is_tenant_admin=False,
+            is_tenant_admin=is_tenant_admin,
             permissions=set(permissions or ()),
             membership={"active": True} if tenant_id else None,
         )
@@ -169,6 +169,36 @@ class DatabaseFileServeScopeTests(unittest.TestCase):
                 ctx, os.path.realpath(self.globex_file))
         self.assertFalse(allowed)
         self.assertIn(via, ("forbidden", "not_found", "denied"))
+
+    def test_member_denied_another_members_private_agent_file(self):
+        """Tenant containment is not authority: the path's own Agent owns it."""
+        from agent.registry import AgentProfile, AgentRegistry
+        from channel.web import web_channel
+
+        private_ws = os.path.join(self.acme_shared, "agents", "private-agent")
+        os.makedirs(private_ws, exist_ok=True)
+        secret = os.path.join(private_ws, "secret.txt")
+        with open(secret, "wb") as fh:
+            fh.write(b"private-agent-body")
+        registry = AgentRegistry([
+            AgentProfile(id="private-agent", name="Private", workspace=private_ws),
+        ], "private-agent")
+        self.svc.bind_agent(tenant_id=self.acme_id, agent_id="private-agent",
+                            private_owner_user_id=self.root["id"])
+
+        member = self._ctx(
+            user_id=self.member["id"], username="member", tenant_id=self.acme_id)
+        admin = self._ctx(
+            user_id=self.root["id"], username="root", tenant_id=self.acme_id,
+            is_tenant_admin=True)
+        with patch("agent.registry.get_agent_registry", return_value=registry):
+            allowed, via = web_channel._authorize_db_file_path(
+                member, os.path.realpath(secret))
+            self.assertFalse(allowed)
+            self.assertEqual(via, "forbidden")
+            allowed, _ = web_channel._authorize_db_file_path(
+                admin, os.path.realpath(secret))
+            self.assertTrue(allowed)
 
     def test_missing_tenant_is_forbidden(self):
         from channel.web import web_channel

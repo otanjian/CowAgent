@@ -206,6 +206,12 @@ inside the home/global workspace root; refusing to fall back
 服务端。其后还压着第二个拦截点：`test15-verify` 当时 `private_owner_user_id` 指向
 用户 `test15`，成员触发 `_require_private_owner` → **403 forbidden**（已实测）。
 
+> **2026-09-14 补记（`fix-private-agent-owner-reachability`）**：本条记录的 403 属于
+> **他人**私属资源被拒，行为不变。当时另有一处缺陷：私属资源对**所有者本人**同样被
+> 过滤掉——投影按逐资源授权求交集，而所有者并不持有 `agent:<id>` 授权，于是"本人
+> 看不到自己的个人助理"。该缺陷已由 `fix-private-agent-owner-reachability` 修复：所有权
+> 本身成为 `read` / `use` 的授权来源（`edit` / `enable` 不放宽）。本文其余记录保持原样。
+
 修复三处：
 
 - **数据校正**：`cow management share-default-agents` 清除默认智能体的私有归属

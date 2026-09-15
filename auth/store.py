@@ -22,6 +22,8 @@ import sqlite3
 import threading
 from typing import Any, Callable, List, Sequence
 
+from auth.policy import BUILTIN_MENU_DEFAULTS
+
 #: Ordered list of schema migrations. Appending a migration to this list is
 #: how the store evolves; ``migration_versions()`` derives the version ids
 #: from its length.
@@ -740,6 +742,478 @@ def _migration_11(con: sqlite3.Connection) -> None:
 
 
 _migrations.append(_migration_11)
+
+
+def _migration_12(con: sqlite3.Connection) -> None:
+    """Tenant archive (soft delete): a nullable timestamp on ``tenants``.
+
+    ``archived_at IS NULL`` means "not archived". Archiving also clears
+    ``active`` so every existing active-tenant gate already rejects an archived
+    tenant; the column only distinguishes "archived" from a plain disable for
+    listing, the archive marker and restore. No tenant row or data is deleted.
+    """
+    con.execute("ALTER TABLE tenants ADD COLUMN archived_at INTEGER")
+
+
+_migrations.append(_migration_12)
+
+
+def _migration_13(con: sqlite3.Connection) -> None:
+    """Backfill built-in role permission sets to the explicit defaults.
+
+    Before built-in roles became editable, their stored ``permissions_json``
+    could only come from the old tenant seed (member: the seven read/todo ids;
+    tenant_admin: ``list(PERMISSION_CATALOG)`` at seed time). Re-pointing every
+    ``builtin=1`` row at the current explicit default gives ``member`` the
+    use/create tier and ``tenant_admin`` the full catalogue, so the console
+    display and the enforcement path agree after upgrade.
+
+    Scoped strictly by ``builtin=1`` and code, so custom roles and every other
+    tenant's rows are untouched; runs once per database via schema version.
+    """
+    import json as _json
+
+    from auth.policy import MEMBER_CODE, TENANT_ADMIN_CODE, default_permissions_for
+
+    for code in (TENANT_ADMIN_CODE, MEMBER_CODE):
+        stored = _json.dumps(sorted(default_permissions_for(code)))
+        con.execute(
+            "UPDATE roles SET permissions_json=?, version=version+1"
+            " WHERE builtin=1 AND code=?",
+            (stored, code),
+        )
+
+
+_migrations.append(_migration_13)
+
+
+def _migration_14(con: sqlite3.Connection) -> None:
+    """A per-member default Agent (change add-user-personal-agent-provisioning).
+
+    A tenant's ``default_agent_id`` is the entry *every* member shares, which is
+    why it must stay tenant-shared. But product planning 3.1 also gives each user
+    a space of their own, and a member may own a private assistant that is
+    theirs alone to anchor on. That needs a default that is scoped to one
+    (tenant, user) edge rather than to the tenant.
+
+    ``memberships`` is exactly that edge, so the pointer lives here instead of in
+    a new table: one row per (tenant, user), and deactivating or deleting the
+    membership takes the registration with it. Nullable and unbackfilled — every
+    existing member simply has no personal default, so default resolution
+    behaves exactly as it did before the upgrade.
+    """
+    con.executescript(
+        """
+        ALTER TABLE memberships ADD COLUMN default_agent_id TEXT;
+        """
+    )
+
+
+_migrations.append(_migration_14)
+
+
+def _migration_15(con: sqlite3.Connection) -> None:
+    """Strip the retired ``knowledge.write`` id from every role's permission set.
+
+    The id no longer authorizes any write path (knowledge writes are decided by
+    data-root + Agent ownership, see
+    ``channel/web/web_channel.py::_knowledge_write_authorized``), so leaving it
+    in a stored set would let the role editor display — and a save round-trip
+    reject — a dead switch.
+
+    Applied to *all* roles (built-in and custom), because either kind may hold a
+    grant from before the id was retired. Only this one id is removed; every
+    other id is preserved verbatim, and a row that does not contain it is left
+    untouched (no version bump), so the migration is idempotent and can never
+    widen a role.
+    """
+    import json as _json
+
+    retired = "knowledge.write"
+    rows = con.execute("SELECT id, permissions_json FROM roles").fetchall()
+    for row_id, raw in rows:
+        try:
+            perms = _json.loads(raw or "[]")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(perms, list) or retired not in perms:
+            continue
+        con.execute(
+            "UPDATE roles SET permissions_json=?, version=version+1 WHERE id=?",
+            (_json.dumps([p for p in perms if p != retired]), row_id),
+        )
+
+
+_migrations.append(_migration_15)
+
+
+def _migration_16(con: sqlite3.Connection) -> None:
+    """Give channel instances a tenant/user scope and an optional owner.
+
+    Change ``enable-member-personal-console``: a member may own a *personal*
+    channel instance, so ``tenant_channel_instances`` has to hold both kinds
+    without a second table (the credential, version history and audit trail are
+    already keyed by instance id and must keep working for both).
+
+    ``scope`` is NOT NULL with a ``'tenant'`` default rather than a nullable
+    column: every pre-existing row is by definition tenant-owned, so the default
+    classifies history correctly with no backfill, and a caller that forgets to
+    choose a scope cannot produce a row of ambiguous ownership.
+
+    ``owner_user_id`` stays NULL for tenant instances (the owner is the tenant
+    itself); the service layer is what requires it to be set when
+    ``scope='user'``, since SQL cannot express a conditional NOT NULL.
+
+    Uniqueness moves from ``(tenant_id, display_name)`` to include scope, owner
+    and channel type. Two consequences are deliberate:
+
+    * ``COALESCE(owner_user_id, '')`` — SQLite treats NULLs as distinct, so
+      indexing the bare column would let two *tenant* instances (both NULL)
+      share a display name, silently losing the old constraint.
+    * ``channel_type`` joins the key, so a Feishu and a Slack bot in one tenant
+      may share a display name. That widens what is accepted; the pre-existing
+      behaviour it replaces was stricter than the product needs.
+    """
+    con.executescript(
+        """
+        ALTER TABLE tenant_channel_instances ADD COLUMN scope TEXT NOT NULL
+            DEFAULT 'tenant';
+        ALTER TABLE tenant_channel_instances ADD COLUMN owner_user_id TEXT;
+        DROP INDEX IF EXISTS idx_tenant_channel_instances_name;
+        CREATE UNIQUE INDEX idx_tenant_channel_instances_name
+            ON tenant_channel_instances(
+                tenant_id, scope, COALESCE(owner_user_id, ''), channel_type,
+                display_name)
+            WHERE active = 1;
+        CREATE INDEX idx_tenant_channel_instances_owner
+            ON tenant_channel_instances(tenant_id, owner_user_id)
+            WHERE scope = 'user';
+        """
+    )
+
+
+_migrations.append(_migration_16)
+
+
+def _migration_17(con: sqlite3.Connection) -> None:
+    """Record where a private agent binding came from.
+
+    Change ``enable-member-personal-console``: provisioning must skip when the
+    member already has a *system-made* personal assistant, but must NOT skip
+    merely because they own some private agent they created themselves. Storage
+    has to tell those two apart, so each binding carries an ``origin``.
+
+    ``DEFAULT 'unknown'`` is deliberately not a synonym for
+    ``'provisioned_assistant'``. Every row predating this column was written by
+    code that did not record its reason, so the honest classification is
+    "unknown"; treating history as system-made would let a later pass treat a
+    member's own agent as replaceable. The column is added with a default (and
+    not as a bare NOT NULL) for the same reason: the upgrade classifies, it does
+    not fail and it does not invent.
+
+    Known values are ``provisioned_assistant``, ``user_created`` and
+    ``unknown``. No CHECK constraint pins them: the accepted set is owned by the
+    service layer, so a future producer can add a value without a migration.
+    """
+    con.executescript(
+        """
+        ALTER TABLE agent_bindings ADD COLUMN origin TEXT NOT NULL
+            DEFAULT 'unknown';
+        """
+    )
+
+
+_migrations.append(_migration_17)
+
+
+def _migration_18(con: sqlite3.Connection) -> None:
+    """Store the self-service binding proof and the personal route it creates.
+
+    Change ``enable-member-personal-console`` lets a member attach a channel
+    instance to themselves. That needs two records, and they are deliberately
+    two rather than one.
+
+    ``binding_challenges`` is the proof of control. The console mints one for a
+    *server-fixed* ``(tenant, user, instance, purpose)`` scope, and it is redeemed
+    by the same person demonstrating they can speak to the bot in a private chat.
+    Keeping the scope as columns rather than inside an opaque token is what makes
+    a challenge unusable against a different target; ``consumed_at`` and
+    ``attempts`` make it single-use and bound the guessing of its code.
+
+    ``personal_channel_links`` is the resulting route. It is kept separate from
+    ``external_identities`` on purpose: that table holds the *global*
+    provider-identity-to-user mapping, which may still be in use by another
+    tenant or by the tenant's own public bind flow. Unlinking has to remove only
+    this tenant's personal route, so the two facts must not share a row — the
+    ``(tenant, user, instance)`` primary key is the route, and the identity is
+    referenced, never owned.
+    """
+    con.executescript(
+        """
+        CREATE TABLE binding_challenges (
+            -- ``NOT NULL`` is spelled out: SQLite only implies it for an
+            -- INTEGER PRIMARY KEY, so a bare TEXT primary key would accept NULL.
+            id          TEXT PRIMARY KEY NOT NULL,
+            tenant_id   TEXT NOT NULL REFERENCES tenants(id),
+            user_id     TEXT NOT NULL REFERENCES users(id),
+            instance_id TEXT NOT NULL REFERENCES tenant_channel_instances(id),
+            purpose     TEXT NOT NULL,
+            code_hash   TEXT NOT NULL,
+            attempts    INTEGER NOT NULL DEFAULT 0,
+            expires_at  INTEGER NOT NULL,
+            consumed_at INTEGER,
+            created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+        CREATE INDEX idx_binding_challenges_scope
+            ON binding_challenges(tenant_id, user_id, instance_id, purpose,
+                                  created_at);
+
+        CREATE TABLE personal_channel_links (
+            tenant_id            TEXT NOT NULL REFERENCES tenants(id),
+            user_id              TEXT NOT NULL REFERENCES users(id),
+            instance_id          TEXT NOT NULL REFERENCES tenant_channel_instances(id),
+            external_identity_id TEXT NOT NULL REFERENCES external_identities(id),
+            active               INTEGER NOT NULL DEFAULT 1,
+            created_at           INTEGER NOT NULL DEFAULT (unixepoch()),
+            PRIMARY KEY (tenant_id, user_id, instance_id)
+        );
+        CREATE INDEX idx_personal_channel_links_identity
+            ON personal_channel_links(external_identity_id);
+        """
+    )
+
+
+_migrations.append(_migration_18)
+
+
+def _migration_19(con: sqlite3.Connection) -> None:
+    """Store a member's own tool/skill parameters and who a credential belongs to.
+
+    Change ``enable-member-personal-console``: a member may save parameters for a
+    resource *for their own use*, and such a configuration must never rewrite the
+    public resource. That needs two pieces of storage.
+
+    ``credentials.owner_user_id`` — a credential's ownership has to be a fact of
+    the row rather than something encoded in its name. It stays NULL for every
+    credential the tenant owns as a whole, so the upgrade classifies history
+    correctly with no backfill, and the tenant's existing credential list keeps
+    resolving them (a non-NULL owner is what makes a credential personal).
+
+    ``personal_resource_configs`` — keyed by ``(tenant, user, kind, resource)``,
+    so a member has at most one parameter set per resource, and two members
+    configuring the same resource cannot collide. Sensitive values are *not*
+    stored here: the row keeps a ``credential_id`` reference and non-sensitive
+    parameters only, which is what keeps secrets out of a plaintext blob.
+    """
+    con.executescript(
+        """
+        ALTER TABLE credentials ADD COLUMN owner_user_id TEXT REFERENCES users(id);
+        CREATE INDEX idx_credentials_owner
+            ON credentials(tenant_id, owner_user_id);
+
+        CREATE TABLE personal_resource_configs (
+            tenant_id     TEXT NOT NULL REFERENCES tenants(id),
+            user_id       TEXT NOT NULL REFERENCES users(id),
+            resource_kind TEXT NOT NULL,
+            resource_id   TEXT NOT NULL,
+            params_json   TEXT NOT NULL DEFAULT '{}',
+            credential_id TEXT REFERENCES credentials(id),
+            version       INTEGER NOT NULL DEFAULT 1,
+            created_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+            updated_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+            PRIMARY KEY (tenant_id, user_id, resource_kind, resource_id)
+        );
+        """
+    )
+
+
+_migrations.append(_migration_19)
+
+
+def _migration_20(con: sqlite3.Connection) -> None:
+    """Give the built-in roles their default console ``menu`` grants.
+
+    Change ``enable-member-personal-console`` registers five personal pages and
+    turns menu gating on for the built-in roles by granting them. Gating is
+    *restrictive* — a role holding any ``menu`` grant is bound to that set — so
+    this cannot be a two-line "insert the new pages". Built-in roles held no menu
+    grants and were therefore governed by functional permissions alone; adding
+    just the five personal pages would have hidden every page a member could
+    already open.
+
+    So each built-in role is given its default set as a set of ids (see
+    ``BUILTIN_MENU_DEFAULTS``): the pages it could already reach, plus the new
+    personal ones. The statement is a guarded insert, which makes the backfill
+    idempotent and, more importantly, non-destructive: an existing grant is never
+    replaced and a grant an administrator removed is never restored by a re-run.
+    Only the two built-in roles are touched — custom roles keep exactly the
+    grants they were given, and no non-``menu`` grant is read or written.
+    """
+    rows = con.execute(
+        "SELECT id, code, tenant_id FROM roles WHERE builtin=1"
+        " AND code IN ('member', 'tenant_admin')").fetchall()
+    for row in rows:
+        for grant in BUILTIN_MENU_DEFAULTS.get(row["code"], ()):
+            page = grant[len("nav:"):]
+            con.execute(
+                "INSERT INTO role_resource_grants(id, tenant_id, role_id,"
+                " resource_kind, resource_id, action)"
+                " SELECT ?, ?, ?, 'menu', ?, 'view'"
+                " WHERE NOT EXISTS (SELECT 1 FROM role_resource_grants"
+                "  WHERE role_id=? AND resource_kind='menu' AND resource_id=?)",
+                ("grant-menu-%s-%s" % (row["id"], page), row["tenant_id"],
+                 row["id"], grant, row["id"], grant),
+            )
+
+
+_migrations.append(_migration_20)
+
+
+def _migration_21(con: sqlite3.Connection) -> None:
+    """Tenant policy for personal access, plus per-instance governance stop.
+
+    Two tenant controls from change task 2.5:
+
+    * ``tenant_channel_policies`` — whether personal access is open at all, which
+      channel types it may use, and how many personal instances an owner and the
+      tenant as a whole may hold. Absence of a row means "nothing narrowed yet",
+      never "denied", so an upgraded tenant behaves exactly as before.
+    * ``governance_disabled_at`` / ``governance_disabled_by`` on the instance —
+      a stop an administrator applies that the owner cannot clear by re-saving or
+      re-enabling. It is deliberately *not* the same column as ``active``: the
+      owner's own switch and the tenant's governance decision have to be
+      independently visible, or lifting governance could not leave the instance
+      stopped (which the spec requires: 解除限制后须由本人明确启用).
+
+    Existing instances keep running: both new columns default to NULL.
+    """
+    con.execute("ALTER TABLE tenant_channel_instances"
+                " ADD COLUMN governance_disabled_at INTEGER")
+    con.execute("ALTER TABLE tenant_channel_instances"
+                " ADD COLUMN governance_disabled_by TEXT")
+    con.executescript(
+        """
+        CREATE TABLE tenant_channel_policies (
+            tenant_id                     TEXT PRIMARY KEY NOT NULL
+                                          REFERENCES tenants(id),
+            personal_enabled              INTEGER NOT NULL DEFAULT 1,
+            allowed_types_json            TEXT NOT NULL DEFAULT '[]',
+            personal_instance_limit       INTEGER NOT NULL DEFAULT -1,
+            tenant_personal_instance_limit INTEGER NOT NULL DEFAULT -1,
+            updated_by                    TEXT,
+            updated_at                    INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+        """
+    )
+
+
+_migrations.append(_migration_21)
+
+
+def _migration_22(con: sqlite3.Connection) -> None:
+    """Tenant policy for member-created private Agents (task 4.2).
+
+    A separate table from ``tenant_channel_policies`` because the two control
+    different resources: a tenant may well allow a member ten personal Agents and
+    one personal WeChat account, and collapsing them into one row would make
+    every future control a guess about which resource it meant.
+
+    Same rule as 2.5: **no row means nothing narrowed yet**, never "denied" — so a
+    tenant upgraded to this schema keeps creating exactly as it did before, and
+    only an explicit ``set_private_agent_policy`` narrows anything.
+
+    Limits count *objects*, not usage windows, so they are not
+    ``quota_limits`` metrics (which meter tokens/tool calls/messages/storage).
+    ``-1`` means unlimited.
+    """
+    con.executescript(
+        """
+        CREATE TABLE tenant_private_agent_policies (
+            tenant_id              TEXT PRIMARY KEY NOT NULL
+                                   REFERENCES tenants(id),
+            personal_enabled       INTEGER NOT NULL DEFAULT 1,
+            member_agent_limit     INTEGER NOT NULL DEFAULT -1,
+            tenant_agent_limit     INTEGER NOT NULL DEFAULT -1,
+            updated_by             TEXT,
+            updated_at             INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+        """
+    )
+
+
+_migrations.append(_migration_22)
+
+
+def _migration_23(con: sqlite3.Connection) -> None:
+    """External-application fingerprint for channel instances (task 6.3).
+
+    Two instances configured with the *same* vendor application would fight over
+    one connection: the second long-connection steals the first one's events, or
+    the vendor refuses it outright. Detecting that needs an equality test across
+    instances — including across two members' personal instances — but the
+    bundles are separately encrypted and must not be decrypted to compare.
+
+    So each instance stores a **keyed digest** of the credential fields that name
+    its application (``channel.channel_instances.app_identity``). It is
+    non-reversible, comparable, and says nothing about the secret itself; the
+    unique index below then makes "one application, one active instance per
+    tenant" a storage invariant rather than a check someone can forget.
+
+    Existing rows default to ``''`` (unknown) and are *not* indexed, so this
+    migration cannot fail on data that predates it. They acquire a fingerprint
+    the next time they are written, and until then the write-time check simply
+    cannot see them.
+
+    The unique index is therefore scoped to personal rows (``scope='user'``):
+    it is the race backstop for "two of my own instances, one application",
+    while the public/personal boundary is decided by the service check, which
+    deliberate asymmetry is documented there.
+    """
+    con.executescript(
+        """
+        ALTER TABLE tenant_channel_instances
+            ADD COLUMN app_fingerprint TEXT NOT NULL DEFAULT '';
+        CREATE UNIQUE INDEX idx_tenant_channel_instances_app
+            ON tenant_channel_instances(tenant_id, app_fingerprint)
+            WHERE active = 1 AND scope = 'user' AND app_fingerprint <> '';
+        """
+    )
+
+
+_migrations.append(_migration_23)
+
+
+def _migration_24(con: sqlite3.Connection) -> None:
+    """Personal route *targets* for shared channel instances (task 7.2).
+
+    A personal instance already knows its target: the instance row's ``agent_id``
+    is the owner's private Agent. A route carried by a *shared* instance has no
+    such row to read the target from — the member chooses their own private Agent
+    at binding time, and every inbound on that shared instance must be routed to
+    the choice the member made then, not to a target re-derived later (which the
+    public instance's configuration could have moved in the meantime).
+
+    So the target travels with the binding: the challenge records it at mint time
+    (server-side, from the member's own instance of the chosen Agent), and the
+    resulting link keeps it. Both columns default to ``''`` so existing personal
+    rows — which never needed it — keep meaning exactly what they meant.
+
+    Deliberately not a foreign key: an Agent can be deleted, and a route whose
+    target no longer resolves must still be *readable* so the inbound path can
+    refuse it explicitly instead of treating the row as absent and falling back
+    to the shared Agent. The refusal is re-derived on every message.
+    """
+    con.executescript(
+        """
+        ALTER TABLE binding_challenges
+            ADD COLUMN target_agent_id TEXT NOT NULL DEFAULT '';
+        ALTER TABLE personal_channel_links
+            ADD COLUMN target_agent_id TEXT NOT NULL DEFAULT '';
+        """
+    )
+
+
+_migrations.append(_migration_24)
 
 
 class IdentityStoreError(RuntimeError):

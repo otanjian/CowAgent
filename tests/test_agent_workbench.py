@@ -103,10 +103,19 @@ def _fake_db_scope():
 
 def _call_get(handler_cls, view=""):
     import channel.web.web_channel as web_channel
+
+    def _scoped_ids(_ctx):
+        # The stub registry is not bound to any real tenant, so stand in for the
+        # tenant scope: these tests cover the projection shape, not scoping
+        # (which tests/test_tenant_default_agent.py pins separately).
+        from agent.registry import get_agent_registry
+        return [p.id for p in get_agent_registry().list(include_disabled=False)]
+
     with patch.object(web_channel, "_db_scope", _fake_db_scope), \
          patch.object(web_channel, "_require_read_permission"), \
          patch.object(web_channel, "_tenant_default_agent_id",
                       return_value="primary"), \
+         patch.object(web_channel, "_tenant_ids_for_context", _scoped_ids), \
          patch.object(web_channel, "_workbench_chat_readiness",
                       return_value=(True, None)), \
          patch.object(web_channel.web, "header"), \
@@ -156,6 +165,20 @@ class TestWorkbenchProjection(unittest.TestCase):
             data = _call_get(AgentsHandler, view="workbench")
         self.assertEqual([a["id"] for a in data["agents"]], ["primary"])
 
+    def test_view_workbench_empty_response_carries_a_reason_code(self):
+        """An empty gallery is not a dead end: it says which empty it is.
+
+        ``empty_reason`` is additive and lives only on the workbench view — the
+        management snapshot keeps its existing contract (pinned by
+        ``test_default_view_returns_tenant_admin_projection``).
+        """
+        from channel.web.web_channel import AgentsHandler
+        with patch("agent.registry.get_agent_registry", return_value=_Registry([])):
+            data = _call_get(AgentsHandler, view="workbench")
+        self.assertEqual(data["status"], "success")
+        self.assertEqual(data["agents"], [])
+        self.assertEqual(data["empty_reason"], "no_agents")
+
     def test_default_view_returns_tenant_admin_projection(self):
         from channel.web.web_channel import AgentsHandler
         projected = {
@@ -197,6 +220,13 @@ class TestWorkbenchProjection(unittest.TestCase):
             def check_resource_action(self, *a, **kw):
                 return False
 
+            def get_agent_binding(self, agent_id):
+                # The readiness gate checks the tenant binding before any grant
+                # (a platform admin would otherwise pass ``check_resource_action``
+                # for another tenant's Agent). This Agent is the caller's own, so
+                # the deny path below is what the test exercises.
+                return {"agent_id": agent_id, "tenant_id": "t1"}
+
         with patch("auth.service.get_identity_service",
                    return_value=_DenySvc()):
             can_chat, reason = _workbench_chat_readiness(
@@ -219,7 +249,10 @@ class TestWorkbenchProjection(unittest.TestCase):
             def check_resource_action(self, *a, **kw):
                 return True
 
-            def resolved_default_agent_id(self, tenant_id):
+            def get_agent_binding(self, agent_id):
+                return {"agent_id": agent_id, "tenant_id": "t1"}
+
+            def resolved_default_agent_id(self, tenant_id, *a, **kw):
                 # This test pins the functional chat.use gate. There is no tenant
                 # default to relax onto, so the Agent stays grant-gated here.
                 return None
@@ -251,7 +284,10 @@ class TestWorkbenchProjection(unittest.TestCase):
             def check_resource_action(self, *a, **kw):
                 return True
 
-            def resolved_default_agent_id(self, tenant_id):
+            def get_agent_binding(self, agent_id):
+                return {"agent_id": agent_id, "tenant_id": "t1"}
+
+            def resolved_default_agent_id(self, tenant_id, *a, **kw):
                 # This test pins the explicit-grant path; keep the shared-default
                 # relaxation out of the way so the grant check is what passes.
                 return None
@@ -314,10 +350,21 @@ class TestWorkbenchFrontEnd(unittest.TestCase):
         # asserted against the merged locale layer.
         js = self._i18n_text()
         for key in ("agent_workbench_title", "agent_workbench_refresh",
-                    "agent_workbench_empty", "agent_workbench_failed",
+                    "agent_workbench_empty", "agent_workbench_empty_unreachable",
+                    "agent_workbench_failed",
                     "agent_target_unavailable", "agent_permission_denied",
                     "start_chat"):
             assert key in js
+
+    def test_workbench_empty_state_is_not_the_failure_state(self):
+        js = self._read("channel/web/static/js/console.js")
+        # The unreachable wording is chosen by the server's reason code, and the
+        # empty branch must keep using the success status line (``setWbStatus``)
+        # rather than the failure one (``setWbError``).
+        assert "agent_workbench_empty_unreachable" in js
+        for code in ("no_agents", "no_reachable_agents"):
+            assert code in js
+        assert "function _wbEmptyKey" in js
 
     def test_workbench_permission_denied_label_and_notice(self):
         js = self._read("channel/web/static/js/console.js")

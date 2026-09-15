@@ -188,6 +188,12 @@ _HISTORICAL_TABLES: Dict[str, TableSpec] = {
             ColumnSpec("last_active", "last_active INTEGER NOT NULL"),
             ColumnSpec("msg_count", "msg_count INTEGER NOT NULL DEFAULT 0"),
             ColumnSpec("pinned", "pinned INTEGER NOT NULL DEFAULT 0"),
+            # Product-level soft-hide: an archived conversation keeps every row
+            # (messages, title, owner, project binding, pin) but is filtered out
+            # of the default history queries. Added as a base column so both
+            # legacy and dimension-composed deployments carry it; the migration
+            # is a plain additive ALTER TABLE with a 0 default.
+            ColumnSpec("archived", "archived INTEGER NOT NULL DEFAULT 0"),
         ),
         key=("session_id",),
         indexes=(

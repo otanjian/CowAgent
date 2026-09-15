@@ -86,6 +86,10 @@ desktop/resources/bin/
 # (config.py: get_data_root() falls back to the workspace root). These are
 # private per-instance artifacts, not source, so keep them out of git.
 /identity.db
+# Timestamped pre-migration dumps of the same database (`identity.db.bak-<stamp>`,
+# `identity.db.prt<n>-...`), written next to it by migration/acceptance scripts.
+/identity.db.bak-*
+/identity.db.prt*
 /memory/
 # Instance-level Web branding state (name/logo/snapshots/rollback) written by
 # channel/web/branding.py under get_data_root(); see /identity.db above.

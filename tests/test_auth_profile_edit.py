@@ -155,6 +155,25 @@ class AuthProfileEditTests(unittest.TestCase):
         ctx2 = self.svc.self_context(self.token)
         self.assertEqual(ctx2["user"]["avatar"], "image")
 
+    def test_avatar_flag_appears_in_list_projections_without_bytes_or_paths(self):
+        # The admin member/platform lists mirror only the metadata flag so the
+        # client can choose the uploaded picture or the bundled default; no
+        # filesystem path or image bytes may leak into a list projection.
+        self.svc.set_self_avatar(self.token)
+        member = [m for m in self.svc.list_members(self.tid)["items"]
+                  if m["username"] == "root"][0]
+        self.assertEqual(member["avatar"], "image")
+        self.assertNotIn("user-", json.dumps(member))
+        platform = [u for u in self.svc.list_platform_users_paged()["items"]
+                    if u["username"] == "root"][0]
+        self.assertEqual(platform["avatar"], "image")
+        self.assertNotIn("user-", json.dumps(platform))
+
+    def test_avatar_flag_is_null_before_any_upload(self):
+        member = [m for m in self.svc.list_members(self.tid)["items"]
+                  if m["username"] == "root"][0]
+        self.assertIsNone(member["avatar"])
+
     def test_avatar_get_404_when_no_file_on_disk(self):
         # Even after the flag is set, without an actual file on disk the GET
         # must return 404 JSON, never crash.

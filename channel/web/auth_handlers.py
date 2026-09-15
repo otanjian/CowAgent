@@ -391,10 +391,17 @@ class DbAuthLoginHandler:
             return _identity_unavailable()
         web.setcookie("cow_session", result.token, expires=7 * 86400, path="/",
                       httponly=True, samesite="Lax")
-        # Return the session token so Desktop (file:// origin) can send it as
-        # Authorization: Bearer. Web console continues to rely on the cookie.
+        # The compatibility ``token`` field stays in the payload but is ALWAYS
+        # empty (design D8). Handing a reusable Bearer token out of the Web login
+        # response made one readable response an authorization grant for a native
+        # session, and it forced the desktop shell to keep the session in the
+        # renderer. Native clients use the browser authorization-code + PKCE
+        # exchange instead: /auth/desktop/authorize mints a 60-second, single-use
+        # code, and /auth/desktop/token trades it for their own AuthSession.
+        # A client that still needs a token here must upgrade rather than be
+        # handed one (the old path is refused, not silently satisfied).
         return _json({
-            "status": "success", "token": result.token, "identity_mode": "database",
+            "status": "success", "token": "", "identity_mode": "database",
             "must_change_password": result.must_change_password,
             "user": {"username": result.username, "display_name": result.display_name,
                      "is_platform_admin": result.is_platform_admin},
@@ -700,3 +707,270 @@ class DbSelfAvatarHandler:
         except (IdentityStoreError, Exception):
             return _identity_unavailable()
         return _json(ctx)
+
+
+class DbUserAvatarHandler:
+    """GET /api/users/<user_id>/avatar — read an account avatar by user id.
+
+    Serves the uploaded bytes to the account itself, a valid platform admin, or
+    a caller sharing an active tenant membership with the target (the existing
+    member-directory visibility). When the account has no uploaded picture it
+    returns 404: the bundled default avatars are static assets the client
+    references directly and are never proxied here. Read-only — it never mutates
+    identity, membership, avatar or session state.
+    """
+
+    def GET(self, user_id):
+        token = _session_token()
+        if not token:
+            return _error("unauthorized", 401, "unauthorized")
+        try:
+            svc = _get_service()
+            actor = svc.self_context(token)
+        except IdentityServiceError as e:
+            return _service_error(e)
+        except (IdentityStoreError, Exception):
+            return _identity_unavailable()
+        actor_id = ((actor or {}).get("user") or {}).get("id")
+        if not actor_id:
+            return _error("unauthorized", 401, "unauthorized")
+        try:
+            target = svc.authorize_user_avatar_read(actor_id, user_id)
+        except IdentityServiceError as e:
+            return _service_error(e)
+        except (IdentityStoreError, Exception):
+            return _identity_unavailable()
+        path = _user_avatar_path(target["id"]) if target.get("avatar") else None
+        if not path:
+            web.ctx.status = "404 Not Found"
+            web.header("Content-Type", "application/json; charset=utf-8")
+            return json.dumps({"status": "error", "message": "no avatar"})
+        with open(path, "rb") as handle:
+            data = handle.read()
+        web.header("Content-Type", _USER_AVATAR_TYPES[os.path.splitext(path)[1].lower()])
+        web.header("Cache-Control", "private, max-age=86400")
+        return data
+
+
+# --- Desktop native authorization (task 8.2 / design D8) -------------------
+#
+# The Desktop shell cannot rely on a cross-origin Cookie (it renders from a
+# file:// origin), so the native protocol replaces the old "login returns a
+# Bearer token" path with a browser authorization-code + PKCE S256 exchange.
+# The state machine and its SQLite-backed, digest-only storage live in
+# :mod:`auth.desktop_auth`; these handlers only adapt HTTP to it.
+#
+# Neither endpoint is a session-bearing business route: ``authorize`` is a
+# browser document/consent form authenticated by the ordinary Web Cookie, and
+# ``token`` authenticates by the code + verifier pair alone. Both therefore
+# carry the ``public`` route policy, and each handler enforces its own rules
+# (CSRF/origin/session on the confirm, exact origin on the exchange).
+
+def _desktop_service():
+    """The native-flow service for the process's identity database."""
+    from auth.desktop_auth import service_for
+
+    return service_for(_get_service())
+
+
+def _request_params() -> Dict[str, str]:
+    """Query + body parameters as a flat ``{str: str}`` map.
+
+    The consent form posts ``application/x-www-form-urlencoded`` from a browser,
+    while the Desktop main process posts JSON to the token endpoint; both shapes
+    are accepted, and the last value wins so a duplicated field cannot smuggle a
+    second value past validation.
+    """
+    from urllib.parse import parse_qs
+
+    out: Dict[str, str] = {}
+    for key, values in parse_qs(web.ctx.env.get("QUERY_STRING", "") or "").items():
+        if values:
+            out[key] = values[-1]
+    if (web.ctx.env.get("REQUEST_METHOD") or "GET").upper() == "GET":
+        return out
+    if "wsgi.input" not in web.ctx.env:
+        return out
+    try:
+        raw = web.data()
+    except KeyError:
+        return out
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", "replace")
+    if not raw:
+        return out
+    content_type = (web.ctx.env.get("CONTENT_TYPE") or "").lower()
+    if "json" in content_type:
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            parsed = None
+        if isinstance(parsed, dict):
+            for key, value in parsed.items():
+                out[str(key)] = "" if value is None else str(value)
+        return out
+    for key, values in parse_qs(raw).items():
+        if values:
+            out[key] = values[-1]
+    return out
+
+
+def _html(body: str, status: Optional[str] = None) -> str:
+    """Serve a browser page with the no-cache/no-referrer policy D8 requires."""
+    headers = {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Referrer-Policy": "no-referrer",
+    }
+    if status:
+        raise web.HTTPError(status, headers, body)
+    for name, value in headers.items():
+        web.header(name, value)
+    return body
+
+
+def _desktop_error(e: Exception) -> str:
+    from auth.desktop_auth import DesktopAuthError
+
+    if isinstance(e, DesktopAuthError):
+        return _error(e.args[0], e.status, e.code)
+    return _error("internal error", 500, "internal")
+
+
+class DesktopAuthorizeHandler:
+    """GET/POST ``/auth/desktop/authorize`` — the browser consent surface.
+
+    GET only ever *renders*: with no Web session (or one that still has to change
+    its password) it answers a notice page, otherwise it opens a one-time consent
+    record and shows the backend, the account and the callback host. It never
+    redirects to the callback, so a bare GET — however many Cookies the browser
+    already holds — cannot mint a code. POST is the explicit confirmation: it
+    requires the same origin (CSRF), a live unrestricted session, and the
+    one-time ``request_id``/``csrf`` pair the page carried.
+    """
+
+    def GET(self):
+        from auth.desktop_auth import (
+            DesktopAuthError, render_consent_page, render_notice_page,
+        )
+
+        params = _request_params()
+        desktop = _desktop_service()
+        try:
+            desktop.precheck(
+                client_id=params.get("client_id", ""),
+                redirect_uri=params.get("redirect_uri", ""),
+                code_challenge=params.get("code_challenge", ""),
+                code_challenge_method=params.get("code_challenge_method", ""),
+                state=params.get("state", ""),
+            )
+        except DesktopAuthError as e:
+            return _desktop_error(e)
+
+        session_token = _session_token()
+        if not session_token:
+            return _html(render_notice_page(
+                title="Sign in to continue",
+                message="Sign in to the Web console first, then start the Desktop "
+                        "authorization again.",
+            ), "401 Unauthorized")
+        try:
+            session = _get_service().verify_session(session_token)
+        except (IdentityStoreError, Exception):
+            return _identity_unavailable()
+        if not session:
+            return _html(render_notice_page(
+                title="Sign in to continue",
+                message="This session is no longer valid. Sign in again, then "
+                        "start the Desktop authorization again.",
+            ), "401 Unauthorized")
+        user = session["user"]
+        if user.get("must_change_password") or session["session"]["restricted"]:
+            return _html(render_notice_page(
+                title="Password change required",
+                message="Change the temporary password before authorizing the "
+                        "Desktop app.",
+            ), "403 Forbidden")
+
+        try:
+            opened = desktop.begin(
+                session_token=session_token,
+                client_id=params.get("client_id", ""),
+                redirect_uri=params.get("redirect_uri", ""),
+                code_challenge=params.get("code_challenge", ""),
+                code_challenge_method=params.get("code_challenge_method", ""),
+                state=params.get("state", ""),
+            )
+        except DesktopAuthError as e:
+            return _desktop_error(e)
+        return _html(render_consent_page(
+            backend_origin=_request_origin(),
+            username=user["username"],
+            display_name=user.get("display_name", ""),
+            redirect_uri=params.get("redirect_uri", ""),
+            request_id=opened["request_id"],
+            csrf=opened["csrf"],
+        ))
+
+    def POST(self):
+        from auth.desktop_auth import DesktopAuthError, with_query
+
+        if not _csrf_ok():
+            return _error("cross-origin request rejected", 403, "cross_origin")
+        params = _request_params()
+        request_id = params.get("request_id", "")
+        csrf = params.get("csrf", "")
+        decision = params.get("decision", "allow")
+        desktop = _desktop_service()
+        session_token = _session_token()
+        try:
+            if decision == "deny":
+                info = desktop.deny(request_id=request_id, csrf=csrf,
+                                    session_token=session_token)
+                query = {"error": "access_denied"}
+            else:
+                info = desktop.confirm(request_id=request_id, csrf=csrf,
+                                       session_token=session_token)
+                query = {"code": info["code"]}
+        except DesktopAuthError as e:
+            return _desktop_error(e)
+        if info.get("state"):
+            query["state"] = info["state"]
+        return _redirect(with_query(info["redirect_uri"], query))
+
+
+class DesktopTokenHandler:
+    """POST ``/auth/desktop/token`` — the exact-origin code exchange.
+
+    Authenticated by the authorization code plus the PKCE verifier, never by a
+    Cookie or a self-declared native marker. A request that carries an
+    ``Origin``/``Referer`` must present the backend's own host, the response is
+    never cacheable, and neither the code nor the verifier is logged.
+    """
+
+    def POST(self):
+        params = _request_params()
+        if not _origin_ok():
+            return _error("cross-origin request rejected", 403, "cross_origin")
+        try:
+            result = _desktop_service().exchange(
+                code=params.get("code", ""),
+                verifier=params.get("code_verifier", ""),
+                client_id=params.get("client_id", ""),
+                redirect_uri=params.get("redirect_uri", ""),
+            )
+        except Exception as e:
+            return _desktop_error(e)
+        return _json(result)
+
+
+def _request_origin() -> str:
+    """The backend's own display origin, from the request's Host header."""
+    host = web.ctx.env.get("HTTP_HOST", "") or "localhost"
+    return "http://" + host
+
+
+def _redirect(location: str):
+    """A 302 to an already-validated loopback callback, never cacheable."""
+    web.header("Cache-Control", "no-store")
+    raise web.redirect(location, "302 Found")

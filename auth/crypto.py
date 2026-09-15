@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import os
 
 from Crypto.Cipher import AES
@@ -87,3 +88,16 @@ def mask_secret(name: str, plaintext: str, keep: int = 3) -> str:
     if len(value) <= (keep + 2):
         return f"{label}••••"
     return f"{label} {value[:keep]}••••{value[-2:]}"
+
+
+def fingerprint(value: str) -> str:
+    """A keyed, non-reversible digest used only for equality checks.
+
+    Lets the service answer "are two instances configured with the same external
+    application?" without decrypting either bundle. The digest is HMAC'd with the
+    deployment's credential key rather than a bare hash, so a leaked column
+    cannot be brute-forced back to a short App ID — and the operation that needs
+    it (comparing one instance's configuration with another's) never has to
+    expose a secret to a client or an administrator.
+    """
+    return hmac.new(_key(), str(value).encode("utf-8"), hashlib.sha256).hexdigest()

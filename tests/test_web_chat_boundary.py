@@ -41,6 +41,12 @@ def boundary(tmp_path, monkeypatch):
         resource_grants=[{"resource_kind": "agent", "resource_id": "agent:shared-agent",
                           "action": "use"}],
     )
+    # A zero-permission role: the built-in ``member`` now carries the use tier
+    # (chat.use/agent.use), so tests that need "no chat authorization" must use
+    # a role that grants nothing.
+    no_perm = service.create_role(
+        actor_user_id=root, tenant_id=tenant, code="no-perm", name="No permission",
+        permissions=[])
     member = service.create_member(
         actor_user_id=root, tenant_id=tenant, operation="create-new",
         username="member", display_name="Member", temporary_password="TempPass123!",
@@ -110,6 +116,7 @@ def boundary(tmp_path, monkeypatch):
                                          "message": "Continue", "stream": True}, **kwargs)
 
     yield SimpleNamespace(service=service, tenant=tenant, root=root, member=member,
+                          no_perm=no_perm["code"],
                           root_token=root_token, member_token=member_token, other_tenant=other_tenant,
                           channel=channel, identities=identities, store=store, request=request,
                           seed=seed, send=send)
@@ -275,12 +282,12 @@ def test_cross_origin_cookie_writes_are_rejected(boundary, path):
 
 
 def _plain_member(boundary, username="denied"):
-    """Create a tenant member with only the built-in role (no chat grants)."""
+    """Create a tenant member with a zero-permission role (no chat grants)."""
     b = boundary
     m = b.service.create_member(
         actor_user_id=b.root, tenant_id=b.tenant, operation="create-new",
         username=username, display_name=username.title(), temporary_password="TempPass123!",
-        roles=["member"],
+        roles=[b.no_perm],
     )["user_id"]
     token = b.service.login(username, "TempPass123!").token
     b.service.change_password(token, "TempPass123!", "MemberPass123!")
@@ -311,7 +318,7 @@ def test_agent_use_revocation_blocks_resume_of_own_session(boundary):
     b.service.update_member(
         actor_user_id=b.root, tenant_id=b.tenant, member_id=membership["id"],
         display_name=membership["display_name"], active=True, department_id=None,
-        position_text=membership["position_text"] or "", roles=["member"],
+        position_text=membership["position_text"] or "", roles=[b.no_perm],
         expected_version=membership["version"],
     )
     response = b.send("revoke-me", token=b.member_token)

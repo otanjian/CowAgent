@@ -277,3 +277,50 @@ def test_legacy_mode_never_records_a_denial(monkeypatch, tmp_path):
     monkeypatch.setattr(iso, "_current_identity", _no_identity)
     assert isolation_decision("bash", {"command": "echo hi"}, None).allowed
     assert security_events.counters() == {}
+
+
+# ---------------------------------------------------------------------------
+# A blocked home must not shadow the tenant's own nested roots
+# (fix-instance-root-trust: instance root ~/cow and the tenant base
+# ~/.cow/tenant-roots live under home; blocking home wholesale refused every
+# access to the tenant's own workspace as "outside the isolation root").
+# ---------------------------------------------------------------------------
+
+def test_blocked_home_does_not_shadow_nested_tenant_root(monkeypatch, tmp_path):
+    """Regression: the default Agent has a private workspace
+    ``<instance root>/agents/<id>`` and the tenant root sits under home. The
+    tenant's own root MUST stay reachable; home paths outside it stay refused."""
+    home = tmp_path / "home"
+    root = home / "cow"
+    work = root / "agents" / "alpha"
+    ssh = home / ".ssh"
+    for directory in (root, work, ssh):
+        directory.mkdir(parents=True, exist_ok=True)
+    (root / "AGENT.md").write_text("x", encoding="utf-8")
+    (ssh / "id_rsa").write_text("secret", encoding="utf-8")
+    boundary = _Boundary(
+        read_roots=[str(root), str(work)],
+        write_roots=[str(root), str(work)],
+        blocked=[str(home), str(tmp_path / "data")],
+        engineering=str(work),
+        tenant_id="t1",
+    )
+    monkeypatch.setattr(iso, "resolve_boundary", lambda ident=None: boundary)
+
+    # The tenant's own root is a legal root carved out of the blocked home.
+    assert iso.isolation_decision("ls", {"path": str(root)}, cwd=str(work)).allowed
+    assert iso.isolation_decision(
+        "read", {"path": str(root / "AGENT.md")}, cwd=str(work)).allowed
+    assert iso.isolation_decision(
+        "write", {"path": str(root / "new.md"), "content": "x"}, cwd=str(work)).allowed
+    assert iso._check_bash(boundary, {"command": f"ls {root}"}, str(work)).allowed
+    assert iso._check_bash(
+        boundary, {"command": f"cat {root}/AGENT.md"}, str(work)).allowed
+    assert iso._check_bash(
+        boundary, {"command": f"echo hi > {work}/out.txt"}, str(work)).allowed
+
+    # Credentials under the same home but outside the tenant roots stay refused.
+    assert not iso.isolation_decision(
+        "read", {"path": str(ssh / "id_rsa")}, cwd=str(work)).allowed
+    assert not iso._check_bash(
+        boundary, {"command": f"cat {ssh}/id_rsa"}, str(work)).allowed

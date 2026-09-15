@@ -269,5 +269,117 @@ class RotationOnRestartTests(_StartupFixture):
         assert "startup-secret" not in json.dumps(listed)
 
 
+# ---------------------------------------------------------------------------
+# 9.1 boot is a connection path: a member-owned instance obeys the same gates
+# as the hot restart.
+# ---------------------------------------------------------------------------
+
+class PersonalInstanceStartupTests(_StartupFixture):
+    """A personal instance is only synthesized when it may actually connect.
+
+    The startup synthesis runs before the console serves and starts whatever it
+    returns. A member-owned row is *stored* long before its channel type has a
+    recorded personal acceptance, so boot has to apply the same two gates the
+    hot restart does: the personal runtime switch for the type, and the owner
+    still being an active member. Skipping one instance must not disturb the
+    tenant-owned ones.
+    """
+
+    MEMBER_PW = "Str0ngMemberFinal"
+
+    def _patch_runtime(self, enabled):
+        from unittest.mock import patch
+        import config
+        patcher = patch.object(config, "conf",
+                               return_value={"personal_channel_runtime": enabled})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _member(self):
+        self.svc.create_member(
+            actor_user_id=self.root["id"], tenant_id=self.ta,
+            operation="create-new", username="alice", display_name="Alice",
+            temporary_password="MemTempPass1", roles=["member"])
+        user_id = [m for m in self.svc.list_members(self.ta)["items"]
+                   if m["username"] == "alice"][0]["user_id"]
+        session = self.svc.login("alice", "MemTempPass1")
+        self.svc.change_password(session.token, "MemTempPass1", self.MEMBER_PW)
+        return user_id
+
+    def _personal_instance(self, owner):
+        bundle = dict(FEISHU_CREDS)
+        # A distinct external application: one app may not be connected twice
+        # (task 6.3), so sharing the tenant's App ID would refuse the create
+        # before any startup question is asked.
+        bundle["feishu_app_id"] = "cli_personal_startup"
+        return self.svc.create_personal_channel_instance(
+            actor_user_id=owner, tenant_id=self.ta, channel_type="feishu",
+            display_name="Alice Bot", agent_id="agent-a",
+            credentials=bundle, recent_password=self.MEMBER_PW)
+
+    def _load(self):
+        import auth.service as service_module
+
+        self._patch_database_mode()
+        self._patch_service(self.svc)
+        return load_tenant_channel_instances()
+
+    def _patch_database_mode(self):
+        import channel.external_identity as ext
+        original = ext.is_database_mode
+        ext.is_database_mode = lambda: True
+        self.addCleanup(lambda: setattr(ext, "is_database_mode", original))
+
+    def _patch_service(self, service):
+        import auth.service as service_module
+        original = service_module.get_identity_service
+        service_module.get_identity_service = lambda: service
+        self.addCleanup(lambda: setattr(service_module, "get_identity_service", original))
+
+    def test_a_personal_instance_is_not_started_while_its_type_is_unverified(self):
+        owner = self._member()
+        personal = self._personal_instance(owner)
+        shared = self._new_instance("Acme Bot")
+        self._patch_runtime(False)
+
+        loaded = self._load()
+
+        self.assertEqual([i.instance_id for i in loaded], [shared["id"]],
+                         "the tenant instance starts, the personal one does not")
+        # The row itself is untouched: "stored, not connected" is the posture.
+        self.assertEqual(
+            self.svc.get_tenant_channel_instance_row(personal["id"])["active"], 1)
+
+    def test_a_personal_instance_starts_once_its_type_is_accepted(self):
+        from unittest.mock import patch
+
+        owner = self._member()
+        personal = self._personal_instance(owner)
+        self._patch_runtime(True)
+
+        with patch("channel.channel_instances.PERSONAL_RUNTIME_ACCEPTED_TYPES",
+                   frozenset({"feishu"})):
+            loaded = self._load()
+
+        self.assertEqual([i.instance_id for i in loaded], [personal["id"]])
+
+    def test_an_inactive_owner_stops_their_instance_from_starting(self):
+        from unittest.mock import patch
+
+        owner = self._member()
+        self._personal_instance(owner)
+        self._patch_runtime(True)
+        with self.svc._tx() as con:
+            con.execute("UPDATE memberships SET active=0 WHERE user_id=? AND"
+                        " tenant_id=?", (owner, self.ta))
+            con.commit()
+
+        with patch("channel.channel_instances.PERSONAL_RUNTIME_ACCEPTED_TYPES",
+                   frozenset({"feishu"})):
+            loaded = self._load()
+
+        self.assertEqual(loaded, [])
+
+
 if __name__ == "__main__":
     unittest.main()

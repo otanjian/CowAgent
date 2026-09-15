@@ -44,12 +44,12 @@ function isLegacyWindows(): boolean {
 const CONFIGURED_FEED = (loadAppConfig()?.updateFeedUrl || '').trim()
 
 // The update feed. Both entries hit the same Pages Function
-// (https://cowagent.ai/update/); the ?lang=zh query tells it to 302 installer
+// (https://www.rsm.global/china/zh-hans); the ?lang=zh query tells it to 302 installer
 // downloads to the China CDN mirror instead of R2. The feed metadata is
 // identical either way, so we can freely switch the feed URL between attempts
 // to fall back from one download origin to the other. Legacy Windows appends a
 // /legacy/ segment so it gets the win-legacy release instead of the standard.
-const FEED_BASE = 'https://cowagent.ai/update/' + (isLegacyWindows() ? 'legacy/' : '')
+const FEED_BASE = 'https://www.rsm.global/china/zh-hans' + (isLegacyWindows() ? 'legacy/' : '')
 const feedUrlFor = (china: boolean) => {
   if (CONFIGURED_FEED) return CONFIGURED_FEED
   return china ? `${FEED_BASE}?lang=zh` : FEED_BASE

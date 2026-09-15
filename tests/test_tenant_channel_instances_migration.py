@@ -70,6 +70,9 @@ class TenantChannelInstancesMigrationTests(unittest.TestCase):
             {
                 "id", "tenant_id", "channel_type", "display_name", "agent_id",
                 "active", "version", "created_by", "created_at", "updated_at",
+                "scope", "owner_user_id",
+                "governance_disabled_at", "governance_disabled_by",
+                "app_fingerprint",
             },
         )
 
@@ -157,6 +160,150 @@ class TenantChannelInstancesMigrationTests(unittest.TestCase):
             con.execute("PRAGMA foreign_keys = ON")
             with self.assertRaises(sqlite3.IntegrityError):
                 _insert_instance(con, tenant_id="nope")
+
+
+class TenantChannelInstanceScopeMigrationTests(unittest.TestCase):
+    """Channel instances gain a tenant/user scope and an optional owner.
+
+    Change ``enable-member-personal-console``: a member may own a *personal*
+    channel instance, so one table has to hold both kinds. The scope must be
+    purely additive — every pre-existing row stays a ``tenant`` instance with no
+    owner, so the public console returns exactly what it returned before, and
+    name uniqueness has to stop treating the two kinds as one namespace.
+    """
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.path = os.path.join(self.root, "identity.db")
+        self.store = IdentityStore(self.path)
+
+    def _columns(self):
+        with self.store.connect() as con:
+            return {
+                r["name"]: {"notnull": r["notnull"], "default": r["dflt_value"]}
+                for r in con.execute("PRAGMA table_info(%s)" % TABLE)
+            }
+
+    def test_scope_is_not_null_and_defaults_to_tenant(self):
+        cols = self._columns()
+        self.assertIn("scope", cols)
+        self.assertEqual(cols["scope"]["notnull"], 1,
+                         "scope must be NOT NULL so a forgotten scope is impossible")
+        self.assertEqual(cols["scope"]["default"], "'tenant'")
+
+    def test_owner_user_id_is_nullable_without_a_default(self):
+        cols = self._columns()
+        self.assertIn("owner_user_id", cols)
+        self.assertEqual(cols["owner_user_id"]["notnull"], 0)
+        self.assertIsNone(cols["owner_user_id"]["default"])
+
+    def test_existing_rows_become_tenant_scoped_without_an_owner(self):
+        """The upgrade must not backfill: an old row keeps working untouched."""
+        with self.store.connect() as con:
+            _seed_tenant(con)
+            _insert_instance(con)  # neither scope nor owner is supplied
+            row = con.execute(
+                "SELECT scope, owner_user_id FROM %s WHERE id='ci1'" % TABLE
+            ).fetchone()
+        self.assertEqual(row["scope"], "tenant")
+        self.assertIsNone(row["owner_user_id"])
+
+    def test_two_owners_may_use_the_same_display_name(self):
+        with self.store.connect() as con:
+            _seed_tenant(con)
+            _insert_instance(con, id="ci1", scope="user", owner_user_id="u_a")
+            _insert_instance(con, id="ci2", scope="user", owner_user_id="u_b")
+            n = con.execute("SELECT COUNT(*) FROM %s" % TABLE).fetchone()[0]
+        self.assertEqual(n, 2)
+
+    def test_one_owner_cannot_repeat_a_display_name(self):
+        with self.store.connect() as con:
+            _seed_tenant(con)
+            _insert_instance(con, id="ci1", scope="user", owner_user_id="u_a")
+            with self.assertRaises(sqlite3.IntegrityError):
+                _insert_instance(con, id="ci2", scope="user", owner_user_id="u_a")
+
+    def test_a_personal_instance_may_share_a_name_with_the_tenant_instance(self):
+        with self.store.connect() as con:
+            _seed_tenant(con)
+            _insert_instance(con, id="ci1")  # tenant scope, no owner
+            _insert_instance(con, id="ci2", scope="user", owner_user_id="u_a")
+            n = con.execute("SELECT COUNT(*) FROM %s" % TABLE).fetchone()[0]
+        self.assertEqual(n, 2)
+
+    def test_a_null_owner_still_holds_the_name_for_tenant_scope(self):
+        """NULLs compare unequal in SQL, so a bare ``owner_user_id`` in the
+        index would silently let two tenant instances share a name."""
+        with self.store.connect() as con:
+            _seed_tenant(con)
+            _insert_instance(con, id="ci1")
+            with self.assertRaises(sqlite3.IntegrityError):
+                _insert_instance(con, id="ci2")
+
+    def test_different_channel_types_may_share_a_display_name(self):
+        """Uniqueness is per channel type now: a Feishu and a Slack bot may both
+        legitimately be called "Support"."""
+        with self.store.connect() as con:
+            _seed_tenant(con)
+            _insert_instance(con, id="ci1", channel_type="feishu")
+            _insert_instance(con, id="ci2", channel_type="slack")
+            n = con.execute("SELECT COUNT(*) FROM %s" % TABLE).fetchone()[0]
+        self.assertEqual(n, 2)
+
+    def test_upgrading_an_existing_instance_keeps_its_id_and_credential_history(self):
+        """The compatibility red line for this migration: an instance that
+        predates the scope columns must keep its id, its credential and its
+        version history — the upgrade only classifies, it never rewrites."""
+        from auth.store import _migrations
+
+        path = os.path.join(tempfile.mkdtemp(), "identity.db")
+        con = sqlite3.connect(path)
+        con.row_factory = sqlite3.Row
+        con.execute(
+            "CREATE TABLE schema_migrations("
+            " version INTEGER NOT NULL,"
+            " applied_at INTEGER NOT NULL DEFAULT (unixepoch()))")
+        for i in range(15):
+            _migrations[i](con)
+        _seed_tenant(con)
+        con.execute(
+            "INSERT INTO users(id, username, display_name, password_hash)"
+            " VALUES('u1','root','Root','x')")
+        _insert_instance(con, id="ci1")  # inserted before scope existed
+        con.execute(
+            "INSERT INTO credentials(id, tenant_id, name, resource_kind,"
+            " resource_id, ciphertext, created_by) VALUES"
+            " ('cred1','t1','channel:ci1','channel','ci1','cipher-v1','u1')")
+        con.execute(
+            "INSERT INTO credential_versions(credential_id, version, ciphertext,"
+            " action, changed_by) VALUES('cred1',1,'cipher-v1','create','u1')")
+        con.execute("INSERT INTO schema_migrations(version) VALUES %s"
+                    % ",".join("(%d)" % (i + 1) for i in range(15)))
+        con.commit()
+        con.close()
+
+        store = IdentityStore(path)  # applies the scope migration
+        with store.connect() as con:
+            inst = con.execute(
+                "SELECT id, scope, owner_user_id, version, created_by, created_at"
+                " FROM %s WHERE id='ci1'" % TABLE).fetchone()
+            cred = con.execute(
+                "SELECT id, ciphertext, version FROM credentials"
+                " WHERE id='cred1'").fetchone()
+            vers = con.execute(
+                "SELECT version, ciphertext FROM credential_versions"
+                " WHERE credential_id='cred1'").fetchall()
+        self.assertEqual(inst["id"], "ci1", "the instance id must not change")
+        self.assertEqual(inst["scope"], "tenant")
+        self.assertIsNone(inst["owner_user_id"])
+        self.assertEqual(inst["version"], 1, "the instance version must not bump")
+        self.assertEqual(inst["created_by"], "u_admin")
+        self.assertIsNotNone(inst["created_at"])
+        self.assertEqual(cred["id"], "cred1")
+        self.assertEqual(cred["ciphertext"], "cipher-v1")
+        self.assertEqual(cred["version"], 1)
+        self.assertEqual([(v["version"], v["ciphertext"]) for v in vers],
+                         [(1, "cipher-v1")])
 
 
 class MigrationReplayAndNonInterferenceTests(unittest.TestCase):

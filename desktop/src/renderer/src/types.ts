@@ -37,13 +37,50 @@ export interface ElectronAPI {
   // Optional app config: first-run default theme + display name. Null when
   // the build ships no app config (standard build).
   getAppConfig?: () => Promise<{ defaultTheme?: string; appName?: string } | null>
-  // Generic HTTPS relay via the main process (bypasses renderer CORS).
+  // Generic HTTPS relay via the main process (bypasses renderer CORS). Foreign
+  // https endpoints only: the main process refuses loopback/private hosts, the
+  // native auth paths and any credential header (design D8), so it can never be
+  // used to reach the backend or spend the broker's session.
   httpRelay?: (req: {
     url: string
     method?: string
     headers?: Record<string, string>
     body?: string
   }) => Promise<{ ok: boolean; status: number; headers: Record<string, string>; body: string }>
+
+  // ---- Desktop identity broker (design D8) -------------------------------
+  // The session bearer lives in the main process. Nothing here returns it, and
+  // nothing here accepts a header, an origin or an Authorization value: the
+  // renderer can ask *what* the context is and *do* business requests through
+  // it, never re-create it. Mirrors src/main/broker-protocol.ts.
+  desktopAuthProbe?: () => Promise<BrokerProbe>
+  desktopAuthStatus?: () => Promise<BrokerStatusReply>
+  desktopAuthBegin?: () => Promise<BrokerSessionReply>
+  desktopAuthCancel?: () => Promise<{ ok: boolean }>
+  desktopAuthLogout?: () => Promise<BrokerLogoutReply>
+  desktopAuthRefresh?: () => Promise<BrokerSessionReply>
+  desktopTenantSelect?: (tenantId: string) => Promise<BrokerSessionReply>
+  desktopPasswordChange?: (payload: { oldPassword: string; newPassword: string }) => Promise<BrokerVoidReply>
+  desktopRequest?: (req: { path: string; method?: string; body?: string }) => Promise<BrokerRequestReply>
+  desktopUpload?: (req: {
+    path: string
+    method?: string
+    form: {
+      fields: Array<{ name: string; value: string }>
+      files: Array<{ name: string; filename: string; contentType: string; bytes: ArrayBuffer }>
+    }
+  }) => Promise<BrokerRequestReply>
+  desktopAssetUrl?: (req: { path: string; kind?: 'get' | 'stream' }) => Promise<BrokerAssetReply>
+  /**
+   * Synchronous variant used by the URL/EventSource helpers in api/client.ts.
+   *
+   * Those call sites are JSX `src=` attributes and `window.open` arguments --
+   * upstream business components whose signatures must not change -- so minting
+   * the opaque asset URL has to be synchronous. The main process only inserts
+   * into an in-memory map, so the blocking call is bounded and trivial; the
+   * returned URL still carries no token, no tenant and no backend origin.
+   */
+  desktopAssetUrlSync?: (req: { path: string; kind?: 'get' | 'stream' }) => BrokerAssetReply
   // Auto-update. lang (e.g. "zh") routes installer downloads to the China CDN.
   checkForUpdate?: (lang?: string) => Promise<void>
   downloadUpdate?: (lang?: string) => Promise<void>
@@ -86,6 +123,63 @@ export interface BackendFailure {
   code: BackendErrorCode
   message: string
   path?: string
+}
+
+// ============================================================
+// Desktop identity broker wire shapes (mirror of src/main/broker-protocol.ts)
+// ============================================================
+
+/** The desensitized native session the renderer may see. Never a token. */
+export interface BrokerSessionWire {
+  userId: string
+  username: string
+  displayName: string
+  isPlatformAdmin: boolean
+  mustChangePassword: boolean
+  tenants: Array<{ id: string; code: string; name: string }>
+  tenantId: string | null
+  /** Monotonic context id; a response from another epoch must be discarded. */
+  epoch: number
+}
+
+export interface BrokerVoidReply {
+  ok: boolean
+  code?: string
+  message?: string
+  status?: number
+}
+
+export interface BrokerProbe extends BrokerVoidReply {
+  authRequired?: boolean
+  identityMode?: string
+}
+
+export interface BrokerStatusReply extends BrokerVoidReply {
+  session?: BrokerSessionWire | null
+  /** Non-empty when the app must stop business requests (failed sign-out). */
+  blockedReason?: string
+  authRequired?: boolean
+  identityMode?: string
+}
+
+export interface BrokerSessionReply extends BrokerVoidReply {
+  session?: BrokerSessionWire
+}
+
+export interface BrokerLogoutReply extends BrokerVoidReply {
+  revoked?: boolean
+}
+
+export interface BrokerRequestReply extends BrokerVoidReply {
+  status?: number
+  statusText?: string
+  contentType?: string
+  body?: string
+}
+
+export interface BrokerAssetReply extends BrokerVoidReply {
+  /** Opaque loopback URL: carries no token, no tenant and no backend origin. */
+  url?: string
 }
 
 export interface BackendStatusEvent {

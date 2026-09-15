@@ -86,8 +86,12 @@ def _tenant_public(tenant: Dict[str, Any]) -> Dict[str, Any]:
     """Whitelist a tenant dictionary for a normal (non-platform) response.
 
     Never exposes the host ``shared_root`` path, password hashes or credentials.
+    ``archived_at`` is collapsed into an ``archived`` flag.
     """
-    return {k: v for k, v in tenant.items() if k != "shared_root"}
+    out = {k: v for k, v in tenant.items()
+           if k not in ("shared_root", "archived_at")}
+    out["archived"] = tenant.get("archived_at") is not None
+    return out
 
 
 #: Fixed isolation identifier for a tenant's space. The host directory is never
@@ -392,8 +396,12 @@ class PlatformTenantsHandler:
         ctx = _require_context()
         _require_platform_admin(ctx)
         svc = _get_service()
-        q = web.input(q="").q or None
-        return _json({"status": "success", "items": svc.list_tenants(q)})
+        inp = web.input(q="", status="")
+        q = inp.q or None
+        status = (inp.status or "").strip() or None
+        if status not in (None, "active", "inactive", "archived", "all"):
+            return _error("invalid status", 400, "invalid_request")
+        return _json({"status": "success", "items": svc.list_tenants(q, status)})
 
     def POST(self):
         _require_management_write()
@@ -428,13 +436,18 @@ class PlatformTenantsHandler:
 
 
 class PlatformTenantHandler:
-    """GET one tenant; POST edit name/active (platform admin).
+    """GET one tenant; POST edit name/active; POST restore; DELETE archive.
 
     ``POST`` dispatches on an explicit ``operation`` (``profile`` / ``name`` /
-    ``status``). ``profile`` edits the name and the enabled flag together in one
-    transaction, which is what the tenant page saves. A request without
-    ``operation`` keeps the pre-existing behaviour of dispatching on the presence
-    of the ``name`` key, so older clients and cached static assets still work.
+    ``status`` / ``restore``). ``profile`` edits the name and the enabled flag
+    together in one transaction, which is what the tenant page saves. A request
+    without ``operation`` keeps the pre-existing behaviour of dispatching on the
+    presence of the ``name`` key, so older clients and cached static assets
+    still work.
+
+    ``DELETE`` archives (soft-deletes) a tenant: it never removes data. Both
+    archive and restore require a current version plus a recent password; the
+    password is the confirmation for this destructive-but-reversible action.
     """
 
     def GET(self, tenant_id: str):
@@ -457,7 +470,7 @@ class PlatformTenantHandler:
         except Exception:
             return _error("Invalid request", 400, "invalid_request")
         operation = str(data.get("operation", "") or "").strip()
-        if operation not in ("", "profile", "name", "status"):
+        if operation not in ("", "profile", "name", "status", "restore"):
             # An unknown operation must not silently fall through to a write.
             return _error("unknown operation", 400, "invalid_request")
         svc = _get_service()
@@ -468,6 +481,13 @@ class PlatformTenantHandler:
                     tenant_id=tenant_id,
                     name=str(data.get("name", "")),
                     active=bool(data.get("active", True)),
+                    expected_version=int(data.get("expected_version", 0)),
+                    recent_password=_recent_password(ctx),
+                )
+            elif operation == "restore":
+                result = svc.restore_tenant(
+                    actor_user_id=ctx.user_id,
+                    tenant_id=tenant_id,
                     expected_version=int(data.get("expected_version", 0)),
                     recent_password=_recent_password(ctx),
                 )
@@ -488,6 +508,28 @@ class PlatformTenantHandler:
                     expected_version=int(data.get("expected_version", 0)),
                     recent_password=_recent_password(ctx),
                 )
+        except IdentityServiceError as e:
+            return _service_error(e)
+        return _json({"status": "success", "tenant": result})
+
+    def DELETE(self, tenant_id: str):
+        """Archive (soft-delete) a tenant. Data is retained for restore."""
+        _require_management_write()
+        ctx = _require_context()
+        _require_platform_admin(ctx)
+        try:
+            data = json.loads(web.data() or b"{}")
+        except Exception:
+            return _error("Invalid request", 400, "invalid_request")
+        svc = _get_service()
+        try:
+            result = svc.archive_tenant(
+                actor_user_id=ctx.user_id,
+                tenant_id=tenant_id,
+                expected_version=int(data.get("expected_version", 0)),
+                recent_password=_recent_password(ctx),
+                current_tenant_id=ctx.tenant_id,
+            )
         except IdentityServiceError as e:
             return _service_error(e)
         return _json({"status": "success", "tenant": result})

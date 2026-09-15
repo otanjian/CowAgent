@@ -35,6 +35,12 @@ CHAT_DENIED = "chat_denied"
 AGENT_DENIED = "agent_denied"
 AGENT_UNBOUND = "agent_unbound"
 UNRESOLVED = "unresolved"
+#: The task carries no member owner while the deployment is on database identity.
+#: Nothing proves who asked for it, so executing it would run under the Agent's
+#: own identity — the "default owner" path this change removes (task 4.2). The
+#: migration quarantines these tasks; this is the runtime backstop for any that
+#: were written afterwards.
+UNATTRIBUTED = "unattributed"
 
 _REASON_TEXT = {
     NOT_MEMBER: ("账号已停用或不属于该组织，任务已暂停执行。", "Account is inactive or not a member; task skipped."),
@@ -43,6 +49,9 @@ _REASON_TEXT = {
     AGENT_DENIED: ("该助手的使用权限已收回，任务已暂停执行。", "Agent use permission revoked; task skipped."),
     AGENT_UNBOUND: ("助手已与组织解绑，任务已暂停执行。", "Agent is no longer bound to the tenant; task skipped."),
     UNRESOLVED: ("无法完成权限复核，任务已暂停执行。", "Revalidation unavailable; task skipped."),
+    UNATTRIBUTED: (
+        "任务缺少创建者归属，已暂停执行；请由本人在对话中重新创建。",
+        "Task has no member owner; skipped. Ask the member to recreate it."),
 }
 
 #: Skip a task after this many consecutive denied fires (log noise / store
@@ -53,6 +62,22 @@ MAX_CONSECUTIVE_SKIPS = 20
 
 def _is_database_identity(owner: dict) -> bool:
     return bool(owner and owner.get("user_id") and owner.get("tenant_id"))
+
+
+def database_identity_enforced() -> bool:
+    """Whether this deployment runs the database identity mode.
+
+    Always true today — database is the only identity mode — but kept as a
+    function rather than a literal so the legacy branch stays expressible and
+    both sides can be pinned by tests. ``identity_mode`` is the switch a
+    deployment would flip; anything unreadable defaults to database, because
+    failing towards "attributes the task" is the safe direction.
+    """
+    try:
+        from config import conf
+        return str(conf().get("identity_mode") or "database").strip().lower() == "database"
+    except Exception:
+        return True
 
 
 def owner_snapshot(context) -> Optional[dict]:
@@ -124,15 +149,18 @@ def revalidate_owner(task) -> Optional[str]:
     """Re-check the task's creator before a fire.
 
     Returns ``None`` when the fire may proceed; a stable machine ``reason``
-    (see module constants) when it must be skipped. Tasks without a database
-    owner snapshot always return ``None`` (legacy behaviour).
+    (see module constants) when it must be skipped. A task with no member owner
+    is skipped as :data:`UNATTRIBUTED` while the deployment is on database
+    identity: the task would otherwise execute as the Agent itself, which is the
+    default-owner path task 4.2 removes. In a legacy deployment the historical
+    behaviour is kept exactly (no owner, no gate).
 
     Mirrors the Web chat gates (chat.use + the target Agent's ``agent.use``
     resource grant; platform/tenant-admin bypass unchanged).
     """
     owner = (task or {}).get("owner") or {}
     if not _is_database_identity(owner):
-        return None
+        return UNATTRIBUTED if database_identity_enforced() else None
     try:
         from auth.runtime import IdentityContextError, member_context
         from auth.service import get_identity_service

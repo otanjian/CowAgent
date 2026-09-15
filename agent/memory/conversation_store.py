@@ -1506,10 +1506,15 @@ class ConversationStore:
         page_size: int = 50,
         user_id: Optional[str] = None,
         q: str = "",
+        archived: bool = False,
     ) -> Dict[str, Any]:
         """
         List sessions with pinned ones first, then last_active DESC, with an
         optional channel_type filter and literal title substring search.
+
+        Archived sessions are soft-hidden: the default read (``archived=False``)
+        excludes them, and ``archived=True`` is the archived view used to
+        restore them. The filter is applied before counting and pagination.
 
         Title matching ignores ASCII letter case. Search uses ``instr`` rather
         than LIKE so percent signs and underscores remain literal characters.
@@ -1542,6 +1547,8 @@ class ConversationStore:
         if channel_type:
             clauses.append("channel_type = ?")
             params.append(channel_type)
+        clauses.append("archived = ?")
+        params.append(1 if archived else 0)
         if q:
             clauses.append("instr(lower(title), lower(?)) > 0")
             params.append(q)
@@ -1697,28 +1704,55 @@ class ConversationStore:
             finally:
                 conn.close()
 
-    def list_session_ids(self, channel_type: Optional[str] = None,
-                         user_id: Optional[str] = None) -> List[str]:
-        """Every session id, optionally filtered by channel and/or owner.
+    def set_archived(self, session_id: str, archived: bool) -> bool:
+        """Soft-hide or restore a session. Returns True if it existed.
 
-        One cheap single-column scan, used to work out how many distinct project
-        spaces are actually in play without paging through full session rows.
+        Archiving only flips the flag: messages, title, owner, project binding
+        and the pin are left untouched, so restoring returns the conversation
+        exactly as it was. Agent/tenant scoping mirrors :meth:`set_pinned`, so
+        a caller cannot address another tenant's session.
         """
         scope_sql, scope_params = dimension_clause(
             values=ambient_dimensions(), keys=("agent_id", "tenant_id"))
         with self._lock:
             conn = self._connect()
             try:
+                with conn:
+                    cur = conn.execute(
+                        "UPDATE sessions SET archived = ?"
+                        f" WHERE session_id = ?{scope_sql}",
+                        (1 if archived else 0, session_id) + scope_params,
+                    )
+                    return cur.rowcount > 0
+            finally:
+                conn.close()
+
+    def list_session_ids(self, channel_type: Optional[str] = None,
+                         user_id: Optional[str] = None,
+                         archived: bool = False) -> List[str]:
+        """Every session id, optionally filtered by channel and/or owner.
+
+        One cheap single-column scan, used to work out how many distinct project
+        spaces are actually in play without paging through full session rows.
+        Archived sessions are excluded by default so a hidden conversation does
+        not keep inflating the space count that decides how the list groups.
+        """
+        scope_sql, scope_params = dimension_clause(
+            values=ambient_dimensions(), keys=("agent_id", "tenant_id"))
+        archived_param = 1 if archived else 0
+        with self._lock:
+            conn = self._connect()
+            try:
                 if channel_type:
                     rows = conn.execute(
                         "SELECT session_id FROM sessions"
-                        f" WHERE channel_type = ? AND owner = ?{scope_sql}",
-                        (channel_type, user_id or "") + scope_params,
+                        f" WHERE channel_type = ? AND owner = ? AND archived = ?{scope_sql}",
+                        (channel_type, user_id or "", archived_param) + scope_params,
                     ).fetchall()
                 else:
                     rows = conn.execute(
-                        f"SELECT session_id FROM sessions WHERE owner = ?{scope_sql}",
-                        (user_id or "",) + scope_params,
+                        f"SELECT session_id FROM sessions WHERE owner = ? AND archived = ?{scope_sql}",
+                        (user_id or "", archived_param) + scope_params,
                     ).fetchall()
             finally:
                 conn.close()

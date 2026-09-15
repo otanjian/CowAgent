@@ -81,9 +81,11 @@ class AuthSecurityTests(unittest.TestCase):
         resp = self._login()
         data = self._json(resp)
         self.assertEqual(data["status"], "success")
-        # Web login sets the session Cookie and also returns the token so
-        # Desktop (file://) can send Authorization: Bearer.
-        self.assertTrue(data.get("token"))
+        # Design D8: the Web login response issues only the session Cookie. The
+        # compatibility ``token`` field is always empty; a native client goes
+        # through the browser authorization-code + PKCE exchange instead.
+        self.assertIn("token", data)
+        self.assertEqual(data["token"], "")
         self.assertIn("cow_session", str(getattr(resp, "headers", {})))
 
     def test_login_cross_origin_rejected(self):

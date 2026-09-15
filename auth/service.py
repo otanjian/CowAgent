@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from auth.store import ConnGuard, IdentityStore
 from auth.password import (
+    PasswordError,
     hash_password,
     verify_password,
     generate_password,
@@ -42,13 +43,21 @@ from auth.session import SessionStore, generate_token, hash_token, session_ttl_s
 from auth.audit import AuditStore, sanitize_payload, denied_event
 from auth.policy import (
     BUILTIN_ROLES,
+    BUILTIN_MENU_DEFAULTS,
+    PERSONAL_CONSOLE_PAGES,
+    personal_capability_enabled,
+    personal_page_capabilities,
+    personal_page_enabled,
     TENANT_ADMIN_CODE,
     MEMBER_CODE,
     PLATFORM_ADMIN_CODE,
-    PERMISSION_CATALOG,
+    TENANT_ADMIN_MINIMUM_PERMISSIONS,
+    default_permissions_for,
     normalize_permissions,
     RESOURCE_KINDS,
     RESOURCE_ACTIONS,
+    PRIVATE_AGENT_OWNER_ACTIONS,
+    PRIVATE_AGENT_OWNER_EXEMPT_ACTIONS,
     normalize_resource_grants,
     validate_model_defaults,
     resource_granted,
@@ -72,7 +81,14 @@ _SIGNED_CONSOLE_PAGES: Dict[str, Dict[str, object]] = {
     "workbench.scenes": {"permission": "", "scope": "tenant", "label": "场景应用"},
     "admin.agents": {"permission": "agent.read", "scope": "agent", "label": "智能体管理"},
     "admin.skills": {"permission": "", "scope": "agent", "label": "工具与技能"},
-    "admin.memory": {"permission": "memory.read", "scope": "agent", "label": "记忆管理"},
+    "admin.memory": {"permission": "memory.read", "scope": "agent", "label": "记忆管理",
+                     # The page reads an *Agent's* memory, so it is offered only
+                     # to an identity that may read at least one Agent's memory
+                     # (register, then resource). Without this the page would be
+                     # handed to every member the moment the registry opens
+                     # ``database-memory-console``, because the built-in member
+                     # role already carries ``memory.read``.
+                     "resource_kind": "agent"},
     "admin.models": {"permission": "", "scope": "platform", "label": "模型与接入"},
     "admin.channels": {"permission": "", "scope": "platform", "label": "消息渠道"},
     "admin.logs": {"permission": "", "scope": "platform", "label": "运行日志"},
@@ -82,6 +98,16 @@ _SIGNED_CONSOLE_PAGES: Dict[str, Dict[str, object]] = {
     "admin.tenants": {"permission": "", "scope": "platform", "label": "租户管理"},
     "admin.branding": {"permission": "", "scope": "platform", "label": "品牌设置"},
     "admin.settings": {"permission": "", "scope": "platform", "label": "系统设置"},
+    # Personal console pages (design D1). Each is a limited view of what the
+    # member owns in the *current* tenant, so the scope is ``self`` — never
+    # ``tenant`` — and the page carries no management meaning. They are granted
+    # to the built-in roles by default (see ``BUILTIN_MENU_DEFAULTS``) and stay
+    # subject to each consumer's own open state.
+    "personal.agents": {"permission": "agent.read", "scope": "self", "label": "我的智能体"},
+    "personal.channels": {"permission": "", "scope": "self", "label": "我的渠道"},
+    "personal.memory": {"permission": "memory.read", "scope": "self", "label": "我的记忆"},
+    "personal.tools": {"permission": "tool.read", "scope": "self", "label": "我的工具"},
+    "personal.skills": {"permission": "skill.read", "scope": "self", "label": "我的技能"},
 }
 
 #: Console pages owned by the built-in ``tenant_admin`` qualification itself —
@@ -93,6 +119,44 @@ _SIGNED_CONSOLE_PAGES: Dict[str, Dict[str, object]] = {
 _TENANT_ADMIN_CORE_PAGES: frozenset = frozenset({
     "admin.members", "admin.roles", "admin.organization",
 })
+
+#: How each personal console page produces its availability, its finite verbs and
+#: its three separated states (task 8.1). One entry per id in
+#: :data:`PERSONAL_CONSOLE_PAGES`, kept here so the projection and its tests read
+#: the same declaration.
+#:
+#: ``kind``     the resource kind the page catalogs (``None``: not a catalog).
+#:              A kind that ``PERSONAL_CONFIG_USE_ACTIONS`` covers (tool/skill)
+#:              gates ``configure`` on a granted resource; the agent page declares
+#:              its kind for documentation but is governed by private ownership
+#:              and the tenant's private-agent policy instead.
+#: ``consumer`` the ``_consumer_availability()`` entry that must be open for the
+#:              page itself to be usable (the read/configure slice).
+#: ``execution`` the consumer whose open state the page's ``execution`` state
+#:              reports. Personal *execution* is a separate consumer from personal
+#:              *configuration* on purpose: a channel type whose inbound path has
+#:              never been accepted must be configurable without the console
+#:              claiming a live conversation.
+#: ``verbs``    the page-level verbs offered while the capability is open. Only
+#:              these are ever true; a verb the page cannot honour (``delete`` on
+#:              channels, ``create`` on memory) is never invented.
+_PERSONAL_PAGE_META: Dict[str, Dict[str, Any]] = {
+    "personal.agents": {"kind": "agent", "consumer": "personal_agents",
+                        "execution": "chat",
+                        "verbs": ("create", "update", "enable")},
+    "personal.channels": {"kind": None, "consumer": "personal_channels",
+                          "execution": "personal_channel_execution",
+                          "verbs": ("create", "update", "enable")},
+    "personal.memory": {"kind": None, "consumer": "personal_memory",
+                        "execution": "personal_memory",
+                        "verbs": ("update", "delete")},
+    "personal.tools": {"kind": "tool", "consumer": "personal_resources",
+                       "execution": "personal_resources",
+                       "verbs": ("configure",)},
+    "personal.skills": {"kind": "skill", "consumer": "personal_resources",
+                        "execution": "personal_resources",
+                        "verbs": ("configure",)},
+}
 
 
 #: Resource-kind + action -> the functional permission that must also be held.
@@ -113,6 +177,125 @@ def _resource_permission(kind: str, action: str) -> str:
     return _RESOURCE_KIND_PERMISSION.get(kind, {}).get(action, "")
 
 
+def _registry_page_availability() -> Dict[str, Dict[str, object]]:
+    """The capability registry's page projection, keyed by console page id.
+
+    Read lazily on every projection so a capability a platform admin opens or
+    withdraws is reflected without a restart, and so ``auth.service`` and
+    ``auth.capability_matrix`` cannot drift into two answers for one page
+    (tasks 9.1/9.5). A registry that cannot be read reports nothing, and the
+    caller falls back to its signed-page behaviour rather than guessing "open".
+    """
+    try:
+        from auth.capability_matrix import page_availability
+        return dict(page_availability())
+    except Exception:  # pragma: no cover - defensive: projection must not 500
+        return {}
+
+
+def _registry_page_states(page_id: str) -> Dict[str, bool]:
+    """The registry's read/config/execute answer for one page.
+
+    An unevaluable registry reports the closed answer: a page must not claim a
+    class it cannot prove it serves.
+    """
+    try:
+        from auth.capability_matrix import page_states
+        return dict(page_states(page_id))
+    except Exception:  # pragma: no cover - defensive: projection must not 500
+        return {"read": False, "config": False, "execution": False}
+
+
+#: Tools that only ever act on the caller's own memory. They are injected per
+#: Agent by ``bridge/agent_initializer`` (they need a ``MemoryManager`` and the
+#: verified user id) instead of being registered in the engine-level tool
+#: catalog: ``ToolManager`` skips dependency-injected tool classes, so their
+#: ``builtin:memory_<name>`` resource ids never reach ``tenant_resource_grants``
+#: or a role's grants. The resource therefore cannot be allocated from any
+#: console, while the runtime execution gate still demanded it -- which refused
+#: these tools for every non-platform-admin identity. Membership plus the
+#: ``tool.execute``/``memory.read`` functional permissions stand in for the
+#: per-resource grant, and only for these names: the set is code-fixed so a
+#: caller-supplied tool name can never widen it.
+PERSONAL_MEMORY_TOOLS: frozenset = frozenset({
+    "memory_search", "memory_get", "memory_add",
+})
+
+#: The one personal memory tool with a write side, and the argument deciding
+#: whether that write stays inside the caller's own scope.
+_MEMORY_ADD_TOOL = "memory_add"
+_MEMORY_SCOPE_ARG = "scope"
+_SHARED_MEMORY_SCOPE = "shared"
+
+#: The channel-instance scopes. ``tenant`` is the tenant's own instance (the
+#: original and only kind before personal consoles); ``user`` is one member's
+#: personal instance. Kept as the single accepted set so an unknown scope is
+#: refused rather than silently treated as tenant-owned.
+INSTANCE_SCOPES: tuple = ("tenant", "user")
+
+#: Where a private agent binding came from. ``provisioned_assistant`` is one the
+#: system made for a member, ``user_created`` is one the member made for
+#: themselves, and ``unknown`` is every row that predates the column. ``unknown``
+#: is kept explicit rather than guessed at: only a *known* system-made binding
+#: may make provisioning skip, and only a known one may be re-authored.
+AGENT_BINDING_ORIGINS: frozenset = frozenset({
+    "provisioned_assistant", "user_created", "unknown",
+})
+
+#: The origins that mean "this member already has a system-supplied assistant".
+#: ``unknown`` is included on purpose: it covers every binding written before the
+#: column existed, which were overwhelmingly this provisioner's own. Treating
+#: them as unsupplied would hand existing members a duplicate assistant.
+SUPPLIED_ASSISTANT_ORIGINS: frozenset = frozenset({
+    "provisioned_assistant", "unknown",
+})
+
+#: The purposes a binding challenge may carry. Fixed server-side so a redeemed
+#: challenge cannot be replayed into a different flow.
+CHALLENGE_PURPOSE_CHANNEL_LINK = "channel_link"
+CHALLENGE_PURPOSES: frozenset = frozenset({CHALLENGE_PURPOSE_CHANNEL_LINK})
+
+#: How long a binding challenge stays redeemable, and how many wrong codes one
+#: challenge tolerates before it locks. The code is short and typed by a human,
+#: so the attempt budget — not the code's entropy — is what bounds guessing.
+#: Both constants live together so the two cannot drift apart.
+CHALLENGE_TTL_SECONDS = 300
+CHALLENGE_MAX_ATTEMPTS = 5
+_CHALLENGE_CODE_LENGTH = 8
+
+#: Resource kind -> the action a member must already hold to save personal
+#: parameters for it. Personal configuration is for *using* a resource, so the
+#: gate is the use action, not the public-maintenance one (``configure``/``edit``):
+#: requiring maintenance rights would conflate "may use this" with "may rewrite
+#: this", which the requirement keeps apart. It also means a personal save can
+#: never widen access — the member had to hold the grant before it existed.
+PERSONAL_CONFIG_USE_ACTIONS: Dict[str, str] = {
+    "tool": "execute",
+    "skill": "use",
+}
+
+
+def _memory_write_stays_own_scope(arguments: Optional[Dict[str, Any]]) -> bool:
+    """Whether a ``memory_add`` call writes only the caller's own memory.
+
+    ``shared`` scope writes memory the whole tenant can read, which is not the
+    caller's own scope, so it keeps requiring the per-resource grant. Absent
+    ``scope`` means the tool's own default (``user``). Anything malformed is
+    refused rather than read as "own scope": a broken argument has no
+    authorization meaning, and guessing in its favour would widen the exemption.
+    """
+    if arguments is None:
+        return True
+    if not isinstance(arguments, dict):
+        return False
+    scope = arguments.get(_MEMORY_SCOPE_ARG)
+    if scope is None:
+        return True
+    if not isinstance(scope, str):
+        return False
+    return scope.strip().lower() != _SHARED_MEMORY_SCOPE
+
+
 class IdentityServiceError(RuntimeError):
     """Base exception for service-level failures (maps to 400/404/409/503)."""
 
@@ -131,6 +314,10 @@ _COMMON_PASSWORDS = {
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$")
 _TENANT_CODE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
 _ROLE_CODE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+#: The deployment's bootstrapped tenant. It may not be archived: doing so would
+#: remove the platform's own default operating context (see ``archive_tenant``).
+_DEFAULT_TENANT_CODE = "default"
 
 #: External identity provider names (feishu/dingtalk/wecom/...). Lowercased at
 #: bind time so inbound resolution can normalize identically.
@@ -346,15 +533,25 @@ class IdentityService:
             "INSERT INTO roles(id, tenant_id, code, name, builtin, permissions_json, version)"
             " VALUES (?,?,?,?,1,?,1)",
             (role_admin_id, tenant_id, TENANT_ADMIN_CODE, BUILTIN_ROLES[TENANT_ADMIN_CODE],
-             json.dumps(list(PERMISSION_CATALOG))),
+             json.dumps(sorted(default_permissions_for(TENANT_ADMIN_CODE)))),
         )
         con.execute(
             "INSERT INTO roles(id, tenant_id, code, name, builtin, permissions_json, version)"
             " VALUES (?,?,?,?,1,?,1)",
             (role_member_id, tenant_id, MEMBER_CODE, BUILTIN_ROLES[MEMBER_CODE],
-             json.dumps(["tenant.info.read", "agent.read", "history.read",
-                         "knowledge.read", "memory.read", "todo.read", "todo.write"])),
+             json.dumps(sorted(default_permissions_for(MEMBER_CODE)))),
         )
+        # The built-in roles' default ``menu`` grants (design D1). A tenant
+        # created from now on carries them immediately; tenants that predate them
+        # are classified once by ``_migration_20``. Both paths write the same
+        # ``BUILTIN_MENU_DEFAULTS`` set, so a new and a migrated tenant end up
+        # identical.
+        for role_id, code in ((role_admin_id, TENANT_ADMIN_CODE),
+                              (role_member_id, MEMBER_CODE)):
+            self._insert_grants_tx(
+                con, role_id,
+                [{"resource_kind": "menu", "resource_id": grant, "action": "view"}
+                 for grant in BUILTIN_MENU_DEFAULTS.get(code, ())])
         if membership_id:
             con.execute(
                 "INSERT INTO membership_roles(tenant_id, membership_id, role_id)"
@@ -530,23 +727,121 @@ class IdentityService:
         tenant = self.get_tenant(tenant_id)
         return tenant.get("default_agent_id") if tenant else None
 
-    def resolved_default_agent_id(self, tenant_id: str) -> Optional[str]:
+    def member_default_agent_id(self, tenant_id: str, user_id: str) -> Optional[str]:
+        """The personal default Agent this member registered in this tenant.
+
+        Read-only, and ``None`` for anyone who never got a personal assistant —
+        including every member on a database that predates the registration, so
+        the pointer's absence is the same thing as "no personal preference".
+        """
+        if not tenant_id or not user_id:
+            return None
+        rows = self._store.execute(
+            "SELECT default_agent_id FROM memberships WHERE tenant_id=? AND user_id=?",
+            (tenant_id, user_id),
+        )
+        return rows[0]["default_agent_id"] if rows else None
+
+    def set_member_default_agent(self, *, tenant_id: str, user_id: str,
+                                 agent_id: str,
+                                 actor_user_id: Optional[str] = None) -> Dict[str, Any]:
+        """Register one of the tenant's bound Agents as a member's own default.
+
+        Only *tenancy* is checked here: the target must be bound to this tenant.
+        Whether the member may actually reach it — tenant-shared, or private to
+        them — is enforced by :meth:`resolved_default_agent_id`, so the
+        exclusive-read gate keeps exactly one implementation instead of two that
+        could drift apart.
+
+        Deliberately does **not** bump ``memberships.version``: the tenant editor
+        commits its tabs under that optimistic-concurrency value, and this is a
+        side action unrelated to the editor's draft. Mirrors how
+        :meth:`set_tenant_default_agent` treats ``tenants.version``.
+        """
+        if not user_id or not agent_id:
+            raise IdentityServiceError("user and agent are required",
+                                       code="invalid_request")
+        with self._tx() as con:
+            membership = con.execute(
+                "SELECT id, default_agent_id FROM memberships"
+                " WHERE tenant_id=? AND user_id=?", (tenant_id, user_id)).fetchone()
+            if not membership:
+                raise IdentityServiceError("member not found",
+                                           code="not_found", status=404)
+            binding = con.execute(
+                "SELECT agent_id FROM agent_bindings WHERE tenant_id=? AND agent_id=?",
+                (tenant_id, agent_id)).fetchone()
+            if not binding:
+                raise IdentityServiceError(
+                    "agent is not bound to this tenant", code="not_found", status=404)
+            if membership["default_agent_id"] != agent_id:
+                con.execute(
+                    "UPDATE memberships SET default_agent_id=?, updated_at=unixepoch()"
+                    " WHERE tenant_id=? AND user_id=?",
+                    (agent_id, tenant_id, user_id))
+                self._audit_in_tx(
+                    con, actor_username=None, actor_user_id=actor_user_id,
+                    tenant_id=tenant_id, target_tenant_id=tenant_id,
+                    action="member.set_default_agent",
+                    target=f"membership:{membership['id']}",
+                    redacted_changes={"default_agent_id": agent_id},
+                    result="success")
+            con.commit()
+        return {"tenant_id": tenant_id, "user_id": user_id,
+                "default_agent_id": agent_id}
+
+    def record_personal_agent_event(self, *, action: str, tenant_id: str, user_id: str,
+                                    result: str, agent_id: Optional[str] = None,
+                                    source_agent_id: Optional[str] = None,
+                                    reason: Optional[str] = None,
+                                    actor_user_id: Optional[str] = None) -> None:
+        """Append the provisioning outcome of a member's personal assistant.
+
+        Its own transaction: the roster copy and the identity write cannot commit
+        together, so an event per attempt is what makes the three outcomes
+        (created / skipped / failed) auditable even when the step itself was
+        best-effort. Redacted by construction — the payload holds ids and a
+        reason code, never a secret.
+        """
+        payload: Dict[str, Any] = {"user_id": user_id, "reason": reason}
+        if agent_id:
+            payload["agent_id"] = agent_id
+        if source_agent_id:
+            payload["source_agent_id"] = source_agent_id
+        with self._tx() as con:
+            self._audit_in_tx(
+                con, actor_username=None, actor_user_id=actor_user_id,
+                tenant_id=tenant_id, target_tenant_id=tenant_id,
+                action=action, target=f"user:{user_id}",
+                redacted_changes=payload, result=result)
+            con.commit()
+
+    def resolved_default_agent_id(self, tenant_id: str,
+                                  user_id: Optional[str] = None) -> Optional[str]:
         """The Agent an Agent-less request from this tenant should use.
 
         A session must still be anchored to one Agent, but the user must not
         have to choose it. Order:
 
-        1. the tenant's configured ``default_agent_id``, **while it is still a
+        1. the *member's own* registered default (``memberships.default_agent_id``),
+           **while it is a usable binding of this tenant and the member can
+           reach it** — tenant-shared, or private to that member. A tenant
+           default is the entry every member shares, so it may not be private;
+           a member's own assistant is exactly the opposite case, which is why
+           the reachability test lives here rather than in the write path;
+        2. the tenant's configured ``default_agent_id``, **while it is still a
            usable binding of this tenant**;
-        2. among the tenant's bound Agents, the tenant-*shared* ones (a private
+        3. among the tenant's bound Agents, the tenant-*shared* ones (a private
            Agent is readable only by its owner, so the shared entry must not be
            pinned to one);
-        3. failing that, every usable bound Agent.
+        4. failing that, every usable bound Agent.
 
-        Steps 2 and 3 pick the smallest stable id, so the answer never depends
+        Steps 3 and 4 pick the smallest stable id, so the answer never depends
         on binding insert order. Read-only by design: a GET must not mutate the
-        tenant, and writing here would put a read path under ``tenants.version``
-        conflict handling.
+        tenant or the registration, and writing here would put a read path under
+        version conflict handling. A stale or unreachable personal default is
+        skipped with a warning rather than cleaned up — cleanup belongs to the
+        delete path, so re-enabling an Agent restores the member's preference.
 
         Fail-closed (task 7.2): a stale configured default is *not* returned --
         it is logged and skipped, because returning an Agent this tenant no
@@ -557,17 +852,39 @@ class IdentityService:
         another tenant.
 
         Single source of truth: the Web layer delegates here rather than
-        re-deriving the rule, so all read paths agree.
+        re-deriving the rule, so all read paths agree. ``user_id`` is optional so
+        every subject-less caller keeps the exact pre-existing behaviour.
         """
+        from common.log import logger
+
         bindings = self.agents_for_tenant(tenant_id)
         usable = [b for b in bindings if self._agent_is_usable(b["agent_id"])]
         usable_ids = [b["agent_id"] for b in usable]
+
+        if user_id:
+            personal = self.member_default_agent_id(tenant_id, user_id)
+            personal_binding = next(
+                (b for b in usable if b["agent_id"] == personal), None)
+            if personal and personal_binding is None:
+                logger.warning(
+                    "[Identity] member %s in tenant %s has a personal default"
+                    " %r that is not a usable binding of this tenant; skipping it",
+                    user_id, tenant_id, personal,
+                )
+            elif personal:
+                owner = personal_binding.get("private_owner_user_id")
+                if owner is None or owner == user_id:
+                    return personal
+                logger.warning(
+                    "[Identity] member %s in tenant %s has a personal default"
+                    " %r owned by someone else; skipping it",
+                    user_id, tenant_id, personal,
+                )
 
         configured = self.tenant_default_agent_id(tenant_id)
         if configured:
             if configured in usable_ids:
                 return configured
-            from common.log import logger
             logger.warning(
                 "[Identity] tenant %s default_agent_id=%r is not usable"
                 " (unbound or disabled); falling back to a usable bound Agent",
@@ -580,6 +897,28 @@ class IdentityService:
                   if b.get("private_owner_user_id") is None]
         pool = shared or usable_ids
         return sorted(pool)[0]
+
+    def resolved_public_default_agent_id(self, tenant_id: str) -> Optional[str]:
+        """The Agent a *public* channel instance of this tenant falls back to.
+
+        The same resolution as :meth:`resolved_default_agent_id`, except that the
+        fallback pool is restricted to the tenant's **shared** Agents. A public
+        instance is an organization-wide surface: resolving it to a member's
+        private Agent would route everyone who messages the bot into one person's
+        workspace, persona and memory, so a tenant with no shared Agent answers
+        ``None`` and the caller refuses (task 7.2). The process-global default is
+        never borrowed for the same reason it is not borrowed elsewhere — it may
+        belong to another tenant.
+        """
+        bindings = self.agents_for_tenant(tenant_id)
+        shared_ids = sorted(
+            b["agent_id"] for b in bindings
+            if b.get("private_owner_user_id") is None
+            and self._agent_is_usable(b["agent_id"]))
+        configured = self.tenant_default_agent_id(tenant_id)
+        if configured and configured in shared_ids:
+            return configured
+        return shared_ids[0] if shared_ids else None
 
     @staticmethod
     def _agent_is_usable(agent_id: str) -> bool:
@@ -621,6 +960,7 @@ class IdentityService:
     def bind_agent(self, *, tenant_id: str, agent_id: str,
                    private_owner_user_id: Optional[str] = None,
                    cloned_from_agent_id: Optional[str] = None,
+                   origin: Optional[str] = None,
                    actor_user_id: Optional[str] = None,
                    actor_username: Optional[str] = None) -> Dict[str, Any]:
         """Register/bind a global agent to a tenant (task 4.1 migration).
@@ -639,9 +979,18 @@ class IdentityService:
         roster. ``actor_user_id``/``actor_username`` are optional so the copy flow
         can attribute the bind without changing existing callers.
 
+        ``origin`` records *why* a private binding exists — system-supplied
+        versus member-created — because provisioning and the re-authoring
+        backfill both branch on it. A repair only fills it in when the row is
+        still ``unknown``: a recorded origin is evidence and is never
+        overwritten by a later bind.
+
         Cross-tenant re-binding is rejected: an agent_id already bound to a
         different tenant cannot be re-pointed here (no ordinary API may re-bind).
         """
+        if origin is not None and origin not in AGENT_BINDING_ORIGINS:
+            raise IdentityServiceError(
+                "unknown agent binding origin", code="bad_request", status=400)
         existing = self.get_agent_binding(agent_id)
         if existing:
             if existing["tenant_id"] == tenant_id:
@@ -652,6 +1001,8 @@ class IdentityService:
                     patch["private_owner_user_id"] = private_owner_user_id
                 if cloned_from_agent_id is not None and existing.get("cloned_from_agent_id") is None:
                     patch["cloned_from_agent_id"] = cloned_from_agent_id
+                if origin is not None and existing.get("origin") in (None, "unknown"):
+                    patch["origin"] = origin
                 if patch:
                     assignments = ", ".join("%s=?" % key for key in patch)
                     try:
@@ -677,8 +1028,9 @@ class IdentityService:
             with self._tx() as con:
                 con.execute(
                     "INSERT INTO agent_bindings(agent_id, tenant_id, private_owner_user_id,"
-                    " cloned_from_agent_id) VALUES (?,?,?,?)",
-                    (agent_id, tenant_id, private_owner_user_id, cloned_from_agent_id))
+                    " cloned_from_agent_id, origin) VALUES (?,?,?,?,?)",
+                    (agent_id, tenant_id, private_owner_user_id,
+                     cloned_from_agent_id, origin or "unknown"))
                 self._audit_in_tx(
                     con,
                     actor_username=actor_username, actor_user_id=actor_user_id,
@@ -686,7 +1038,8 @@ class IdentityService:
                     action="agent.bind", target=f"agent:{agent_id}",
                     redacted_changes={"tenant_id": tenant_id,
                                       "private_owner_user_id": private_owner_user_id,
-                                      "cloned_from_agent_id": cloned_from_agent_id},
+                                      "cloned_from_agent_id": cloned_from_agent_id,
+                                      "origin": origin or "unknown"},
                     result="success")
                 con.commit()
         except sqlite3.IntegrityError:
@@ -697,6 +1050,207 @@ class IdentityService:
                 % (agent_id, cloned_from_agent_id),
                 code="conflict", status=409)
         return self.get_agent_binding(agent_id)
+
+    @staticmethod
+    def require_personal_capability(name: str) -> None:
+        """Refuse an *opening* personal write whose capability switch is off.
+
+        Task 9.1. The check is deliberately additional: the caller still runs its
+        own owner, membership and permission checks on the same call, so a
+        withdrawn switch can only ever remove authority. It is applied to writes
+        that *open* a surface (create, re-key, claim, enable), never to the ones
+        that close one — a deployment that withdraws a capability must not strand
+        a member with an object they can no longer revoke, disable or delete.
+        """
+        if personal_capability_enabled(name):
+            return
+        raise IdentityServiceError(
+            f"personal capability is not enabled in this deployment: {name}",
+            code="capability_disabled", status=403)
+
+    @staticmethod
+    def personal_capability_open(name: str) -> bool:
+        """Whether one capability switch is on (read-only; never raises)."""
+        return personal_capability_enabled(name)
+
+    def bind_private_agent_with_quota(self, *, tenant_id: str, agent_id: str,
+                                     user_id: str, origin: str,
+                                     actor_user_id: Optional[str] = None,
+                                     ) -> Dict[str, Any]:
+        """Bind a member-created private Agent, enforcing the tenant policy.
+
+        The quota decision and the binding are one transaction on purpose. A
+        read-then-insert at the service layer would be two, and two concurrent
+        creates that each saw "one slot left" would both insert — which is
+        exactly the race the spec's "两个请求竞争最后一个额度" scenario describes.
+        ``_tx()`` opens ``BEGIN IMMEDIATE``, so the count is taken under the write
+        lock that the insert then holds.
+
+        Counting includes **disabled** objects: a member must not be able to use
+        "disable" as an unbounded quota bypass (the same reasoning as 2.5's
+        channel-instance counting).
+
+        Absence of a policy row means unrestricted, so an upgraded tenant is not
+        silently narrowed. ``personal_enabled=0`` refuses creation outright.
+        """
+        if origin not in AGENT_BINDING_ORIGINS:
+            raise IdentityServiceError(
+                "unknown agent binding origin", code="bad_request", status=400)
+        tenant = self.get_tenant(tenant_id)
+        if not tenant:
+            raise IdentityServiceError("tenant not found", code="not_found", status=404)
+
+        # Idempotent path first: re-binding the same agent to the same tenant is
+        # a retry, not a new object, so it must not consume a slot twice.
+        existing = self.get_agent_binding(agent_id)
+        if existing is not None:
+            return self.bind_agent(
+                tenant_id=tenant_id, agent_id=agent_id,
+                private_owner_user_id=user_id, origin=origin,
+                actor_user_id=actor_user_id)
+
+        # A withdrawn capability stops *new* personal agents. The retry above
+        # runs first so a retried create still lands, and deletion/edit of an
+        # existing private agent is untouched: an operator narrowing the
+        # deployment must not strand agents a member can no longer remove.
+        self.require_personal_capability("user_private_agent_management")
+
+        try:
+            with self._tx() as con:
+                self._enforce_private_agent_quota_in_tx(
+                    con, tenant_id=tenant_id, user_id=user_id)
+                con.execute(
+                    "INSERT INTO agent_bindings(agent_id, tenant_id,"
+                    " private_owner_user_id, cloned_from_agent_id, origin)"
+                    " VALUES (?,?,?,NULL,?)",
+                    (agent_id, tenant_id, user_id, origin))
+                self._audit_in_tx(
+                    con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                    target_tenant_id=tenant_id, action="agent.bind",
+                    target=f"agent:{agent_id}",
+                    redacted_changes={"tenant_id": tenant_id,
+                                      "private_owner_user_id": user_id,
+                                      "origin": origin},
+                    result="success")
+                con.commit()
+        except sqlite3.IntegrityError:
+            raise IdentityServiceError(
+                "agent %r is already bound" % agent_id,
+                code="conflict", status=409)
+        return self.get_agent_binding(agent_id)
+
+    def check_private_agent_quota(self, *, tenant_id: str, user_id: str) -> None:
+        """Fail fast before doing expensive work (clone + workspace copy).
+
+        Deliberately the *same* predicate as the atomic gate
+        (:meth:`_enforce_private_agent_quota_in_tx`), run in a transaction that is
+        never committed. Two implementations of "is there room" would eventually
+        disagree, and the one that disagreed would be the one the member saw. This
+        check is an optimisation; the binding's own transaction stays
+        authoritative.
+        """
+        with self._tx() as con:
+            self._enforce_private_agent_quota_in_tx(
+                con, tenant_id=tenant_id, user_id=user_id)
+
+    def _enforce_private_agent_quota_in_tx(self, con: sqlite3.Connection, *,
+                                           tenant_id: str, user_id: str) -> None:
+        """Read the policy, count the objects, refuse — inside the caller's tx."""
+        row = con.execute(
+            "SELECT * FROM tenant_private_agent_policies WHERE tenant_id=?",
+            (tenant_id,)).fetchone()
+        policy = dict(row) if row else {}
+        if policy and not policy.get("personal_enabled", 1):
+            raise IdentityServiceError(
+                "personal agents are disabled for this tenant",
+                code="forbidden", status=403)
+        total = con.execute(
+            "SELECT COUNT(*) AS n FROM agent_bindings"
+            " WHERE tenant_id=? AND private_owner_user_id IS NOT NULL",
+            (tenant_id,)).fetchone()["n"]
+        mine = con.execute(
+            "SELECT COUNT(*) AS n FROM agent_bindings"
+            " WHERE tenant_id=? AND private_owner_user_id=?",
+            (tenant_id, user_id)).fetchone()["n"]
+        self._check_limit(
+            limit=policy.get("member_agent_limit", -1) if policy else -1,
+            used=mine, scope="member")
+        self._check_limit(
+            limit=policy.get("tenant_agent_limit", -1) if policy else -1,
+            used=total, scope="tenant")
+
+    @staticmethod
+    def _check_limit(*, limit: int, used: int, scope: str) -> None:
+        limit = int(limit if limit is not None else -1)
+        if limit < 0:
+            return
+        if used >= limit:
+            raise IdentityServiceError(
+                "%s private-agent limit reached" % scope,
+                code="quota_exceeded", status=409)
+
+    def get_private_agent_policy(self, actor_user_id: str,
+                                 tenant_id: str) -> Dict[str, Any]:
+        """The tenant's current private-Agent policy, defaults materialised."""
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError("policy read denied", code="forbidden", status=403)
+        row = self._store.execute(
+            "SELECT * FROM tenant_private_agent_policies WHERE tenant_id=?",
+            (tenant_id,))
+        if not row:
+            return {"tenant_id": tenant_id, "personal_enabled": True,
+                    "member_agent_limit": -1, "tenant_agent_limit": -1}
+        record = dict(row[0])
+        return {
+            "tenant_id": tenant_id,
+            "personal_enabled": bool(record["personal_enabled"]),
+            "member_agent_limit": int(record["member_agent_limit"]),
+            "tenant_agent_limit": int(record["tenant_agent_limit"]),
+        }
+
+    def set_private_agent_policy(self, *, actor_user_id: str, tenant_id: str,
+                                 personal_enabled: bool = True,
+                                 member_agent_limit: int = -1,
+                                 tenant_agent_limit: int = -1) -> Dict[str, Any]:
+        """Narrow (or lift) the tenant's private-Agent policy.
+
+        ``-1`` is unlimited, matching the channel policy's convention. An explicit
+        row is now written, so this call is what turns "nothing narrowed yet" into
+        a decision; that is why the default constructor values are permissive.
+        """
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError("policy set denied", code="forbidden", status=403)
+        if not self.get_tenant(tenant_id):
+            raise IdentityServiceError("tenant not found", code="not_found", status=404)
+        member_limit, tenant_limit = int(member_agent_limit), int(tenant_agent_limit)
+        for value in (member_limit, tenant_limit):
+            if value < -1:
+                raise IdentityServiceError("invalid agent limit",
+                                           code="invalid", status=400)
+        with self._tx() as con:
+            con.execute(
+                "INSERT INTO tenant_private_agent_policies"
+                " (tenant_id, personal_enabled, member_agent_limit,"
+                "  tenant_agent_limit, updated_by, updated_at)"
+                " VALUES (?,?,?,?,?,unixepoch())"
+                " ON CONFLICT(tenant_id) DO UPDATE SET"
+                "  personal_enabled=excluded.personal_enabled,"
+                "  member_agent_limit=excluded.member_agent_limit,"
+                "  tenant_agent_limit=excluded.tenant_agent_limit,"
+                "  updated_by=excluded.updated_by,"
+                "  updated_at=excluded.updated_at",
+                (tenant_id, 1 if personal_enabled else 0, member_limit,
+                 tenant_limit, actor_user_id))
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                target_tenant_id=tenant_id, action="tenant.private_agent_policy.set",
+                target=f"tenant:{tenant_id}",
+                redacted_changes={"personal_enabled": bool(personal_enabled),
+                                  "member_agent_limit": member_limit,
+                                  "tenant_agent_limit": tenant_limit},
+                result="success")
+            con.commit()
+        return self.get_private_agent_policy(actor_user_id, tenant_id)
 
     def set_tenant_default_agent(self, *, tenant_id: str, agent_id: str,
                                  actor_user_id: Optional[str] = None) -> Dict[str, Any]:
@@ -836,6 +1390,67 @@ class IdentityService:
             updated += 1
         return {"updated": updated, "resolved": resolved}
 
+    def release_deleted_agent(self, *, agent_id: str,
+                              actor_user_id: Optional[str] = None) -> Dict[str, Any]:
+        """Detach an Agent that has just been deleted, so nothing still resolves to it.
+
+        Removing the roster entry is not enough. Two records keep pointing at the
+        Agent, and each one alone is enough to keep it alive on the read path:
+
+        * ``tenants.default_agent_id`` — the configured default. A stale pointer
+          is skipped by :meth:`resolved_default_agent_id`, but leaving it behind
+          means the tenant carries a default that can never be reached.
+        * the ``agent_bindings`` row — the tenant's authorization of record. It is
+          never removed on delete today, and :meth:`_agent_is_usable` deliberately
+          treats an Agent the registry does not know as *usable*. So a surviving
+          binding would still be returned as the tenant's default: the delete
+          would look successful while the console kept anchoring to a ghost.
+        * ``memberships.default_agent_id`` — a member's personal default. Cleared
+          for the same reason, and only for rows naming *this* Agent: every other
+          member's registration is their own business.
+
+        Deliberately *not* scoped to the caller's tenant. ``agent_bindings.agent_id``
+        is the primary key, so an Agent belongs to exactly one tenant — but the
+        operator need not be in that tenant: a platform admin browsing under one
+        tenant can delete a roster entry bound to another, and a tenant-scoped
+        ``DELETE`` would match zero rows and leave the binding behind. The Agent id
+        is unique across the roster, so a delete invalidates it everywhere, and the
+        owning tenant is found by value rather than assumed from the caller.
+
+        Only this Agent is touched: other Agents' bindings and private owners, and
+        other tenants' defaults, are left alone. Idempotent, so a retry after a
+        partial failure is safe.
+        """
+        if not agent_id:
+            raise IdentityServiceError("agent_id is required", code="invalid_agent_id")
+        with self._tx() as con:
+            cleared = [r["id"] for r in con.execute(
+                "SELECT id FROM tenants WHERE default_agent_id=?", (agent_id,)).fetchall()]
+            if cleared:
+                con.execute(
+                    "UPDATE tenants SET default_agent_id=NULL, updated_at=unixepoch()"
+                    " WHERE default_agent_id=?", (agent_id,))
+            unregistered = con.execute(
+                "UPDATE memberships SET default_agent_id=NULL, updated_at=unixepoch()"
+                " WHERE default_agent_id=?", (agent_id,)).rowcount
+            removed = con.execute(
+                "DELETE FROM agent_bindings WHERE agent_id=?", (agent_id,)).rowcount
+            if cleared or removed or unregistered:
+                self._audit_in_tx(
+                    con,
+                    actor_username=None, actor_user_id=actor_user_id,
+                    tenant_id=None, target_tenant_id=None,
+                    action="tenant.release_deleted_agent", target=f"agent:{agent_id}",
+                    redacted_changes={"default_agent_id": None, "agent_id": agent_id,
+                                      "tenants_cleared": cleared,
+                                      "bindings_removed": removed,
+                                      "personal_registrations_cleared": unregistered},
+                    result="success")
+            con.commit()
+        return {"agent_id": agent_id, "tenants_cleared": cleared,
+                "bindings_removed": removed,
+                "personal_registrations_cleared": unregistered}
+
     def register_default_tenancy(
         self, *, tenant_id: str, private_owner_user_id: str, agent_ids: List[str],
     ) -> Dict[str, Any]:
@@ -910,11 +1525,12 @@ class IdentityService:
         role_permissions: Dict[str, set] = {}
         role_codes: List[str] = []
         for row in rows:
-            if row["code"] in (TENANT_ADMIN_CODE, MEMBER_CODE):
-                role_codes.append(row["code"])
-            else:
-                role_codes.append(row["code"])
-                role_permissions[row["code"]] = set(json.loads(row["permissions_json"] or "[]"))
+            # The persisted set is authoritative for every role, built-ins
+            # included: a tenant that edited its member/tenant_admin role must
+            # have that edit enforced, and the console reads the same row. The
+            # explicit default is only a fallback for a role with no stored set.
+            role_codes.append(row["code"])
+            role_permissions[row["code"]] = set(json.loads(row["permissions_json"] or "[]"))
         from auth.policy import permissions_for_roles
 
         return permissions_for_roles(role_codes, role_permissions)
@@ -1019,6 +1635,28 @@ class IdentityService:
             return "all"
         return "role"
 
+    def _private_agent_owner_user_id(
+        self, tenant_id: Optional[str], agent_id: Optional[str]
+    ) -> Optional[str]:
+        """The member who privately owns ``agent_id`` in ``tenant_id``, if any.
+
+        The single-row lookup the private-content gate needs. Returns ``None``
+        for an unbound, shared, or other-tenant Agent, which is what keeps
+        "private" from being inferred.
+        """
+        if not tenant_id or not agent_id:
+            return None
+        binding = self.get_agent_binding(agent_id)
+        if not binding or binding.get("tenant_id") != tenant_id:
+            return None
+        return binding.get("private_owner_user_id") or None
+
+    @staticmethod
+    def _agent_id_from_resource(resource_id: str) -> str:
+        """Accept an agent id with or without its ``agent:`` namespace."""
+        rid = resource_id or ""
+        return rid[len("agent:"):] if rid.startswith("agent:") else rid
+
     def check_resource_action(
         self,
         user_id: str,
@@ -1031,25 +1669,206 @@ class IdentityService:
     ) -> bool:
         """True when ``user`` may perform ``action`` on ``resource`` in ``tenant``.
 
-        A platform admin returns True for any *known* resource-kind/action (all).
-        For a normal member both a functional permission (when supplied) and an
-        explicit resource grant must be present. Unknown resource kinds/actions
-        are rejected by the caller via :func:`normalize_grants`; here an unknown
-        kind/action is always False so ``all`` never turns an arbitrary name into
-        a grant.
+        **Private ownership is decided before the administrator bypass.** A
+        privately owned Agent's content belongs to its owner: an administrator's
+        interest in it is governance (that it exists, who owns it, whether to stop
+        it), which reaches them through the governance surface — not by reading or
+        editing the object. So a private Agent short-circuits here, ahead of
+        ``all``, and only its owner passes.
+
+        For everything else a platform admin returns True for any *known*
+        resource-kind/action (all). For a normal member both a functional
+        permission (when supplied) and an explicit resource grant must be present.
+        Unknown resource kinds/actions are rejected by the caller via
+        :func:`normalize_grants`; here an unknown kind/action is always False so
+        ``all`` never turns an arbitrary name into a grant.
+
+        Ownership is also a grant for the owner's own actions: the private owner of
+        an Agent may ``read``/``use``/``edit``/``enable`` it without an
+        ``agent:<id>`` row (see :meth:`resource_ids_for`), which is what makes the
+        auto-provisioned personal assistant usable and maintainable.
         """
         if kind not in RESOURCE_ACTIONS or action not in RESOURCE_ACTIONS[kind]:
             return False
+        agent_id = None
+        if kind == "agent":
+            agent_id = self._agent_id_from_resource(resource_id)
+            owner = self._private_agent_owner_user_id(tenant_id, agent_id)
+            if owner is not None:
+                return self._private_agent_action_allowed(
+                    user_id, tenant_id, owner, action, permission=permission)
         if self.authorization_mode(user_id, tenant_id) == "all":
             return True
         membership = self._membership(user_id, tenant_id)
         if not membership:
             return False
         if permission is not None:
+            # No exemption is needed here: an owner's ``enable`` never reaches this
+            # line, because the private-Agent short-circuit above already answered
+            # it (``_private_agent_action_allowed``). Adding one back would be dead
+            # code that reads like a live relaxation.
             if permission not in self._permissions_for_membership(membership["id"]):
                 return False
+        if (kind == "agent" and action in PRIVATE_AGENT_OWNER_ACTIONS
+                and self.is_private_agent_owner(tenant_id, user_id, agent_id)):
+            return True
         grants = self._role_grants_for_membership(membership["id"])
         return resource_granted(grants, kind, resource_id, action)
+
+    def _private_agent_action_allowed(
+        self,
+        user_id: str,
+        tenant_id: str,
+        owner_user_id: str,
+        action: str,
+        *,
+        permission: Optional[str] = None,
+    ) -> bool:
+        """The whole policy for a privately owned Agent, owner-only.
+
+        Non-owners are refused outright — including platform administrators, which
+        is the point of evaluating this before the ``all`` bypass.
+        """
+        if owner_user_id != user_id:
+            return False
+        if action not in PRIVATE_AGENT_OWNER_ACTIONS:
+            return False
+        if permission is not None and action not in PRIVATE_AGENT_OWNER_EXEMPT_ACTIONS:
+            membership = self._membership(user_id, tenant_id)
+            if not membership:
+                return False
+            if permission not in self._permissions_for_membership(membership["id"]):
+                return False
+        return True
+
+    def tenant_admin_may_execute_tool(self, user_id: str, tenant_id: str,
+                                      resource_id: str,
+                                      agent_id: Optional[str] = None) -> bool:
+        """True when a tenant admin may run a tenant-available tool without a grant.
+
+        The built-in ``tenant_admin`` qualification is the tenant's resource
+        manager (产品规划 3.1): it maintains the tenant's tools and Agents, so a
+        per-resource ``tool.execute`` grant must not be the only way it can run
+        the tools it manages. This mirrors the existing tenant-bound Agent
+        exemption for the tool-execution gate.
+
+        Narrow by construction -- all three must hold:
+
+        * an active ``tenant_admin`` member of *this* tenant;
+        * the functional ``tool.execute`` permission (only the resource grant is
+          skipped, never the functional permission); and
+        * the tool is available to the tenant -- its id is in the tenant's
+          allocatable tool-execute set (the platform's open limit), or it is a
+          tenant-owned MCP tool (``mcp:<connection>:<tool>``) declared by an
+          Agent bound to this tenant.
+
+        ``agent_id`` is the caller's runtime Agent (``RuntimeIdentity.agent_id``),
+        and it is what makes the MCP branch an actual check. The resource id alone
+        names a *connection*, not a tenant, so accepting the ``mcp:`` prefix on
+        its own would admit any id the caller can spell. The binding lookup
+        (``agent_id in tenant_agent_ids(tenant_id)``) is the same isolation
+        boundary ``web_channel._tenant_admin_owns_agent`` relies on, so an MCP
+        connection reached through another tenant's Agent is refused and a missing
+        ``agent_id`` is refused rather than assumed. Builtin tools do not need it:
+        their ids are checked against the tenant's own grant set.
+
+        Read-only and recomputed per call, so a revoked role or a tightened
+        tenant limit denies the next invocation. Never raises for a missing
+        identity: an unknown user/tenant is simply not exempt.
+        """
+        if not user_id or not tenant_id:
+            return False
+        resource_id = str(resource_id or "")
+        if not resource_id:
+            return False
+        if not self._is_tenant_admin(user_id, tenant_id):
+            return False
+        if "tool.execute" not in self.permissions_for(user_id, tenant_id):
+            return False
+        if resource_id.startswith("mcp:"):
+            return bool(agent_id) and str(agent_id) in set(
+                self.tenant_agent_ids(tenant_id))
+        return resource_id in self.grantable_resource_ids(
+            tenant_id, "tool", "execute", None)
+
+    def personal_memory_tool_may_execute(
+        self, user_id: str, tenant_id: str, tool_name: str,
+        arguments: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """True when a member may run an identity-scoped memory tool without a grant.
+
+        ``memory_search`` / ``memory_get`` / ``memory_add`` are injected per Agent
+        and skipped by the engine-level tool catalog (see
+        :data:`PERSONAL_MEMORY_TOOLS`), so their resource ids cannot be granted
+        anywhere -- yet the execution gate still asked for one, refusing the
+        tools for every ordinary member while a platform admin passed by
+        ``authorization_mode == "all"``. This substitutes the per-resource grant
+        with the two functional permissions that actually describe the capability.
+
+        Narrow by construction:
+
+        * the tool name must be in the code-fixed :data:`PERSONAL_MEMORY_TOOLS`
+          set -- never derived from the caller's arguments or a resource-id
+          string;
+        * the caller must be an *active* member of *this* tenant (an inactive
+          membership or user is refused);
+        * the caller must hold both ``tool.execute`` and ``memory.read``;
+        * a ``memory_add`` write must stay in the caller's own scope (see
+          :func:`_memory_write_stays_own_scope`); ``shared`` writes are not the
+          caller's own data and keep the grant gate.
+
+        Only the resource grant is substituted: execution isolation, quota and
+        the Agent's tool scope are enforced elsewhere and untouched. Nothing is
+        cached, so revoking ``memory.read`` or ``tool.execute`` denies the very
+        next call. Never raises for an unknown user/tenant/tool.
+        """
+        if not user_id or not tenant_id:
+            return False
+        name = str(tool_name or "").strip()
+        if name not in PERSONAL_MEMORY_TOOLS:
+            return False
+        membership = self._membership(user_id, tenant_id)
+        if not membership or not membership["active"] or not membership["user_active"]:
+            return False
+        permissions = self._permissions_for_membership(membership["id"])
+        if "tool.execute" not in permissions or "memory.read" not in permissions:
+            return False
+        if name == _MEMORY_ADD_TOOL and not _memory_write_stays_own_scope(arguments):
+            return False
+        return True
+
+    def private_agent_ids(self, tenant_id: Optional[str], user_id: Optional[str]) -> set:
+        """Agent ids this user owns *privately* inside this tenant.
+
+        Ownership is derived from ``agent_bindings.private_owner_user_id`` — the
+        single source of truth — never from a user-level grant row. Requiring
+        ``tenant_id`` to match is what keeps the derivation inside the tenant
+        boundary: an Agent bound to another tenant is never "owned" here.
+        """
+        if not tenant_id or not user_id:
+            return set()
+        rows = self._store.execute(
+            "SELECT agent_id FROM agent_bindings"
+            " WHERE tenant_id=? AND private_owner_user_id=?",
+            (tenant_id, user_id),
+        )
+        return {row["agent_id"] for row in rows}
+
+    def is_private_agent_owner(self, tenant_id: Optional[str], user_id: Optional[str],
+                               agent_id: Optional[str]) -> bool:
+        """True when ``agent_id`` is bound to ``tenant_id`` and owned by ``user_id``.
+
+        Reads the binding by primary key, so the per-Agent hot paths (chat
+        readiness, the send gate) cost one single-row lookup rather than a scan.
+        Nothing is memoized: ownership is re-derived on every call, so revoking
+        it takes effect on the very next request.
+        """
+        if not tenant_id or not user_id or not agent_id:
+            return False
+        binding = self.get_agent_binding(agent_id)
+        return bool(binding
+                    and binding.get("tenant_id") == tenant_id
+                    and binding.get("private_owner_user_id") == user_id)
 
     def resource_ids_for(self, user_id: str, tenant_id: str, kind: str, action: str,
                          permission: Optional[str] = None) -> set:
@@ -1058,16 +1877,37 @@ class IdentityService:
         A platform admin is unrestricted (the caller projects the live catalog).
         For a normal member, returns the explicit set granted across roles,
         intersected with the functional permission when one is supplied.
+
+        For ``agent`` the caller's *own* private Agents are unioned in for the
+        owner actions (``read``/``use``/``edit``/``enable``): a private Agent is an
+        owned resource, so its owner holds it without a hand-written
+        ``agent:<id>`` grant. Only the owner's own objects are added — being
+        reachable must not imply a tenant-wide maintenance permission, which is
+        why the member role still carries no ``agent.enable``. Agents owned by
+        others are never listed, administrator or not (task 3.2).
         """
         if self.authorization_mode(user_id, tenant_id) == "all":
+            # A platform admin projects the live catalog — but private Agents
+            # owned by others are not part of it: ownership precedes the bypass.
             return None  # sentinel: unrestricted (caller projects live catalog)
         membership = self._membership(user_id, tenant_id)
         if not membership:
             return set()
+        owns_for_action = (kind == "agent"
+                           and action in PRIVATE_AGENT_OWNER_ACTIONS)
+        owned = set()
+        if owns_for_action:
+            owned = {f"agent:{agent_id}"
+                     for agent_id in self.private_agent_ids(tenant_id, user_id)}
         if permission is not None and permission not in self._permissions_for_membership(membership["id"]):
+            # The functional permission gates *shared* resources. An owner's own
+            # Agent survives it only for the exempt actions (``enable``).
+            if action in PRIVATE_AGENT_OWNER_EXEMPT_ACTIONS:
+                return owned
             return set()
         grants = self._role_grants_for_membership(membership["id"])
-        return resource_ids_for(grants, kind, action)
+        allowed = resource_ids_for(grants, kind, action)
+        return allowed | owned
 
     def grantable_resource_ids(self, tenant_id: str, kind: str, action: str,
                                owned_ids) -> set:
@@ -1242,6 +2082,14 @@ class IdentityService:
         try:
             from agent.tools.tool_manager import ToolManager
             tm = ToolManager()
+            # Tool classes are populated lazily by ``load_tools()`` when the
+            # first Agent boots. A platform-console request may run before any
+            # Agent has started, and the per-state-root instance is then empty:
+            # listing it without loading would return [] and leave the tenant
+            # 工具授权 tab permanently blank. Mirror ``ToolsHandler.GET`` and
+            # force the same one-time load here.
+            if not tm.tool_classes:
+                tm.load_tools()
             for name, meta in tm.list_tools().items():
                 out.append({
                     "resource_id": f"builtin:{name}",
@@ -1856,6 +2704,58 @@ class IdentityService:
             con.commit()
         return self.self_context(token)
 
+    def authorize_user_avatar_read(self, actor_user_id: str,
+                                  target_user_id: str) -> Dict[str, Any]:
+        """Authorize ``GET /api/users/<user_id>/avatar`` and return its metadata.
+
+        The single entry point for reading an *uploaded* account avatar (see the
+        ``user-avatar`` spec): the owning account, an active platform admin, or a
+        caller sharing at least one active tenant membership with the target may
+        read the bytes. Every other caller is denied here rather than filtered by
+        the handler, so no caller shape can widen the scope by accident.
+
+        Read-only by construction: no identity, membership, avatar or session
+        state is touched, and the projection carries only the account id and the
+        ``users.avatar`` flag — never a password hash, a path or a token.
+
+        401 when the actor is no longer an active account, 404 when the target
+        account does not exist, 403 when the actor has no read qualification.
+        """
+        actor = self._find_user_by_id(actor_user_id) if actor_user_id else None
+        if not actor or not actor["active"]:
+            raise IdentityServiceError("unauthorized", code="unauthorized", status=401)
+        target = self._find_user_by_id(target_user_id)
+        if not target:
+            raise IdentityServiceError("account not found", code="not_found", status=404)
+        allowed = (
+            actor["id"] == target["id"]
+            or self.is_platform_admin_user(actor["id"])
+            or self._shares_active_tenant(actor["id"], target["id"])
+        )
+        if not allowed:
+            raise IdentityServiceError("forbidden", code="forbidden", status=403)
+        return {"id": target["id"], "avatar": target.get("avatar") or None}
+
+    def _shares_active_tenant(self, user_id: str, other_user_id: str) -> bool:
+        """True when both active accounts hold an active membership in one live tenant.
+
+        This is the member-directory visibility rule expressed once: a shared
+        *active* membership in an *active* tenant. An archived tenant, a deactivated
+        membership or a disabled account on either side does not qualify.
+        """
+        rows = self._store.execute(
+            "SELECT 1 AS ok FROM memberships a"
+            " JOIN memberships b ON b.tenant_id = a.tenant_id"
+            " JOIN tenants t ON t.id = a.tenant_id"
+            " JOIN users ua ON ua.id = a.user_id"
+            " JOIN users ub ON ub.id = b.user_id"
+            " WHERE a.user_id=? AND b.user_id=?"
+            "   AND a.active=1 AND b.active=1"
+            "   AND t.active=1 AND ua.active=1 AND ub.active=1 LIMIT 1",
+            (user_id, other_user_id),
+        )
+        return bool(rows)
+
     # --- self-account context (GET /auth/me) ------------------------------
 
     def self_context(self, token: str) -> Dict[str, Any]:
@@ -2056,6 +2956,59 @@ class IdentityService:
             },
         }
 
+        # Personal pages (member self-service, design D1 / task 8.1). Each page
+        # reports the member's own view in the *current* tenant: what may be
+        # read, what may be configured, and whether a runtime consumer for it
+        # exists in this deployment. They are ``self`` scoped and carry no
+        # management meaning — the ``admin.*`` ids below keep their own scope and
+        # their own availability rules, so an open personal page never becomes a
+        # second way into public management.
+        for pid in PERSONAL_CONSOLE_PAGES:
+            meta = signed.get(pid) or {}
+            page_meta = _PERSONAL_PAGE_META.get(pid) or {}
+            page_consumer = consumers.get(str(page_meta.get("consumer") or ""), {})
+            page_open = bool(page_consumer.get("available"))
+            permission = str(meta.get("permission") or "")
+            # A withdrawn capability hides the page from this identity, exactly
+            # like a missing consumer or a missing permission — but it is
+            # reported as its own reason, and it never touches the owner checks
+            # the write paths run (task 9.1). ``switches`` travels with the page
+            # so the console can say *which* capability is off.
+            switches = personal_page_capabilities(pid)
+            page_capable = all(switches.values())
+            read_allowed = bool(
+                page_open and page_capable
+                and (not permission or read_ok(permissions, permission)))
+            states = self._personal_page_states(
+                pid, read_allowed=read_allowed, mode=mode,
+                permissions=permissions, grants=grants, tenant_id=tenant["id"])
+            actions: Dict[str, bool] = {}
+            if read_allowed:
+                for verb in page_meta.get("verbs", ()):
+                    # ``create`` on the agent page is the tenant's private-agent
+                    # policy; ``configure`` on a catalog page needs something
+                    # granted to configure. The remaining verbs are the owner's
+                    # own maintenance authority over objects they already hold.
+                    actions[verb] = bool(
+                        states["config"] if verb in ("create", "configure")
+                        else True)
+            reason = ""
+            if not page_capable:
+                reason = "capability_disabled"
+            elif not page_open:
+                reason = str(page_consumer.get("reason") or "consumer_closed")
+            elif not read_allowed:
+                reason = "no_permission"
+            result[pid] = {
+                "available": read_allowed,
+                "read_allowed": read_allowed,
+                "scope": "self",
+                "reason": reason,
+                "switches": switches,
+                "actions": actions,
+                "states": states,
+            }
+
         # Identity-management pages (only open consumer this milestone).
         if identity_admin_open:
             result["admin.members"] = {
@@ -2130,8 +3083,62 @@ class IdentityService:
                 "actions": {},
             }
         # Signed-but-not-yet-available pages (business consumers still closed).
+        registry_pages = _registry_page_availability()
         for pid, meta in _SIGNED_CONSOLE_PAGES.items():
             if pid in result:
+                continue
+            # A page the capability registry owns reports *the registry's* answer,
+            # never a blanket ``deferred``: the measured defect was a page whose
+            # route had already opened while its projection still said the feature
+            # was not shipped, and the mirror image -- a page reporting itself open
+            # while its interface answers 503 (tasks 9.1/9.5, design D9). The menu
+            # pass below still applies on top, so a denied menu says ``menu_denied``
+            # rather than either of these.
+            registry = registry_pages.get(pid)
+            if registry is not None:
+                page_open = bool(registry.get("available"))
+                # No declared permission means "any member of the tenant may
+                # open it" (that is what the route policy says too); an empty
+                # string must not be read as a permission nobody holds. A page
+                # that reads a *resource* (the memory page reads an Agent's
+                # memory) additionally needs the same read register the
+                # neighbouring management pages need, or opening the slice would
+                # hand the page to every member holding the functional
+                # permission.
+                page_permission = str(meta.get("permission") or "")
+                page_kind = str(meta.get("resource_kind") or "")
+                if not page_open:
+                    read_allowed = False
+                elif page_kind:
+                    read_allowed = resource_state(page_kind, "read", page_permission)
+                else:
+                    read_allowed = bool(not page_permission
+                                        or read_ok(permissions, page_permission))
+                # ``available`` is this identity's answer, not just the
+                # deployment's: a member who may not read the page must not be
+                # told it is available just because the consumer exists (the
+                # personal-page branch and the ``admin.channels`` pair agree on
+                # that), while a page nobody opened yet reports the registry's
+                # own reason rather than a blanket ``deferred``.
+                result[pid] = {
+                    "available": read_allowed,
+                    "read_allowed": read_allowed,
+                    "scope": meta.get("scope", "tenant"),
+                    "reason": "" if read_allowed else (
+                        str(registry.get("reason") or "not_implemented")
+                        if not page_open else "no_permission"),
+                    "actions": {},
+                    # Which access classes the page actually serves, reported
+                    # separately because they are separate refusals: a member who
+                    # may read their task list keeps it -- and keeps pausing or
+                    # deleting their own task -- even when running one is refused
+                    # (spec ``database-runtime-consumers``: the projection
+                    # reports read/config/execute by current authorization, and a
+                    # refused page must not leak the flags).
+                    "states": (dict(_registry_page_states(pid)) if read_allowed
+                               else {"read": False, "config": False,
+                                     "execution": False}),
+                }
                 continue
             # Catalog/read pages: report the directory open state separately even
             # when execution remains closed.
@@ -2179,8 +3186,68 @@ class IdentityService:
                 entry["available"] = False
                 entry["reason"] = "menu_not_granted"
                 entry["actions"] = {}
+                if "states" in entry:
+                    entry["states"] = {"read": False, "config": False,
+                                       "execution": False}
                 entry["menu_denied"] = True
         return result
+
+    def _personal_page_states(self, pid: str, *, read_allowed: bool, mode: str,
+                              permissions: set, grants, tenant_id: str
+                              ) -> Dict[str, bool]:
+        """The three separated states of one personal page (task 8.1).
+
+        ``read``      the page's own data may be read by this identity.
+        ``config``    the capability behind the page may be written *now*: the
+                      tenant still allows private Agents, a channel type is open
+                      for onboarding, or a resource the member may use exists.
+        ``execution`` a runtime consumer for the page exists in this deployment.
+                      Kept apart from ``config`` so a configuration surface never
+                      implies a live one (the channel case is exactly that today).
+
+        An unreadable page reports all three as false: a denied page must not
+        leak capability flags through the same payload that denies it.
+        """
+        meta = _PERSONAL_PAGE_META.get(pid) or {}
+        consumer = self._consumer_availability().get(
+            str(meta.get("execution") or ""), {})
+        execution_open = bool(consumer.get("available"))
+        if not read_allowed:
+            return {"read": False, "config": False, "execution": False}
+
+        kind = str(meta.get("kind") or "")
+        use_action = PERSONAL_CONFIG_USE_ACTIONS.get(kind, "")
+        if use_action:
+            config = bool(
+                mode == "all"
+                or resource_ids_for(grants, kind, use_action) != set())
+            execution = bool(config and execution_open)
+        elif pid == "personal.agents":
+            policy = self._private_agent_policy_row(tenant_id)
+            config = bool(mode == "all" or policy.get("personal_enabled", True))
+            execution = execution_open
+        elif pid == "personal.channels":
+            ready = [t for t in self.personal_channel_types() if t.get("ready")]
+            config = bool(ready)
+            execution = bool(ready and execution_open)
+        else:  # personal.memory: a member's own memory is always writable
+            config = True
+            execution = execution_open
+        return {"read": True, "config": bool(config),
+                "execution": bool(execution)}
+
+    def _private_agent_policy_row(self, tenant_id: str) -> Dict[str, Any]:
+        """The tenant's private-agent policy as stored, without control checks.
+
+        The *display* projection needs the flag for every member; the write path
+        keeps using the control-checked :meth:`get_private_agent_policy`.
+        """
+        rows = self._store.execute(
+            "SELECT personal_enabled FROM tenant_private_agent_policies"
+            " WHERE tenant_id=?", (tenant_id,))
+        if not rows:
+            return {}
+        return {"personal_enabled": bool(rows[0]["personal_enabled"])}
 
     def _consumer_availability(self) -> Dict[str, Dict[str, Any]]:
         """Static, server-side consumer availability labels (capability report).
@@ -2189,23 +3256,57 @@ class IdentityService:
         upload/serve/preview, voice, tools/skills, OpenAI-compatible API, MCP
         warmup, external channels and the AgentBridge runtime) report
         ``available=true`` — authorization is always re-checked per request.
-        Scheduler management stays deferred until its own slice adds trigger
-        snapshots + revalidation; Desktop enterprise login remains closed.
+
+        The recovered database-parity slices (scheduler management, memory
+        browsing, project browsing, QR onboarding, Desktop tenant context) are
+        NOT listed here: they report from :mod:`auth.capability_matrix`, which
+        is also what the route table derives its policy from. One declaration
+        means "the route is open" and "the console may render the page" cannot
+        disagree, which is the defect this indirection removes.
+
         This is a static capability report, NOT a readiness/permission service,
         and never grants access on its own.
         """
+        from auth.capability_matrix import consumer_availability
         return {
             "web_identity_admin": {"available": True, "reason": ""},
             "chat": {"available": True, "reason": ""},
             "tools": {"available": True, "reason": ""},
             "files": {"available": True, "reason": ""},
             "projects": {"available": True, "reason": ""},
-            "scheduler": {"available": False, "reason": "deferred"},
             "openai_api": {"available": True, "reason": ""},
-            "desktop_enterprise": {"available": False, "reason": "deferred"},
             "mcp": {"available": True, "reason": ""},
             "channels": {"available": True, "reason": ""},
+            # Personal-console consumers (task 8.1). The read/configure slices
+            # are open; personal channel *execution* is not, because no channel
+            # type has a recorded inbound acceptance yet (task 7.5). Keeping it
+            # as its own entry is what lets the console say "configurable, not
+            # yet live" instead of hiding the page or promising a conversation.
+            "personal_agents": {"available": True, "reason": ""},
+            "personal_channels": {"available": True, "reason": ""},
+            "personal_memory": {"available": True, "reason": ""},
+            "personal_resources": {"available": True, "reason": ""},
+            "personal_channel_execution": (
+                {"available": True, "reason": ""}
+                if self._personal_channel_execution_open()
+                else {"available": False, "reason": "awaiting_acceptance"}),
+            **consumer_availability(),
         }
+
+    @staticmethod
+    def _personal_channel_execution_open() -> bool:
+        """Whether any personal-ready channel type may actually connect.
+
+        Read from the runtime switch itself rather than a second copy, so the
+        page's ``execution`` state and the connection gate can never disagree.
+        """
+        try:
+            from channel.channel_instances import (
+                personal_channel_types, personal_runtime_enabled)
+            return any(personal_runtime_enabled(str(t.get("channel_type") or ""))
+                       for t in personal_channel_types() if t.get("ready"))
+        except Exception:  # noqa: BLE001 - an unevaluable switch is not an open one
+            return False
 
     def _self_membership_summary(self, user_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
         """Member summary for the current user in one tenant (white-listed)."""
@@ -2310,20 +3411,51 @@ class IdentityService:
 
     # --- tenant management (tasks 3.1/3.2) --------------------------------
 
-    def list_tenants(self, q: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list_tenants(self, q: Optional[str] = None,
+                     status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """List tenants, optionally filtered by name/code and lifecycle status.
+
+        ``status`` is one of ``active`` / ``inactive`` / ``archived`` / ``all``.
+        Archived tenants are excluded unless ``archived`` or ``all`` is asked
+        for, so the platform list hides them by default while the dedicated
+        filter can still surface them for restore.
+        """
+        where: List[str] = []
+        params: List[Any] = []
         if q:
-            rows = self._store.execute(
-                "SELECT * FROM tenants WHERE name LIKE ? OR code LIKE ?"
-                " ORDER BY name",
-                (f"%{q}%", f"%{q}%"),
-            )
+            where.append("(name LIKE ? OR code LIKE ?)")
+            params.extend([f"%{q}%", f"%{q}%"])
+        if status == "archived":
+            where.append("archived_at IS NOT NULL")
+        elif status == "active":
+            where.append("archived_at IS NULL AND active=1")
+        elif status == "inactive":
+            where.append("archived_at IS NULL AND active=0")
+        elif status == "all":
+            pass
         else:
-            rows = self._store.execute("SELECT * FROM tenants ORDER BY name")
-        # never leak shared_root (host absolute path) to list output
-        return [
-            {k: v for k, v in dict(r).items() if k != "shared_root"}
-            for r in rows
-        ]
+            # Default: never return archived tenants.
+            where.append("archived_at IS NULL")
+        sql = "SELECT * FROM tenants"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY name"
+        rows = self._store.execute(sql, tuple(params))
+        return [self._tenant_list_projection(r) for r in rows]
+
+    @staticmethod
+    def _tenant_list_projection(row: Any) -> Dict[str, Any]:
+        """Whitelist a tenant row for list output.
+
+        Never leak ``shared_root`` (a host absolute path). ``archived_at`` is
+        collapsed into an ``archived`` flag so clients do not depend on the
+        raw timestamp.
+        """
+        data = dict(row)
+        out = {k: v for k, v in data.items()
+               if k not in ("shared_root", "archived_at")}
+        out["archived"] = data.get("archived_at") is not None
+        return out
 
     def create_tenant(
         self,
@@ -2439,6 +3571,10 @@ class IdentityService:
                 raise IdentityServiceError("tenant not found", code="not_found", status=404)
             if row["version"] != expected_version:
                 raise IdentityServiceError("version conflict", code="conflict", status=409)
+            if row["archived_at"] is not None:
+                # Only restore_tenant may change an archived tenant's state;
+                # otherwise a plain enable could strand archived_at.
+                raise IdentityServiceError("tenant is archived", code="archived", status=409)
             if active:
                 # recovery requires a valid active tenant_admin
                 if self._count_valid_tenant_admins(tenant_id, con) < 1:
@@ -2611,6 +3747,8 @@ class IdentityService:
             row = con.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
             if not row:
                 raise IdentityServiceError("tenant not found", code="not_found", status=404)
+            if row["archived_at"] is not None:
+                raise IdentityServiceError("tenant is archived", code="archived", status=409)
             if row["version"] != expected_version:
                 raise IdentityServiceError("version conflict", code="conflict", status=409)
             con.execute(
@@ -2649,6 +3787,8 @@ class IdentityService:
                 raise IdentityServiceError("tenant not found", code="not_found", status=404)
             if row["version"] != expected_version:
                 raise IdentityServiceError("version conflict", code="conflict", status=409)
+            if row["archived_at"] is not None:
+                raise IdentityServiceError("tenant is archived", code="archived", status=409)
             if active:
                 # Enabling still requires a valid active tenant_admin.
                 if self._count_valid_tenant_admins(tenant_id, con) < 1:
@@ -2681,6 +3821,108 @@ class IdentityService:
         # The row was version-checked under the write lock, so exactly one bump.
         return {"id": tenant_id, "name": name, "active": bool(active),
                 "version": expected_version + 1}
+
+    def archive_tenant(self, *, actor_user_id: str, tenant_id: str,
+                       expected_version: int,
+                       recent_password: str,
+                       current_tenant_id: Optional[str] = None) -> Dict[str, Any]:
+        """Soft-delete a tenant: keep every row and the tenant space, remove it
+        from service.
+
+        Archiving sets ``archived_at`` and ``active=0`` in one identity
+        transaction. Because every existing active-tenant gate reads ``active``,
+        the archived tenant is rejected by login, tenant selection, tenant-scoped
+        business requests and the private-data directory, and disappears from the
+        personal tenant list. No tenant data is deleted; ``restore_tenant``
+        reverses it. The actor must be a platform admin and pass the
+        recent-password check; the deployment default tenant and the actor's
+        current tenant are protected.
+
+        The member→tenant continuity rule still applies: an archive that would
+        leave an enabled account with no other active tenant is rejected whole
+        (matching ``set_tenant_status``), so a tenant's members must be assigned
+        elsewhere first.
+        """
+        self._require_platform_admin(actor_user_id)
+        self._require_recent_password(actor_user_id, recent_password)
+        with self._tx() as con:
+            row = con.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+            if not row:
+                raise IdentityServiceError("tenant not found", code="not_found", status=404)
+            if row["archived_at"] is not None:
+                raise IdentityServiceError("tenant already archived",
+                                           code="archived", status=409)
+            if row["version"] != expected_version:
+                raise IdentityServiceError("version conflict", code="conflict", status=409)
+            if row["code"].lower() == _DEFAULT_TENANT_CODE:
+                raise IdentityServiceError("default tenant cannot be archived",
+                                           code="tenant_protected", status=403)
+            if current_tenant_id and current_tenant_id == tenant_id:
+                raise IdentityServiceError("current tenant cannot be archived",
+                                           code="tenant_protected", status=403)
+            # Collect affected enabled members BEFORE the update so continuity is
+            # re-checked on the post-update state, same as set_tenant_status.
+            affected_user_ids = [
+                r["user_id"] for r in con.execute(
+                    "SELECT DISTINCT m.user_id FROM memberships m"
+                    " JOIN users u ON u.id=m.user_id"
+                    " WHERE m.tenant_id=? AND m.active=1 AND u.active=1",
+                    (tenant_id,),
+                ).fetchall()
+            ]
+            con.execute(
+                "UPDATE tenants SET active=0, archived_at=?, version=version+1"
+                " WHERE id=?",
+                (int(_now()), tenant_id),
+            )
+            self._check_all_affected_active_tenant_continuity(con, affected_user_ids)
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=None,
+                target_tenant_id=tenant_id, action="tenant.archive",
+                target=f"tenant:{tenant_id}",
+                redacted_changes={"code": row["code"], "name": row["name"]},
+                result="success")
+            con.commit()
+        return {"id": tenant_id, "code": row["code"], "active": False,
+                "archived": True, "version": expected_version + 1}
+
+    def restore_tenant(self, *, actor_user_id: str, tenant_id: str,
+                       expected_version: int, recent_password: str) -> Dict[str, Any]:
+        """Bring an archived tenant back into service.
+
+        Clears ``archived_at`` and re-enables the tenant in one transaction,
+        re-using the same "a tenant may only be enabled with a valid
+        ``tenant_admin``" guard as ``set_tenant_status``. A tenant without a
+        valid admin therefore stays archived until one is configured.
+        """
+        self._require_platform_admin(actor_user_id)
+        self._require_recent_password(actor_user_id, recent_password)
+        with self._tx() as con:
+            row = con.execute("SELECT * FROM tenants WHERE id=?", (tenant_id,)).fetchone()
+            if not row:
+                raise IdentityServiceError("tenant not found", code="not_found", status=404)
+            if row["archived_at"] is None:
+                raise IdentityServiceError("tenant is not archived",
+                                           code="not_archived", status=409)
+            if row["version"] != expected_version:
+                raise IdentityServiceError("version conflict", code="conflict", status=409)
+            if self._count_valid_tenant_admins(tenant_id, con) < 1:
+                raise IdentityServiceError("tenant has no valid admin",
+                                           code="no_admin", status=409)
+            con.execute(
+                "UPDATE tenants SET active=1, archived_at=NULL, version=version+1"
+                " WHERE id=?",
+                (tenant_id,),
+            )
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=None,
+                target_tenant_id=tenant_id, action="tenant.restore",
+                target=f"tenant:{tenant_id}",
+                redacted_changes={"code": row["code"], "name": row["name"]},
+                result="success")
+            con.commit()
+        return {"id": tenant_id, "code": row["code"], "active": True,
+                "archived": False, "version": expected_version + 1}
 
     def set_platform_user_status(
         self, *, actor_user_id: str, user_id: str, active: bool,
@@ -2962,7 +4204,7 @@ class IdentityService:
         page_params = params + [page_size, (page - 1) * page_size]
         rows = self._store.execute(
             "SELECT id, username, display_name, active, is_platform_admin,"
-            " must_change_password, version FROM users"
+            " must_change_password, version, avatar FROM users"
             f"{where_sql} ORDER BY username LIMIT ? OFFSET ?",
             page_params,
         )
@@ -3178,7 +4420,13 @@ class IdentityService:
         """Delete a single external identity binding (admin-only).
 
         The binding disappears immediately; the next inbound resolve treats the
-        triple as unbound.
+        triple as unbound. Any personal route that was built on this binding is
+        deleted with it, in the same transaction: a route's *entire* proof is the
+        binding, so once the binding is gone the route can never be served again
+        (``_identity_still_resolves`` refuses it) and leaving the row behind would
+        only keep an administrator from withdrawing an account at all. The audit
+        row records the triple and how many routes went with it, never the
+        routes' members or instances.
         """
         self._require_platform_admin(actor_user_id)
         actor = self._find_user_by_id(actor_user_id) or {}
@@ -3192,6 +4440,9 @@ class IdentityService:
                 raise IdentityServiceError(
                     "external identity binding not found",
                     code="not_found", status=404)
+            removed = con.execute(
+                "DELETE FROM personal_channel_links WHERE external_identity_id=?",
+                (binding_id,)).rowcount
             con.execute(
                 "DELETE FROM external_identities WHERE id=?", (binding_id,))
             self._audit_in_tx(
@@ -3203,6 +4454,7 @@ class IdentityService:
                 redacted_changes={
                     "provider": row["provider"], "issuer": row["issuer"],
                     "subject": row["subject"], "binding_id": binding_id,
+                    "personal_routes_removed": int(removed or 0),
                 },
             )
 
@@ -3299,6 +4551,7 @@ class IdentityService:
         sender_name: str = "",
         message_preview: str = "",
         is_group: bool = False,
+        personal_flow: bool = False,
     ) -> None:
         """Remember an inbound author that resolved to no account.
 
@@ -3311,6 +4564,13 @@ class IdentityService:
         newest message (the latest thing said is the best clue) but never lets a
         blank name erase a known one — a channel that only learns the name on a
         later message must be able to fill the gap.
+
+        **A personal flow contributes no content (task 6.6).** A member's personal
+        inbound is private traffic, and a binding-challenge message *is* a
+        credential; neither may become administrator-readable evidence. ``True``
+        for either signal — the instance being member-owned, or the caller
+        flagging a personal flow on a shared instance — drops the nickname and
+        the preview, keeping only the triple the administrator needs to bind.
         """
         provider = (provider or "").strip().lower()
         issuer = (issuer or "").strip()
@@ -3319,6 +4579,8 @@ class IdentityService:
         message_preview = (message_preview or "").strip()
         if not provider or not subject:
             return
+        if personal_flow or self._instance_is_personal(instance_id):
+            sender_name, message_preview = "", ""
         try:
             with self._tx() as con:
                 con.execute(
@@ -3347,10 +4609,37 @@ class IdentityService:
                 "[identity] failed to record unbound inbound attempt "
                 "provider=%s issuer=%s", provider, issuer, exc_info=True)
 
+    def _instance_is_personal(self, instance_id: str) -> bool:
+        """Whether this instance belongs to one member (scope ``user``).
+
+        Read from the instance row rather than trusted from the caller: the
+        inbound path may not know, and a caller that forgot must not be able to
+        turn a member's private message into administrator-readable evidence.
+        Best-effort by design — this runs while refusing a message, so a lookup
+        failure resolves to "not personal" rather than raising.
+        """
+        instance_id = str(instance_id or "").strip()
+        if not instance_id:
+            return False
+        try:
+            rows = self._store.execute(
+                "SELECT scope FROM tenant_channel_instances WHERE id=?",
+                (instance_id,))
+        except Exception:  # pragma: no cover - defensive
+            return False
+        return bool(rows) and str(rows[0]["scope"] or "") == "user"
+
     def list_external_identity_attempts(
         self, *, actor_user_id: str, tenant_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """List pending attempts for a tenant admin, or all for the platform."""
+        """List pending attempts for a tenant admin, or all for the platform.
+
+        Redacted as it is read (task 6.6): a row written before this rule
+        existed — or by a caller that could not know the instance was personal —
+        still must not display a member's private message, so the personal
+        instances of the returned rows are resolved and their content fields are
+        blanked here as well as at the write.
+        """
         if tenant_id is None:
             self._require_platform_admin(actor_user_id)
             rows = self._store.execute(
@@ -3362,7 +4651,25 @@ class IdentityService:
                 "SELECT * FROM external_identity_attempts WHERE tenant_id=?"
                 " ORDER BY last_seen_at DESC LIMIT 200",
                 (tenant_id,))
-        return {"items": [dict(r) for r in rows], "total": len(rows)}
+        items = [dict(r) for r in rows]
+        personal_ids = self._personal_instance_ids(
+            [item.get("instance_id") for item in items])
+        for item in items:
+            if item.get("instance_id") in personal_ids:
+                item["sender_name"] = ""
+                item["message_preview"] = ""
+        return {"items": items, "total": len(items)}
+
+    def _personal_instance_ids(self, instance_ids) -> set:
+        """Which of these instance ids are member-owned (one query)."""
+        wanted = {str(i) for i in instance_ids if i}
+        if not wanted:
+            return set()
+        found = set()
+        for instance_id in wanted:
+            if self._instance_is_personal(instance_id):
+                found.add(instance_id)
+        return found
 
     def find_user_for_external_identity(
         self, provider: str, issuer: str, subject: str
@@ -3384,6 +4691,648 @@ class IdentityService:
             return None
         user = dict(rows[0])
         return user if user["active"] else None
+
+    # --- personal channel binding (task 2.3) ------------------------------
+
+    def _personal_instance_row(self, tenant_id: str, user_id: str,
+                               instance_id: str) -> Dict[str, Any]:
+        """The user-scoped instance this member personally owns, or a refusal.
+
+        Scope and owner are re-read from storage rather than taken from the
+        request, so a member cannot start a personal binding flow against the
+        tenant's shared instance or against someone else's personal one. This is
+        the single gate both minting and linking go through.
+        """
+        rows = self._store.execute(
+            "SELECT * FROM tenant_channel_instances WHERE id=? AND tenant_id=?",
+            (instance_id, tenant_id),
+        )
+        if not rows:
+            raise IdentityServiceError(
+                "channel instance not found", code="not_found", status=404)
+        row = dict(rows[0])
+        if row["scope"] != "user" or row["owner_user_id"] != user_id:
+            raise IdentityServiceError(
+                "channel instance is not this member's personal instance",
+                code="forbidden", status=403)
+        return row
+
+    def create_binding_challenge(
+        self, *, tenant_id: str, user_id: str, instance_id: str,
+        purpose: str = CHALLENGE_PURPOSE_CHANNEL_LINK,
+        target_agent_id: str = "",
+    ) -> Dict[str, Any]:
+        """Mint a one-time code proving control of a channel instance.
+
+        The scope is fixed here, server-side, rather than carried inside an
+        opaque token: a challenge is valid only for the exact
+        ``(tenant, user, instance, purpose)`` it was created for, so redeeming it
+        against a different target is a lookup miss instead of a check the caller
+        could influence. Only the code's hash is stored; the plaintext is
+        returned once and is not re-readable.
+
+        ``target_agent_id`` is only meaningful for a route carried by a *shared*
+        instance (task 7.2): there the member picks their own private Agent, and
+        the choice is recorded now so the inbound path routes to what was chosen
+        at binding time. On a personal instance the target is the instance row's
+        own ``agent_id``, so a caller-supplied value is refused rather than
+        stored — two sources of truth for one route would be a bug waiting.
+        """
+        if purpose not in CHALLENGE_PURPOSES:
+            raise IdentityServiceError(
+                "unknown challenge purpose", code="bad_request", status=400)
+        target_agent_id = (target_agent_id or "").strip()
+        instance = self.get_tenant_channel_instance_row(instance_id) or {}
+        if not instance or instance.get("tenant_id") != tenant_id:
+            raise IdentityServiceError(
+                "channel instance not found", code="not_found", status=404)
+        if instance.get("scope") == "user":
+            self._personal_instance_row(tenant_id, user_id, instance_id)
+            if target_agent_id:
+                raise IdentityServiceError(
+                    "a personal instance routes to its own agent",
+                    code="bad_request", status=400)
+        else:
+            # A shared instance may host personal routes only when its type can
+            # prove senders per instance and the deployment has recorded that
+            # acceptance; the member then names one of *their own* private Agents.
+            self._require_member(user_id, tenant_id)
+            self._require_public_personal_ingress(tenant_id, instance)
+            if not self.is_private_agent_owner(
+                    tenant_id, user_id, target_agent_id):
+                raise IdentityServiceError(
+                    "a personal route on a shared instance must target your own"
+                    " private agent", code="forbidden", status=403)
+        code = "".join(secrets.choice("0123456789")
+                       for _ in range(_CHALLENGE_CODE_LENGTH))
+        challenge_id = self._new_id("chal")
+        expires_at = int(time.time()) + CHALLENGE_TTL_SECONDS
+        with self._tx() as con:
+            con.execute(
+                "INSERT INTO binding_challenges(id, tenant_id, user_id, instance_id,"
+                " purpose, code_hash, expires_at, target_agent_id)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (challenge_id, tenant_id, user_id, instance_id, purpose,
+                 hash_password(code, min_length=1), expires_at, target_agent_id),
+            )
+            con.commit()
+        return {"challenge_id": challenge_id, "code": code,
+                "expires_at": expires_at, "purpose": purpose,
+                "target_agent_id": target_agent_id}
+
+    def consume_binding_challenge(self, *, challenge_id: str,
+                                  code: str) -> Dict[str, Any]:
+        """Redeem a challenge exactly once, within its attempt budget.
+
+        A wrong code does not consume the challenge — a typo must not force the
+        member to start over — but it does burn one attempt, so guessing is
+        bounded. That increment is committed *before* the refusal is raised: the
+        counter is the whole point of the limit, so it has to survive the failure
+        that produced it.
+        """
+        with self._tx() as con:
+            row = con.execute(
+                "SELECT * FROM binding_challenges WHERE id=?", (challenge_id,)
+            ).fetchone()
+            if not row:
+                raise IdentityServiceError(
+                    "challenge not found", code="not_found", status=404)
+            if row["consumed_at"] is not None:
+                raise IdentityServiceError(
+                    "challenge already used", code="conflict", status=409)
+            if row["attempts"] >= CHALLENGE_MAX_ATTEMPTS:
+                raise IdentityServiceError(
+                    "challenge attempt limit reached",
+                    code="too_many_requests", status=429)
+            if row["expires_at"] <= int(time.time()):
+                raise IdentityServiceError(
+                    "challenge expired", code="expired", status=410)
+            if not verify_password(code or "", row["code_hash"]):
+                con.execute(
+                    "UPDATE binding_challenges SET attempts=attempts+1 WHERE id=?",
+                    (challenge_id,),
+                )
+                con.commit()
+                raise IdentityServiceError(
+                    "invalid challenge code", code="bad_request", status=400)
+            con.execute(
+                "UPDATE binding_challenges SET consumed_at=unixepoch() WHERE id=?",
+                (challenge_id,),
+            )
+            con.commit()
+            return dict(row)
+
+    def personal_channel_link(self, *, tenant_id: str, user_id: str,
+                              instance_id: str) -> Optional[Dict[str, Any]]:
+        """This member's active route for one instance, or ``None``.
+
+        Carries the provider triple so an inbound path can compare the sender it
+        actually observed against the one this route was verified with, plus the
+        target Agent a shared-instance route was created with (empty on a
+        personal instance, whose target is its own row).
+        """
+        rows = self._store.execute(
+            "SELECT l.*, e.provider, e.issuer, e.subject"
+            " FROM personal_channel_links l"
+            " JOIN external_identities e ON e.id = l.external_identity_id"
+            " WHERE l.tenant_id=? AND l.user_id=? AND l.instance_id=?"
+            " AND l.active=1",
+            (tenant_id, user_id, instance_id),
+        )
+        return dict(rows[0]) if rows else None
+
+    def personal_route_for_sender(
+        self, *, tenant_id: str, instance_id: str,
+        provider: str, issuer: str, subject: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Whose personal route claims this sender on this instance, if any.
+
+        Looked up by the *observed* triple rather than by a user id, because on a
+        shared instance the inbound path does not know who is speaking until the
+        route says so. Only the triple this route was verified with can match, so
+        knowing a bot's address is still not enough to be routed as someone else.
+        """
+        rows = self._store.execute(
+            "SELECT l.*, e.provider, e.issuer, e.subject"
+            " FROM personal_channel_links l"
+            " JOIN external_identities e ON e.id = l.external_identity_id"
+            " WHERE l.tenant_id=? AND l.instance_id=? AND l.active=1"
+            " AND e.provider=? AND e.issuer=? AND e.subject=?",
+            (tenant_id, instance_id, (provider or "").strip().lower(),
+             (issuer or "").strip(), (subject or "").strip()),
+        )
+        return dict(rows[0]) if rows else None
+
+    def personal_routes_for_instance(
+        self, *, tenant_id: str, instance_id: str,
+    ) -> List[Dict[str, Any]]:
+        """Every active personal route on one instance (owner-facing read)."""
+        rows = self._store.execute(
+            "SELECT l.*, e.provider, e.issuer, e.subject"
+            " FROM personal_channel_links l"
+            " JOIN external_identities e ON e.id = l.external_identity_id"
+            " WHERE l.tenant_id=? AND l.instance_id=? AND l.active=1"
+            " ORDER BY l.created_at",
+            (tenant_id, instance_id),
+        )
+        return [dict(row) for row in rows]
+
+    def link_personal_channel(
+        self, *, tenant_id: str, user_id: str, instance_id: str,
+        provider: str, issuer: str, subject: str,
+        target_agent_id: str = "",
+    ) -> Dict[str, Any]:
+        """Route an instance's verified identity to this member's own agent.
+
+        The global ``external_identities`` mapping is *reused* when the triple is
+        already bound to this same user, so one person attaching the same
+        provider identity in several tenants does not pile up rows. A triple
+        bound to someone else is refused with 409 and never overwritten — that is
+        the takeover case the proof-of-control flow exists to prevent, so the
+        conflict must be loud rather than silently re-pointed.
+
+        The route is allowed on a personal instance the member owns, or on a
+        *shared* instance that is declared able to carry personal routes (task
+        7.2). In the shared case the row records the member's chosen private
+        Agent, because the instance's own ``agent_id`` is the public target and
+        must not be moved by a personal route.
+        """
+        instance = self.get_tenant_channel_instance_row(instance_id) or {}
+        if not instance or instance.get("tenant_id") != tenant_id:
+            raise IdentityServiceError(
+                "channel instance not found", code="not_found", status=404)
+        target_agent_id = (target_agent_id or "").strip()
+        if instance.get("scope") == "user":
+            self._personal_instance_row(tenant_id, user_id, instance_id)
+            target_agent_id = ""
+        else:
+            self._require_member(user_id, tenant_id)
+            self._require_public_personal_ingress(tenant_id, instance)
+            if not self.is_private_agent_owner(
+                    tenant_id, user_id, target_agent_id):
+                raise IdentityServiceError(
+                    "a personal route on a shared instance must target your own"
+                    " private agent", code="forbidden", status=403)
+        provider = (provider or "").strip().lower()
+        issuer = (issuer or "").strip()
+        subject = (subject or "").strip()
+        existing = self._store.execute(
+            "SELECT id, user_id FROM external_identities"
+            " WHERE provider=? AND issuer=? AND subject=?",
+            (provider, issuer, subject),
+        )
+        if existing:
+            if existing[0]["user_id"] != user_id:
+                raise IdentityServiceError(
+                    "external identity is already bound",
+                    code="conflict", status=409)
+            identity_id = existing[0]["id"]
+        else:
+            # Same validation, audit and pending-attempt cleanup as the admin
+            # surfaces; a divergence here would be a security-relevant
+            # difference between the self-service and administrative paths.
+            identity_id = self._bind_external_identity_row(
+                actor_user_id=user_id, user_id=user_id,
+                provider=provider, issuer=issuer, subject=subject)["id"]
+        with self._tx() as con:
+            con.execute(
+                "INSERT INTO personal_channel_links(tenant_id, user_id,"
+                " instance_id, external_identity_id, active, target_agent_id)"
+                " VALUES (?,?,?,?,1,?)"
+                " ON CONFLICT(tenant_id, user_id, instance_id) DO UPDATE SET"
+                " external_identity_id=excluded.external_identity_id, active=1,"
+                " target_agent_id=excluded.target_agent_id",
+                (tenant_id, user_id, instance_id, identity_id, target_agent_id),
+            )
+            con.commit()
+        return self.personal_channel_link(
+            tenant_id=tenant_id, user_id=user_id, instance_id=instance_id)
+
+    def unlink_personal_channel(self, *, tenant_id: str, user_id: str,
+                                instance_id: str) -> None:
+        """Drop this member's personal route, and only that.
+
+        The global identity mapping is deliberately left in place: the same
+        person may still be using it in another tenant, and the tenant's own
+        public bind flow may depend on it. Deleting it here would break routes
+        this member cannot even see.
+        """
+        with self._tx() as con:
+            con.execute(
+                "DELETE FROM personal_channel_links"
+                " WHERE tenant_id=? AND user_id=? AND instance_id=?",
+                (tenant_id, user_id, instance_id),
+            )
+            con.commit()
+
+    # --- personal resource configuration (task 2.4) -----------------------
+
+    def _personal_config_projection(self, row) -> Dict[str, Any]:
+        """The member's own view of their configuration.
+
+        Deliberately carries no secret material: only the parameter blob and a
+        reference to the credential, never its plaintext or ciphertext.
+        """
+        return {
+            "tenant_id": row["tenant_id"],
+            "user_id": row["user_id"],
+            "resource_kind": row["resource_kind"],
+            "resource_id": row["resource_id"],
+            "params": json.loads(row["params_json"] or "{}"),
+            "credential_id": row["credential_id"],
+            "version": row["version"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def _personal_config_row(self, tenant_id: str, user_id: str,
+                             resource_kind: str, resource_id: str):
+        rows = self._store.execute(
+            "SELECT * FROM personal_resource_configs WHERE tenant_id=?"
+            " AND user_id=? AND resource_kind=? AND resource_id=?",
+            (tenant_id, user_id, resource_kind, resource_id),
+        )
+        return rows[0] if rows else None
+
+    def _require_personal_resource_use(self, user_id: str, tenant_id: str,
+                                       resource_kind: str,
+                                       resource_id: str) -> None:
+        """Refuse a resource the member may not currently use.
+
+        This is the "no new authorization" gate: personal configuration can only
+        ever be saved for a resource already granted to the member. Being
+        re-checked at *use* time as well is what keeps a saved configuration from
+        outliving a revoked grant.
+        """
+        action = PERSONAL_CONFIG_USE_ACTIONS.get(resource_kind)
+        if not action:
+            raise IdentityServiceError(
+                "resource does not support personal configuration",
+                code="bad_request", status=400)
+        if not self._member_active(user_id, tenant_id):
+            raise IdentityServiceError(
+                "personal configuration requires an active membership",
+                code="forbidden", status=403)
+        if not self.check_resource_action(
+                user_id, tenant_id, resource_kind, resource_id, action):
+            raise IdentityServiceError(
+                "resource is not available to this member",
+                code="forbidden", status=403)
+
+    def _upsert_personal_credential(self, con, *, tenant_id: str, user_id: str,
+                                    resource_kind: str, resource_id: str,
+                                    owner_user_id: str, secret: str) -> str:
+        """Create or rotate the one credential backing this configuration.
+
+        Exactly one credential per configuration, found by a deterministic name,
+        so a re-save rotates a version instead of laying down a second row. The
+        plaintext is encrypted before it reaches this point and never touches the
+        parameter blob.
+        """
+        from auth.crypto import encrypt_secret
+
+        name = "personal:%s:%s:%s" % (owner_user_id, resource_kind, resource_id)
+        ciphertext = encrypt_secret(secret)
+        existing = con.execute(
+            "SELECT id, version FROM credentials WHERE tenant_id=? AND name=?",
+            (tenant_id, name),
+        ).fetchone()
+        if existing:
+            credential_id = existing["id"]
+            next_version = con.execute(
+                "SELECT COALESCE(MAX(version), 0) + 1 v FROM credential_versions"
+                " WHERE credential_id=?", (credential_id,)).fetchone()["v"]
+            con.execute(
+                "INSERT INTO credential_versions(credential_id, version, ciphertext,"
+                " action, changed_by) VALUES (?,?,?,?,?)",
+                (credential_id, next_version, ciphertext, "rotated", user_id))
+            con.execute(
+                "UPDATE credentials SET ciphertext=?, version=?, active=1,"
+                " updated_at=unixepoch() WHERE id=?",
+                (ciphertext, next_version, credential_id))
+        else:
+            credential_id = self._new_id("cred")
+            con.execute(
+                "INSERT INTO credentials(id, tenant_id, name, resource_kind,"
+                " resource_id, ciphertext, active, version, created_by,"
+                " owner_user_id) VALUES (?,?,?,?,?,?,1,1,?,?)",
+                (credential_id, tenant_id, name, resource_kind, resource_id,
+                 ciphertext, user_id, owner_user_id))
+            con.execute(
+                "INSERT INTO credential_versions(credential_id, version, ciphertext,"
+                " action, changed_by) VALUES (?,1,?,?,?)",
+                (credential_id, ciphertext, "create", user_id))
+        return credential_id
+
+    def save_personal_resource_config(
+        self, *, actor_user_id: str, tenant_id: str, resource_kind: str,
+        resource_id: str, params: Optional[Dict[str, Any]] = None,
+        secret: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Save the caller's own parameters (and optional secret) for a resource.
+
+        Ownership is the caller, full stop: there is no ``user_id`` parameter, so
+        no actor — not a tenant admin, not a platform admin — can write another
+        member's personal configuration. Public maintenance stays on its own
+        gated paths; nothing here touches a tool definition, an MCP connection, a
+        skill body, install/enable state, or the tenant's grants.
+
+        The console-wide ``member_personal_console`` switch refuses saving a new
+        configuration (task 9.1); clearing your own configuration and reading
+        what you already saved stay reachable, so a withdrawn capability cannot
+        leave a member unable to withdraw their own secret.
+        """
+        self.require_personal_capability("member_personal_console")
+        user_id = actor_user_id
+        resource_kind = (resource_kind or "").strip()
+        resource_id = (resource_id or "").strip()
+        if not resource_id:
+            raise IdentityServiceError(
+                "resource_id is required", code="bad_request", status=400)
+        if params is None:
+            params = {}
+        if not isinstance(params, dict):
+            raise IdentityServiceError(
+                "params must be an object", code="bad_request", status=400)
+        try:
+            params_json = json.dumps(params)
+        except (TypeError, ValueError):
+            raise IdentityServiceError(
+                "params must be JSON-serializable",
+                code="bad_request", status=400)
+        self._require_personal_resource_use(
+            user_id, tenant_id, resource_kind, resource_id)
+
+        with self._tx() as con:
+            credential_id = None
+            existing = con.execute(
+                "SELECT * FROM personal_resource_configs WHERE tenant_id=?"
+                " AND user_id=? AND resource_kind=? AND resource_id=?",
+                (tenant_id, user_id, resource_kind, resource_id),
+            ).fetchone()
+            if existing and existing["credential_id"]:
+                credential_id = existing["credential_id"]
+            if secret is not None:
+                credential_id = self._upsert_personal_credential(
+                    con, tenant_id=tenant_id, user_id=user_id,
+                    resource_kind=resource_kind, resource_id=resource_id,
+                    owner_user_id=user_id, secret=secret)
+            con.execute(
+                "INSERT INTO personal_resource_configs(tenant_id, user_id,"
+                " resource_kind, resource_id, params_json, credential_id,"
+                " version) VALUES (?,?,?,?,?,?,1)"
+                " ON CONFLICT(tenant_id, user_id, resource_kind, resource_id)"
+                " DO UPDATE SET params_json=excluded.params_json,"
+                " credential_id=COALESCE(excluded.credential_id,"
+                " personal_resource_configs.credential_id),"
+                " version=personal_resource_configs.version+1,"
+                " updated_at=unixepoch()",
+                (tenant_id, user_id, resource_kind, resource_id, params_json,
+                 credential_id),
+            )
+            self._audit_in_tx(
+                con, actor_user_id=user_id, tenant_id=tenant_id,
+                target_tenant_id=tenant_id, action="personal_resource.configure",
+                target="%s:%s" % (resource_kind, resource_id),
+                redacted_changes={"resource_kind": resource_kind,
+                                  "resource_id": resource_id,
+                                  "params": sorted(params),
+                                  "has_credential": credential_id is not None},
+                result="success")
+            con.commit()
+        return self._personal_config_projection(
+            self._personal_config_row(tenant_id, user_id, resource_kind, resource_id))
+
+    def clear_personal_resource_config(
+        self, *, actor_user_id: str, tenant_id: str, resource_kind: str,
+        resource_id: str,
+    ) -> bool:
+        """Remove the caller's own configuration, secret included.
+
+        Deliberately **not** gated on the member's current grant: the point of a
+        clear is that it stays available after the grant that allowed the
+        configuration was revoked, so a member can always clean up their own
+        residue. Ownership (the caller) is the only requirement, and the stored
+        credential is revoked in the same transaction rather than deleted, so its
+        version history stays auditable and no live secret remains. Returns
+        ``True`` when something was removed, ``False`` when there was nothing to
+        remove (an idempotent clear is not an error).
+        """
+        user_id = actor_user_id
+        resource_kind = (resource_kind or "").strip()
+        resource_id = (resource_id or "").strip()
+        if not resource_id:
+            raise IdentityServiceError(
+                "resource_id is required", code="bad_request", status=400)
+        if resource_kind not in PERSONAL_CONFIG_USE_ACTIONS:
+            raise IdentityServiceError(
+                "resource does not support personal configuration",
+                code="bad_request", status=400)
+        removed = False
+        with self._tx() as con:
+            existing = con.execute(
+                "SELECT * FROM personal_resource_configs WHERE tenant_id=?"
+                " AND user_id=? AND resource_kind=? AND resource_id=?",
+                (tenant_id, user_id, resource_kind, resource_id),
+            ).fetchone()
+            if existing:
+                credential_id = existing["credential_id"]
+                if credential_id:
+                    row = con.execute(
+                        "SELECT id, ciphertext, version, active FROM credentials"
+                        " WHERE id=? AND tenant_id=?",
+                        (credential_id, tenant_id)).fetchone()
+                    if row and row["active"]:
+                        next_version = con.execute(
+                            "SELECT COALESCE(MAX(version), 0) + 1 v"
+                            " FROM credential_versions WHERE credential_id=?",
+                            (row["id"],)).fetchone()["v"]
+                        con.execute(
+                            "INSERT INTO credential_versions(credential_id, version,"
+                            " ciphertext, action, changed_by) VALUES (?,?,?,?,?)",
+                            (row["id"], next_version, row["ciphertext"],
+                             "revoked", user_id))
+                        con.execute(
+                            "UPDATE credentials SET active=0, version=?,"
+                            " updated_at=unixepoch() WHERE id=?",
+                            (next_version, row["id"]))
+                con.execute(
+                    "DELETE FROM personal_resource_configs WHERE tenant_id=?"
+                    " AND user_id=? AND resource_kind=? AND resource_id=?",
+                    (tenant_id, user_id, resource_kind, resource_id))
+                removed = True
+                self._audit_in_tx(
+                    con, actor_user_id=user_id, tenant_id=tenant_id,
+                    target_tenant_id=tenant_id,
+                    action="personal_resource.clear",
+                    target="%s:%s" % (resource_kind, resource_id),
+                    redacted_changes={"resource_kind": resource_kind,
+                                      "resource_id": resource_id,
+                                      "credential_revoked": bool(credential_id)},
+                    result="success")
+            con.commit()
+        return removed
+
+    def list_personal_resource_configs(
+        self, *, actor_user_id: str, tenant_id: str, resource_kind: str = "",
+    ) -> List[Dict[str, Any]]:
+        """The caller's own configurable resources, with their saved state.
+
+        The list is the intersection of *what the member is currently granted*
+        (per resource, action level) and *what they have saved*. A revoked grant
+        therefore removes the resource from the page instead of leaving a dead
+        row, and the query is scoped to the caller by construction, so another
+        member's configuration can never appear here.
+
+        Each entry carries the same two verbs the configuration path enforces:
+        ``configure`` (the resource may be used, so its personal parameters may be
+        saved) and ``clear`` (something is saved to remove).
+        """
+        kinds = ([resource_kind] if resource_kind in PERSONAL_CONFIG_USE_ACTIONS
+                 else sorted(PERSONAL_CONFIG_USE_ACTIONS))
+        if not self._member_active(actor_user_id, tenant_id):
+            return []
+        grants = self.grants_for(actor_user_id, tenant_id)
+        out: List[Dict[str, Any]] = []
+        for kind in kinds:
+            action = PERSONAL_CONFIG_USE_ACTIONS[kind]
+            allowed = resource_ids_for(grants, kind, action)
+            if not allowed:
+                continue
+            names = {str(item.get("resource_id") or ""): str(
+                item.get("display_name") or item.get("name") or item.get("resource_id") or "")
+                for item in self._resource_catalog_items(kind, tenant_id)}
+            for rid in sorted(allowed):
+                row = self._personal_config_row(tenant_id, actor_user_id, kind, rid)
+                entry: Dict[str, Any] = {
+                    "resource_kind": kind,
+                    "resource_id": rid,
+                    "name": names.get(rid) or rid,
+                    "configured": bool(row),
+                    "params": json.loads(row["params_json"] or "{}") if row else {},
+                    "has_credential": bool(row and row["credential_id"]),
+                    "version": int(row["version"]) if row else 0,
+                    "updated_at": int(row["updated_at"]) if row else 0,
+                }
+                entry["actions"] = {"configure": True, "clear": bool(row)}
+                out.append(entry)
+        return out
+
+    def _resource_catalog_items(self, kind: str,
+                                tenant_id: str) -> List[Dict[str, Any]]:
+        """Catalog entries for one resource kind (labels for the member's list).
+
+        Wrapped because the live catalog readers touch the skill/tool managers:
+        an unavailable catalog must degrade to bare ids, never fail a page that is
+        merely trying to label what the member already holds.
+        """
+        try:
+            return list(self._resource_source_projection(tenant_id, kind))
+        except Exception:  # noqa: BLE001 - labels are presentation, not authorization
+            return []
+
+    def get_personal_resource_config(
+        self, *, actor_user_id: str, tenant_id: str, resource_kind: str,
+        resource_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """The caller's own configuration for a resource, or ``None``.
+
+        Scoped to the caller by construction, so one member can never read
+        another's parameters.
+        """
+        row = self._personal_config_row(
+            tenant_id, actor_user_id, (resource_kind or "").strip(),
+            (resource_id or "").strip())
+        return self._personal_config_projection(row) if row else None
+
+    def resolve_personal_resource_config(
+        self, *, actor_user_id: str, tenant_id: str, resource_kind: str,
+        resource_id: str,
+    ) -> Dict[str, Any]:
+        """Resolve the caller's configuration for actual use.
+
+        Authorization is re-checked here rather than trusted from save time:
+        saved parameters and a stored credential must not outlive the grant that
+        justified them, so a member who has since lost the resource cannot keep
+        using it through a configuration they saved earlier.
+        """
+        self._require_personal_resource_use(
+            actor_user_id, tenant_id, (resource_kind or "").strip(),
+            (resource_id or "").strip())
+        row = self._personal_config_row(
+            tenant_id, actor_user_id, (resource_kind or "").strip(),
+            (resource_id or "").strip())
+        if not row:
+            raise IdentityServiceError(
+                "no personal configuration for this resource",
+                code="not_found", status=404)
+        resolved = self._personal_config_projection(row)
+        secret = None
+        if row["credential_id"]:
+            secret = self._decrypt_owned_credential(
+                row["credential_id"], tenant_id=tenant_id, user_id=actor_user_id)
+        resolved["secret"] = secret
+        return resolved
+
+    def _decrypt_owned_credential(self, credential_id: str, *, tenant_id: str,
+                                  user_id: str) -> str:
+        """Decrypt a credential that belongs to ``user_id`` in ``tenant_id``.
+
+        The ownership predicate is in the query, not checked afterwards, so an
+        id from another member or tenant cannot be resolved even if it is somehow
+        supplied.
+        """
+        from auth.crypto import decrypt_secret
+
+        rows = self._store.execute(
+            "SELECT ciphertext, owner_user_id FROM credentials"
+            " WHERE id=? AND tenant_id=? AND active=1",
+            (credential_id, tenant_id),
+        )
+        if not rows or rows[0]["owner_user_id"] != user_id:
+            raise IdentityServiceError(
+                "credential is not this member's", code="forbidden", status=403)
+        return decrypt_secret(rows[0]["ciphertext"])
 
     # --- memberships (task 3.3) -------------------------------------------
 
@@ -3423,7 +5372,7 @@ class IdentityService:
         page_params = params + [page_size, (page - 1) * page_size]
         rows = self._store.execute(
             f"SELECT m.id, m.display_name, m.active, m.department_id, m.position_text,"
-            f" m.version, u.username, u.id AS user_id"
+            f" m.version, u.username, u.id AS user_id, u.avatar"
             f" FROM memberships m JOIN users u ON u.id=m.user_id"
             f" WHERE {count_where} ORDER BY u.username LIMIT ? OFFSET ?",
             page_params,
@@ -3487,7 +5436,21 @@ class IdentityService:
             raise IdentityServiceError("invalid operation", code="invalid_operation")
 
         # Compute the expensive temp-password hash OUTSIDE the write lock.
-        temp_hash = hash_password(temporary_password) if operation == "create-new" else None
+        # ``hash_password`` rejects a shorter-than-minimum or whitespace-only
+        # password with ``PasswordError``, which is not an
+        # ``IdentityServiceError``: left untranslated it escapes the handler as a
+        # 500 with an HTML body, and the console reports an unactionable
+        # "load-failed" instead of the reason. Translate it to the same
+        # structured ``weak_password`` rejection the in-transaction
+        # ``_validate_new_account`` produces.
+        if operation == "create-new":
+            try:
+                temp_hash = hash_password(temporary_password)
+            except PasswordError:
+                raise IdentityServiceError(
+                    "weak temporary password", code="weak_password", status=400)
+        else:
+            temp_hash = None
         with self._tx() as con:
             existing_user = con.execute(
                 "SELECT * FROM users WHERE username=?", (username.strip(),)
@@ -3563,7 +5526,53 @@ class IdentityService:
                 result="success")
             con.commit()
 
-        return {"membership_id": membership_id, "user_id": user_id}
+        # Past the commit, and deliberately outside the transaction: standing up
+        # an Agent touches the file-backed roster, which cannot join an
+        # ``identity.db`` transaction. Adding a member is the admin's core action
+        # and must not start failing because a template is missing, so this is
+        # best-effort — the outcome is reported instead of raised, and the
+        # orchestrator compensates whatever it half-created.
+        personal_agent = self._provision_personal_agent(
+            tenant_id=tenant_id, user_id=user_id, username=username.strip(),
+            display_name=display_name, position_text=position_text,
+            department_id=department_id, actor_user_id=actor_user_id)
+
+        return {"membership_id": membership_id, "user_id": user_id,
+                "personal_agent": personal_agent}
+
+    def _provision_personal_agent(self, *, tenant_id: str, user_id: str,
+                                  username: str, display_name: str,
+                                  position_text: str = "",
+                                  department_id: Optional[str] = None,
+                                  actor_user_id: Optional[str] = None
+                                  ) -> Optional[Dict[str, Any]]:
+        """Give a newly added member their own private assistant.
+
+        The orchestration lives in :mod:`agent.personal_assistant` so this module
+        keeps no dependency on the roster (and the identity tests keep running
+        without one); the import is lazy for the same reason. Overridable so a
+        caller that wants a bare member — or a test — can opt out.
+        """
+        from agent.personal_assistant import get_personal_assistant_provisioner
+
+        provisioner = get_personal_assistant_provisioner()
+        try:
+            return provisioner.provision(
+                tenant_id=tenant_id, user_id=user_id, username=username,
+                display_name=display_name, position_text=position_text,
+                department_id=department_id, actor_user_id=actor_user_id)
+        except Exception as exc:  # never let this step break adding a member
+            logger.warning(
+                "[Identity] personal assistant for member %s in tenant %s failed: %s",
+                user_id, tenant_id, exc)
+            try:
+                self.record_personal_agent_event(
+                    action="member.personal_agent.fail", tenant_id=tenant_id,
+                    user_id=user_id, result="failure", reason="error",
+                    actor_user_id=actor_user_id)
+            except Exception:  # pragma: no cover - audit is best-effort here
+                logger.warning("[Identity] could not audit the failure above")
+            return {"status": "failed", "reason": "error", "message": str(exc)}
 
     def update_member(
         self,
@@ -3659,7 +5668,40 @@ class IdentityService:
                                   "roles": role_codes},
                 result="success")
             con.commit()
+        if not active:
+            # A deactivated member's personal channels must stop serving now, not
+            # at the next restart: the request-time gate already refuses their
+            # messages, and this closes the vendor connection behind them (task
+            # 7.3). Best-effort by construction — the membership write is already
+            # committed and its audit row stands.
+            for instance_id in self._member_personal_instance_ids(
+                    tenant_id, membership["user_id"]):
+                self._reconcile_personal_runtime(instance_id)
         return {"id": member_id, "active": active, "version": membership["version"] + 1}
+
+    def member_is_active(self, user_id: str, tenant_id: str) -> bool:
+        """Whether ``user_id`` is an active member of ``tenant_id`` right now.
+
+        Read-only, no side effects, and never raises: the channel runtime uses it
+        to decide whether a member-owned instance may stay connected, and a
+        store that cannot answer must not be read as "still active".
+        """
+        try:
+            return self._member_active(user_id, tenant_id)
+        except Exception:  # noqa: BLE001 - an unevaluable answer is not consent
+            return False
+
+    def _member_personal_instance_ids(self, tenant_id: str,
+                                      user_id: str) -> List[str]:
+        """The ids of one member's own channel instances in one tenant."""
+        if not tenant_id or not user_id:
+            return []
+        rows = self._store.execute(
+            "SELECT id FROM tenant_channel_instances"
+            " WHERE tenant_id=? AND scope='user' AND owner_user_id=?",
+            (tenant_id, user_id),
+        )
+        return [str(row["id"]) for row in rows]
 
     def _check_admin_continuity(self, con, *, tenant_id, exclude_membership_id,
                                 was_admin, now_admin, member_active) -> None:
@@ -3757,7 +5799,14 @@ class IdentityService:
                     name: str, permissions: Sequence[str], expected_version: int,
                     resource_grants: Optional[Sequence[Dict[str, Any]]] = None,
                     model_defaults: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-        """Update a custom role, optionally replacing grants/model defaults.
+        """Update a role, optionally replacing grants/model defaults.
+
+        Built-in roles (``member``/``tenant_admin``) may be edited too: their
+        stored set becomes the tenant's effective set for that role. The role
+        *code* and scope cannot change here, and the admin qualification stays
+        code-derived, so an edit can never grant or revoke administrator status.
+        Editing ``tenant_admin`` must keep its identity read permissions or the
+        tenant would lock itself out of the console that could undo it.
 
         ``resource_grants``/``model_defaults`` omitted (None) preserve existing;
         an explicit list/dict replaces (empty clears). The whole write is one
@@ -3769,8 +5818,14 @@ class IdentityService:
             row = con.execute("SELECT * FROM roles WHERE id=? AND tenant_id=?", (role_id, tenant_id)).fetchone()
             if not row:
                 raise IdentityServiceError("role not found", code="not_found", status=404)
-            if row["builtin"]:
-                raise IdentityServiceError("built-in role cannot be modified", code="forbidden", status=403)
+            if row["builtin"] and row["code"] == TENANT_ADMIN_CODE:
+                missing = [p for p in TENANT_ADMIN_MINIMUM_PERMISSIONS if p not in perms]
+                if missing:
+                    raise IdentityServiceError(
+                        "tenant_admin must keep identity read permissions: "
+                        + ", ".join(missing),
+                        code="builtin_minimum_permissions", status=409,
+                    )
             if row["version"] != expected_version:
                 raise IdentityServiceError("version conflict", code="conflict", status=409)
             current_grants = self._role_grants(role_id)
@@ -3849,6 +5904,10 @@ class IdentityService:
             ).fetchone()["c"]
             if in_use:
                 raise IdentityServiceError("role is in use", code="in_use", status=409)
+            # Grants reference the role via a composite foreign key and carry no
+            # independent meaning once the role is gone, so clear them in the
+            # same transaction before removing the role row.
+            con.execute("DELETE FROM role_resource_grants WHERE role_id=?", (role_id,))
             con.execute("DELETE FROM roles WHERE id=?", (role_id,))
             self._audit_in_tx(con, actor_user_id=actor_user_id, tenant_id=tenant_id,
                               target_tenant_id=tenant_id, action="role.delete",
@@ -4218,19 +6277,29 @@ class IdentityService:
     def list_credentials(
         self, *, actor_user_id: str, tenant_id: str, page: int = 1, page_size: int = 100
     ) -> Dict[str, Any]:
-        """Masked projection of a tenant's credentials (never plaintext)."""
+        """Masked projection of a tenant's credentials (never plaintext).
+
+        A personal credential (one with an owner) is visible only to its owner:
+        the tenant's controllers administer the tenant's credentials, but a
+        member's private credential is not a tenant resource, so it must not
+        appear in their listing. Tenant credentials have no owner and are
+        unaffected, which is what keeps this list backward-compatible.
+        """
         if not self._is_control(actor_user_id, tenant_id):
             raise IdentityServiceError("credential list denied", code="forbidden", status=403)
         if page_size > 100:
             page_size = 100
+        scope = " WHERE tenant_id=?" \
+                " AND (owner_user_id IS NULL OR owner_user_id=?)"
         rows = self._store.execute(
             "SELECT id, name, resource_kind, resource_id, active, version,"
-            " created_at, updated_at FROM credentials WHERE tenant_id=?"
+            " created_at, updated_at FROM credentials" + scope +
             " ORDER BY name LIMIT ? OFFSET ?",
-            (tenant_id, page_size, (page - 1) * page_size),
+            (tenant_id, actor_user_id, page_size, (page - 1) * page_size),
         )
         total = self._store.execute(
-            "SELECT COUNT(*) c FROM credentials WHERE tenant_id=?", (tenant_id,)
+            "SELECT COUNT(*) c FROM credentials" + scope,
+            (tenant_id, actor_user_id),
         )[0]["c"]
         items = []
         for row in rows:
@@ -4257,19 +6326,42 @@ class IdentityService:
         verifies tenant ownership, active state, and the functional
         ``credential.use`` permission/controller bypass, then returns the
         plaintext exactly once (never logged, never cached here).
+
+        A credential with an owner is that member's, so the owner resolves it
+        without the ``credential.use`` permission (they maintain their own
+        personal credentials); everyone else is refused even when they are a
+        controller, which is what stops an administrator injecting a member's
+        personal credential into a task of their own.
         """
         from auth.crypto import decrypt_secret
 
-        if not self._credential_eligible(actor_user_id, tenant_id):
-            raise IdentityServiceError("credential use denied", code="forbidden", status=403)
         rows = self._store.execute(
-            "SELECT id, tenant_id, ciphertext, active, version, resource_kind, resource_id"
+            "SELECT id, tenant_id, ciphertext, active, version, resource_kind,"
+            " resource_id, owner_user_id"
             " FROM credentials WHERE tenant_id=? AND name=?",
             (tenant_id, name),
         )
-        if not rows or not rows[0]["active"]:
+        row = rows[0] if rows else None
+        owner_user_id = row["owner_user_id"] if row else None
+        is_owner = owner_user_id is not None and owner_user_id == actor_user_id
+        # The eligibility refusal happens for anyone who is not the owner, and
+        # before existence is revealed, so an ineligible caller still cannot
+        # probe which credential names exist.
+        if is_owner:
+            if not self._member_active(actor_user_id, tenant_id):
+                raise IdentityServiceError(
+                    "credential use denied", code="forbidden", status=403)
+        elif not self._credential_eligible(actor_user_id, tenant_id):
+            raise IdentityServiceError(
+                "credential use denied", code="forbidden", status=403)
+        if row is None or not row["active"]:
             raise IdentityServiceError("credential not found", code="not_found", status=404)
-        row = rows[0]
+        # A personal credential is one member's, so a controller who passed the
+        # eligibility check above still may not decrypt it. This is the
+        # anti-injection guard, and it runs before any plaintext is produced.
+        if owner_user_id is not None and owner_user_id != actor_user_id:
+            raise IdentityServiceError(
+                "credential belongs to another member", code="forbidden", status=403)
         if resource_kind and row["resource_kind"] and row["resource_kind"] != resource_kind:
             raise IdentityServiceError("credential resource mismatch", code="forbidden", status=403)
         if resource_id and row["resource_id"] and row["resource_id"] != resource_id:
@@ -4596,6 +6688,61 @@ class IdentityService:
                 "agent is not available to this tenant", code="forbidden", status=403)
         return agent_id
 
+    def _require_public_instance_agent(self, tenant_id: str, agent_id: str) -> None:
+        """A *shared* instance may route only to a tenant-shared Agent (7.2).
+
+        The instance's Agent is the persona every sender of that instance runs
+        as. Pointing a shared instance at a member's private Agent would hand
+        that member's persona — and the private memory it reads — to everyone
+        who can message the bot, so the two are refused rather than merely
+        discouraged. A personal instance is exempt by construction: it names its
+        own owner, and ``_require_instance_agent`` has already proven the Agent
+        belongs to this tenant.
+        """
+        if not agent_id:
+            return
+        binding = self.get_agent_binding(agent_id) or {}
+        if binding.get("private_owner_user_id"):
+            raise IdentityServiceError(
+                "a shared channel instance cannot route to a private agent",
+                code="forbidden", status=403)
+
+    def _resolve_instance_scope(
+        self, tenant_id: str, scope: Optional[str], owner_user_id: Optional[str],
+    ):
+        """Validate a channel instance's ``(scope, owner)`` pair.
+
+        ``scope`` decides *whose* instance this is. A ``tenant`` instance belongs
+        to the tenant itself and must not name an owner; a ``user`` instance must
+        name exactly one, and that owner must be an active member of **this**
+        tenant. Both halves are checked here rather than in the handlers so every
+        writer — the console, the personal API and any future importer — cannot
+        create an instance whose ownership is ambiguous or cross-tenant.
+
+        Returns the normalised ``(scope, owner_user_id)``.
+        """
+        scope = (scope or "tenant").strip()
+        if scope not in INSTANCE_SCOPES:
+            raise IdentityServiceError(
+                "unknown channel scope", code="bad_request", status=400)
+        owner = (owner_user_id or "").strip() or None
+        if scope == "tenant":
+            if owner:
+                raise IdentityServiceError(
+                    "a tenant instance has no owner", code="bad_request",
+                    status=400)
+            return scope, None
+        if not owner:
+            raise IdentityServiceError(
+                "a personal instance requires an owner", code="bad_request",
+                status=400)
+        membership = self._membership(owner, tenant_id)
+        if not membership or not membership["active"] or not membership["user_active"]:
+            raise IdentityServiceError(
+                "owner is not an active member of this tenant",
+                code="bad_request", status=400)
+        return scope, owner
+
     def _validated_channel_bundle(self, channel_type: str, credentials) -> str:
         """Validate a credential bundle and return its plaintext JSON.
 
@@ -4675,9 +6822,367 @@ class IdentityService:
             "agent_id": row["agent_id"],
             "active": bool(row["active"]),
             "version": row["version"],
+            "scope": row["scope"],
+            "owner_user_id": row["owner_user_id"],
+            # Governance metadata: *who* stopped personal access and *when*, never
+            # the private configuration. An administrator may see this much, which
+            # is what makes the stop auditable without exposing the member's data.
+            "governance_disabled": row["governance_disabled_at"] is not None,
+            "governance_disabled_at": row["governance_disabled_at"],
+            "governance_disabled_by": row["governance_disabled_by"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
+
+    # --- personal access policy (task 2.5) --------------------------------
+
+    #: Column defaults for a tenant with no policy row. ``-1`` means unlimited;
+    #: an absent policy is *permissive* so an upgraded tenant is unaffected.
+    _CHANNEL_POLICY_DEFAULTS = {
+        "personal_enabled": True,
+        "allowed_types": (),
+        "personal_instance_limit": -1,
+        "tenant_personal_instance_limit": -1,
+    }
+
+    def _effective_channel_policy(self, con, tenant_id: str) -> Dict[str, Any]:
+        """The tenant's personal-access policy, defaults applied.
+
+        Read inside the caller's transaction so a create can decide on the same
+        snapshot it will insert into.
+        """
+        import json
+
+        row = con.execute(
+            "SELECT * FROM tenant_channel_policies WHERE tenant_id=?",
+            (tenant_id,)).fetchone()
+        if row is None:
+            # A fresh dict per call: the caller may hold or mutate the list, and
+            # the class attribute must not become shared state.
+            return {"personal_enabled": True, "allowed_types": [],
+                    "personal_instance_limit": -1,
+                    "tenant_personal_instance_limit": -1}
+        allowed = json.loads(row["allowed_types_json"] or "[]")
+        return {
+            "personal_enabled": bool(row["personal_enabled"]),
+            "allowed_types": list(allowed),
+            "personal_instance_limit": row["personal_instance_limit"],
+            "tenant_personal_instance_limit":
+                row["tenant_personal_instance_limit"],
+        }
+
+    def get_tenant_channel_policy(
+        self, *, actor_user_id: str, tenant_id: str
+    ) -> Dict[str, Any]:
+        """Read the personal-access policy (tenant control only)."""
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError(
+                "channel policy read denied", code="forbidden", status=403)
+        with self._store.connect() as con:
+            return self._effective_channel_policy(con, tenant_id)
+
+    def set_tenant_channel_policy(
+        self,
+        *,
+        actor_user_id: str,
+        tenant_id: str,
+        recent_password: str,
+        personal_enabled: Optional[bool] = None,
+        allowed_types=None,
+        personal_instance_limit: Optional[int] = None,
+        tenant_personal_instance_limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Narrow or widen the tenant's personal-access policy.
+
+        Only the fields passed are changed. The policy bounds what *new* personal
+        access may do; it never rewrites an existing instance (stopping an
+        existing member is a governance action, which is separately auditable).
+        """
+        import json
+
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError(
+                "channel policy manage denied", code="forbidden", status=403)
+        self._require_recent_password(actor_user_id, recent_password)
+        normalized_types = None
+        if allowed_types is not None:
+            if isinstance(allowed_types, str):
+                allowed_types = [allowed_types]
+            normalized = []
+            for raw in allowed_types:
+                ctype = (raw or "").strip()
+                if self._channel_credential_keys(ctype) is None:
+                    raise IdentityServiceError(
+                        "channel type is not available for tenant configuration",
+                        code="bad_request", status=400)
+                if ctype not in normalized:
+                    normalized.append(ctype)
+            normalized_types = normalized
+        for value in (personal_instance_limit, tenant_personal_instance_limit):
+            if value is not None and int(value) < -1:
+                raise IdentityServiceError(
+                    "invalid quota limit", code="bad_request", status=400)
+
+        with self._tx() as con:
+            current = self._effective_channel_policy(con, tenant_id)
+            enabled = (current["personal_enabled"] if personal_enabled is None
+                       else bool(personal_enabled))
+            types = (list(current["allowed_types"]) if normalized_types is None
+                     else normalized_types)
+            limit = (current["personal_instance_limit"]
+                     if personal_instance_limit is None
+                     else int(personal_instance_limit))
+            tenant_limit = (current["tenant_personal_instance_limit"]
+                            if tenant_personal_instance_limit is None
+                            else int(tenant_personal_instance_limit))
+            con.execute(
+                "INSERT INTO tenant_channel_policies(tenant_id, personal_enabled,"
+                " allowed_types_json, personal_instance_limit,"
+                " tenant_personal_instance_limit, updated_by, updated_at)"
+                " VALUES(?,?,?,?,?,?,unixepoch())"
+                " ON CONFLICT(tenant_id) DO UPDATE SET"
+                " personal_enabled=excluded.personal_enabled,"
+                " allowed_types_json=excluded.allowed_types_json,"
+                " personal_instance_limit=excluded.personal_instance_limit,"
+                " tenant_personal_instance_limit=excluded.tenant_personal_instance_limit,"
+                " updated_by=excluded.updated_by, updated_at=excluded.updated_at",
+                (tenant_id, int(enabled), json.dumps(types), limit, tenant_limit,
+                 actor_user_id),
+            )
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                target_tenant_id=tenant_id, action="channel.policy.update",
+                target=f"tenant:{tenant_id}",
+                redacted_changes={"personal_enabled": enabled,
+                                  "allowed_types": types,
+                                  "personal_instance_limit": limit,
+                                  "tenant_personal_instance_limit": tenant_limit},
+                result="success")
+            con.commit()
+        return self.get_tenant_channel_policy(
+            actor_user_id=actor_user_id, tenant_id=tenant_id)
+
+    def _enforce_personal_instance_policy(
+        self, con, tenant_id: str, channel_type: str, owner_user_id: str
+    ) -> None:
+        """Refuse a personal instance the tenant policy does not allow.
+
+        Runs inside the caller's ``BEGIN IMMEDIATE`` transaction, which is what
+        makes the count-then-insert atomic: two simultaneous requests cannot both
+        read "one slot left" and both insert. Counting includes inactive
+        instances on purpose — disabling one is not a way to get another.
+        """
+        policy = self._effective_channel_policy(con, tenant_id)
+        if not policy["personal_enabled"]:
+            raise IdentityServiceError(
+                "personal channel access is disabled for this tenant",
+                code="personal_access_disabled", status=403)
+        from channel.channel_instances import personal_channel_ready
+        ready, _reason = personal_channel_ready(channel_type)
+        if not ready:
+            # Create and enable both come through here, so the readiness verdict
+            # is re-decided at the moment of the write; an operator narrowing the
+            # ready set closes the enable path too, not just new creates.
+            raise IdentityServiceError(
+                "channel type is not open for personal access",
+                code="channel_type_not_ready", status=403)
+        if policy["allowed_types"] and channel_type not in policy["allowed_types"]:
+            raise IdentityServiceError(
+                "channel type is not allowed for personal access",
+                code="channel_type_not_allowed", status=403)
+        owner_limit = policy["personal_instance_limit"]
+        if owner_limit >= 0:
+            used = con.execute(
+                "SELECT COUNT(*) c FROM tenant_channel_instances"
+                " WHERE tenant_id=? AND scope='user' AND owner_user_id=?",
+                (tenant_id, owner_user_id)).fetchone()["c"]
+            if used >= owner_limit:
+                raise IdentityServiceError(
+                    "personal channel instance quota exhausted",
+                    code="quota_exceeded", status=403)
+        tenant_limit = policy["tenant_personal_instance_limit"]
+        if tenant_limit >= 0:
+            used = con.execute(
+                "SELECT COUNT(*) c FROM tenant_channel_instances"
+                " WHERE tenant_id=? AND scope='user'",
+                (tenant_id,)).fetchone()["c"]
+            if used >= tenant_limit:
+                raise IdentityServiceError(
+                    "tenant personal channel instance quota exhausted",
+                    code="quota_exceeded", status=403)
+
+    def _assert_no_app_conflict(self, con, *, tenant_id: str, fingerprint: str,
+                               scope: str = "tenant",
+                               instance_id: str = "") -> None:
+        """Refuse to connect the same external app twice (task 6.3).
+
+        The tenant's shared instance and a member's personal one are two
+        connections to one vendor application, and the vendor will only serve one
+        of them. The comparison is by keyed digest, so it runs without decrypting
+        anybody's bundle and the refusal cannot leak *which* app another instance
+        uses — only that this one is taken.
+
+        **Scope asymmetry, deliberate:** a *personal* write is compared against
+        every active instance (public and personal), because a member must not be
+        able to point their own bot at an application the tenant is already
+        running. A *public* write is compared only against personal instances:
+        two shared instances sharing one app is a pre-existing deployment choice
+        of the upstream tenant surface (webhook-mode channels do it), and this
+        change must not silently narrow that surface's behaviour.
+
+        Only the delivery channel is filtered, and only in the sense that an
+        inactive instance is not connected at all, so it does not conflict — it
+        conflicts again the moment someone tries to enable it, which is why the
+        enable path calls this too.
+        """
+        if not fingerprint:
+            return
+        if scope == "user":
+            clash = con.execute(
+                "SELECT 1 FROM tenant_channel_instances"
+                " WHERE tenant_id=? AND app_fingerprint=? AND active=1 AND id<>?",
+                (tenant_id, fingerprint, instance_id or ""),
+            ).fetchone()
+        else:
+            clash = con.execute(
+                "SELECT 1 FROM tenant_channel_instances"
+                " WHERE tenant_id=? AND app_fingerprint=? AND active=1 AND id<>?"
+                " AND scope='user'",
+                (tenant_id, fingerprint, instance_id or ""),
+            ).fetchone()
+        if clash:
+            raise IdentityServiceError(
+                "this external application is already connected by another"
+                " channel instance", code="app_conflict", status=409)
+
+    def list_personal_channel_instances_for_governance(
+        self, actor_user_id: str, tenant_id: str
+    ) -> List[Dict[str, Any]]:
+        """The governance view of members' personal channel instances (tasks 3.2/3.3).
+
+        Distinguishes **governance metadata** from **private content**. An
+        administrator has a legitimate reason to know *that* a member has personal
+        access, *which platform* it is on, *who* owns it, and *whether* it was
+        stopped — that is what makes the tenant policy and the stop enforceable. An
+        administrator has no reason to read the member's configuration, so the
+        projection stops short of it: no display name, no agent binding, no
+        credential reference, no parameters.
+
+        That line is the whole point of the task. Without it, "administer the
+        policy" would quietly become "read every member's private setup", which is
+        exactly the widening the private-content refusal (task 3.2) exists to
+        prevent.
+        """
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError(
+                "channel instance manage denied", code="forbidden", status=403)
+        rows = self._store.execute(
+            "SELECT id, tenant_id, channel_type, owner_user_id, active,"
+            " governance_disabled_at, governance_disabled_by, created_at,"
+            " updated_at FROM tenant_channel_instances"
+            " WHERE tenant_id=? AND scope='user' ORDER BY created_at, id",
+            (tenant_id,))
+        return [{
+            "id": row["id"],
+            "tenant_id": row["tenant_id"],
+            "channel_type": row["channel_type"],
+            "owner_user_id": row["owner_user_id"],
+            "active": bool(row["active"]),
+            "governance_disabled": row["governance_disabled_at"] is not None,
+            "governance_disabled_at": row["governance_disabled_at"],
+            "governance_disabled_by": row["governance_disabled_by"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        } for row in rows]
+
+    def channel_instances_referencing_agent(
+        self, tenant_id: str, agent_id: str
+    ) -> List[Dict[str, Any]]:
+        """Active channel instances that still route to ``agent_id`` (task 4.5).
+
+        Deliberately unconditional — no actor check. The only caller has already
+        proved the caller owns the Agent, and what it needs is the *fact* of a
+        dependency, whose answer must not depend on who is asking.
+
+        Both scopes are returned: a tenant administrator may have bound a shared
+        instance to a member's private Agent, and that reference is just as much
+        a reason the delete has to wait as the member's own personal one. Only
+        active instances count — a stopped channel is not a live route.
+        """
+        if not tenant_id or not agent_id:
+            return []
+        rows = self._store.execute(
+            "SELECT id, channel_type, display_name, scope, owner_user_id, active"
+            " FROM tenant_channel_instances"
+            " WHERE tenant_id=? AND agent_id=? AND active=1"
+            " ORDER BY created_at, id",
+            (tenant_id, agent_id),
+        )
+        return [dict(row) for row in rows]
+
+    def set_personal_instance_governance(
+        self,
+        *,
+        actor_user_id: str,
+        tenant_id: str,
+        instance_id: str,
+        disabled: bool,
+        recent_password: str,
+        reason: str = "",
+    ) -> Dict[str, Any]:
+        """Stop (or lift the stop on) one member's personal access.
+
+        Disabling turns the instance off as well, so the stop takes effect for the
+        next message rather than only the next configuration read. Lifting it does
+        **not** turn the instance back on: the owner has to enable it explicitly,
+        which is what keeps a governance stop from silently restoring a
+        connection nobody re-verified.
+        """
+        if not self._is_control(actor_user_id, tenant_id):
+            raise IdentityServiceError(
+                "channel instance manage denied", code="forbidden", status=403)
+        self._require_recent_password(actor_user_id, recent_password)
+        with self._tx() as con:
+            row = con.execute(
+                "SELECT * FROM tenant_channel_instances WHERE id=? AND tenant_id=?",
+                (instance_id, tenant_id)).fetchone()
+            if not row:
+                raise IdentityServiceError(
+                    "channel instance not found", code="not_found", status=404)
+            if row["scope"] != "user":
+                raise IdentityServiceError(
+                    "governance stop applies to personal instances only",
+                    code="bad_request", status=400)
+            if disabled:
+                con.execute(
+                    "UPDATE tenant_channel_instances SET governance_disabled_at="
+                    "unixepoch(), governance_disabled_by=?, active=0,"
+                    " version=version+1, updated_at=unixepoch() WHERE id=?",
+                    (actor_user_id, instance_id))
+            else:
+                con.execute(
+                    "UPDATE tenant_channel_instances SET governance_disabled_at=NULL,"
+                    " governance_disabled_by=NULL, version=version+1,"
+                    " updated_at=unixepoch() WHERE id=?",
+                    (instance_id,))
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                target_tenant_id=tenant_id,
+                action=("channel.personal.governance_disable" if disabled
+                        else "channel.personal.governance_lift"),
+                target=f"channel_instance:{instance_id}",
+                # Governance metadata only: no channel type, display name, owner
+                # identity or credential detail — an administrator acting on a
+                # violation does not thereby gain a private-configuration read.
+                redacted_changes={"disabled": bool(disabled),
+                                  "reason": (reason or "").strip()[:200]},
+                result="success")
+            con.commit()
+            updated = con.execute(
+                "SELECT * FROM tenant_channel_instances WHERE id=?",
+                (instance_id,)).fetchone()
+        self._reconcile_personal_runtime(instance_id)
+        return self._instance_projection(updated)
 
     def create_tenant_channel_instance(
         self,
@@ -4690,6 +7195,9 @@ class IdentityService:
         agent_id: str = "",
         credentials=None,
         scan_ticket: str = "",
+        scope: str = "tenant",
+        owner_user_id: Optional[str] = None,
+        allow_owner: bool = False,
     ) -> Dict[str, Any]:
         """Create a tenant-owned channel instance with one encrypted bundle.
 
@@ -4702,23 +7210,54 @@ class IdentityService:
         ``scan_ticket`` carries the grant a completed vendor scan minted (see
         ``auth.scan_authorization``). It stands in for ``recent_password`` on the
         auto-persist path, where the operator never sees a prompt.
+
+        ``allow_owner`` is the member self-service path (task 6.1): the actor is
+        the owner being bound, so the scope pair is *forced* to
+        ``("user", actor)`` instead of taken from the request, and the tenant
+        control check is replaced by an active-membership check. Everything
+        else — validation, encryption, quota, audit, runtime — is the same code.
         """
         import json
 
         from auth.crypto import encrypt_secret
 
-        if not self._is_control(actor_user_id, tenant_id):
+        if allow_owner:
+            if not self._member_active(actor_user_id, tenant_id):
+                raise IdentityServiceError(
+                    "personal channel access requires an active membership",
+                    code="forbidden", status=403)
+            scope, owner_user_id = "user", actor_user_id
+        elif not self._is_control(actor_user_id, tenant_id):
             raise IdentityServiceError(
                 "channel instance manage denied", code="forbidden", status=403)
         ctype = (channel_type or "").strip()
+        if allow_owner:
+            # Decided *before* the bundle is validated so an unusable type is
+            # answered with "not open for personal access" rather than "unknown
+            # channel type" — the two are the same fact to the server and a very
+            # different message to a member choosing from the console's list.
+            from channel.channel_instances import personal_channel_ready
+
+            ready, _reason = personal_channel_ready(ctype)
+            if not ready:
+                raise IdentityServiceError(
+                    "channel type is not open for personal access",
+                    code="channel_type_not_ready", status=403)
         self._require_channel_write_authorization(
             actor_user_id, tenant_id, ctype, recent_password, scan_ticket)
         bundle_json = self._validated_channel_bundle(ctype, credentials)
+        from channel.channel_instances import app_identity
+
+        app_fingerprint = app_identity(ctype, json.loads(bundle_json))
         display_name = (display_name or "").strip()
         if not display_name:
             raise IdentityServiceError(
                 "display name is required", code="bad_request", status=400)
         agent_id = self._require_instance_agent(tenant_id, agent_id)
+        scope, owner_user_id = self._resolve_instance_scope(
+            tenant_id, scope, owner_user_id)
+        if scope == "tenant":
+            self._require_public_instance_agent(tenant_id, agent_id)
         try:
             ciphertext = encrypt_secret(bundle_json)
         except Exception as error:
@@ -4732,18 +7271,38 @@ class IdentityService:
         with self._tx() as con:
             dup = con.execute(
                 "SELECT 1 FROM tenant_channel_instances"
-                " WHERE tenant_id=? AND display_name=? AND active=1",
-                (tenant_id, display_name),
+                " WHERE tenant_id=? AND scope=? AND COALESCE(owner_user_id,'')=?"
+                " AND channel_type=? AND display_name=? AND active=1",
+                (tenant_id, scope, owner_user_id or "", ctype, display_name),
             ).fetchone()
             if dup:
                 raise IdentityServiceError(
                     "display name exists", code="conflict", status=409)
-            con.execute(
-                "INSERT INTO tenant_channel_instances(id, tenant_id, channel_type,"
-                " display_name, agent_id, active, version, created_by)"
-                " VALUES (?,?,?,?,?,1,1,?)",
-                (instance_id, tenant_id, ctype, display_name, agent_id, actor_user_id),
-            )
+            self._assert_no_app_conflict(
+                con, tenant_id=tenant_id, fingerprint=app_fingerprint,
+                scope=scope)
+            if scope == "user":
+                # Atomic with the insert below: the quota count and the row it
+                # guards live in the same BEGIN IMMEDIATE transaction.
+                self._enforce_personal_instance_policy(
+                    con, tenant_id, ctype, owner_user_id)
+            try:
+                con.execute(
+                    "INSERT INTO tenant_channel_instances(id, tenant_id, channel_type,"
+                    " display_name, agent_id, active, version, created_by, scope,"
+                    " owner_user_id, app_fingerprint)"
+                    " VALUES (?,?,?,?,?,1,1,?,?,?,?)",
+                    (instance_id, tenant_id, ctype, display_name, agent_id,
+                     actor_user_id, scope, owner_user_id, app_fingerprint),
+                )
+            except sqlite3.IntegrityError:
+                # Belt to the check's braces: two creates can pass the SELECT
+                # above concurrently, and the unique index is the only thing that
+                # actually serialises them. Answering the same actionable code
+                # keeps the race invisible to the member.
+                raise IdentityServiceError(
+                    "the external application is already connected by another"
+                    " instance", code="app_conflict", status=409)
             con.execute(
                 "INSERT INTO credentials(id, tenant_id, name, resource_kind,"
                 " resource_id, ciphertext, active, version, created_by)"
@@ -4769,7 +7328,8 @@ class IdentityService:
                 target_tenant_id=tenant_id, action="channel.instance.create",
                 target=f"channel_instance:{instance_id}",
                 redacted_changes={"channel_type": ctype, "display_name": display_name,
-                                  "agent_id": agent_id,
+                                  "agent_id": agent_id, "scope": scope,
+                                  "owner_user_id": owner_user_id,
                                   "credential_fields": sorted(json.loads(bundle_json))},
                 result="success")
             con.commit()
@@ -4801,7 +7361,9 @@ class IdentityService:
         """
         rows = self._store.execute(
             "SELECT id, tenant_id, channel_type, display_name, agent_id, active,"
-            " version FROM tenant_channel_instances WHERE id=?",
+            " version, scope, owner_user_id, governance_disabled_at,"
+            " governance_disabled_by FROM tenant_channel_instances"
+            " WHERE id=?",
             (instance_id,),
         )
         return dict(rows[0]) if rows else None
@@ -4814,13 +7376,18 @@ class IdentityService:
         Control of the tenant is required: a non-controller gets 403 rather than
         an empty list, so a probe cannot distinguish "no instances" from "not
         allowed".
+
+        Only ``scope='tenant'`` instances are returned. A personal instance
+        belongs to one member, so it is not the tenant's to administer and must
+        never appear in this list — the owner's own view is a separate surface.
         """
         if not self._is_control(actor_user_id, tenant_id):
             raise IdentityServiceError(
                 "channel instance list denied", code="forbidden", status=403)
         rows = self._store.execute(
-            "SELECT * FROM tenant_channel_instances WHERE tenant_id=?"
-            " ORDER BY display_name", (tenant_id,))
+            "SELECT * FROM tenant_channel_instances"
+            " WHERE tenant_id=? AND scope='tenant' ORDER BY display_name",
+            (tenant_id,))
         items = [self._instance_projection(row) for row in rows]
         return {"items": items, "total": len(items)}
 
@@ -4835,6 +7402,7 @@ class IdentityService:
         display_name: Optional[str] = None,
         agent_id: Optional[str] = None,
         credentials=None,
+        allow_owner: bool = False,
     ) -> Dict[str, Any]:
         """Edit a tenant channel instance, optionally rotating its bundle.
 
@@ -4842,10 +7410,16 @@ class IdentityService:
         credential in place — never a second credential row, so an instance is
         always exactly one credential. A stale ``expected_version`` aborts
         before any field or bundle changes.
+
+        ``allow_owner`` (task 6.1) swaps the tenant control check for the owner
+        check: the caller may edit only its own ``scope='user'`` instance, proven
+        from storage, and cannot address anyone else's.
         """
         from auth.crypto import encrypt_secret
 
-        if not self._is_control(actor_user_id, tenant_id):
+        if allow_owner:
+            self._personal_instance_row(tenant_id, actor_user_id, instance_id)
+        elif not self._is_control(actor_user_id, tenant_id):
             raise IdentityServiceError(
                 "channel instance manage denied", code="forbidden", status=403)
         self._require_recent_password(actor_user_id, recent_password)
@@ -4861,21 +7435,38 @@ class IdentityService:
                     "channel instance not found", code="not_found", status=404)
             if row["version"] != expected_version:
                 raise IdentityServiceError("version conflict", code="conflict", status=409)
+            # A governance stop closes the paths that would put the instance back
+            # into service — enabling it, or rotating the credential it would run
+            # with. Ordinary metadata edits stay allowed ("配置仅在允许范围内处理");
+            # what must not happen is clearing the restriction *or* restoring use.
+            if row["governance_disabled_at"] is not None and credentials is not None:
+                raise IdentityServiceError(
+                    "personal access is stopped by tenant governance",
+                    code="governance_disabled", status=403)
             new_name = row["display_name"] if display_name is None else display_name.strip()
             if not new_name:
                 raise IdentityServiceError(
                     "display name is required", code="bad_request", status=400)
             new_agent = row["agent_id"] if agent_id is None else agent_id
+            if row["scope"] == "tenant" and new_agent != row["agent_id"]:
+                # Checked on the path that *changes* the routing target: an
+                # instance already pointing at a private Agent (written before
+                # this rule) must still be editable, and must not be silently
+                # re-pointed by an unrelated rename.
+                self._require_public_instance_agent(tenant_id, new_agent)
             if new_name != row["display_name"]:
                 dup = con.execute(
                     "SELECT 1 FROM tenant_channel_instances"
-                    " WHERE tenant_id=? AND display_name=? AND id<>? AND active=1",
-                    (tenant_id, new_name, instance_id),
+                    " WHERE tenant_id=? AND scope=? AND COALESCE(owner_user_id,'')=?"
+                    " AND channel_type=? AND display_name=? AND id<>? AND active=1",
+                    (tenant_id, row["scope"], row["owner_user_id"] or "",
+                     row["channel_type"], new_name, instance_id),
                 ).fetchone()
                 if dup:
                     raise IdentityServiceError(
                         "display name exists", code="conflict", status=409)
             rotated_id = None
+            next_fingerprint = row["app_fingerprint"] if "app_fingerprint" in row.keys() else ""
             if credentials is not None:
                 # A rotation carries only the fields the operator retyped, so it
                 # is merged over the stored bundle before validation — the
@@ -4887,6 +7478,18 @@ class IdentityService:
                         tenant_id, instance_id, credentials)
                 bundle_json = self._validated_channel_bundle(
                     row["channel_type"], effective)
+                from channel.channel_instances import app_identity
+
+                next_fingerprint = app_identity(row["channel_type"], effective)
+                # Checked only when the bundle actually changes: a pure rename
+                # must not fail because of an application the instance already
+                # holds (a legacy row can share one with a live duplicate, and
+                # this write would otherwise be refused for a reason the operator
+                # did not cause).
+                if row["active"]:
+                    self._assert_no_app_conflict(
+                        con, tenant_id=tenant_id, fingerprint=next_fingerprint,
+                        scope=row["scope"], instance_id=instance_id)
                 ciphertext = encrypt_secret(bundle_json)
                 cred = con.execute(
                     "SELECT id FROM credentials WHERE tenant_id=? AND name=? AND active=1",
@@ -4912,8 +7515,9 @@ class IdentityService:
                 rotated_id = cred["id"]
             con.execute(
                 "UPDATE tenant_channel_instances SET display_name=?, agent_id=?,"
-                " version=version+1, updated_at=unixepoch() WHERE id=?",
-                (new_name, new_agent, instance_id),
+                " app_fingerprint=?, version=version+1, updated_at=unixepoch()"
+                " WHERE id=?",
+                (new_name, new_agent, next_fingerprint, instance_id),
             )
             self._audit_in_tx(
                 con, actor_user_id=actor_user_id, tenant_id=tenant_id,
@@ -4942,14 +7546,22 @@ class IdentityService:
         active: bool,
         expected_version: int,
         recent_password: str,
+        allow_owner: bool = False,
     ) -> Dict[str, Any]:
         """Enable or disable a tenant channel instance (disable = rollback).
 
         Only the switch and the instance version change: the credential and its
         version history are untouched, so re-enabling keeps working and the
         maintenance-window rollback path needs no data restore.
+
+        ``allow_owner`` (task 6.1) lets a member flip their own ``scope='user'``
+        instance. The owner check is proven from storage and the tenant
+        governance stop is still decided inside the transaction, so an owner can
+        re-enable only what the tenant has not stopped.
         """
-        if not self._is_control(actor_user_id, tenant_id):
+        if allow_owner:
+            self._personal_instance_row(tenant_id, actor_user_id, instance_id)
+        elif not self._is_control(actor_user_id, tenant_id):
             raise IdentityServiceError(
                 "channel instance manage denied", code="forbidden", status=403)
         self._require_recent_password(actor_user_id, recent_password)
@@ -4961,16 +7573,45 @@ class IdentityService:
             if not row:
                 raise IdentityServiceError(
                     "channel instance not found", code="not_found", status=404)
+            if allow_owner and (row["scope"] != "user"
+                                or row["owner_user_id"] != actor_user_id):
+                raise IdentityServiceError(
+                    "channel instance is not this member's personal instance",
+                    code="forbidden", status=403)
             if row["version"] != expected_version:
                 raise IdentityServiceError("version conflict", code="conflict", status=409)
+            if row["scope"] == "user":
+                if row["governance_disabled_at"] is not None:
+                    raise IdentityServiceError(
+                        "personal access is stopped by tenant governance",
+                        code="governance_disabled", status=403)
+                if active:
+                    # Re-check on the enable path too: the tenant may have closed
+                    # personal access, or removed this type from the allow list,
+                    # since the instance was created.
+                    self._enforce_personal_instance_policy(
+                        con, tenant_id, row["channel_type"],
+                        row["owner_user_id"] or "")
             if active:
+                # An application another active instance already holds must not
+                # be connected twice — including across the personal/public
+                # boundary, which is why this ignores scope (task 6.3).
+                self._assert_no_app_conflict(
+                    con, tenant_id=tenant_id,
+                    fingerprint=(row["app_fingerprint"]
+                                 if "app_fingerprint" in row.keys() else ""),
+                    scope=row["scope"], instance_id=instance_id)
                 # Enabling must not collide with another enabled instance of the
                 # same name: the partial unique index would otherwise raise a
-                # raw constraint error instead of an actionable conflict.
+                # raw constraint error instead of an actionable conflict. Scoped
+                # like the index (scope + owner + type), so two members may both
+                # call their personal Feishu bot "Support".
                 clash = con.execute(
                     "SELECT 1 FROM tenant_channel_instances"
-                    " WHERE tenant_id=? AND display_name=? AND id<>? AND active=1",
-                    (tenant_id, row["display_name"], instance_id),
+                    " WHERE tenant_id=? AND scope=? AND COALESCE(owner_user_id,'')=?"
+                    " AND channel_type=? AND display_name=? AND id<>? AND active=1",
+                    (tenant_id, row["scope"], row["owner_user_id"] or "",
+                     row["channel_type"], row["display_name"], instance_id),
                 ).fetchone()
                 if clash:
                     raise IdentityServiceError(
@@ -4993,15 +7634,24 @@ class IdentityService:
         return self._instance_projection(updated)
 
     def list_enabled_tenant_channel_instances(self) -> List[Dict[str, Any]]:
-        """Every enabled tenant channel instance, for the startup path.
+        """Every enabled channel instance, for the startup path.
 
         Internal and system-side, like :meth:`channel_instance_credentials`:
         it takes no actor (none exists at startup), is not reachable over HTTP,
         and returns the instance *metadata* only — no credential material.
+
+        ``scope`` and ``owner_user_id`` are included so the startup synthesis can
+        apply the personal gates itself (change enable-member-personal-console,
+        task 9.1): a member-owned instance may only be started when its channel
+        type is accepted for personal execution *and* its owner is still an
+        active member. Filtering them here instead would hide the decision from
+        the one place that starts a connection.
         """
         rows = self._store.execute(
-            "SELECT id, tenant_id, channel_type, display_name, agent_id, version"
+            "SELECT id, tenant_id, channel_type, display_name, agent_id, version,"
+            " scope, owner_user_id"
             " FROM tenant_channel_instances WHERE active=1"
+            " AND governance_disabled_at IS NULL"
             " ORDER BY tenant_id, display_name"
         )
         return [dict(row) for row in rows]
@@ -5050,6 +7700,835 @@ class IdentityService:
                 "channel credential decrypt failed", code="credential_crypto",
                 status=500) from error
 
+    # --- personal channel onboarding (enable-member-personal-console 6.x) ---
+
+    def _personal_channel_projection(
+        self, row: Dict[str, Any], *, credential_version: int = 0,
+        credential_fields: Optional[List[str]] = None,
+        binding: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """The owner's own view of their personal channel instance.
+
+        Built on top of :meth:`_instance_projection`, so the owner sees exactly
+        the fields an operator sees and nothing more: the credential is reported
+        as "configured, version N" plus the *names* of the fields it holds, never
+        a value. ``governance_disabled`` is included because the owner has to be
+        told why their channel stopped — without being told who stopped it or
+        anything about anyone else's.
+        """
+        view = self._instance_projection(row)
+        view.pop("owner_user_id", None)
+        # The owner is told *that* the tenant stopped their channel and when, not
+        # *which* administrator decided it: the stop has to be explainable
+        # without turning the member's page into an audit trail of colleagues.
+        view.pop("governance_disabled_by", None)
+        view["scope"] = "user"
+        view["credential"] = {
+            "configured": credential_version > 0,
+            "version": int(credential_version or 0),
+            # Field *names* only. A masked "••••" per key is the whole mask; the
+            # bundle itself is write-only and never leaves this method.
+            "fields": list(credential_fields or ()),
+        }
+        view["binding"] = binding
+        # The owner's finite verbs for *this object* (task 8.1/8.3). Derived from
+        # the row's own state — a governance stop withholds ``enable`` (the owner
+        # cannot lift it), an active instance offers ``disable``, and
+        # ``bind``/``unbind`` follow whether a route exists. A caller never
+        # infers these from its role or from the page's availability.
+        governance = row.get("governance_disabled_at") is not None
+        active = bool(row.get("active"))
+        view["actions"] = {
+            "edit": True,
+            "enable": bool(not governance and not active),
+            "disable": bool(active),
+            "revoke": bool(view["credential"]["configured"]),
+            "bind": binding is None,
+            "unbind": binding is not None,
+        }
+        return view
+
+    def _personal_credential_projection(
+        self, instance_id: str, channel_type: str,
+    ) -> Dict[str, Any]:
+        """Masked credential state for one personal instance (no decryption)."""
+        rows = self._store.execute(
+            "SELECT id, version FROM credentials WHERE name=? AND active=1",
+            (f"channel:{instance_id}",),
+        )
+        version = int(rows[0]["version"] or 0) if rows else 0
+        from channel.channel_instances import CREDENTIAL_KEYS
+
+        fields = list(CREDENTIAL_KEYS.get(channel_type) or ()) if version else []
+        return {"version": version, "fields": fields}
+
+    def _personal_binding_projection(self, instance_id: str, tenant_id: str,
+                                     user_id: str = "") -> Optional[Dict[str, Any]]:
+        """The masked identity link of one instance, for one route owner.
+
+        Scoped by ``user_id`` as well as instance: on a shared instance several
+        members hold routes on the same instance, and each must see only their
+        own. The caller has already proven it may read that route (it owns the
+        instance, or it is the route's own member). The subject is masked like a
+        credential — the member confirms "which account is linked" by the
+        provider and a short tail, not by reading back the identifier the
+        provider minted.
+        """
+        where = "l.tenant_id=? AND l.instance_id=?"
+        params = [tenant_id, instance_id]
+        if user_id:
+            where += " AND l.user_id=?"
+            params.append(user_id)
+        rows = self._store.execute(
+            "SELECT l.user_id, l.target_agent_id, e.provider, e.issuer, e.subject,"
+            " l.created_at AS linked_at"
+            " FROM personal_channel_links l"
+            " JOIN external_identities e ON e.id = l.external_identity_id"
+            " WHERE " + where,
+            tuple(params),
+        )
+        if not rows:
+            return None
+        row = dict(rows[0])
+        subject = str(row.get("subject") or "")
+        tail = subject[-4:] if len(subject) > 8 else ""
+        return {
+            "provider": row.get("provider") or "",
+            "issuer": row.get("issuer") or "",
+            "subject_masked": f"••••{tail}" if tail else "••••",
+            "target_agent_id": row.get("target_agent_id") or "",
+            "linked_at": row.get("linked_at"),
+        }
+
+    def personal_channel_types(self) -> List[Dict[str, Any]]:
+        """Channel types offered for personal onboarding, with readiness.
+
+        Public (member-visible) and static: it carries the same field contract
+        the create path validates against plus the readiness verdict, so the
+        console can show either the form or the reason a type is not open —
+        without the member having to discover it by a failed save.
+        """
+        from channel.channel_instances import personal_channel_types
+
+        return personal_channel_types()
+
+    def list_personal_channel_instances(
+        self, *, actor_user_id: str, tenant_id: str,
+    ) -> Dict[str, Any]:
+        """Every personal channel instance this member owns in this tenant.
+
+        Scope and owner are filtered in SQL from the caller's own identity, so
+        the listing cannot be widened by a request field. Another member's
+        instance is therefore not merely hidden — it is never selected.
+        """
+        self._require_member(actor_user_id, tenant_id)
+        rows = self._store.execute(
+            "SELECT * FROM tenant_channel_instances"
+            " WHERE tenant_id=? AND scope='user' AND owner_user_id=?"
+            " ORDER BY display_name",
+            (tenant_id, actor_user_id),
+        )
+        items = []
+        for candidate in rows:
+            row = dict(candidate)
+            credential = self._personal_credential_projection(
+                row["id"], row["channel_type"])
+            items.append(self._personal_channel_projection(
+                row, credential_version=credential["version"],
+                credential_fields=credential["fields"],
+                binding=self._personal_binding_projection(
+                    row["id"], tenant_id, row["owner_user_id"])))
+        return {"items": items, "total": len(items)}
+
+    def _require_member(self, user_id: str, tenant_id: str) -> None:
+        """An active membership, or a refusal that says nothing else."""
+        if not self._member_active(user_id, tenant_id):
+            raise IdentityServiceError(
+                "not a tenant member", code="forbidden", status=403)
+
+    def get_personal_channel_instance(
+        self, *, actor_user_id: str, tenant_id: str, instance_id: str,
+    ) -> Dict[str, Any]:
+        """One of the caller's own personal instances, projected masked.
+
+        Ownership is proven by ``_personal_instance_row`` (storage, not the
+        request), and a non-owned id answers 403 rather than 404: the caller
+        already knows the id — they supplied it — but must never be able to
+        enumerate which ids exist by the shape of the refusal.
+        """
+        self._require_member(actor_user_id, tenant_id)
+        row = self._personal_instance_row(tenant_id, actor_user_id, instance_id)
+        credential = self._personal_credential_projection(
+            row["id"], row["channel_type"])
+        return self._personal_channel_projection(
+            row, credential_version=credential["version"],
+            credential_fields=credential["fields"],
+            binding=self._personal_binding_projection(
+                row["id"], tenant_id, actor_user_id))
+
+    def create_personal_channel_instance(
+        self, *, actor_user_id: str, tenant_id: str, channel_type: str,
+        display_name: str, agent_id: str = "", credentials=None,
+        recent_password: str = "",
+    ) -> Dict[str, Any]:
+        """Register a channel instance the member personally owns.
+
+        The whole write — row, encrypted bundle, credential version, audit — is
+        :meth:`create_tenant_channel_instance`'s, reused verbatim with
+        ``allow_owner``: the scope/owner pair is forced to this member (the client
+        cannot name them at all), the tenant control check is replaced by an
+        active-membership check, and the personal policy gate (tenant switch,
+        allowed types, readiness, quota) runs in the         same transaction.
+
+        A withdrawn ``personal_channel_onboarding`` switch refuses a *new*
+        instance here, before the transaction opens; edits, revocations and
+        disables stay reachable so nothing a member already holds is stranded.
+        """
+        self.require_personal_capability("personal_channel_onboarding")
+        created = self.create_tenant_channel_instance(
+            actor_user_id=actor_user_id,
+            tenant_id=tenant_id,
+            channel_type=channel_type,
+            display_name=display_name,
+            agent_id=agent_id,
+            credentials=credentials,
+            recent_password=recent_password,
+            allow_owner=True,
+        )
+        self._reconcile_personal_runtime(created["id"])
+        return self.get_personal_channel_instance(
+            actor_user_id=actor_user_id, tenant_id=tenant_id,
+            instance_id=created["id"])
+
+    def update_personal_channel_instance(
+        self, *, actor_user_id: str, tenant_id: str, instance_id: str,
+        expected_version: int, display_name: Optional[str] = None,
+        agent_id: Optional[str] = None, credentials=None,
+        recent_password: str = "",
+    ) -> Dict[str, Any]:
+        """Edit or re-key the caller's own personal instance.
+
+        ``allow_owner`` makes the version/rotation/audit transaction identical to
+        the operator's path; the only difference is which check decides "may this
+        actor write this row". A stale ``expected_version`` still aborts before
+        anything is written, so two open console tabs resolve to one winner.
+        """
+        self.require_personal_capability("personal_channel_onboarding")
+        updated = self.update_tenant_channel_instance(
+            actor_user_id=actor_user_id,
+            tenant_id=tenant_id,
+            instance_id=instance_id,
+            expected_version=expected_version,
+            display_name=display_name,
+            agent_id=agent_id,
+            credentials=credentials,
+            recent_password=recent_password,
+            allow_owner=True,
+        )
+        self._reconcile_personal_runtime(updated["id"])
+        return self.get_personal_channel_instance(
+            actor_user_id=actor_user_id, tenant_id=tenant_id,
+            instance_id=updated["id"])
+
+    def set_personal_channel_instance_active(
+        self, *, actor_user_id: str, tenant_id: str, instance_id: str,
+        active: bool, expected_version: int, recent_password: str = "",
+    ) -> Dict[str, Any]:
+        """The owner flips their own instance on or off.
+
+        The tenant's governance stop is checked *inside* the transaction and
+        wins: an owner can re-enable only what the tenant has not stopped, and
+        the enable path re-decides allowed types and readiness, so an operator
+        narrowing the policy closes an instance that is already configured.
+
+        Enabling is an *opening* write, so a withdrawn onboarding switch refuses
+        it; disabling stays allowed, deliberately, so a member is never left with
+        a connection they cannot turn off.
+        """
+        if active:
+            self.require_personal_capability("personal_channel_onboarding")
+        updated = self.set_tenant_channel_instance_active(
+            actor_user_id=actor_user_id,
+            tenant_id=tenant_id,
+            instance_id=instance_id,
+            active=active,
+            expected_version=expected_version,
+            recent_password=recent_password,
+            allow_owner=True,
+        )
+        self._reconcile_personal_runtime(updated["id"])
+        return self.get_personal_channel_instance(
+            actor_user_id=actor_user_id, tenant_id=tenant_id,
+            instance_id=updated["id"])
+
+    def revoke_personal_channel_credentials(
+        self, *, actor_user_id: str, tenant_id: str, instance_id: str,
+        expected_version: int, recent_password: str = "",
+    ) -> Dict[str, Any]:
+        """Withdraw the caller's own credential for one personal instance.
+
+        Revocation is a *deactivation*, not a delete: the ciphertext and its
+        version history stay, so an operator investigating "why did it stop"
+        can still see that a credential existed and when it was withdrawn, while
+        nothing can decrypt-and-run it. The instance is switched off in the same
+        transaction, so there is no window in which a revoked credential is
+        still serving, and re-configuring later proves presence again (and lands
+        as a new version, which is what makes the old one unusable for good).
+        """
+        self._require_member(actor_user_id, tenant_id)
+        self._personal_instance_row(tenant_id, actor_user_id, instance_id)
+        self._require_recent_password(actor_user_id, recent_password)
+        with self._tx() as con:
+            row = con.execute(
+                "SELECT * FROM tenant_channel_instances WHERE id=? AND tenant_id=?",
+                (instance_id, tenant_id),
+            ).fetchone()
+            if not row:
+                raise IdentityServiceError(
+                    "channel instance not found", code="not_found", status=404)
+            if row["version"] != expected_version:
+                raise IdentityServiceError("version conflict", code="conflict", status=409)
+            cred = con.execute(
+                "SELECT id, active FROM credentials WHERE tenant_id=? AND name=?",
+                (tenant_id, f"channel:{instance_id}"),
+            ).fetchone()
+            if not cred or not cred["active"]:
+                raise IdentityServiceError(
+                    "channel credential not found", code="not_found", status=404)
+            con.execute(
+                "UPDATE credentials SET active=0, version=version+1,"
+                " updated_at=unixepoch() WHERE id=?",
+                (cred["id"],),
+            )
+            con.execute(
+                "UPDATE tenant_channel_instances SET active=0, version=version+1,"
+                " app_fingerprint='', updated_at=unixepoch() WHERE id=?",
+                (instance_id,),
+            )
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                target_tenant_id=tenant_id, action="channel.credential.revoke",
+                target=f"channel_instance:{instance_id}",
+                redacted_changes={"credential": "revoked"}, result="success")
+            con.commit()
+            refreshed = con.execute(
+                "SELECT * FROM tenant_channel_instances WHERE id=?", (instance_id,)
+            ).fetchone()
+        self._reconcile_personal_runtime(instance_id)
+        return self._personal_channel_projection(dict(refreshed))
+
+    # --- personal channel self-service binding (task 6.4/6.5) --------------
+
+    def _channel_policy_for(self, tenant_id: str) -> Dict[str, Any]:
+        """The tenant's personal-access policy, read without a control check.
+
+        For internal decisions that have already established the caller's rights
+        by another route (self-service route binding, inbound resolution). The
+        control-checked ``get_tenant_channel_policy`` stays the client surface.
+        """
+        with self._store.connect() as con:
+            return self._effective_channel_policy(con, tenant_id)
+
+    def _require_public_personal_ingress(self, tenant_id: str, instance) -> None:
+        """Gate for a personal route carried by a *shared* instance (task 7.2).
+
+        Three facts have to line up, and each is re-decided on the inbound path
+        because any of them can change after the route exists: the type must be
+        able to prove senders per instance, the deployment must have recorded
+        that acceptance, and the tenant must still allow personal access. A bare
+        "forbidden" would leave the member guessing which of the three closed.
+        """
+        from channel.channel_instances import public_personal_ingress_ready
+
+        if not public_personal_ingress_ready(
+                str(instance.get("channel_type") or "")):
+            raise IdentityServiceError(
+                "this channel does not carry personal routes",
+                code="channel_type_not_ready", status=403)
+        if not self._channel_policy_for(tenant_id).get("personal_enabled"):
+            raise IdentityServiceError(
+                "personal access is not enabled for this tenant",
+                code="forbidden", status=403)
+
+    def _reconcile_personal_runtime(self, instance_id: str) -> None:
+        """Ask the channel runtime to match the row that was just committed.
+
+        Best-effort and one-way (task 7.3): the identity write is the authority
+        and has already committed, so a connection that cannot follow is
+        reported through the recorded runtime state rather than raised here.
+        Every personal mutation calls this, which is what makes "disable /
+        revoke / governance / unlink takes effect before the next message" a
+        property of the write itself, not of a console handler remembering to
+        reconcile.
+        """
+        try:
+            from channel.channel_instances import reconcile_instance_runtime
+
+            reconcile_instance_runtime(instance_id)
+        except Exception as e:  # noqa: BLE001 - the write already committed
+            logger.warning(
+                f"[Identity] personal runtime reconcile failed for "
+                f"'{instance_id}': {e}")
+
+    def start_personal_channel_binding(
+        self, *, actor_user_id: str, tenant_id: str, instance_id: str,
+        target_agent_id: str = "",
+    ) -> Dict[str, Any]:
+        """Mint a one-time code the member sends *from* their IM account.
+
+        The browser never supplies the identity being bound — it only receives
+        the code. Whoever sends that code to the bot proves control of the IM
+        account, and the triple the inbound path stamps on that message is what
+        gets linked (:meth:`redeem_personal_channel_challenge`). A nickname or a
+        hand-typed subject therefore has no path into a link, which is the whole
+        point of the flow (task 6.4).
+
+        ``target_agent_id`` selects the member's own private Agent for a route
+        carried by a *shared* instance (task 7.2). On a personal instance it must
+        be omitted: that instance already names its target, and a second source
+        of truth is refused rather than ignored.
+
+        Minting a code is part of onboarding: a withdrawn
+        ``personal_channel_onboarding`` switch refuses it here, while
+        ``unlink``/``revoke`` stay reachable so an existing link can always be
+        withdrawn.
+        """
+        self.require_personal_capability("personal_channel_onboarding")
+        self._require_member(actor_user_id, tenant_id)
+        return self.create_binding_challenge(
+            tenant_id=tenant_id, user_id=actor_user_id, instance_id=instance_id,
+            purpose=CHALLENGE_PURPOSE_CHANNEL_LINK,
+            target_agent_id=target_agent_id)
+
+    def personal_channel_binding_status(
+        self, *, actor_user_id: str, tenant_id: str, instance_id: str,
+    ) -> Dict[str, Any]:
+        """The caller's view of a route's link state, plus any live code.
+
+        Works for a route on the member's own instance and for one on a shared
+        instance (where the member is a routing participant, not the owner). Only
+        the *existence* and expiry of a pending challenge is reported — the code
+        itself was shown once, when it was minted, and is not re-readable (only
+        its hash is stored).
+        """
+        self._require_member(actor_user_id, tenant_id)
+        instance = self.get_tenant_channel_instance_row(instance_id) or {}
+        if instance.get("tenant_id") != tenant_id:
+            raise IdentityServiceError(
+                "channel instance not found", code="not_found", status=404)
+        if instance.get("scope") != "user":
+            self._require_public_personal_ingress(tenant_id, instance)
+        rows = self._store.execute(
+            "SELECT id, expires_at, attempts, consumed_at FROM binding_challenges"
+            " WHERE tenant_id=? AND user_id=? AND instance_id=? AND purpose=?"
+            " ORDER BY created_at DESC LIMIT 1",
+            (tenant_id, actor_user_id, instance_id, CHALLENGE_PURPOSE_CHANNEL_LINK),
+        )
+        pending = None
+        if rows:
+            row = dict(rows[0])
+            live = (row["consumed_at"] is None
+                    and row["attempts"] < CHALLENGE_MAX_ATTEMPTS
+                    and int(row["expires_at"]) > int(time.time()))
+            if live:
+                pending = {"expires_at": row["expires_at"],
+                           "attempts_left": CHALLENGE_MAX_ATTEMPTS - row["attempts"]}
+        return {
+            "link": self._personal_binding_projection(
+                instance_id, tenant_id, actor_user_id),
+            "challenge": pending,
+        }
+
+    def redeem_personal_channel_challenge(
+        self, *, tenant_id: str, instance_id: str, code: str,
+        provider: str, issuer: str, subject: str,
+    ) -> Dict[str, Any]:
+        """Redeem the code an inbound message carried, then link its sender.
+
+        Called by the inbound path, never by the browser: ``provider``/
+        ``issuer``/``subject`` are the triple *observed* on the message, so the
+        link is created from something the sender proved rather than something a
+        client claimed.
+
+        The route's owner and target are taken from the challenge row that the
+        code matched — fixed server-side when it was minted — so a code cannot be
+        pointed at another member or another Agent by whoever sends it.
+
+        Single consumption is the database's: the challenge row is claimed with a
+        conditional ``UPDATE ... WHERE consumed_at IS NULL`` and only the claimer
+        proceeds to link, so two messages carrying one code cannot both succeed
+        — and, critically, a *loser* of that race can never create the link it
+        was attempting. Linking first and claiming second would let a replay from
+        a different sender relink the instance even though it lost, which is
+        exactly the takeover the code exists to prevent.
+        """
+        if not str(code or "").strip():
+            raise IdentityServiceError(
+                "challenge code required", code="bad_request", status=400)
+        instance = self.get_tenant_channel_instance_row(instance_id)
+        if not instance:
+            raise IdentityServiceError(
+                "channel instance not found", code="not_found", status=404)
+        if instance["tenant_id"] != tenant_id:
+            raise IdentityServiceError(
+                "channel instance not found", code="not_found", status=404)
+        if instance["scope"] == "user":
+            # A shared instance has no owner to link *by itself*; its personal
+            # routes come from the challenge rows instead (task 7.2).
+            owner_user_id = str(instance["owner_user_id"] or "")
+            candidates = self._redeemable_challenges(
+                tenant_id=tenant_id, owner_user_id=owner_user_id,
+                instance_id=instance_id)
+        else:
+            # Accepting the observed code over the instance's live challenges
+            # (each of which fixed its own member) is what lets one shared bot
+            # serve several members without the sender naming themselves.
+            candidates = self._redeemable_challenges(
+                tenant_id=tenant_id, owner_user_id=None, instance_id=instance_id)
+        if not candidates:
+            raise IdentityServiceError(
+                "challenge not found or expired", code="not_found", status=404)
+        matched = next((row for row in candidates
+                        if verify_password(code, row["code_hash"])), None)
+        if matched is None:
+            # The code matched no live challenge. Report the newest one's own
+            # reason (so "expired" and "locked" reach the member as such) and
+            # burn one of its attempts: the budget, not the code's entropy, is
+            # what bounds guessing, so it has to be spent even on a refusal.
+            newest = candidates[0]
+            self._burn_attempt(newest)
+            raise IdentityServiceError(
+                "invalid challenge code", code="bad_request", status=400)
+        if not self._claim_challenge(matched["id"], code):
+            raise IdentityServiceError(
+                "challenge already used", code="conflict", status=409)
+        route_owner = str(matched["user_id"] or "")
+        link = self.link_personal_channel(
+            tenant_id=tenant_id, user_id=route_owner, instance_id=instance_id,
+            provider=provider, issuer=issuer, subject=subject,
+            target_agent_id=str(matched["target_agent_id"] or ""))
+        return {"instance_id": instance_id, "link": link}
+
+    def _redeemable_challenges(self, *, tenant_id: str, owner_user_id: Optional[str],
+                               instance_id: str):
+        """This instance's unconsumed challenges, newest first.
+
+        Selected by instance rather than by an id the sender could quote: the
+        inbound message carries only the channel it arrived on, so the instance
+        is the only trustworthy discriminator. On a personal instance
+        ``owner_user_id`` narrows it to the one member who can own a route there;
+        on a shared instance it is ``None``, because the whole point is that any
+        member with a live challenge may redeem it from their own account.
+
+        Expired and attempt-locked rows are *included*: they are the ones whose
+        refusal reason has to be reported (410 / 429) instead of collapsing into
+        a generic "not found".
+        """
+        if owner_user_id is None:
+            rows = self._store.execute(
+                "SELECT * FROM binding_challenges"
+                " WHERE tenant_id=? AND instance_id=? AND purpose=?"
+                " AND consumed_at IS NULL"
+                " ORDER BY created_at DESC",
+                (tenant_id, instance_id, CHALLENGE_PURPOSE_CHANNEL_LINK),
+            )
+        else:
+            rows = self._store.execute(
+                "SELECT * FROM binding_challenges"
+                " WHERE tenant_id=? AND user_id=? AND instance_id=? AND purpose=?"
+                " AND consumed_at IS NULL"
+                " ORDER BY created_at DESC",
+                (tenant_id, owner_user_id, instance_id,
+                 CHALLENGE_PURPOSE_CHANNEL_LINK),
+            )
+        return [dict(row) for row in rows]
+
+    def _burn_attempt(self, row) -> None:
+        """Spend one attempt on a challenge, or report why it cannot be used.
+
+        The increment is committed before the refusal is raised: the counter is
+        the whole point of the limit, so it has to survive the failure that
+        produced it.
+        """
+        if row["attempts"] >= CHALLENGE_MAX_ATTEMPTS:
+            raise IdentityServiceError(
+                "challenge attempt limit reached",
+                code="too_many_requests", status=429)
+        if row["expires_at"] <= int(time.time()):
+            raise IdentityServiceError(
+                "challenge expired", code="expired", status=410)
+        with self._tx() as con:
+            con.execute(
+                "UPDATE binding_challenges SET attempts=attempts+1 WHERE id=?",
+                (row["id"],),
+            )
+            con.commit()
+
+    def _claim_challenge(self, challenge_id: str, code: str) -> bool:
+        """Atomically consume one challenge; a wrong code only burns an attempt.
+
+        The ``BEGIN IMMEDIATE`` transaction serialises the whole read-decide-write,
+        so the answer is exact even when two inbounds carrying the same code
+        arrive at once: one ``UPDATE`` changes a row, the other finds
+        ``consumed_at`` already set and gets ``False``.
+        """
+        with self._tx() as con:
+            row = con.execute(
+                "SELECT * FROM binding_challenges WHERE id=?", (challenge_id,)
+            ).fetchone()
+            if not row or row["consumed_at"] is not None:
+                return False
+            if row["attempts"] >= CHALLENGE_MAX_ATTEMPTS:
+                raise IdentityServiceError(
+                    "challenge attempt limit reached",
+                    code="too_many_requests", status=429)
+            if row["expires_at"] <= int(time.time()):
+                raise IdentityServiceError(
+                    "challenge expired", code="expired", status=410)
+            if not verify_password(code or "", row["code_hash"]):
+                con.execute(
+                    "UPDATE binding_challenges SET attempts=attempts+1 WHERE id=?",
+                    (challenge_id,),
+                )
+                con.commit()
+                raise IdentityServiceError(
+                    "invalid challenge code", code="bad_request", status=400)
+            updated = con.execute(
+                "UPDATE binding_challenges SET consumed_at=unixepoch()"
+                " WHERE id=? AND consumed_at IS NULL", (challenge_id,),
+            )
+            con.commit()
+            return updated.rowcount == 1
+
+    def unlink_personal_channel_instance(
+        self, *, actor_user_id: str, tenant_id: str, instance_id: str,
+    ) -> Dict[str, Any]:
+        """The caller removes *their own* route, leaving everyone else's intact.
+
+        Only this ``(tenant, user, instance)`` route is deleted; the global
+        identity mapping is left alone, because the same person may hold the same
+        provider identity in another tenant whose route this member cannot see.
+        Other members' routes on the same shared instance are untouched by
+        construction — the delete is keyed by the caller's own user id.
+
+        The runtime is reconciled so the dropped route stops serving before the
+        next message rather than only at the next restart (task 7.3).
+        """
+        self._require_member(actor_user_id, tenant_id)
+        instance = self.get_tenant_channel_instance_row(instance_id) or {}
+        if instance.get("tenant_id") != tenant_id:
+            raise IdentityServiceError(
+                "channel instance not found", code="not_found", status=404)
+        if instance.get("scope") == "user":
+            self._personal_instance_row(tenant_id, actor_user_id, instance_id)
+        elif not self.personal_channel_link(
+                tenant_id=tenant_id, user_id=actor_user_id,
+                instance_id=instance_id):
+            # On a shared instance the member has no ownership to prove; the
+            # route itself is the only thing they may remove, and removing one
+            # they do not have is a refusal rather than a silent no-op.
+            raise IdentityServiceError(
+                "channel instance is not this member's personal route",
+                code="forbidden", status=403)
+        self.unlink_personal_channel(
+            tenant_id=tenant_id, user_id=actor_user_id, instance_id=instance_id)
+        self._reconcile_personal_runtime(instance_id)
+        return {"instance_id": instance_id, "link": None}
+
+    def resolve_personal_channel_inbound(
+        self, *, instance_id: str, provider: str, issuer: str, subject: str,
+        is_group: bool = False,
+    ) -> Dict[str, Any]:
+        """Who, if anyone, may run on this instance for this observed sender.
+
+        The single decision point for a member-owned instance's inbound (task
+        7.1): the sender must be the instance's owner, through a route that was
+        verified for exactly this triple, with the membership, the credential and
+        the owner's private Agent all still live. The answer is a plain dict and
+        never an exception, because the caller is refusing a message and needs a
+        reason to act on, not a stack trace.
+
+        Returns ``{"allowed": bool, "reason": str, "owner_user_id": str,
+        "agent_id": str}``. ``reason`` is a stable code the channel layer maps to
+        a fixed notice; ``allowed`` false means "do not run the agent, do not
+        fall back to any other target".
+        """
+        from channel.channel_instances import personal_runtime_enabled
+
+        instance = self.get_tenant_channel_instance_row(instance_id) or {}
+        if not instance or instance.get("tenant_id") is None:
+            return {"allowed": False, "reason": "not_found",
+                    "owner_user_id": "", "agent_id": ""}
+        tenant_id = str(instance["tenant_id"])
+        owner_user_id = str(instance.get("owner_user_id") or "")
+        agent_id = str(instance.get("agent_id") or "")
+        if str(instance.get("scope") or "") != "user":
+            # Not a member-owned instance: this resolver makes no decision here,
+            # and the caller must not treat the miss as permission.
+            return {"allowed": False, "reason": "not_personal",
+                    "owner_user_id": "", "agent_id": ""}
+        if not personal_runtime_enabled(str(instance.get("channel_type") or "")):
+            # The gate that keeps a channel type switched off for personal
+            # execution (task 7.5) also holds at request time: a connection that
+            # was already up when the switch was turned off must not keep
+            # serving until the next restart.
+            return {"allowed": False, "reason": "channel_type_not_ready",
+                    "owner_user_id": owner_user_id, "agent_id": agent_id}
+        if not instance.get("active"):
+            return {"allowed": False, "reason": "instance_disabled",
+                    "owner_user_id": owner_user_id, "agent_id": agent_id}
+        if instance.get("governance_disabled_at") is not None:
+            # A governance stop outranks the owner's intent for as long as it
+            # stands, including a connection that was already up.
+            return {"allowed": False, "reason": "governance_disabled",
+                    "owner_user_id": owner_user_id, "agent_id": agent_id}
+        if is_group:
+            # Only the owner's *private* chat is their own conversation; a group
+            # is a shared surface and must not carry a member's private Agent or
+            # private memory (7.2).
+            return {"allowed": False, "reason": "group_not_personal",
+                    "owner_user_id": owner_user_id, "agent_id": agent_id}
+        if not self._instance_credential_active(instance_id):
+            return {"allowed": False, "reason": "credential_revoked",
+                    "owner_user_id": owner_user_id, "agent_id": agent_id}
+        route = self.personal_channel_link(
+            tenant_id=tenant_id, user_id=owner_user_id, instance_id=instance_id)
+        if not route:
+            return {"allowed": False, "reason": "not_linked",
+                    "owner_user_id": owner_user_id, "agent_id": agent_id}
+        if not self._same_external_identity(route, provider, issuer, subject):
+            # A different sender on the owner's own bot: never served, and never
+            # answered as the owner.
+            return {"allowed": False, "reason": "sender_not_owner",
+                    "owner_user_id": owner_user_id, "agent_id": agent_id}
+        if not self._identity_still_resolves(
+                owner_user_id, provider, issuer, subject):
+            # The triple no longer resolves to this member (rebound elsewhere, or
+            # the account is inactive). The route is a stale fact, not a licence.
+            return {"allowed": False, "reason": "identity_unavailable",
+                    "owner_user_id": owner_user_id, "agent_id": agent_id}
+        if not self._member_active(owner_user_id, tenant_id):
+            return {"allowed": False, "reason": "member_inactive",
+                    "owner_user_id": owner_user_id, "agent_id": agent_id}
+        if not agent_id:
+            return {"allowed": False, "reason": "no_target_agent",
+                    "owner_user_id": owner_user_id, "agent_id": ""}
+        if not self.is_private_agent_owner(tenant_id, owner_user_id, agent_id):
+            # The target has to be *this member's own* private Agent, re-derived
+            # now: an Agent that was re-bound, re-owned or made public since the
+            # route was created is no longer a valid personal target, and falling
+            # back to it would run the wrong persona.
+            return {"allowed": False, "reason": "target_not_owned",
+                    "owner_user_id": owner_user_id, "agent_id": agent_id}
+        if not self._member_can_use_agent(owner_user_id, tenant_id, agent_id):
+            return {"allowed": False, "reason": "target_not_authorized",
+                    "owner_user_id": owner_user_id, "agent_id": agent_id}
+        return {"allowed": True, "reason": "",
+                "owner_user_id": owner_user_id, "agent_id": agent_id}
+
+    def resolve_shared_personal_route(
+        self, *, instance_id: str, provider: str, issuer: str, subject: str,
+        is_group: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """The personal route a *shared* instance carries for this sender, if any.
+
+        ``None`` means "no personal route claims this sender", and the caller
+        keeps the shared instance's own public behaviour. A non-``None`` answer is
+        the same shape as :meth:`resolve_personal_channel_inbound` and has the
+        same contract: when it is present but not allowed, the message is refused
+        rather than served by the shared Agent, because silently swapping the
+        persona a member explicitly chose is exactly the substitution the
+        requirement forbids.
+        """
+        instance = self.get_tenant_channel_instance_row(instance_id) or {}
+        if not instance or str(instance.get("scope") or "") != "tenant":
+            return None
+        tenant_id = str(instance["tenant_id"])
+        if is_group:
+            return None
+        route = self.personal_route_for_sender(
+            tenant_id=tenant_id, instance_id=instance_id,
+            provider=provider, issuer=issuer, subject=subject)
+        if not route:
+            return None
+        user_id = str(route["user_id"] or "")
+        result = {"allowed": False, "reason": "", "owner_user_id": user_id,
+                  "agent_id": str(route.get("target_agent_id") or ""),
+                  "personal_route": True}
+        try:
+            self._require_public_personal_ingress(tenant_id, instance)
+        except IdentityServiceError as e:
+            result["reason"] = str(getattr(e, "code", "") or "not_ready")
+            return result
+        if not instance.get("active"):
+            result["reason"] = "instance_disabled"
+            return result
+        if not self._member_active(user_id, tenant_id):
+            result["reason"] = "member_inactive"
+            return result
+        if not result["agent_id"]:
+            result["reason"] = "no_target_agent"
+            return result
+        if not self.is_private_agent_owner(tenant_id, user_id, result["agent_id"]):
+            result["reason"] = "target_not_owned"
+            return result
+        if not self._member_can_use_agent(user_id, tenant_id, result["agent_id"]):
+            result["reason"] = "target_not_authorized"
+            return result
+        if not self._identity_still_resolves(user_id, provider, issuer, subject):
+            # The triple was rebound to another account (or that account is gone)
+            # after the route was proven. Serving it would authenticate the wrong
+            # person as the route's owner.
+            result["reason"] = "identity_unavailable"
+            return result
+        result["allowed"] = True
+        return result
+
+    def _identity_still_resolves(self, user_id: str, provider: str, issuer: str,
+                                 subject: str) -> bool:
+        """Whether the observed triple still authenticates ``user_id``.
+
+        The route records who proved control of the account once; this re-reads
+        the binding so an administrator rebinding the account (or deactivating
+        it) takes effect on the next message instead of being shadowed by the
+        older route.
+        """
+        user = self.find_user_for_external_identity(provider, issuer, subject)
+        return bool(user) and str(user.get("id") or "") == user_id
+
+    def _instance_credential_active(self, instance_id: str) -> bool:
+        """Whether the instance still has a live (non-revoked) credential.
+
+        A revoked credential leaves the row in place for the audit trail, so
+        "revoked" has to be read from the credential state rather than inferred
+        from the instance being missing.
+        """
+        rows = self._store.execute(
+            "SELECT active FROM credentials WHERE name=?",
+            (f"channel:{instance_id}",))
+        return bool(rows) and bool(rows[0]["active"])
+
+    def _same_external_identity(self, route, provider: str, issuer: str,
+                                subject: str) -> bool:
+        """Whether the observed triple is exactly the one this route verified."""
+        return (str(route.get("provider") or "") == (provider or "").strip().lower()
+                and str(route.get("issuer") or "") == (issuer or "").strip()
+                and str(route.get("subject") or "") == (subject or "").strip())
+
+    def _member_can_use_agent(self, user_id: str, tenant_id: str,
+                              agent_id: str) -> bool:
+        """The same ``agent.use`` gate web chat and public inbound enforce.
+
+        Re-derived per message (nothing is memoized), so a revoked grant stops
+        the next message rather than the next restart.
+        """
+        try:
+            return bool(self.check_resource_action(
+                user_id, tenant_id, "agent", f"agent:{agent_id}",
+                "use", permission="agent.use"))
+        except Exception:  # noqa: BLE001 - an unevaluable grant is not a grant
+            return False
+
     # --- approvals (open-database-runtime 8.x) -----------------------------
 
     def request_approval(
@@ -5061,11 +8540,22 @@ class IdentityService:
         action: str,
         payload: Optional[Dict[str, Any]] = None,
         expires_in_s: int = 1800,
+        target: str = "",
+        digest: str = "",
     ) -> Dict[str, Any]:
         """Register a high-risk external side-effect action as pending.
 
         No side effect runs from here: a decision by another qualified user is
         required first (see :meth:`decide_approval`).
+
+        ``target`` and ``digest`` bind the request to the **one** action it
+        authorises. They are computed by the caller's own policy module
+        (``agent.approval_gate.request_digest``), never taken from a request
+        body: a requester who could choose the digest could get one approval to
+        cover parameters nobody approved. The executor presents the same two
+        facts at dispatch, which is what makes "the parameters changed after
+        approval" a mismatch instead of a guess (see
+        :meth:`consume_action_approval`).
         """
         if not self._member_active(actor_user_id, tenant_id):
             raise IdentityServiceError("not a tenant member", code="forbidden", status=403)
@@ -5077,6 +8567,10 @@ class IdentityService:
         import time as _time
         safe = {k: v for k, v in (payload or {}).items()
                 if str(k).lower() not in {"token", "secret", "password", "authorization"}}
+        # The binding is stored with the request rather than in new columns: it is
+        # part of what was asked for, it must survive as the audit record of what
+        # was approved, and the payload is already redacted on the way in.
+        safe["_binding"] = {"target": str(target or ""), "digest": str(digest or "")}
         payload_json = json.dumps(safe, ensure_ascii=False)
         now = int(_time.time())
         expires_at = now + max(60, min(86400, int(expires_in_s)))
@@ -5214,6 +8708,105 @@ class IdentityService:
             con.commit()
         return {"id": approval_id, "status": "revoked"}
 
+    def consume_action_approval(
+        self, *, actor_user_id: str, tenant_id: str, approval_id: str,
+        action: str, agent_id: str = "", target: str = "", digest: str = "",
+    ) -> Dict[str, Any]:
+        """Consume one *approved* single-action approval, exactly once.
+
+        The executor calls this immediately before the external action it is
+        about to take, and four facts must match the four the approval was
+        granted for: the tenant, the requesting user (an approval is that user's
+        own authority to act — never a reference another member can borrow), the
+        action identity, and the canonical target + parameter digest. An approval
+        that is pending, denied, revoked, expired or already consumed is refused
+        with its own code, so the caller can distinguish "still waiting" from
+        "not allowed" instead of collapsing them into one refusal.
+
+        Consumption is a single conditional ``UPDATE``: two executors racing on
+        the same approval cannot both win, because the loser's ``WHERE
+        status='approved'`` matches no row. It commits *before* the side effect,
+        which is the deliberate half of the trade-off: consuming after the action
+        would let a crash in between replay it. A failed action therefore needs a
+        new approval, and that is what "a single action" costs.
+        """
+        if not actor_user_id or not tenant_id:
+            raise IdentityServiceError(
+                "approval cannot be consumed without an identity",
+                code="forbidden", status=403)
+        import json
+        import time as _time
+        now = int(_time.time())
+        with self._tx() as con:
+            row = con.execute(
+                "SELECT * FROM approvals WHERE id=? AND tenant_id=?",
+                (approval_id, tenant_id),
+            ).fetchone()
+            if not row:
+                raise IdentityServiceError(
+                    "approval not found", code="approval_unknown", status=404)
+            status = str(row["status"] or "")
+            if status != "approved":
+                codes = {"pending": "approval_pending", "denied": "approval_denied",
+                         "revoked": "approval_revoked", "expired": "approval_expired",
+                         "consumed": "approval_consumed"}
+                raise IdentityServiceError(
+                    f"approval is {status}",
+                    code=codes.get(status, "approval_mismatch"), status=409)
+            if row["expires_at"] and now > int(row["expires_at"]):
+                # The sweep only flips pending rows; an approved one that ran out
+                # of time must be refused here rather than at the next sweep, or
+                # a stale approval would keep working until a background job ran.
+                con.execute(
+                    "UPDATE approvals SET status='expired', decided_at=?,"
+                    " version=version+1 WHERE id=? AND status='approved'",
+                    (now, approval_id),
+                )
+                con.commit()
+                raise IdentityServiceError(
+                    "approval expired", code="approval_expired", status=409)
+            if str(row["requester_user_id"] or "") != actor_user_id:
+                raise IdentityServiceError(
+                    "approval belongs to another user", code="approval_mismatch",
+                    status=403)
+            if agent_id and str(row["agent_id"] or "") and str(row["agent_id"]) != agent_id:
+                raise IdentityServiceError(
+                    "approval belongs to another agent", code="approval_mismatch",
+                    status=403)
+            if str(row["action"] or "") != str(action or ""):
+                raise IdentityServiceError(
+                    "approval is for another action", code="approval_mismatch",
+                    status=409)
+            try:
+                binding = (json.loads(row["payload_json"] or "{}") or {}).get("_binding") or {}
+            except Exception:  # noqa: BLE001 - an unreadable binding is not one
+                binding = {}
+            if (str(binding.get("target") or "") != str(target or "")
+                    or str(binding.get("digest") or "") != str(digest or "")):
+                raise IdentityServiceError(
+                    "approval does not cover this request", code="approval_mismatch",
+                    status=409)
+            cursor = con.execute(
+                "UPDATE approvals SET status='consumed', decided_at=?,"
+                " version=version+1 WHERE id=? AND status='approved'",
+                (now, approval_id),
+            )
+            if cursor.rowcount != 1:
+                con.commit()
+                raise IdentityServiceError(
+                    "approval was consumed concurrently", code="approval_consumed",
+                    status=409)
+            self._audit_in_tx(
+                con, actor_user_id=actor_user_id, tenant_id=tenant_id,
+                target_tenant_id=tenant_id, action="approval.consume",
+                target=f"approval:{approval_id}",
+                redacted_changes={"action": str(action or "")[:64],
+                                  "agent_id": agent_id,
+                                  "target": str(target or "")[:128]},
+                result="success")
+            con.commit()
+        return {"id": approval_id, "status": "consumed"}
+
     def list_approvals(
         self, *, actor_user_id: str, tenant_id: str, status: Optional[str] = None
     ) -> List[Dict[str, Any]]:
@@ -5259,7 +8852,11 @@ class IdentityService:
 
     # --- quotas (open-database-runtime 9.x) --------------------------------
 
-    _QUOTA_METRICS = ("tokens", "tool_calls", "messages", "storage_bytes")
+    _QUOTA_METRICS = ("tokens", "tool_calls", "messages", "storage_bytes",
+                      # A stored-count limit rather than a meter: how many
+                      # scheduled tasks one member may keep (3.3). Counted from
+                      # the tasks themselves so deleting frees the slot.
+                      "scheduled_tasks")
 
     def set_quota(
         self, *, actor_user_id: str, tenant_id: str, metric: str,
@@ -5430,6 +9027,71 @@ class IdentityService:
                 return True
             logger.error(f"[quota] consume failed for {tenant_id}/{user_id}/{metric}: {error}")
             raise IdentityServiceError("quota meter failed", code="quota_error", status=500) from error
+
+    def check_scheduled_task_quota(
+        self, *, user_id: str, tenant_id: str, would_be_count: int,
+    ) -> int:
+        """Hard limit on a member's own scheduled tasks; 0 means unlimited.
+
+        A count-based limit rather than a meter, because the quantity being
+        bounded is *stored* tasks, not consumed events: a task the member
+        deleted must free its slot, which a cumulative usage row could not do.
+        The per-user row wins over the tenant-wide row, so an operator can set a
+        default for the tenant and a smaller one for a heavy user.
+
+        Raises ``IdentityServiceError(code='quota_exceeded')`` when the count is
+        already at the limit, so the refusal is a refusal and not a silent no-op
+        (task 3.3: tool-created and tool-enabled tasks must not skip the gate).
+        """
+        limit = self._scheduled_task_limit(user_id=user_id, tenant_id=tenant_id)
+        if limit and int(would_be_count) > limit:
+            try:
+                self._audit.record(
+                    actor_user_id=user_id, tenant_id=tenant_id,
+                    target_tenant_id=tenant_id, action="scheduler.quota.deny",
+                    target=f"quota:{tenant_id}:{user_id}:scheduled_tasks",
+                    redacted_changes={"limit": limit, "count": int(would_be_count)},
+                    result="denied",
+                )
+            except Exception as error:  # never mask the refusal with an audit fault
+                from common.log import logger as _logger
+                _logger.error("[quota] scheduler deny audit failed: %s", error)
+            raise IdentityServiceError(
+                "scheduled task quota exhausted", code="quota_exceeded", status=409)
+        return limit
+
+    def _scheduled_task_limit(self, *, user_id: str, tenant_id: str) -> int:
+        rows = self._store.execute(
+            "SELECT user_id, hard_limit FROM quota_limits WHERE tenant_id=?"
+            " AND metric='scheduled_tasks'", (tenant_id,),
+        )
+        tenant_limit = 0
+        user_limit = 0
+        for row in rows:
+            if row["user_id"] == "":
+                tenant_limit = int(row["hard_limit"] or 0)
+            elif row["user_id"] == user_id:
+                user_limit = int(row["hard_limit"] or 0)
+        return user_limit or tenant_limit
+
+    def record_business_audit(
+        self, *, actor_user_id: str, tenant_id: str, action: str, target: str,
+        redacted_changes: Optional[Dict[str, Any]] = None, result: str = "success",
+    ) -> Dict[str, Any]:
+        """Record a redacted non-identity business event in the same audit trail.
+
+        Used by subsystem gates that must leave a trace but own no storage of
+        their own (the scheduler's task writes are the first consumer). It exists
+        so those subsystems do not each open ``identity.db`` themselves, and so
+        every event goes through the same sanitizer: ``audit.sanitize_payload``
+        drops secret-shaped keys, which is what keeps a task's notification
+        tokens out of the trail even when a caller passes a whole task dict.
+        """
+        return self._audit.record(
+            actor_user_id=actor_user_id, tenant_id=tenant_id,
+            target_tenant_id=tenant_id, action=action, target=target,
+            redacted_changes=redacted_changes or {}, result=result,
+        )
 
     @staticmethod
     def _quota_fail_open() -> bool:

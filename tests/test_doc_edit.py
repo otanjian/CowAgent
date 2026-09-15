@@ -318,15 +318,27 @@ def test_skill_content_handler_requires_a_name_and_string_content(tmp_path):
 
 
 def test_memory_content_handler_includes_the_editable_path(tmp_path):
+    """The compat read reports the workspace-relative path the editor writes to.
+
+    The target has to be named (task 5.1/5.2 of
+    ``complete-database-capability-parity``): a request with neither ``scope``
+    nor ``agent_id`` is the caller's *personal* memory, whose root is not the
+    workspace, so it has no workspace-relative path to report. Only an
+    Agent-addressed entry does, and that is what this test is about.
+    """
     from channel.web.web_channel import MemoryContentHandler
 
     _write(tmp_path / "MEMORY.md", "# global\n")
 
-    with patch("channel.web.web_channel._get_workspace_root", return_value=str(tmp_path)):
-        response = _get(MemoryContentHandler, {"filename": "MEMORY.md", "category": "memory"})
+    with patch("channel.web.memory_console._agent_binding", return_value={}), \
+         patch("channel.web.web_channel._get_workspace_root", return_value=str(tmp_path)):
+        response = _get(MemoryContentHandler, {"filename": "MEMORY.md",
+                                               "category": "memory",
+                                               "agent_id": "primary"})
 
     assert response["status"] == "success"
     assert response["rel_path"] == "MEMORY.md"
+    assert response["scope"] == "shared", "an unowned Agent is the shared scope"
 
 
 # ----------------------------------------------------------------------

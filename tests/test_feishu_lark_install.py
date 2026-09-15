@@ -63,7 +63,16 @@ def test_vendor_urls_prefer_the_china_mirror(monkeypatch):
     urls = lark_install.vendor_urls()
     assert len(urls) > 1, "expected a fallback mirror"
     assert "link-ai" in urls[0], "the China CDN should be tried first"
-    assert all(lark_install.VENDOR_VERSION in u for u in urls)
+    # This is a *functional endpoint*, not a user-visible link: the first mirror
+    # is what keeps the install path working, so it must still resolve to a real
+    # archive carrying the pinned version.
+    assert lark_install.VENDOR_VERSION in urls[0]
+    # ``upstream-link-retargeting`` retired the upstream mirror to the operator's
+    # address, so the failover now fails loudly instead of silently reaching
+    # ``cdn.cowagent.ai``. Any mirror that still claims to serve an archive must
+    # therefore be a resolvable per-version package URL.
+    assert not any("cowagent.ai" in u for u in urls)
+    assert all(lark_install.VENDOR_VERSION in u for u in urls if u.endswith(".zip"))
 
 
 def test_vendor_url_can_be_overridden(monkeypatch):

@@ -187,10 +187,34 @@ def test_dispatch_stays_read_only():
 # ----------------------------------------------------------------------
 # HTTP handlers
 # ----------------------------------------------------------------------
+def _handler_stack():
+    """Environment for calling a handler body directly.
+
+    These unit tests exercise the (legacy) handler bodies without a request, so
+    the tenant gate is a no-op (``ctx=None``) — the real database behaviour is
+    covered by ``tests/test_console_workspace_transport.py``. Booting ``web.ctx``
+    with a header list lets the handler's ``web.notfound()`` denial build its
+    HTTPError even outside a WSGI request.
+    """
+    from contextlib import ExitStack, nullcontext
+    from channel.web import web_channel
+    import web as web_module
+
+    stack = ExitStack()
+    stack.enter_context(
+        patch("channel.web.web_channel._db_scope", return_value=nullcontext(None)))
+    stack.enter_context(
+        patch("channel.web.auth_handlers.require_management_write"))
+    stack.enter_context(
+        patch.object(web_module.ctx, "headers", [], create=True))
+    stack.enter_context(patch.object(web_channel.web, "header"))
+    return stack
+
+
 def _post(handler_cls, body):
     from channel.web import web_channel
 
-    with patch.object(web_channel.web, "header"), \
+    with _handler_stack(), \
          patch.object(web_channel.web, "data", return_value=json.dumps(body).encode()):
         return json.loads(handler_cls().POST())
 
@@ -198,7 +222,7 @@ def _post(handler_cls, body):
 def _get(handler_cls, params):
     from channel.web import web_channel
 
-    with patch.object(web_channel.web, "header"), \
+    with _handler_stack(), \
          patch.object(web_channel.web, "input", return_value=web_channel.web.storage(**params)):
         return json.loads(handler_cls().GET())
 
@@ -265,6 +289,12 @@ def test_write_handler_rejects_non_string_content(tmp_path):
 
 
 def test_write_handler_rejects_path_outside_workspace(tmp_path):
+    """An absolute path outside every allowed root is invisible (404).
+
+    It must not silently fall back to an arbitrary host path or the global
+    default Agent's workspace.
+    """
+    import web as web_module
     from channel.web.web_channel import WorkspaceWriteHandler
 
     project = tmp_path / "project"
@@ -274,12 +304,12 @@ def test_write_handler_rejects_path_outside_workspace(tmp_path):
 
     with patch("channel.web.web_channel._get_workspace_root", return_value=str(project)), \
          patch("common.state_dir.state_root_str", return_value=str(project)):
-        response = _post(WorkspaceWriteHandler, {
-            "path": str(outside),
-            "content": "tampered\n",
-        })
+        with pytest.raises(web_module.HTTPError):
+            _post(WorkspaceWriteHandler, {
+                "path": str(outside),
+                "content": "tampered\n",
+            })
 
-    assert response["status"] == "error"
     assert outside.read_text(encoding="utf-8") == "secret\n"
 
 

@@ -244,3 +244,25 @@ P0 表示本次菜单治理应立即处理的功能失效；不代表安全漏�
 - 浏览器检查：5 个占位入口点击后保留原页面；配置页地址仍为 `/chat`；折叠系统设置后 Tab 聚焦 `data-view="platform"`，父容器高度为 0；账号菜单含个人资料、修改密码、界面偏好、切换租户、关于当前品牌、退出登录。
 
 本次未提交表单、修改权限、操作业务数据，也未对 17 个有页面的模块逐一执行 CRUD 或全部角色测试。所有“新增”“后续开放”和目标路由均为方案，不是当前实现能力。
+
+## 9. 后续实施记录：个人入口迁入账号菜单（change `move-personal-menu-to-account`）
+
+上文第 1–8 节是提出该改造前的审计与方案。本节记录其落地情况，并区分三种状态：
+
+| 状态 | 结论 |
+| --- | --- |
+| 文档（需求与验收口径） | 完成：`openspec/changes/move-personal-menu-to-account/` 的 proposal / design / 三份 delta spec / 证据 |
+| 代码（本机工作区） | 完成：`channel/web/chat.html`、`static/js/console.js`、`static/css/console.css`、`static/js/i18n/account.js` 及相应前端/浏览器测试 |
+| 生产启用 | **未声明**：本 change 不改变任何开关默认值；成员个人控制台各切片的可启用结论仍以依赖 change `enable-member-personal-console` 的 9.x 证据为准 |
+
+逐项对照提案里的优化细节：
+
+| 细节 | 结论 | 证据 |
+| --- | --- | --- |
+| 1 底部触发器展示头像、用户名及展开箭头 +「个人资源与设置」提示与可访问名称 | 已实施：`#sidebar-account-toggle` 头像/名称/副标题/chevron + `title`/`aria-label`（`_renderSidebarAccount`），保留显示名回退与成员名优先 | `evidence/2-1-host-move-and-trigger.md` 第 2 节 |
+| 2 五个入口及页标题沿用「我的」前缀、既有 view ID、`personal.*` 能力键与 `nav:personal.*` 授权编号 | 已实施：名称键 `menu_personal_*`、组名 `nav_group_personal`、`VIEW_META` 与 `console_pages` 键均未改动 | 同上第 2 节；`evidence/3-1-authorization-navigation-current.md` 第 1 节 |
+| **3 个人页顶部页签 / 页面内快捷导航 / 个人中心页** | **明确未实施**：`chat.html` 无 `role="tablist"`、无 `personal-console-tabs`、无 `personal-shortcuts` | `evidence/2-1-host-move-and-trigger.md` 第 3 节（前端断言 `the account panel keeps its region order and adds no personal page tab`） |
+| 4 提交后主导航撤销其他选中项、账号菜单内唯一当前项 + 底部区域轻量状态 + 标题/面包屑一致 | 已实施：`_syncAccountPersonalCurrent`（`aria-current` 唯一、`is-personal`、区域状态）+ `navigateTo` 提交后同步 | `evidence/3-1-authorization-navigation-current.md` 第 4 节 |
+| 5 桌面按可用空间展开并内部滚动、移动端底部弹出、分隔个人资源/账号设置/帮助与退出、覆盖低高度与大字号与键盘和触摸 | 已实施：`_applyAccountMenuHeight` 限高 + 内部滚动、`_mountAccountMenu` 底部模态面板（body 宿主、`role="dialog"`、遮罩、滚动锁、安全区）、三段分隔、Escape/外点/Tab/焦点循环 | `evidence/4-1-responsive-focus-lifecycle.md` |
+
+使用方式（成员视角）：工作台或管理控制台的侧栏底部点击账号行 → 面板「我的资源」内选择「我的智能体 / 我的渠道 / 我的记忆 / 我的工具 / 我的技能」；被菜单撤权或能力关闭的入口不展示，直接访问旧地址（`/chat#view-personal-*`）会落到说明页且不启动该页数据。

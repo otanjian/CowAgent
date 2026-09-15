@@ -165,3 +165,56 @@ def test_legacy_mode_unaffected(registry, tmp_path):
     """Legacy (no tenant) resolves the default Agent's workspace, no guard trip."""
     with use_identity(RuntimeIdentity(agent_id="alpha")):
         assert state_dir.shared_root() == (tmp_path / "eng").resolve()
+
+
+def _pin_instance_root(monkeypatch, instance):
+    """Point ``agent_workspace`` at ``instance`` for this test."""
+    import config as config_module
+
+    monkeypatch.setitem(config_module.conf(), "agent_workspace", str(instance))
+
+
+def test_instance_root_trusted_when_default_agent_has_private_workspace(
+        monkeypatch):
+    """The default tenant's shared root is the *instance* root, so giving the
+    default Agent a private workspace beneath it must not shrink the exemption.
+
+    Reproduces the real regression: with ``agent_workspace = <instance>`` and the
+    default Agent living in ``<instance>/agents/<id>``, a tenant whose root is
+    ``<instance>`` was falsely rejected as a home/global escape.
+    """
+    instance = os.path.join(os.path.expanduser("~"), ".cow-test-instance-eng")
+    (Path(instance) / "agents" / "alpha").mkdir(parents=True, exist_ok=True)
+    set_agent_registry(AgentRegistry(
+        [AgentProfile(id="alpha", name="Alpha",
+                      workspace=os.path.join(instance, "agents", "alpha"))], "alpha"))
+    try:
+        _pin_instance_root(monkeypatch, instance)
+        db = _db()
+        svc = _svc(db)
+        tid = svc.list_tenants()[0]["id"]
+        _set_root(svc, tid, instance)
+        _bind_svc_to_db(svc, db, monkeypatch)
+        with use_identity(RuntimeIdentity(tenant_id=tid, agent_id="alpha")):
+            assert state_dir.shared_root() == Path(instance).resolve()
+    finally:
+        set_agent_registry(None)
+
+
+def test_instance_root_trust_does_not_widen_to_other_home_dirs(
+        monkeypatch):
+    """Trusting the instance root must not make the rest of home legal.
+
+    The instance root is the one home-resident path the guard exempts; every
+    other home subdirectory still has to be refused.
+    """
+    instance = os.path.join(os.path.expanduser("~"), ".cow-test-instance")
+    _pin_instance_root(monkeypatch, instance)
+    db = _db()
+    svc = _svc(db)
+    tid = svc.list_tenants()[0]["id"]
+    _set_root(svc, tid, os.path.join(os.path.expanduser("~"), "Documents"))
+    _bind_svc_to_db(svc, db, monkeypatch)
+    with use_identity(RuntimeIdentity(tenant_id=tid, agent_id="alpha")):
+        with pytest.raises(state_dir.StateDirError, match="home/global workspace root"):
+            state_dir.shared_root()

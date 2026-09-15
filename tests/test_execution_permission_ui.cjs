@@ -23,8 +23,18 @@ test('web refused-tool hint keeps its explanation but drops the action button', 
     assert.match(consoleJs, /perm-denied-hint/);
     assert.match(consoleJs, /perm_denied_hint/);
     assert.match(consoleJs, /perm_denied_role_hint/);
+    assert.match(consoleJs, /perm_denied_isolation_hint/);
+    assert.match(consoleJs, /kind === 'isolation'/);
     assert.doesNotMatch(consoleJs, /perm-denied-btn/);
     assert.doesNotMatch(consoleJs, /perm_denied_action/);
+});
+
+test('every language explains an isolation refusal', () => {
+    const dicts = loadDictionaries();
+    for (const lang of ['zh', 'zh-Hant', 'en']) {
+        assert.ok(Object.prototype.hasOwnProperty.call(dicts[lang] || {}, 'perm_denied_isolation_hint'),
+            `perm_denied_isolation_hint is missing from the ${lang} dictionary`);
+    }
 });
 
 test('desktop has no permission selector or adjust button', () => {
@@ -34,11 +44,15 @@ test('desktop has no permission selector or adjust button', () => {
     assert.doesNotMatch(chatInput, /PermissionSelector/);
     assert.doesNotMatch(messageSteps, /perm_denied_action/);
     assert.match(messageSteps, /perm_denied_role_hint/);
+    assert.match(messageSteps, /perm_denied_isolation_hint/);
+    assert.match(messageSteps, /kind === 'isolation'/);
     assert.doesNotMatch(store, /'permission'/);
     assert.equal(
         fs.existsSync(path.join(root, 'desktop/src/renderer/src/components/PermissionSelector.tsx')),
         false,
     );
+    const i18n = read('desktop/src/renderer/src/i18n.ts');
+    assert.match(i18n, /perm_denied_isolation_hint/);
 });
 
 test('the global default permission reads as owned by roles in database mode', () => {

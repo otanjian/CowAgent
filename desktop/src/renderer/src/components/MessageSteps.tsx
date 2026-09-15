@@ -161,14 +161,19 @@ const ToolStep: React.FC<{ step: MessageStep }> = ({ step }) => {
  * There is deliberately no action button: execution is decided by the caller's
  * role grants (an administrator's decision), so offering an in-conversation
  * switch would point at a control that cannot fix the refusal. Only a legacy
- * single-tenant mode refusal names a mode; anything else is reported as an
- * authorization gap.
+ * single-tenant mode refusal names a mode; an isolation refusal explains the
+ * tenant boundary; anything else is reported as an authorization gap.
  */
 const PermissionDeniedHint: React.FC<{ mode?: string; kind?: string }> = ({ mode, kind }) => {
+  // Name the refusal's actual source: a legacy mode refusal names the mode, an
+  // isolation refusal is a tenant boundary rather than a missing grant, and
+  // anything else is an authorization gap the caller's role has to close.
   const text =
     kind === 'mode' && mode
       ? t('perm_denied_hint').replace('{name}', permLabel(mode))
-      : t('perm_denied_role_hint')
+      : kind === 'isolation'
+        ? t('perm_denied_isolation_hint')
+        : t('perm_denied_role_hint')
   return (
     <div className="mt-1.5 mb-1 flex items-center gap-2 px-3 py-2 rounded-lg border border-default bg-inset-2 text-[12px] text-content-secondary">
       <Shield size={13} className="shrink-0 text-content-tertiary" />

@@ -209,7 +209,9 @@ async function state(page, expected) {
     assert.equal(actual.darkHighlightDisabled, !actual.dark);
 }
 async function panel(page) {
-    if (!await page.locator('#appearance-dialog').evaluate(el => el.open)) await page.locator('#theme-toggle').click();
+    // Language, appearance and logout live in the account menu only, so the
+    // preference panel opens from there instead of a top-bar entry.
+    if (!await page.locator('#appearance-dialog').evaluate(el => el.open)) await accountPanel(page);
     await page.locator('#appearance-dialog').waitFor({ state: 'visible' });
 }
 async function choose(page, field, value) {
@@ -344,7 +346,7 @@ const panelAuditSelectors = [
         await choose(page, 'mode', 'dark');
         await state(page, { palette: 'slate', mode: 'dark', resolved: 'dark' });
         await closePanel(page);
-        await expectFocus(page, 'theme-toggle');
+        await expectFocus(page, 'sidebar-account-toggle');
         await page.reload({ waitUntil: 'networkidle' });
         await state(page, { palette: 'slate', mode: 'dark', resolved: 'dark' });
         await page.locator('#chat-input').fill('Draft survives appearance choices');
@@ -421,7 +423,7 @@ const panelAuditSelectors = [
         assert.ok(report.preferenceTabSequence.some(item => item.name === 'web-palette'));
         await page.mouse.click(3, 3);
         await page.locator('#appearance-dialog').waitFor({ state: 'hidden' });
-        await expectFocus(page, 'theme-toggle');
+        await expectFocus(page, 'sidebar-account-toggle');
         await accountPanel(page); await choose(page, 'mode', 'system');
         await page.emulateMedia({ colorScheme: 'dark' });
         await state(page, { palette: 'slate', mode: 'system', resolved: 'dark' });
@@ -445,7 +447,8 @@ const panelAuditSelectors = [
         const page = await open(ctx);
         await panel(page); await choose(page, 'palette', 'slate'); await closePanel(page);
         const before = await page.evaluate(() => [localStorage.getItem('cow_web_palette'), localStorage.getItem('cow_theme')]);
-        await page.locator('#logout-btn-header').click();
+        await page.locator('#sidebar-account-toggle').click();
+        await page.locator('#account-menu-logout').click();
         await page.locator('#login-form').waitFor({ state: 'visible' });
         await state(page, { palette: 'slate', mode: 'system', resolved: 'dark' });
         await page.locator('#login-username').fill('appearance-member-b');
@@ -754,14 +757,12 @@ const panelAuditSelectors = [
         const page = await open(ctx);
         await page.locator('#attach-btn').click();
         assert.equal(await page.locator('#attach-menu').isVisible(), true);
-        await page.locator('#theme-toggle').focus();
-        await page.keyboard.press('Enter');
-        await page.locator('#appearance-dialog').waitFor({ state: 'visible' });
+        await accountPanel(page);
         assert.equal(await page.locator('#attach-menu').isVisible(), false);
         await page.evaluate(() => fetch('/api/appearance-fixture-expire'));
         await page.locator('#login-form').waitFor({ state: 'visible' });
         await page.locator('#appearance-dialog').waitFor({ state: 'hidden' });
-        assert.equal(await page.locator('#theme-toggle').evaluate(el => el === document.activeElement), false);
+        assert.equal(await page.locator('#sidebar-account-toggle').evaluate(el => el === document.activeElement), false);
         await page.locator('#login-username').fill('member');
         await page.locator('#login-password').fill('fixture-password');
         assert.equal(await page.locator('#login-password').inputValue(), 'fixture-password');
@@ -869,11 +870,13 @@ const panelAuditSelectors = [
     });
 
     await scenario('all localized labels and palette/mode/viewport visual matrix', async () => {
-        for (const [lang, title] of [['zh', '外观'], ['zh-Hant', '外觀'], ['en', 'Appearance']]) {
+        for (const [lang, title, prefs] of [['zh', '外观', '个人偏好'], ['zh-Hant', '外觀', '個人偏好'], ['en', 'Appearance', 'Preferences']]) {
             const ctx = await context({ initial: { cow_lang: lang }, viewport: { width: 375, height: 812 } });
             const page = await open(ctx); await panel(page);
             assert.equal(await page.locator('#appearance-title').textContent(), title);
-            assert.equal(await page.locator('#theme-toggle').getAttribute('aria-label'), title);
+            // Appearance is reached from the account menu only, so that entry's
+            // label must follow the same language as the panel it opens.
+            assert.equal(await page.locator('#account-menu-prefs span[data-i18n="account_menu_prefs"]').textContent(), prefs);
             await page.screenshot({ path: path.join(output, `mobile-${lang}-panel.png`) });
             await ctx.close();
         }

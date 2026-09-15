@@ -73,3 +73,49 @@ test('the server cache-busts the fragment loader and the fragment markup', () =>
     assert.match(server, /f'fragments\/\{name\}'/,
         'fragment assets must be added to the cache_bust list');
 });
+
+test('a missing optional UI seam falls back to display only and never touches authorization', async () => {
+    // R5's fourth form: rdai with only an *optional display* seam missing. The
+    // fragment is presentation, so its absence may cost the appearance dialog
+    // and must cost nothing else -- in particular it must not widen or narrow
+    // any backend authorization, which is only true if the loader's failure
+    // path is a no-op (no mount, no i18n pass, no event) and it reaches nothing
+    // but the fragment URL it was declared with.
+    const vm = require('node:vm');
+    const allowed = [];
+    const events = [];
+    const el = {
+        innerHTML: '<!-- mount left as declared -->',
+        getAttribute: name => name === 'data-fork-fragment'
+            ? 'assets/fragments/appearance-dialog.html' : null,
+        removeAttribute: () => { throw new Error('a failed mount must keep its declaration'); },
+    };
+    const sandbox = {
+        window: { applyI18n: () => { throw new Error('a failed mount must not localize'); } },
+        document: {
+            readyState: 'complete',
+            querySelectorAll: () => [el],
+            addEventListener: () => {},
+            dispatchEvent: event => { events.push(event.type); },
+        },
+        fetch: url => {
+            allowed.push(String(url));
+            return Promise.resolve({ ok: false, status: 404, text: async () => '' });
+        },
+        CustomEvent: class { constructor(type) { this.type = type; } },
+    };
+    vm.createContext(sandbox);
+    vm.runInContext(loader, sandbox);
+    await sandbox.window.CowFragments.mountAll(sandbox.document);
+
+    assert.ok(allowed.length > 0, 'the loader must attempt the declared fragment');
+    assert.deepEqual([...new Set(allowed)], ['assets/fragments/appearance-dialog.html'],
+        'the loader must reach nothing but the declared fragment');
+    assert.equal(el.innerHTML, '<!-- mount left as declared -->',
+        'a missing fragment must leave the mount point empty, not half-mounted');
+    assert.deepEqual(events, [], 'no mount event may fire for markup that never landed');
+    assert.doesNotMatch(loader, /\/api\//,
+        'a display seam must not be able to reach a business endpoint');
+    assert.doesNotMatch(loader, /credentials:\s*'include'|localStorage|sessionStorage/,
+        'a display seam must not carry credentials or persist anything');
+});

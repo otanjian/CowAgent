@@ -275,11 +275,6 @@ html[data-web-palette] #main-content > header button:hover {
     color: var(--web-text-main);
 }
 html[data-web-palette] #main-content > header button:hover i { color: inherit; }
-html[data-web-palette] #main-content > header #logout-btn-header:hover {
-    background-color: var(--web-danger-soft);
-    color: var(--web-danger);
-}
-html[data-web-palette] #lang-menu,
 html[data-web-palette] #tenant-menu {
     background-color: var(--web-surface-bg);
     color: var(--web-text-main);
@@ -736,7 +731,6 @@ html[data-web-palette] #main-content > .workbench-header {
 }
 .workbench-context { display: flex; align-items: center; gap: 16px; min-width: 0; }
 .workbench-page-title { flex-shrink: 0; }
-.workbench-header .lang-label-short { display: none; }
 html[data-web-palette] .workbench-header #menu-toggle {
     display: inline-flex;
     align-items: center;
@@ -1028,10 +1022,6 @@ html[data-web-palette] #composer-card #optimize-btn.text-primary-500 { color: va
     #chat-main.chat-home :is(.home-intro, #chat-input-area, .home-suggestions, .home-footer) { width: min(var(--web-home-width), calc(100% - 48px)); }
     .home-suggestions :is(.home-suggestion-list, .home-suggestions-list) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@media (max-width: 767px) {
-    .workbench-header .lang-label-full { display: none; }
-    .workbench-header .lang-label-short { display: inline; }
-}
 @media (max-width: 640px) {
     /* A 300px team menu cannot be right-anchored to the toolbar's 22px avatar
        on a phone. Anchor it to the existing composer card instead. */
@@ -1047,7 +1037,6 @@ html[data-web-palette] #composer-card #optimize-btn.text-primary-500 { color: va
     html[data-web-palette] .workbench-header #breadcrumb-page { font-size: 14px; }
     html[data-web-palette] .workbench-header #chat-agent-name { font-size: 12px; }
     .workbench-context { gap: 10px; }
-    .workbench-header #lang-toggle { padding-left: 6px; padding-right: 6px; font-size: 12px; }
     #chat-main.chat-home :is(.home-intro, #chat-input-area, .home-suggestions, .home-footer) { width: calc(100% - 36px); }
     #chat-main.chat-home .home-intro { margin-bottom: 24px; }
     html[data-web-palette] .home-intro .home-greeting { margin-bottom: 12px; font-size: 27px; line-height: 1.45; }

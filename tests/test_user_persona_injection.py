@@ -1,11 +1,17 @@
 # encoding:utf-8
-"""Per-user persona injection (change personal-conversation-and-memory, task 3.x).
+"""Per-user context injection: persona (personal-conversation-and-memory) and
+current-user identity (add-current-user-identity-context).
 
-The personal layer is a *segment* appended to the Agent's system suffix, not a
-new Agent and not an overwrite of ``AGENT.md``. What matters here is ordering
-(scene -> employee -> personal), that an absent profile adds nothing, and that
-ownership gates it: a session someone else owns must never carry the current
-caller's persona, because ``get_agent()`` is cached per ``(agent_id, session_id)``.
+Both layers are *segments* appended to the Agent's system suffix, not new
+Agents and not overwrites of ``AGENT.md``. What matters here is ordering
+(scene -> employee -> personal -> identity), that an absent profile adds
+nothing, and that ownership gates both: a session someone else owns must never
+carry the current caller's persona *or* account, because ``get_agent()`` is
+cached per ``(agent_id, session_id)``.
+
+Identity is deliberately independent of the persona file (a fact every user has
+vs. an opt-in profile) and non-authoritative: it must be injected from the
+verified runtime identity only, read no resource grants, and fail closed.
 """
 
 import os
@@ -84,6 +90,14 @@ class UserPersonaInjectionTestCase(unittest.TestCase):
             store.append_messages(
                 session_id=session_id, channel_type="web",
                 messages=[{"role": "user", "content": "hi"}])
+
+    def _deactivate_membership(self, user_id):
+        """Drop a member from the tenant, as an admin removal would."""
+        with self.svc._tx() as con:
+            con.execute(
+                "UPDATE memberships SET active=0 WHERE user_id=? AND tenant_id=?",
+                (user_id, self.tid),
+            )
 
     # -- 3.2/3.3 ordering and coexistence -------------------------------
 
@@ -166,6 +180,96 @@ class UserPersonaInjectionTestCase(unittest.TestCase):
 
         self.assertIn("FIRST-VERSION", first.extra_system_suffix)
         self.assertIn("SECOND-VERSION", second.extra_system_suffix)
+
+    # -- current-user identity segment ----------------------------------
+
+    def test_identity_segment_injected_for_own_session(self):
+        with use_identity(self._ident(self.alice)):
+            self._own_session(self.alice, "s-alice")
+            agent = _Agent(self.ws)
+            self.bridge._apply_user_identity_context(agent, "s-alice")
+        suffix = agent.extra_system_suffix
+        self.assertIn("当前用户身份", suffix)
+        self.assertIn("alice", suffix)
+        self.assertIn("Alice", suffix)
+
+    def test_identity_injected_without_persona_profile(self):
+        """A user with no persona file still gets the identity segment."""
+        with use_identity(self._ident(self.alice)):
+            self._own_session(self.alice, "s-alice")
+            agent = _Agent(self.ws)
+            self.bridge._apply_user_persona_context(agent, "s-alice")
+            self.bridge._apply_user_identity_context(agent, "s-alice")
+        self.assertNotIn("个人偏好", agent.extra_system_suffix,
+                         "a missing profile produced a persona segment")
+        self.assertIn("alice", agent.extra_system_suffix,
+                      "identity was skipped along with the absent persona")
+
+    def test_identity_appended_after_personal(self):
+        with use_identity(self._ident(self.alice)):
+            self._write_persona("PERSONAL-MARKER")
+            self._own_session(self.alice, "s-alice")
+            agent = _Agent(self.ws)
+            self.bridge._apply_user_persona_context(agent, "s-alice")
+            self.bridge._apply_user_identity_context(agent, "s-alice")
+        suffix = agent.extra_system_suffix
+        self.assertLess(suffix.index("PERSONAL-MARKER"), suffix.index("alice"))
+
+    def test_brand_new_session_gets_callers_identity(self):
+        with use_identity(self._ident(self.alice)):
+            agent = _Agent(self.ws)
+            self.bridge._apply_user_identity_context(agent, "never-written")
+        self.assertIn("alice", agent.extra_system_suffix)
+
+    def test_other_users_session_gets_no_identity(self):
+        self._own_session(self.alice, "s-alice")
+        with use_identity(self._ident(self.bob)):
+            agent = _Agent(self.ws)
+            self.bridge._apply_user_identity_context(agent, "s-alice")
+        self.assertEqual(agent.extra_system_suffix, "",
+                         "Bob's caller got Alice's account in her session")
+
+    def test_legacy_identity_adds_no_identity_segment(self):
+        with use_identity(RuntimeIdentity()):
+            agent = _Agent(self.ws)
+            self.bridge._apply_user_identity_context(agent, "s-any")
+        self.assertEqual(agent.extra_system_suffix, "")
+
+    def test_removed_member_is_not_injected(self):
+        """Fail closed: a member dropped from the tenant stops being named."""
+        self._own_session(self.alice, "s-alice")
+        self._deactivate_membership(self.alice)
+        with use_identity(self._ident(self.alice)):
+            agent = _Agent(self.ws)
+            self.bridge._apply_user_identity_context(agent, "s-alice")
+        self.assertEqual(agent.extra_system_suffix, "",
+                         "a non-member was still injected as the speaker")
+
+    def test_identity_injection_consults_no_resource_grants(self):
+        """A name in the prompt is a fact, never a grant: resolve no resources."""
+        self._own_session(self.alice, "s-alice")
+        calls = []
+        original = self.svc.check_resource_action
+
+        def spy(*args, **kwargs):
+            calls.append((args, kwargs))
+            return original(*args, **kwargs)
+
+        self.svc.check_resource_action = spy
+        try:
+            with use_identity(self._ident(self.alice)):
+                agent = _Agent(self.ws)
+                self.bridge._apply_user_identity_context(agent, "s-alice")
+        finally:
+            self.svc.check_resource_action = original
+        self.assertEqual(calls, [], "identity injection consulted resource grants")
+
+    def test_identity_segment_disclaims_authority(self):
+        with use_identity(self._ident(self.alice)):
+            self._own_session(self.alice, "s-alice")
+            agent = _Agent(self.ws)
+            self.bridge._apply_user_identity_context(agent, "s-alice")
+        self.assertIn("不改变任何权限判定", agent.extra_system_suffix)
 
 
 if __name__ == "__main__":

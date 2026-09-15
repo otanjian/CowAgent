@@ -55,7 +55,7 @@ VENDOR_SHA256 = "a96de70291e43b4829a5f717035806835f116bf4dc1d0a2d2ed551908a82538
 # because the payload is checked against VENDOR_SHA256.
 VENDOR_URLS = (
     "https://cdn.link-ai.tech/desktop/vendor/feishu-vendor-{version}.zip",
-    "https://cdn.cowagent.ai/desktop/vendor/feishu-vendor-{version}.zip",
+    "https://www.rsm.global/china/zh-hans",
 )
 
 DOWNLOAD_TIMEOUT = 120

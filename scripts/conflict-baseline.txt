@@ -8,6 +8,25 @@
 # Regenerate with scripts/sync-from-master.sh (task 9.3 / 4.21); the script compares the
 # live merge against this file and reports drift (added/removed conflict files).
 #
+# 2026-09-15 rehearsal (change: complete-database-capability-parity, tasks 10.1/10.4)
+#   source   origin/master@9ad944dd3d94ee0fcf8b93e7f2c23e67b5a72226  (2026-09-09T18:07:11+08:00)
+#   target   rdai@e6f1e2a7cb4a6147cd125e7007a1c5982521d76c          (local worktree HEAD)
+#   merge base e5e2a52d3f309130ebabcb69ee0fb12adf754fbd
+#   method   isolated `git clone --no-hardlinks` + scripts/sync-from-master.sh upstream master
+#   result   the live merge reproduces this file exactly: 21 conflicted files, no
+#            added/removed drift, all 21 reported as 已知冲突. Upstream master has not
+#            moved since the frozen baseline, so no new upstream route, handler method,
+#            task field, transport or boot step has to be classified in this round.
+#   note     the rehearsal runs against the committed HEAD; the candidate's own work is
+#            uncommitted in the working tree, so its per-file decisions are recorded in
+#            the ``seam:`` column below (extended by this change) rather than as new
+#            conflict rows. New fork-owned modules this change adds
+#            (auth/capability_matrix.py, channel/web/scan_onboarding.py,
+#            channel/web/memory_console.py, channel/web/project_browser.py) have no
+#            upstream counterpart, so they cannot conflict today -- if upstream ever
+#            adds one of those paths, the merge MUST fail closed and classify it rather
+#            than silently merge two answers for one question (task 10.5).
+#
 # Columns: hunks <TAB> status <TAB> path <TAB> disposition
 #   status: UU = both modified, DU = deleted by fork / modified upstream
 #
@@ -19,13 +38,13 @@
 1	UU	.gitignore	keep-fork	fork /openspec/ ignore block, keep in own labelled section (9.6)
 0	DU	README.md	keep-deletion	fork removes all READMEs (upstream 25 -> fork 0); upstream README edits not carried (9.7)
 11	UU	agent/memory/conversation_store.py	seam:6.1-6.11	constraint-level seam; composite PK per decision 0.1
-1	UU	agent/tools/scheduler/integration.py	seam:8.15-8.16	converge to upstream global service + identity seam (0.2)
-1	UU	app.py	seam:6.11,8.9	keep upstream migration; fork guard via extension hook (0.3)
-1	UU	channel/channel_instances.py	seam:8.13	partitioned symbol registration (D4b, manual discipline)
-2	UU	channel/web/chat.html	seam:8.8	fork blocks via mount points
-12	UU	channel/web/static/js/console.js	seam:4.13-4.16	database-only login; no shared-password / branding CSRF
-3	UU	channel/web/web_channel.py	seam:4.1-4.12	retire shared-password/HMAC; keep upstream _import_local_file
-1	UU	desktop/src/renderer/src/api/client.ts	seam:2.11-2.12,4.19	database session Bearer; refuse cow_auth_token
+1	UU	agent/tools/scheduler/integration.py	seam:8.15-8.16,3.4	converge to upstream global service + identity seam (0.2)
+1	UU	app.py	seam:6.11,8.9,2.3,4.1-4.3	keep upstream migration; fork guard via extension hook (0.3)
+1	UU	channel/channel_instances.py	seam:8.13,7.3	partitioned symbol registration (D4b, manual discipline)
+2	UU	channel/web/chat.html	seam:8.8,2.2,9.1	fork blocks via mount points
+12	UU	channel/web/static/js/console.js	seam:4.13-4.16,2.2,9.1	database-only login; no shared-password / branding CSRF
+3	UU	channel/web/web_channel.py	seam:4.1-4.12,3.1-3.7,5.1-5.4,6.1-6.4,7.1-7.7	retire shared-password/HMAC; keep upstream _import_local_file
+1	UU	desktop/src/renderer/src/api/client.ts	seam:2.11-2.12,4.19,8.1,8.4	database session Bearer; refuse cow_auth_token
 0	DU	desktop/src/renderer/src/components/PermissionSelector.tsx	keep-deletion	replaced by RBAC execution permission; test asserts absence (0.4)
 2	UU	docs/intro/architecture.mdx	merge-docs	both-sides doc edit, no code impact
 1	UU	docs/intro/index.mdx	merge-docs	both-sides doc edit, no code impact
@@ -36,7 +55,7 @@
 0	DU	docs/zh/README.md	keep-deletion	fork removes all READMEs (9.7)
 1	UU	docs/zh/intro/architecture.mdx	merge-docs	both-sides doc edit, no code impact
 1	UU	docs/zh/intro/index.mdx	merge-docs	both-sides doc edit, no code impact
-1	UU	tests/test_scheduler_web_update.py	seam:8.17	revise with upstream behaviour change
+1	UU	tests/test_scheduler_web_update.py	seam:8.17,3.4,3.5	revise with upstream behaviour change
 
 # ---------------------------------------------------------------------------
 # Deliberate removals (task 9.7, decision D9) — re-decide on every sync

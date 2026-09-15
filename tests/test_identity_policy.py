@@ -36,6 +36,16 @@ class PermissionCatalogTests(unittest.TestCase):
         ):
             self.assertIn(p, PERMISSION_CATALOG)
 
+    def test_knowledge_write_is_not_a_catalog_item(self):
+        from auth.policy import PERMISSION_METADATA
+
+        # Writes are authorized by data-root + Agent ownership, so the id must
+        # not exist as an assignable catalogue entry any more.
+        self.assertNotIn("knowledge.write", PERMISSION_CATALOG)
+        self.assertNotIn("knowledge.write", PERMISSION_METADATA)
+        with self.assertRaises(PermissionError):
+            normalize_permissions(["knowledge.write"])
+
     def test_unknown_and_admin_permissions_rejected(self):
         for bad in ("tenant.admin", "platform.admin", "tenant.info.write", "*", "history.read.*"):
             with self.assertRaises(PermissionError):

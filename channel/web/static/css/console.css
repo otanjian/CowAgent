@@ -256,6 +256,84 @@
 .sidebar-recent.open .sidebar-recent-more:not(.hidden) { display: block; }
 .sidebar-recent-more:hover { color: #a3a3a3; background: rgba(255, 255, 255, .04); }
 .sidebar-recent-more.hidden { display: none !important; }
+.sidebar-recent-archived {
+    display: none;
+    width: calc(100% - 26px);
+    margin: 2px 0 4px 26px;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #737373;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+}
+.sidebar-recent.open .sidebar-recent-archived { display: block; }
+.sidebar-recent-archived:hover { color: #a3a3a3; background: rgba(255, 255, 255, .04); }
+.sidebar-recent-row {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+.sidebar-recent-row .sidebar-recent-item {
+    flex: 1;
+    min-width: 0;
+}
+/* Per-row icon controls. Rename and archive share one rule set so their size,
+   reveal behaviour and hover feedback can never drift apart. */
+.sidebar-recent-archive-btn,
+.sidebar-recent-rename-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #737373;
+    font-size: 11px;
+    cursor: pointer;
+    /* Reserve the width so hovering does not reflow the title, but only reveal
+       the control on hover/focus. Keyboard focus still reaches it. */
+    opacity: 0;
+    transition: opacity .12s ease, background .15s ease, color .15s ease;
+}
+.sidebar-recent-row:hover .sidebar-recent-archive-btn,
+.sidebar-recent-row:focus-within .sidebar-recent-archive-btn,
+.sidebar-recent-row:hover .sidebar-recent-rename-btn,
+.sidebar-recent-row:focus-within .sidebar-recent-rename-btn {
+    opacity: 1;
+}
+.sidebar-recent-archive-btn:hover,
+.sidebar-recent-rename-btn:hover {
+    background: rgba(255, 255, 255, .08);
+    color: #e5e5e5;
+}
+/* Touch has no hover: keep the controls visible so they stay reachable. */
+@media (hover: none) {
+    .sidebar-recent-archive-btn,
+    .sidebar-recent-rename-btn { opacity: 1; }
+}
+/* Inline rename: the open button steps aside so the editor sits in the row. */
+.sidebar-recent-item.hidden { display: none !important; }
+.sidebar-recent-rename-input {
+    flex: 1;
+    min-width: 0;
+    padding: 6px 8px;
+    border: 1px solid #4ABE6E;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, .06);
+    color: #e5e5e5;
+    font-size: 12px;
+    line-height: 1.35;
+    font-family: inherit;
+    outline: none;
+}
+.sidebar-recent-rename-input::placeholder { color: #737373; }
 .sidebar-account-toggle {
     display: flex;
     align-items: center;
@@ -289,6 +367,20 @@
     line-height: 1;
 }
 .sidebar-account-avatar > i { font-size: 15px; }
+/* The account avatar is an <img> (uploaded picture or a bundled default), not a
+   letter. The inner slot is a span in the sidebar, so give it the outer disc's
+   box first; then the image fills whichever sized disc it is dropped into. */
+.sidebar-account-avatar > #sidebar-account-avatar {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+.user-avatar {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
 .sidebar-account-toggle > .sidebar-account-avatar {
     width: 28px;
     height: 28px;
@@ -411,6 +503,125 @@
 .account-menu-version { position: relative; margin-top: 5px; padding-top: 5px; border-top: 1px solid #363b39; }
 .account-menu-version a { min-height: 28px; padding: 4px 30px 4px 10px; color: #a8b0aa; font-size: 11px; line-height: 20px; }
 .account-menu-version > svg { position: absolute; right: 10px; top: calc(50% + 2.5px); transform: translateY(-50%); pointer-events: none; }
+
+/* ---- Personal resources inside the account panel -------------------------
+   The five member entries were moved here (change
+   move-personal-menu-to-account) so the workbench and the console share one
+   host. Group titles are labels, not disclosures: the entries below them are
+   directly actionable. */
+.account-menu-group-title {
+    margin: 2px 4px 4px;
+    padding: 0 6px;
+    color: #8d968f;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    line-height: 1.6;
+}
+.account-menu-resources-status {
+    margin: 0 4px 4px;
+    padding: 8px 10px;
+    color: #bdc5bf;
+    font-size: 12px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+.account-menu-personal { position: relative; }
+/* The single current-page marker for a personal page lives on its account entry
+   (the main navigation keeps none). Colour is not the only cue: the entry also
+   carries aria-current="page". */
+.account-menu-personal[aria-current="page"] {
+    background: rgba(116, 216, 149, .14);
+    color: #fff;
+    font-weight: 600;
+}
+.account-menu-personal[aria-current="page"]::before {
+    content: "";
+    position: absolute;
+    left: 2px;
+    top: 8px;
+    bottom: 8px;
+    width: 3px;
+    border-radius: 2px;
+    background: #74d895;
+}
+/* The account trigger reflects that the current page belongs to the personal
+   area without becoming a second current-page link. */
+.sidebar-account-footer.is-personal .sidebar-account-toggle {
+    box-shadow: inset 0 0 0 1px rgba(116, 216, 149, .35);
+}
+.account-menu-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+.account-menu-sheet-head { display: none; }
+.account-menu-sheet .account-menu-sheet-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0 4px 6px;
+    padding: 2px 4px 8px;
+    border-bottom: 1px solid #363b39;
+}
+.account-menu-sheet-title { margin: 0; color: #e8eee9; font-size: 14px; font-weight: 600; }
+.account-menu-sheet-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #a8b0aa;
+    cursor: pointer;
+}
+.account-menu-sheet-close:hover { background: rgba(255, 255, 255, .07); color: #fff; }
+.account-menu-sheet .hidden { display: none; }
+.account-menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 75;
+    background: rgba(0, 0, 0, .45);
+    touch-action: none;
+}
+.account-menu-backdrop.hidden { display: none; }
+body.account-menu-sheet-open { overflow: hidden; }
+@keyframes accountMenuSheetIn {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+/* Mobile (below the existing sidebar breakpoint, lg: 1024px): the same panel DOM
+   is moved to a fixed bottom sheet outside the transformed sidebar, sized from
+   the available height and internally scrollable so the last entry stays
+   reachable in short viewports, landscape and at large text sizes. */
+@media (max-width: 1023.98px) {
+    .sidebar-account-menu.account-menu-sheet {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 80;
+        width: auto;
+        max-height: min(80vh, 80dvh);
+        padding: 8px 10px calc(10px + env(safe-area-inset-bottom));
+        border-radius: 16px 16px 0 0;
+        transform-origin: bottom center;
+        animation: accountMenuSheetIn .18s ease-out;
+    }
+    .account-menu-sheet .account-menu-action:focus-visible,
+    .account-menu-sheet .account-menu-sheet-close:focus-visible { outline-offset: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .sidebar-account-menu.account-menu-sheet { animation: none; }
+}
 .sidebar-account-toggle:focus-visible,
 .account-menu-action:focus-visible,
 .account-menu-version a:focus-visible { outline: 2px solid #74d895; outline-offset: -3px; }
@@ -434,36 +645,51 @@
     color: #bdc5bf;
 }
 .account-field-status.error { color: #f87171; }
-.account-profile-content { display: flex; flex-direction: column; gap: 18px; }
+/* Groups breathe more than the rows inside them ("loose between, tight
+   within"): the content column owns the group gap, the grid owns the row gap. */
+.account-profile-content { display: flex; flex-direction: column; gap: 24px; }
 .account-profile-section { min-width: 0; }
 .account-profile-subtitle {
-    margin: 0 0 8px;
+    margin: 0 0 10px;
     font-size: 12px;
     font-weight: 600;
     letter-spacing: .02em;
     text-transform: uppercase;
-    color: #969da5;
+    color: #475569;
 }
+/* One grid per group, not per row: rows dissolve into it via `display:
+   contents`, so every label shares a single right edge and every value starts
+   on the same vertical line no matter how wide an individual label is. */
 .account-profile-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
+    --account-profile-label-w: 96px;
+    display: grid;
+    grid-template-columns: var(--account-profile-label-w) minmax(0, 1fr);
+    column-gap: 14px;
+    row-gap: 9px;
+    align-items: center;
     margin: 0;
     font-size: 13px;
     line-height: 1.5;
 }
 /* Each field is a labelled row; the value cell holds either the read-only text
    or (in edit mode) an input. */
-.account-profile-row {
-    display: grid;
-    grid-template-columns: minmax(96px, auto) 1fr;
-    gap: 6px 14px;
-    align-items: center;
-    min-width: 0;
+.account-profile-row { display: contents; }
+.account-profile-row dt { color: #666; text-align: right; white-space: nowrap; }
+.account-profile-row dd { margin: 0; color: #333; overflow-wrap: anywhere; min-width: 0; }
+.account-profile-row dd.muted { color: #999; font-style: italic; }
+/* Identity roles read as tags: a tinted, rounded chip beats plain text. */
+.account-profile-chip {
+    display: inline-block;
+    padding: 1px 10px;
+    border: 1px solid #cdead8;
+    border-radius: 999px;
+    background: #e8f5ec;
+    color: #1f7a45;
+    font-size: 12px;
+    line-height: 1.7;
+    vertical-align: middle;
 }
-.account-profile-row dt { color: #969da5; }
-.account-profile-row dd { margin: 0; color: #e8eee9; overflow-wrap: anywhere; min-width: 0; }
-.account-profile-row dd.muted { color: #bdc5bf; font-style: italic; }
+.account-profile-chip + .account-profile-chip { margin-left: 6px; }
 /* The editable input cell is hidden unless the row is in edit mode. */
 .account-profile-edit { display: none; }
 .account-profile-row.editing .account-profile-edit { display: block; }
@@ -474,29 +700,42 @@
 .account-profile-hero {
     display: flex;
     align-items: center;
-    gap: 14px;
-    padding: 18px 24px 4px;
+    gap: 16px;
+    padding: 20px 24px 4px;
+}
+/* The edit indicator and the file input are siblings of the avatar button, not
+   part of its innerHTML: the disc is fully re-rendered on every profile load,
+   and anything nested inside it would be deleted by that repaint. */
+.account-profile-avatar-wrap {
+    position: relative;
+    flex: none;
+    line-height: 0;
+    /* A double-click gesture must not select surrounding text. */
+    user-select: none;
+    -webkit-user-select: none;
 }
 .account-profile-avatar {
     flex: none;
-    width: 56px;
-    height: 56px;
+    width: 64px;
+    height: 64px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, .08);
+    background: #eef1f4;
     display: flex;
     align-items: center;
     justify-content: center;
     overflow: hidden;
-    color: #e8eee9;
+    color: #334155;
 }
 .account-profile-avatar img {
     width: 100%;
     height: 100%;
     object-fit: cover;
     display: block;
+    /* Never let the disc be dragged out of the dialog mid double-click. */
+    -webkit-user-drag: none;
 }
 .account-profile-avatar-initial {
-    font-size: 22px;
+    font-size: 24px;
     font-weight: 600;
 }
 .account-profile-avatar-btn {
@@ -505,32 +744,77 @@
     padding: 0;
 }
 .account-profile-avatar-btn:hover { box-shadow: 0 0 0 3px rgba(116, 216, 149, .3); }
+.account-profile-avatar-btn:focus-visible { outline: 2px solid #74d895; outline-offset: 2px; }
 .account-profile-avatar.is-uploading { opacity: .6; pointer-events: none; }
+/* The disc only reacts to a double-click, so the badge has to carry the
+   affordance: it brightens while the pointer or keyboard focus is on the disc. */
+.account-profile-avatar-wrap:hover .account-profile-avatar-edit,
+.account-profile-avatar-wrap:focus-within .account-profile-avatar-edit { background: #1f7a45; }
+.account-profile-avatar-edit {
+    position: absolute;
+    right: -2px;
+    bottom: -2px;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid #fff;
+    border-radius: 50%;
+    background: #26884b;
+    color: #fff;
+    font-size: 10px;
+    line-height: 1;
+    pointer-events: none;
+}
 .account-profile-hero-copy { min-width: 0; flex: 1; }
 .account-profile-hero-name {
     margin: 0;
-    font-size: 16px;
-    font-weight: 600;
-    color: #e8eee9;
+    font-size: 20px;
+    font-weight: 700;
+    color: #1e293b;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 .account-profile-hero-username {
-    margin: 2px 0 0;
+    margin: 3px 0 0;
     font-size: 13px;
-    color: #969da5;
+    color: #666;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.account-profile-avatar-tip {
-    margin: 3px 0 0;
-    font-size: 11px;
-    color: #7d8a84;
-    opacity: .85;
-}
 .account-profile-edit-btn { flex: none; }
+
+/* The title bar is bolder and separated from the content by a hairline. */
+#account-profile-drawer .agent-modal-head {
+    padding-bottom: 16px;
+    border-bottom: 1px solid #eef1f4;
+}
+#account-profile-drawer .agent-modal-title { font-weight: 700; }
+#account-profile-drawer .agent-modal-body { padding-top: 10px; }
+
+/* Dark theme keeps the previous palette; the light baseline above carries the
+   readable #666/#333 that the drawer previously lacked. */
+.dark .account-profile-subtitle { color: #969da5; }
+.dark .account-profile-row dt { color: #969da5; }
+.dark .account-profile-row dd { color: #e8eee9; }
+.dark .account-profile-row dd.muted { color: #bdc5bf; }
+.dark .account-profile-chip {
+    border-color: rgba(116, 216, 149, .28);
+    background: rgba(116, 216, 149, .14);
+    color: #8ae1a6;
+}
+.dark .account-profile-avatar { background: rgba(255, 255, 255, .08); color: #e8eee9; }
+.dark .account-profile-avatar-edit { border-color: #1A1A1A; }
+.dark .account-profile-hero-name { color: #e8eee9; }
+.dark .account-profile-hero-username { color: #969da5; }
+.dark #account-profile-drawer .agent-modal-head { border-bottom-color: rgba(255, 255, 255, .08); }
+
+@media (max-width: 480px) {
+    .account-profile-grid { --account-profile-label-w: 72px; }
+}
 
 /* Change-password modal fields. */
 .account-password-note,
@@ -1645,17 +1929,107 @@
 }
 .confirm-btn-ok:hover { background: #dc2626; }
 
+/* Archived sessions dialog (reuses the confirm overlay shell) */
+.archived-sessions-modal {
+    width: 520px;
+    max-width: 92vw;
+}
+.archived-sessions-body {
+    max-height: min(50vh, 420px);
+    overflow-y: auto;
+    margin: 6px 0 18px;
+}
+.archived-sessions-status {
+    padding: 12px 2px;
+    color: #6b7280;
+    font-size: 13px;
+}
+.dark .archived-sessions-status { color: #9ca3af; }
+.archived-session-retry {
+    margin-top: 8px;
+    padding: 6px 14px;
+    border: 0;
+    border-radius: 8px;
+    background: #f3f4f6;
+    color: #374151;
+    font-size: 13px;
+    cursor: pointer;
+}
+.dark .archived-session-retry {
+    background: rgba(255, 255, 255, .08);
+    color: #d1d5db;
+}
+.archived-session-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 6px;
+    border-radius: 8px;
+}
+.archived-session-row:hover { background: rgba(0, 0, 0, .03); }
+.dark .archived-session-row:hover { background: rgba(255, 255, 255, .05); }
+.archived-session-copy {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+}
+.archived-session-title {
+    font-size: 13px;
+    color: #1f2937;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.dark .archived-session-title { color: #e5e7eb; }
+.archived-session-meta {
+    font-size: 11px;
+    color: #9ca3af;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.archived-session-time {
+    font-size: 11px;
+    color: #9ca3af;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.dark .archived-session-time { color: #6b7280; }
+.archived-session-restore {
+    flex-shrink: 0;
+    padding: 6px 14px;
+    border: 0;
+    border-radius: 8px;
+    background: #f3f4f6;
+    color: #374151;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background .15s ease;
+}
+.archived-session-restore:hover { background: #e5e7eb; }
+.dark .archived-session-restore {
+    background: rgba(255, 255, 255, .08);
+    color: #d1d5db;
+}
+.dark .archived-session-restore:hover { background: rgba(255, 255, 255, .14); }
+
 /* Menu Groups */
 .menu-group-items { max-height: 0; overflow: hidden; transition: max-height 0.25s ease-out; visibility: hidden; }
 .menu-group.open .menu-group-items { max-height: 2000px; transition: max-height 0.35s ease-in; visibility: visible; }
 .menu-group .chevron { transition: transform 0.25s ease; }
 .menu-group.open .chevron { transform: rotate(90deg); }
 
-/* Admin sidebar: category headers with right-side chevron (reference layout). */
-.admin-nav-shell .admin-menu-group {
+/* Admin sidebar: category headers with right-side chevron (reference layout).
+   The member-side personal group (``[data-nav-shell="workbench"]``) reuses the
+   same disclosure treatment, so a member's "Mine" group reads like every other
+   category instead of looking like a bare list. */
+:is(.admin-nav-shell, [data-nav-shell="workbench"]) .admin-menu-group {
     margin-top: 10px;
 }
-.admin-nav-shell .admin-menu-group-toggle {
+:is(.admin-nav-shell, [data-nav-shell="workbench"]) .admin-menu-group-toggle {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1675,21 +2049,21 @@
     cursor: pointer;
     transition: background .15s ease, color .15s ease;
 }
-.admin-nav-shell .admin-menu-group-toggle:hover {
+:is(.admin-nav-shell, [data-nav-shell="workbench"]) .admin-menu-group-toggle:hover {
     background: rgba(255, 255, 255, .05);
     color: #d4d4d4;
 }
-.admin-nav-shell .admin-menu-group-toggle .chevron {
+:is(.admin-nav-shell, [data-nav-shell="workbench"]) .admin-menu-group-toggle .chevron {
     flex-shrink: 0;
     font-size: 10px;
     color: inherit;
     opacity: .75;
     transform: rotate(-90deg);
 }
-.admin-nav-shell .admin-menu-group.open .admin-menu-group-toggle .chevron {
+:is(.admin-nav-shell, [data-nav-shell="workbench"]) .admin-menu-group.open .admin-menu-group-toggle .chevron {
     transform: rotate(0deg);
 }
-.admin-nav-shell .admin-menu-group .menu-group-items {
+:is(.admin-nav-shell, [data-nav-shell="workbench"]) .admin-menu-group .menu-group-items {
     padding-left: 4px;
 }
 

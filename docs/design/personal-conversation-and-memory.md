@@ -76,6 +76,14 @@ memory / task records 划给 **Per end user（`user_root`）**——"Wang 喜欢
   `cow management share-default-agents [--dry-run]`。私有归属是**显式**动作，
   永不推定。
 
+> **2026-09-14 补记（`fix-private-agent-owner-reachability`）**：上条约束的是**租户**
+> 默认智能体，仍然成立——租户默认不得带私有归属。当时遗漏的是另一侧：**成员本人的**
+> 私属个人助理。它由成员创建流程自动生成并登记为该成员的**个人默认**，因带私有归属
+> 而同样被 `_tenant_shared_default_agent` 排除，又因成员不持有 `agent:<id>` 授权被投影
+> 过滤，导致该成员两端皆空。现由 `fix-private-agent-owner-reachability` 补齐：**所有权
+> 本身**成为 `read` / `use` 的授权来源，`edit` / `enable` 仍须逐项授权。本节所述
+> 解析顺序（个人默认 → 配置默认 → 租户共享最小 id → 其余）与只读性质均未改动。
+
 ## 4. 兼容与迁移
 
 - **无 schema 变更**：`chunks.user_id`/`scope` 早已存在，本 change 只是开始实际写入。

@@ -53,10 +53,10 @@ class MutationTests(unittest.TestCase):
         #    would appear in another tenant's console.
         (
             "auth/service.py",
-            [('            "SELECT * FROM tenant_channel_instances WHERE tenant_id=?"\n'
-              '            " ORDER BY display_name", (tenant_id,))',
-              '            "SELECT * FROM tenant_channel_instances"\n'
-              '            " ORDER BY display_name", ())')],
+            [('            " WHERE tenant_id=? AND scope=\'tenant\' ORDER BY display_name",\n'
+              '            (tenant_id,))',
+              '            " WHERE scope=\'tenant\' ORDER BY display_name",\n'
+              '            ())')],
             ["tests/test_tenant_channel_instances_service.py::"
              "ListInstanceTests::test_list_never_returns_another_tenants_instances",
              "tests/test_tenant_channel_isolation_acceptance.py::"
@@ -86,6 +86,19 @@ class MutationTests(unittest.TestCase):
              "test_wechatcom_app_is_not_declared_multi_instance_ready",
              "tests/test_tenant_channel_http.py::GetTenantChannelTypesTests::"
              "test_the_form_contract_offers_feishu_and_withholds_wechatcom_app"],
+        ),
+        # 4. Drop the scope predicate from the list query: a member's personal
+        #    instance would surface in the tenant's administration list, which is
+        #    not the tenant's to administer.
+        (
+            "auth/service.py",
+            [('            " WHERE tenant_id=? AND scope=\'tenant\' ORDER BY display_name",\n'
+              '            (tenant_id,))',
+              '            " WHERE tenant_id=? ORDER BY display_name",\n'
+              '            (tenant_id,))')],
+            ["tests/test_tenant_channel_instances_service.py::"
+             "InstanceScopeTests::"
+             "test_the_public_list_does_not_expose_personal_instances"],
         ),
     ]
 

@@ -542,6 +542,107 @@ def required_credential_keys(channel_type: str) -> tuple:
     return REQUIRED_CREDENTIAL_KEYS.get(_normalize_type(channel_type), ())
 
 
+def credential_contract(channel_type: str) -> Dict[str, Any]:
+    """The credential declaration for one channel type (task 7.3).
+
+    One shape for the three things a scan-driven create has to know before it
+    stores a vendor answer: which fields the type accepts, which of them are
+    secrets, and which are mandatory. Assembled here rather than in the caller
+    so the scan pipeline cannot keep a second copy that drifts from the form and
+    from ``_validated_channel_bundle``.
+
+    ``secret_keys`` is the same hint test the console's field contract uses
+    (``_SECRET_KEY_HINTS``); it marks a field as write-only, it is not a
+    statement about a particular value.
+    """
+    ctype = _normalize_type(channel_type)
+    keys = tuple(CREDENTIAL_KEYS.get(ctype) or ())
+    return {
+        "channel_type": ctype,
+        "keys": keys,
+        "secret_keys": tuple(key for key in keys
+                             if any(hint in key for hint in _SECRET_KEY_HINTS)),
+        "required": tuple(REQUIRED_CREDENTIAL_KEYS.get(ctype) or ()),
+    }
+
+
+def instance_connection_state(
+    instance_id: str, *, service: Any = None
+) -> Dict[str, Any]:
+    """Saved-vs-connected state for one instance, as two separate facts (task 7.3).
+
+    ``saved`` answers "is there a committed row" and comes from the identity
+    store; ``connected`` answers "is a vendor connection up right now" and comes
+    from the per-instance runtime state. They are reported apart on purpose: a
+    row committed a second ago is *saved*, and calling it *connected* would be
+    exactly the confusion D9 forbids. A row that exists but has no recorded
+    runtime outcome yet reports ``pending`` — "not connected yet, nothing
+    failed" — which is what a console-only process legitimately returns.
+
+    Never raises: an unreadable store or an unevaluable switch reports
+    ``state="unknown"`` with ``saved=False``, so a caller cannot mistake a
+    lookup failure for "nothing to run".
+    """
+    out = {"instance_id": str(instance_id or ""), "saved": False,
+           "connected": False, "state": "missing", "reason": ""}
+    if not instance_id:
+        return out
+    if service is None:
+        try:
+            from auth.service import get_identity_service
+
+            service = get_identity_service()
+        except Exception as error:  # noqa: BLE001 - reported, never raised
+            logger.warning(
+                f"[ChannelInstances] cannot resolve the identity service for"
+                f" connection state: {error}")
+            out["state"] = "unknown"
+            out["reason"] = "identity store unavailable"
+            return out
+    try:
+        row = service.get_tenant_channel_instance_row(instance_id)
+    except Exception as error:  # noqa: BLE001 - reported, never raised
+        logger.warning(
+            f"[ChannelInstances] cannot read instance '{instance_id}': {error}")
+        out["state"] = "unknown"
+        out["reason"] = "instance lookup failed"
+        return out
+    if row is None:
+        return out
+
+    out["saved"] = True
+    if not row.get("active"):
+        out["state"] = "stopped"
+        return out
+    if row.get("governance_disabled_at") is not None:
+        out["state"] = "stopped"
+        out["reason"] = "governance stop"
+        return out
+
+    ctype = _normalize_type(str(row.get("channel_type") or ""))
+    personal = str(row.get("scope") or "tenant") == "user"
+    if personal and not personal_runtime_enabled(ctype):
+        # The configuration is saved and stays manageable; the connection is
+        # closed until this type has a recorded acceptance. Saying "connected"
+        # here would claim acceptance the deployment has not got (task 7.4).
+        out["state"] = "not_connected"
+        out["reason"] = "personal runtime is not enabled for this channel type"
+        return out
+
+    runtime = instance_runtime_state(instance_id)
+    if runtime.get("applied"):
+        out["connected"] = True
+        out["state"] = "connected"
+        return out
+    if runtime.get("pending"):
+        out["state"] = "pending"
+        out["reason"] = "the connection has not been applied in this process yet"
+        return out
+    out["state"] = "failed"
+    out["reason"] = str(runtime.get("error") or "the connection did not start")
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Runtime state for tenant-owned instances.
 #
@@ -613,6 +714,28 @@ def _stop_instance_runtime(instance_id: str) -> None:
         logger.warning(f"[ChannelInstances] failed to stop '{instance_id}': {e}")
 
 
+def _owner_is_active_member(service, row) -> bool:
+    """Whether a member-owned instance's owner may still run it.
+
+    Shared and platform instances have no owner to check, so they answer True.
+    A store that cannot answer answers False: an unevaluable membership is not a
+    licence to keep a member's connection alive.
+    """
+    if str(row.get("scope") or "tenant") != "user":
+        return True
+    owner = str(row.get("owner_user_id") or "")
+    tenant_id = str(row.get("tenant_id") or "")
+    if not owner or not tenant_id:
+        return False
+    checker = getattr(service, "member_is_active", None)
+    if not callable(checker):
+        return False
+    try:
+        return bool(checker(owner, tenant_id))
+    except Exception:  # noqa: BLE001 - an unevaluable answer is not consent
+        return False
+
+
 def apply_tenant_instance_runtime(instance_id: str) -> Dict[str, Any]:
     """Make one tenant instance's running state match its stored state, now.
 
@@ -650,6 +773,29 @@ def apply_tenant_instance_runtime(instance_id: str) -> Dict[str, Any]:
             _stop_instance_runtime(instance_id)
             return _record_runtime_state(instance_id, applied=True)
 
+        if (str(row.get("scope") or "tenant") == "user"
+                and not _owner_is_active_member(service, row)):
+            # A member-owned instance only runs while its owner is an active
+            # member of the tenant (task 7.3): a deactivated member must not keep
+            # a live vendor connection serving a persona they may no longer use.
+            _stop_instance_runtime(instance_id)
+            return _record_runtime_state(
+                instance_id, applied=False,
+                error="the owning member is not an active member of this tenant")
+
+        if (str(row.get("scope") or "tenant") == "user"
+                and not personal_runtime_enabled(str(row.get("channel_type") or ""))):
+            # A personal instance is *stored* before it is *connected* (task 7.5):
+            # the console collects the configuration while no real end-to-end
+            # acceptance has been recorded for this type, so the switch keeps the
+            # vendor connection closed. Reported as pending — not applied — so the
+            # member is told "saved, not connected" instead of being lied to in
+            # either direction, and a previously running connection is stopped.
+            _stop_instance_runtime(instance_id)
+            return _record_runtime_state(
+                instance_id, applied=False, pending=True,
+                error="personal runtime is not enabled for this channel type")
+
         try:
             credentials = service.channel_instance_credentials(
                 row["tenant_id"], instance_id)
@@ -676,7 +822,6 @@ def apply_tenant_instance_runtime(instance_id: str) -> Dict[str, Any]:
             # A console-only process (or a test harness) with no channels: the
             # credentials are fine, the effect is simply not observable here.
             return _record_runtime_state(instance_id, applied=False, pending=True)
-
         # ``restart`` stops the previous run itself, but the guarantee "the old
         # credential is never left serving" must not depend on another object's
         # internal ordering: stop it here first, so a failure to start still
@@ -692,6 +837,27 @@ def apply_tenant_instance_runtime(instance_id: str) -> Dict[str, Any]:
                 instance_id, applied=False, error=str(e) or e.__class__.__name__)
         logger.info(f"[ChannelInstances] instance '{instance_id}' applied immediately")
         return _record_runtime_state(instance_id, applied=True)
+
+
+def reconcile_instance_runtime(instance_id: str) -> Dict[str, Any]:
+    """Make the running state match the stored state, and never raise.
+
+    The identity domain owns the row; the channel runtime owns the connection.
+    A write that has already committed must not be turned into a failed save
+    because the connection could not follow it, so this wrapper records the
+    outcome instead of propagating it. Every personal-channel mutation calls it,
+    which is what makes "disable / revoke / governance / unlink takes effect for
+    the next message" a property of the write itself rather than of whichever
+    console handler happened to remember to reconcile.
+    """
+    try:
+        return apply_tenant_instance_runtime(instance_id)
+    except Exception as e:  # noqa: BLE001 - the write already committed
+        logger.error(
+            f"[ChannelInstances] reconcile failed for '{instance_id}': {e}")
+        return _record_runtime_state(
+            instance_id, applied=False, pending=True,
+            error=f"runtime reconcile failed: {e}")
 
 
 def load_tenant_channel_instances() -> List[ChannelInstance]:
@@ -727,6 +893,29 @@ def load_tenant_channel_instances() -> List[ChannelInstance]:
     for row in rows:
         instance_id = str(row.get("id") or "")
         tenant_id = str(row.get("tenant_id") or "")
+        if str(row.get("scope") or "tenant") == "user":
+            # A member-owned instance is *stored* before it is *connected* (task
+            # 7.5). The startup synthesis is a connection path just like the hot
+            # restart is, so the same two gates hold here (task 9.1) — otherwise
+            # a deployment that never recorded a personal acceptance, or a switch
+            # withdrawn for a rollback, would still bring member connections up
+            # on boot. Both refusals are logged with their reason and skip only
+            # that instance.
+            ctype = _normalize_type(str(row.get("channel_type") or ""))
+            if not personal_runtime_enabled(ctype):
+                logger.info(
+                    f"[ChannelInstances] personal instance '{instance_id}' "
+                    f"({ctype}) not started: personal runtime is not enabled "
+                    f"for this channel type"
+                )
+                continue
+            if not _owner_is_active_member(service, row):
+                logger.info(
+                    f"[ChannelInstances] personal instance '{instance_id}' "
+                    f"not started: its owner is not an active member of tenant "
+                    f"'{tenant_id}'"
+                )
+                continue
         try:
             credentials = service.channel_instance_credentials(tenant_id, instance_id)
         except Exception as e:
@@ -809,6 +998,85 @@ CREDENTIAL_FIELD_LABELS: Dict[str, Dict[str, str]] = {
 #: Credential keys whose value must never be echoed back to a client.
 _SECRET_KEY_HINTS = ("secret", "token", "aes", "key", "password")
 
+#: The credential key(s) that name the **external application** an instance
+#: connects as (change enable-member-personal-console, task 6.3). Two instances
+#: holding the same application would fight over one vendor connection, so the
+#: service refuses the second active one — including when one is the tenant's
+#: shared instance and the other is a member's personal one, which is exactly
+#: the conflict a member could otherwise create by pasting the tenant's App ID.
+#:
+#: A type missing here has no declared application identity, so no cross-instance
+#: conflict can be detected for it; that is a deliberate "unknown" rather than a
+#: guess, and the readiness list keeps such a type out of personal onboarding.
+APP_IDENTITY_KEYS: Dict[str, tuple] = {
+    const.FEISHU: ("feishu_app_id",),
+    const.DINGTALK: ("dingtalk_client_id",),
+    const.WECOM_BOT: ("wecom_bot_id",),
+    # WeChat's QR login hands back one bot token per scanned bot (task 7.3):
+    # the token *is* the application, exactly like Telegram/Slack/Discord below.
+    # The earlier revision used the callback base URL, which is the same
+    # well-known vendor host for every bot — so a member's personal create was
+    # refused as "this application is already connected" whenever *any* weixin
+    # instance was active, while the value that actually names one bot (the
+    # token) was never compared.
+    const.WEIXIN: ("weixin_token",),
+    const.QQ: ("qq_app_id",),
+    # For a bot-token provider the token *is* the application: it names the bot
+    # and its installation, and two instances cannot share one.
+    const.TELEGRAM: ("telegram_token",),
+    const.SLACK: ("slack_bot_token",),
+    const.DISCORD: ("discord_token",),
+}
+
+
+def app_identity(channel_type: str, credentials: Optional[Dict[str, Any]]) -> str:
+    """A comparable digest naming the external application behind a bundle.
+
+    Returns ``""`` when the type declares no application keys or none is
+    configured — "unknown", never "same as everyone else" — so an undeclared
+    type is never blocked by a comparison it cannot support.
+    """
+    keys = APP_IDENTITY_KEYS.get(_normalize_type(channel_type)) or ()
+    parts = []
+    for key in keys:
+        value = str((credentials or {}).get(key) or "").strip()
+        if value:
+            parts.append(f"{key}={value}")
+    if not parts:
+        return ""
+    from auth.crypto import fingerprint
+
+    try:
+        return fingerprint(_normalize_type(channel_type) + "\x1f" + "\x1f".join(parts))
+    except Exception as e:  # noqa: BLE001 - an unusable master key is reported elsewhere
+        logger.warning(f"[ChannelInstances] cannot fingerprint application: {e}")
+        return ""
+
+
+def scan_default_display_name(channel_type: str, taken: Any = ()) -> str:
+    """The name an instance gets when the operator types none (task 7.3).
+
+    A scan has no form to fill in: the operator points their phone at a QR and
+    the instance appears. The name therefore has to come from the type itself,
+    which is what the console's own form pre-fills — the type's label — with the
+    first free ordinal appended when that name is taken, because the identity
+    store refuses a second *active* instance of one type with one name.
+
+    ``taken`` is the set of names already in use for the same type, scope and
+    owner, passed in by the caller (it owns the store lookup). ``2`` is the first
+    ordinal on purpose: "微信" is the first instance and "微信 2" the second, so a
+    console list reads like a user wrote it.
+    """
+    ctype = _normalize_type((channel_type or "").strip())
+    label = (TENANT_CHANNEL_LABELS.get(ctype) or {}).get("zh") or ctype or "channel"
+    used = {str(name or "").strip() for name in (taken or ())}
+    if label not in used:
+        return label
+    ordinal = 2
+    while f"{label} {ordinal}" in used:
+        ordinal += 1
+    return f"{label} {ordinal}"
+
 
 def tenant_channel_types() -> List[Dict[str, Any]]:
     """Channel types a tenant may own, with the fields its form must collect.
@@ -852,3 +1120,184 @@ def tenant_channel_types() -> List[Dict[str, Any]]:
             ],
         })
     return out
+
+
+#: Channel types whose **personal** (member-owned) onboarding boundary is
+#: declared ready (change enable-member-personal-console, task 6.3).
+#:
+#: A type is eligible only when it truly runs several instances *and* its
+#: inbound path can prove the sender per instance — the two are the same
+#: requirement, which is why this is seeded from :data:`MULTI_INSTANCE_READY`
+#: rather than guessed. Being listed here makes a type *offered*; it does not
+#: make it run. Each type still has to record a real inbound acceptance (task
+#: 7.5) before the personal-runtime switch is opened for it, and an operator may
+#: narrow this set per deployment with ``personal_channel_ready_types``.
+PERSONAL_READY_CHANNEL_TYPES = frozenset(MULTI_INSTANCE_READY)
+
+#: Actionable reason codes for a type that is not open for personal access.
+#: A bare "bad request" would leave the member guessing whether they mistyped
+#: the type or the deployment has not opened it.
+PERSONAL_NOT_READY_REASONS = frozenset({
+    # The provider cannot dispatch per instance yet: one connection only.
+    "not_multi_instance",
+    # Multi-instance, but its per-instance sender boundary is not declared.
+    "not_declared",
+    # Declared as not open for this deployment.
+    "not_allowed",
+    # Known type, but its credential contract is incomplete.
+    "no_credential_contract",
+})
+
+
+def _configured_personal_types() -> Optional[set]:
+    """Operator narrowing of :data:`PERSONAL_READY_CHANNEL_TYPES`, or None.
+
+    Only ever narrows: a type absent from the base set cannot be added back by
+    configuration, so a config mistake cannot open an unverified channel.
+    """
+    try:
+        from config import conf
+        raw = conf().get("personal_channel_ready_types")
+    except Exception:
+        return None
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        raw = [part.strip() for part in raw.split(",") if part.strip()]
+    if not isinstance(raw, (list, tuple, set, frozenset)):
+        return None
+    return {_normalize_type(str(item or "").strip()) for item in raw if str(item or "").strip()}
+
+
+def personal_channel_ready(channel_type: str):
+    """``(ready, reason)`` for personal onboarding of *channel_type*.
+
+    ``ready`` is about the **declaration**, not the runtime: a ready type may be
+    configured even while the personal-runtime switch keeps it from connecting,
+    which is what lets the console collect a configuration without pretending
+    the channel is live.
+    """
+    ctype = _normalize_type((channel_type or "").strip())
+    if not ctype:
+        return False, "no_credential_contract"
+    if not CREDENTIAL_KEYS.get(ctype):
+        # Unknown type, or one with no declared credential contract.
+        return False, ("not_multi_instance" if ctype not in MULTI_INSTANCE_READY
+                       else "no_credential_contract")
+    if ctype not in MULTI_INSTANCE_READY:
+        return False, "not_multi_instance"
+    if ctype not in PERSONAL_READY_CHANNEL_TYPES:
+        return False, "not_declared"
+    narrowed = _configured_personal_types()
+    if narrowed is not None and ctype not in narrowed:
+        return False, "not_allowed"
+    return True, ""
+
+
+def personal_channel_types() -> List[Dict[str, Any]]:
+    """The personal-onboarding type list, readiness included.
+
+    Same field contract as :func:`tenant_channel_types` (one declaration, no
+    second copy in the console), plus the readiness verdict so the member sees
+    either the form or the reason the type is not open yet.
+    """
+    out: List[Dict[str, Any]] = []
+    for entry in tenant_channel_types():
+        ready, reason = personal_channel_ready(entry["channel_type"])
+        item = dict(entry)
+        item["ready"] = ready
+        item["reason"] = reason
+        out.append(item)
+    return out
+
+
+#: Channel types with a **recorded real end-to-end acceptance** for personal
+#: execution (change enable-member-personal-console, task 7.5).
+#:
+#: Readiness (`personal_channel_ready`) answers "may this type be *configured*".
+#: This answers "may it *connect*", and the two are deliberately separate: the
+#: console can collect and validate a configuration while no vendor traffic has
+#: ever been proven to reach the right member. Opening a type means a real
+#: provider round trip was observed (task 7.5 raises the record), so this set is
+#: empty until that evidence exists — a declaration mistake must not be able to
+#: start routing a member's private conversations on an unverified boundary.
+PERSONAL_RUNTIME_ACCEPTED_TYPES: frozenset = frozenset()
+
+#: Channel types that may carry a member's own private-chat route on a **shared**
+#: instance (task 7.2). Same reasoning as above: empty until a real acceptance
+#: exists, and further narrowed per deployment, never widened, by
+#: ``public_personal_ingress_types``.
+PUBLIC_PERSONAL_INGRESS_TYPES: frozenset = frozenset()
+
+
+def _configured_subset(base: frozenset, key: str) -> set:
+    """Deployment narrowing of *base*, or ``base`` itself when unset.
+
+    Only ever narrows: a value naming a type outside *base* cannot add it back,
+    so a config typo can never open an unverified boundary.
+    """
+    try:
+        from config import conf
+        raw = conf().get(key)
+    except Exception:
+        return set(base)
+    if raw is None:
+        return set(base)
+    if isinstance(raw, str):
+        raw = [part.strip() for part in raw.split(",") if part.strip()]
+    if not isinstance(raw, (list, tuple, set, frozenset)):
+        return set(base)
+    wanted = {_normalize_type(str(item or "").strip()) for item in raw}
+    return {ctype for ctype in base if ctype in wanted}
+
+
+def _personal_runtime_capability_enabled() -> bool:
+    """The deployment-wide master switch for personal connections (task 9.1).
+
+    Read through policy so the console projection, the connection gate and the
+    inbound verifier can never disagree. An unevaluable switch is a *closed*
+    switch: nothing about this boundary may fail open.
+    """
+    try:
+        from auth.policy import personal_capability_enabled
+        return personal_capability_enabled("personal_channel_runtime")
+    except Exception:  # noqa: BLE001 - fail closed
+        return False
+
+
+def personal_runtime_enabled(channel_type: str) -> bool:
+    """Whether a personal instance of this type may hold a live connection.
+
+    False keeps the vendor connection closed while the configuration stays
+    stored and inspectable, which is the honest posture for a type whose real
+    inbound acceptance has not been recorded yet.
+
+    Two independent conditions must both hold: the deployment-wide master switch
+    (``personal_channel_runtime``) and a recorded per-type acceptance. The master
+    is checked first so a rollback can stop every personal connection at once
+    without editing the per-type record.
+    """
+    ctype = _normalize_type((channel_type or "").strip())
+    if not ctype:
+        return False
+    if not _personal_runtime_capability_enabled():
+        return False
+    return ctype in _configured_subset(
+        PERSONAL_RUNTIME_ACCEPTED_TYPES, "personal_channel_runtime_types")
+
+
+def public_personal_ingress_ready(channel_type: str) -> bool:
+    """Whether a shared instance of this type may carry personal routes."""
+    ctype = _normalize_type((channel_type or "").strip())
+    if not ctype:
+        return False
+    if not personal_channel_ready(ctype)[0]:
+        # A type that cannot prove senders per instance cannot tell one member's
+        # private chat from another's, so it cannot host personal routes either.
+        return False
+    if not _personal_runtime_capability_enabled():
+        # Shared-instance personal routes are still a live personal connection:
+        # the same deployment-wide master governs them (task 9.1).
+        return False
+    return ctype in _configured_subset(
+        PUBLIC_PERSONAL_INGRESS_TYPES, "public_personal_ingress_types")

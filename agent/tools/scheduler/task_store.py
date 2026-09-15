@@ -21,6 +21,96 @@ def _lock_for_path(store_path: str):
         return _store_locks.setdefault(normalized_path, threading.RLock())
 
 
+class TaskRevisionConflict(Exception):
+    """A write was refused because the stored revision moved under it.
+
+    Raised when a caller supplies ``expected_revision`` and the task has been
+    written since. It exists so two editors — the Web console and an Agent tool
+    call in the same conversation, say — cannot silently overwrite each other:
+    the loser is told to reload rather than having its change disappear.
+    """
+
+
+class MultiWriterDeploymentError(RuntimeError):
+    """A second process is writing this task store.
+
+    ``TaskStore`` coordinates writers with an in-process lock, so two processes
+    sharing a store would interleave read-modify-write cycles and lose tasks
+    (``load`` in process A, ``load`` in process B, ``save`` A, ``save`` B — A's
+    change is gone). The store therefore takes a pid lease next to the file and
+    refuses when another *live* process holds it: a refused write is a loud
+    deployment error, a silently merged write is data loss.
+    """
+
+
+class TaskWriteLease:
+    """A pid lease on one task store, so multi-writer deployments fail loudly.
+
+    The lease is advisory and cheap: the file records the writing pid, and a
+    lease whose pid is gone is taken over (a crashed process must not lock the
+    scheduler out for ever). Same-pid holders — several ``TaskStore`` instances
+    inside one process, which is what tests and the Web layer both do — are
+    always allowed, because the shared in-process lock already covers them.
+    """
+
+    def __init__(self, store_path: str):
+        self.path = store_path + ".writer"
+        self.pid = os.getpid()
+        self._held = False
+
+    def _read_pid(self):
+        try:
+            with open(self.path, "r", encoding="utf-8") as handle:
+                return int((handle.read() or "0").strip() or 0)
+        except (OSError, ValueError):
+            return 0
+
+    @staticmethod
+    def _pid_alive(pid: int) -> bool:
+        if pid <= 0:
+            return False
+        if pid == os.getpid():
+            return True
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            # Another user's process holds it; still alive, still a conflict.
+            return True
+        except OSError:
+            return False
+        return True
+
+    def acquire(self) -> None:
+        if self._held:
+            return
+        holder = self._read_pid()
+        if holder and holder != self.pid and self._pid_alive(holder):
+            raise MultiWriterDeploymentError(
+                "another process (pid %s) is writing %s; multi-writer "
+                "deployments are not supported" % (holder, self.path))
+        try:
+            with open(self.path, "w", encoding="utf-8") as handle:
+                handle.write(str(self.pid))
+        except OSError:
+            # No lease file: fall back to the in-process lock only. Refusing
+            # every write on a read-only directory would be worse than the risk
+            # this advisory lease removes.
+            return
+        self._held = True
+
+    def release(self) -> None:
+        if not self._held:
+            return
+        self._held = False
+        try:
+            if self._read_pid() == self.pid:
+                os.unlink(self.path)
+        except OSError:
+            pass
+
+
 class TaskStore:
     """
     Manages persistent storage of scheduled tasks
@@ -40,6 +130,7 @@ class TaskStore:
         
         self.store_path = store_path
         self.lock = _lock_for_path(store_path)
+        self.lease = TaskWriteLease(store_path)
         self._ensure_store_dir()
     
     def _ensure_store_dir(self):
@@ -109,6 +200,7 @@ class TaskStore:
             True if successful
         """
         with self.lock:
+            self.lease.acquire()
             tasks = self.load_tasks()
             task_id = task.get("id")
 
@@ -122,25 +214,51 @@ class TaskStore:
             self.save_tasks(tasks)
         return True
     
-    def update_task(self, task_id: str, updates: dict) -> bool:
+    def update_task(self, task_id: str, updates: dict,
+                    expected_revision: int = None) -> bool:
         """
         Update an existing task
-        
+
         Args:
             task_id: Task ID
             updates: Dictionary of fields to update
-            
+            expected_revision: When given, the write is refused with
+                ``TaskRevisionConflict`` unless the stored task's revision equals
+                it. The revision is incremented on every successful write, so a
+                caller that read a task and wants to change it can detect that
+                someone else wrote in between instead of overwriting them.
+
         Returns:
             True if successful
+
+        Raises:
+            ValueError: no such task.
+            TaskRevisionConflict: the stored revision moved.
+            MultiWriterDeploymentError: another process holds the store.
         """
         with self.lock:
+            self.lease.acquire()
             tasks = self.load_tasks()
 
             if task_id not in tasks:
                 raise ValueError(f"Task '{task_id}' not found")
 
-            tasks[task_id].update(updates)
-            tasks[task_id]["updated_at"] = datetime.now().isoformat()
+            current = tasks[task_id]
+            if expected_revision is not None:
+                actual = current.get("revision")
+                if actual is None:
+                    # A task written before revisions existed is at revision 1
+                    # by definition (creation was the first write).
+                    actual = 1
+                if int(actual) != int(expected_revision):
+                    raise TaskRevisionConflict(
+                        "task '%s' revision is %s, expected %s"
+                        % (task_id, actual, expected_revision))
+
+            patch = {k: v for k, v in (updates or {}).items() if k != "revision"}
+            current.update(patch)
+            current["revision"] = int(current.get("revision") or 1) + 1
+            current["updated_at"] = datetime.now().isoformat()
 
             self.save_tasks(tasks)
         return True
@@ -156,6 +274,7 @@ class TaskStore:
             True if successful
         """
         with self.lock:
+            self.lease.acquire()
             tasks = self.load_tasks()
 
             if task_id not in tasks:

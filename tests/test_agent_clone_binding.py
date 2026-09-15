@@ -39,6 +39,96 @@ def _seed_binding(con, agent_id, tenant_id="t1", cloned_from=None):
     )
 
 
+class AgentBindingOriginColumnTests(unittest.TestCase):
+    """Private-agent provenance: migration 17 adds ``agent_bindings.origin``.
+
+    Change ``enable-member-personal-console`` has to tell a *system-provisioned*
+    personal assistant apart from one a member created by hand, because only the
+    system-made kind may make a later provisioning run skip. Legacy rows carry no
+    such record, so the default is a deliberate ``'unknown'`` — never a guess
+    that a row is system-made (and therefore safe to treat as replaceable).
+    """
+
+    def setUp(self):
+        self.store = IdentityStore(_db_path())
+
+    def _columns(self):
+        with self.store.connect() as con:
+            return {
+                r["name"]: {"notnull": r["notnull"], "default": r["dflt_value"]}
+                for r in con.execute("PRAGMA table_info(agent_bindings)")
+            }
+
+    def test_origin_is_not_null_and_defaults_to_unknown(self):
+        cols = self._columns()
+        self.assertIn("origin", cols)
+        self.assertEqual(cols["origin"]["notnull"], 1,
+                         "origin must be NOT NULL so an unlabelled row is impossible")
+        self.assertEqual(cols["origin"]["default"], "'unknown'")
+
+    def test_a_legacy_binding_reads_as_unknown_without_being_backfilled(self):
+        """The upgrade must not invent provenance: an old row stays unknown."""
+        with self.store.connect() as con:
+            _seed_tenant(con)
+            _seed_binding(con, "a1")  # no origin supplied
+            row = con.execute(
+                "SELECT origin FROM agent_bindings WHERE agent_id='a1'").fetchone()
+        self.assertEqual(row["origin"], "unknown")
+
+    def test_a_binding_may_record_a_known_origin(self):
+        with self.store.connect() as con:
+            _seed_tenant(con)
+            con.execute(
+                "INSERT INTO agent_bindings(agent_id, tenant_id, origin)"
+                " VALUES('a1','t1','provisioned_assistant')")
+            con.execute(
+                "INSERT INTO agent_bindings(agent_id, tenant_id, origin)"
+                " VALUES('a2','t1','user_created')")
+            origins = {r["agent_id"]: r["origin"] for r in con.execute(
+                "SELECT agent_id, origin FROM agent_bindings")}
+        self.assertEqual(origins, {"a1": "provisioned_assistant",
+                                   "a2": "user_created"})
+
+    def test_upgrading_keeps_a_private_owners_binding_intact(self):
+        """The compatibility red line: an existing private binding keeps its id,
+        its owner and its clone provenance, and only gains 'unknown'."""
+        from auth.store import _migrations
+
+        path = _db_path()
+        con = sqlite3.connect(path)
+        con.row_factory = sqlite3.Row
+        con.execute(
+            "CREATE TABLE schema_migrations("
+            " version INTEGER NOT NULL,"
+            " applied_at INTEGER NOT NULL DEFAULT (unixepoch()))")
+        for i in range(16):
+            _migrations[i](con)
+        _seed_tenant(con)
+        con.execute(
+            "INSERT INTO users(id, username, display_name, password_hash)"
+            " VALUES('u1','root','Root','x')")
+        con.execute(
+            "INSERT INTO agent_bindings(agent_id, tenant_id,"
+            " private_owner_user_id, cloned_from_agent_id)"
+            " VALUES('a1','t1','u1','src')")
+        con.execute("INSERT INTO schema_migrations(version) VALUES %s"
+                    % ",".join("(%d)" % (i + 1) for i in range(16)))
+        con.commit()
+        con.close()
+
+        store = IdentityStore(path)  # applies the origin migration
+        with store.connect() as con:
+            row = con.execute(
+                "SELECT agent_id, tenant_id, private_owner_user_id,"
+                " cloned_from_agent_id, origin FROM agent_bindings"
+                " WHERE agent_id='a1'").fetchone()
+        self.assertEqual(row["agent_id"], "a1")
+        self.assertEqual(row["tenant_id"], "t1")
+        self.assertEqual(row["private_owner_user_id"], "u1")
+        self.assertEqual(row["cloned_from_agent_id"], "src")
+        self.assertEqual(row["origin"], "unknown")
+
+
 class AgentBindingCloneColumnTests(unittest.TestCase):
     """The provenance column and its uniqueness live in migration 8."""
 

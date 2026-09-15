@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Default user avatar 4">
+  <defs><clipPath id="uav4clip"><circle cx="32" cy="32" r="32"/></clipPath></defs>
+  <g clip-path="url(#uav4clip)">
+    <rect width="64" height="64" fill="#E8963C"/>
+    <path d="M12 64c0-11 9-19 20-19s20 8 20 19z" fill="#ffffff"/>
+    <circle cx="32" cy="27" r="11" fill="#ffffff"/>
+    <path d="M19 25c0-8 5.5-14 13-14s13 6 13 14z" fill="#A85C14"/>
+    <rect x="16" y="22" width="32" height="5" rx="2.5" fill="#A85C14"/>
+    <circle cx="32" cy="9" r="4" fill="#A85C14"/>
+  </g>
+</svg>

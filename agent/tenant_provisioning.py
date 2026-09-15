@@ -21,6 +21,15 @@ time, a failure cleans up whatever that agent created, and the response reports
 per-source success, skip and failure so the caller never sees a false "all
 good". A crash in between leaves an unbound roster entry, which the id planner
 adopts on the next run rather than duplicating.
+
+A clone must not point back at the tenant it came from. The persona files are
+copied verbatim by the admin service, so this module rewrites the references a
+copy cannot keep: the source shared root (absolute and ``~`` forms) becomes the
+target's, and a source Agent id becomes that agent's clone id in the target. The
+rewrite is bounded -- only the copied persona files, only ids the target has (or
+is getting) a clone for, whole tokens only -- because the point is to carry the
+source tenant's *behaviour* across, not to translate every string that resembles
+it.
 """
 
 from __future__ import annotations
@@ -30,13 +39,92 @@ import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
 
 #: The roster's own id contract (kept in step with ``agent.registry``).
 _AGENT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _MAX_AGENT_ID_LEN = 64
+
+#: Persona files a copy carries over and that may name the source tenant.
+_PERSONA_FILES = ("AGENT.md", "USER.md", "RULE.md", "BOOTSTRAP.md")
+
+#: Characters that may surround an Agent id without making it a different one.
+_ID_CHARS = r"A-Za-z0-9_-"
+
+
+def _whole_token_re(value: str) -> "re.Pattern":
+    """Match ``value`` when it is not part of a longer id-like token.
+
+    Without the lookarounds, rewriting ``business-analysis`` would also corrupt
+    ``business-analysis-test15`` -- an id that already names the clone, and
+    exactly the kind of reference a re-run has to leave untouched.
+    """
+    return re.compile(r"(?<![%s])%s(?![%s])" % (_ID_CHARS, re.escape(value), _ID_CHARS))
+
+
+def _tilde(path: str) -> str:
+    """``~/...`` form of ``path``, or "" when it is not under the home dir."""
+    try:
+        return "~/" + str(Path(path).relative_to(Path.home()))
+    except (TypeError, ValueError):
+        return ""
+
+
+def _persona_rewrites(source_root: str, target_root: str,
+                      id_map: Dict[str, str]) -> List[Tuple[Optional[Any], Optional[str], str]]:
+    """Ordered ``(regex, literal, replacement)`` rewrites for a copied persona.
+
+    Ids come first and longest-first, so a short id can never eat the prefix of
+    a longer one; the root paths follow, which is what turns a source
+    ``<root>/agents/<id>`` reference into the clone's own location.
+    """
+    rewrites: List[Tuple[Optional[Any], Optional[str], str]] = []
+    for source_id, clone_id in sorted(id_map.items(), key=lambda kv: -len(kv[0])):
+        if source_id and clone_id and source_id != clone_id:
+            rewrites.append((_whole_token_re(source_id), None, clone_id))
+    if source_root and target_root and source_root != target_root:
+        pairs = [(source_root, target_root)]
+        source_tilde = _tilde(source_root)
+        if source_tilde and source_tilde != source_root:
+            # A persona may write the root either way; the target has a ``~``
+            # form only when it is under the same home.
+            pairs.append((source_tilde, _tilde(target_root) or target_root))
+        for form_from, form_to in pairs:
+            if form_from != form_to:
+                rewrites.append((None, form_from, form_to))
+    return rewrites
+
+
+def _apply_rewrites(text: str, rewrites) -> str:
+    for regex, literal, replacement in rewrites:
+        if regex is not None:
+            text = regex.sub(replacement, text)
+        else:
+            text = text.replace(literal, replacement)
+    return text
+
+
+def _rewrite_persona(workspace: str, rewrites) -> int:
+    """Apply ``rewrites`` to the persona files of a freshly copied workspace.
+
+    Returns the number of files changed. Only files that exist are touched, and
+    only when a rewrite actually matches, so a persona with nothing to fix stays
+    byte-identical.
+    """
+    root = Path(workspace)
+    changed = 0
+    for filename in _PERSONA_FILES:
+        path = root / filename
+        if not path.is_file():
+            continue
+        original = path.read_text(encoding="utf-8")
+        updated = _apply_rewrites(original, rewrites)
+        if updated != original:
+            path.write_text(updated, encoding="utf-8")
+            changed += 1
+    return changed
 
 
 class TenantProvisioningError(ValueError):
@@ -242,17 +330,24 @@ class TenantAgentProvisioner:
         return base[:room].strip("-_") + suffix
 
     def _plan_one(self, source_agent_id: str, target: Dict[str, Any],
-                  target_root: Path) -> tuple:
+                  target_root: Path, taken: Optional[set] = None) -> tuple:
         """Decide the clone's id and workspace, adopting a previous orphan.
 
         Returns ``(agent_id, workspace, adopted)``. A crash between the roster
         write and the binding leaves an Agent that is ours but unbound; when its
         id is exactly the one we would derive and its workspace is where we put
         clones, it is adopted instead of being shadowed by a ``-2`` twin.
+
+        ``taken`` carries the ids already planned in this batch. The whole
+        selection is planned before anything is written, because rewriting one
+        clone's persona needs the clone ids of its siblings -- and two source
+        ids can sanitise to the same base, so the roster alone is not enough to
+        keep them apart.
         """
         agents_root = target_root / "agents"
         base = self._derive_id(source_agent_id, target["code"])
         roster = self._roster_by_id()
+        taken = taken if taken is not None else set()
 
         orphan = roster.get(base)
         if orphan is not None and self._svc.get_agent_binding(base) is None:
@@ -261,7 +356,7 @@ class TenantAgentProvisioner:
                 return base, str(workspace), True
 
         agent_id, sequence = base, 1
-        while agent_id in roster:
+        while agent_id in roster or agent_id in taken:
             sequence += 1
             agent_id = self._with_suffix(base, sequence)
         return agent_id, str(agents_root / agent_id), False
@@ -321,6 +416,31 @@ class TenantAgentProvisioner:
         had_agents = bool(self._svc.agents_for_tenant(target_tenant_id)) or bool(
             self._svc.tenant_default_agent_id(target_tenant_id))
 
+        # Plan the whole selection up front: rewriting one clone's persona needs
+        # the clone ids of its siblings, so the mapping has to be complete before
+        # the first workspace is written. The mapping also covers sources the
+        # target already holds a clone of -- a reference to a colleague must name
+        # the colleague this tenant actually has, whether it arrived in this
+        # batch or an earlier one.
+        plan: Dict[str, tuple] = {}
+        id_map: Dict[str, str] = {}
+        for binding in self._svc.agents_for_tenant(target_tenant_id):
+            cloned_from = binding.get("cloned_from_agent_id")
+            if cloned_from:
+                id_map[cloned_from] = binding["agent_id"]
+        reserved: set = set()
+        for source_id in selected:
+            existing = self._svc.clone_of(target_tenant_id, source_id)
+            if existing:
+                id_map[source_id] = existing["agent_id"]
+                continue
+            planned = self._plan_one(source_id, tenant, target_root, reserved)
+            plan[source_id] = planned
+            reserved.add(planned[0])
+            id_map[source_id] = planned[0]
+        rewrites = _persona_rewrites(self._svc.tenant_shared_root(source.tenant_id) or "",
+                                     str(target_root), id_map)
+
         copied: List[Dict[str, str]] = []
         skipped: List[Dict[str, str]] = []
         failed: List[Dict[str, str]] = []
@@ -333,9 +453,19 @@ class TenantAgentProvisioner:
             agent_id: Optional[str] = None
             adopted = False
             try:
-                agent_id, workspace, adopted = self._plan_one(source_id, tenant, target_root)
+                planned = plan.get(source_id)
+                if planned is None:
+                    # The plan was built moments ago in this same call; only a
+                    # concurrent change to the tenant can empty this.
+                    raise TenantProvisioningError(
+                        "the copy plan for '%s' is stale; retry" % source_id,
+                        code="conflict", status=409)
+                agent_id, workspace, adopted = planned
                 if not adopted:
                     self.admin.clone_agent(source_id, agent_id, workspace=workspace)
+                # Before binding, so a persona we cannot rewrite fails this
+                # agent instead of leaving a bound clone that names its source.
+                _rewrite_persona(workspace, rewrites)
                 self._svc.bind_agent(
                     tenant_id=target_tenant_id, agent_id=agent_id,
                     cloned_from_agent_id=source_id, actor_user_id=actor_user_id)

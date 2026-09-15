@@ -80,6 +80,7 @@ function setup(fetchImpl = async () => response([agent('B')])) {
     vm.runInContext(`let _sessCfg = null; let _wsSelState = {};
         this.state = () => ({agents: agentWorkbench, loading: agentWorkbenchLoading,
             error: _wbLoadedError, notice: _wbNoticeKey, busy: !!_agentStartInFlight,
+            emptyReason: _wbEmptyReason,
             settings: _sessCfg, workspace: _wsSelState});`, ctx);
     return { ctx, nodes, events, storage, logs, node: id => ctx.document.getElementById(id) };
 }
@@ -280,6 +281,67 @@ test('a render fault while painting the loading state cannot escape the loader',
     assert.equal(ctx.state().error, false, 'a paint fault is not a load failure');
     assert.deepEqual(ctx.state().agents.map(a => a.id), ['B'], 'the read still applies');
     assert.ok(logs.some(line => /paint exploded/.test(line)), 'the paint fault is logged');
+});
+
+test('an empty list that hides Agents says so instead of "no Agents available"', async () => {
+    //「暂无可用智能体」reports an authorization gap as a missing feature: the
+    // Agents exist, the caller just cannot reach them. The server distinguishes
+    // the two causes and the console must render them differently — while still
+    // treating the read as a success (no failure banner, no retry, and no change
+    // of the current Agent/session).
+    const { ctx, node } = setup(async () => ({
+        ok: true,
+        json: async () => ({
+            status: 'success', agents: [], empty_reason: 'no_reachable_agents',
+        }),
+    }));
+    await ctx.loadAgentWorkbench();
+    assert.equal(ctx.state().error, false, 'an empty list is a successful read');
+    assert.equal(ctx.state().notice, '', 'an empty list is not a notice/error');
+    assert.equal(node('agent-workbench-status').textContent,
+        'agent_workbench_empty_unreachable');
+    assert.equal(node('agent-workbench-status').classList.contains('opacity-0'), false);
+    assert.doesNotMatch(node('agent-workbench-grid').innerHTML, /agent_workbench_retry/,
+        'the empty state must not offer a retry');
+    assert.equal(ctx.activeAgentId, 'A', 'the current Agent is untouched');
+    assert.equal(ctx.sessionId, 'old-session', 'the session is untouched');
+});
+
+test('a tenant with no Agents keeps the plain empty message', async () => {
+    const { ctx, node } = setup(async () => ({
+        ok: true,
+        json: async () => ({ status: 'success', agents: [], empty_reason: 'no_agents' }),
+    }));
+    await ctx.loadAgentWorkbench();
+    assert.equal(ctx.state().error, false);
+    assert.equal(node('agent-workbench-status').textContent, 'agent_workbench_empty');
+});
+
+test('an empty reason is cleared when a later read returns cards', async () => {
+    // A stale reason must not label a populated list as unreachable.
+    let empty = true;
+    const { ctx, node } = setup(async () => ({
+        ok: true,
+        json: async () => (empty
+            ? { status: 'success', agents: [], empty_reason: 'no_reachable_agents' }
+            : { status: 'success', agents: [agent('B')], empty_reason: null }),
+    }));
+    await ctx.loadAgentWorkbench();
+    empty = false;
+    await ctx.loadAgentWorkbench(true);
+    assert.deepEqual(ctx.state().agents.map(a => a.id), ['B']);
+    assert.equal(ctx.state().emptyReason, '', 'a populated list carries no empty reason');
+    assert.notEqual(node('agent-workbench-status').textContent,
+        'agent_workbench_empty_unreachable');
+});
+
+test('an old backend with no reason code still shows the plain empty message', async () => {
+    // `empty_reason` is additive: a server that predates it must not break the
+    // page or borrow the unreachable wording.
+    const { ctx, node } = setup(async () => response([]));
+    await ctx.loadAgentWorkbench();
+    assert.equal(ctx.state().error, false);
+    assert.equal(node('agent-workbench-status').textContent, 'agent_workbench_empty');
 });
 
 test('default card leads even when its ID sorts last', async () => {

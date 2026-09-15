@@ -125,6 +125,32 @@ class RegistryDerivationTests(unittest.TestCase):
         self.assertEqual(entry["policy"], "tenant")
         self.assertTrue(entry.get("tenant_from_resource"))
 
+    def test_upload_readback_declares_its_tenant_is_resource_derived(self):
+        """The other header-less route: an ``<img>``/``<audio>`` subresource.
+
+        The console loads uploaded thumbnails and clips straight from
+        ``/uploads/...``, so the browser issues the GET itself and cannot attach
+        ``X-Tenant-ID``. Like ``/stream``, the exemption is recorded in the
+        registry rather than special-cased in the gate; the handler derives the
+        tenant from the addressed Agent's binding.
+        """
+        entry = derive_route_policy()["/uploads/(.*)"]["GET"]
+        self.assertEqual(entry["policy"], "tenant")
+        self.assertTrue(entry.get("tenant_from_resource"))
+
+    def test_file_serve_declares_its_tenant_is_resource_derived(self):
+        """The download/preview asset URL is also a browser-native request.
+
+        An artifact card downloads through ``<a href=/api/file?path=...>`` and
+        the console renders message images as ``<img src=/api/file?...>``; both
+        are issued by the browser and cannot attach ``X-Tenant-ID``. The
+        exemption is recorded in the registry, and the handler derives the
+        tenant from the addressed file's own workspace.
+        """
+        entry = derive_route_policy()["/api/file"]["GET"]
+        self.assertEqual(entry["policy"], "tenant")
+        self.assertTrue(entry.get("tenant_from_resource"))
+
     def test_a_plain_tenant_route_does_not_claim_the_exemption(self):
         entry = derive_route_policy()["/api/sessions"]["GET"]
         self.assertEqual(entry["policy"], "tenant")
@@ -259,6 +285,82 @@ class ForkExtensionTests(unittest.TestCase):
         for rel in (("channel", "web", "web_channel.py"), ("auth", "http_policy.py")):
             with open(os.path.join(_REPO_ROOT, *rel), encoding="utf-8") as fh:
                 self.assertNotIn("/api/fork/probe", fh.read(), rel)
+
+
+class PersonalConsoleRouteTests(unittest.TestCase):
+    """Method-level pin for the member personal console routes (task 9.3).
+
+    ``personal`` is the entire route-level claim: a session, no more. The tenant
+    comes from the verified request context and the owner from that session, so a
+    route-level permission would only be a second, weaker authority next to the
+    owner/menu/functional checks the handler runs. These assertions freeze the
+    policy *and* the method set, because a route silently gaining or losing a
+    method is exactly the drift the frozen baseline exists to catch.
+    """
+
+    PERSONAL_ROUTES = (
+        ("/api/memory/personal", "GET"),
+        ("/api/memory/personal", "POST"),
+        ("/api/memory/personal/content", "GET"),
+        ("/api/personal/channels", "GET"),
+        ("/api/personal/channels", "POST"),
+        ("/api/personal/channels/([^/]+)", "GET"),
+        ("/api/personal/channels/([^/]+)", "POST"),
+        ("/api/personal/resources", "GET"),
+        ("/api/personal/resources", "POST"),
+    )
+
+    #: Routes a member must never reach through the personal surface, with the
+    #: policy each keeps. They are asserted together so a future edit that
+    #: "simplifies" one of them into `personal` fails here.
+    UNCHANGED_MANAGEMENT_ROUTES = (
+        ("/api/channels", "GET", "platform"),
+        ("/api/channels", "POST", "platform"),
+        ("/api/tenant/channels", "GET", "tenant"),
+        ("/api/tenant/channels", "POST", "tenant"),
+        ("/api/agents", "GET", "tenant"),
+        ("/api/agents", "POST", "tenant"),
+    )
+
+    def test_every_personal_route_is_session_scoped_and_carries_no_permission(self):
+        derived = derive_route_policy()
+        for pattern, method in self.PERSONAL_ROUTES:
+            entry = derived.get(pattern, {}).get(method)
+            self.assertIsNotNone(entry, "%s %s is not registered" % (pattern, method))
+            self.assertEqual(entry["policy"], "personal", "%s %s" % (pattern, method))
+            self.assertEqual(entry.get("permission", ""), "",
+                             "%s %s must not claim a route-level permission"
+                             % (pattern, method))
+            # A tenant-scoped policy would answer 400 before the handler whenever a
+            # browser cannot send the header; a public one would skip the session.
+            self.assertNotIn(entry["policy"], ("public", "tenant", "platform"),
+                             "%s %s" % (pattern, method))
+
+    def test_the_frozen_baseline_records_exactly_these_methods(self):
+        rows = _baseline_rows()
+        for pattern, method in self.PERSONAL_ROUTES:
+            self.assertEqual(rows.get((pattern, method)), ("personal", ""),
+                             "%s %s" % (pattern, method))
+
+    def test_the_management_surfaces_keep_their_administrator_policies(self):
+        derived = derive_route_policy()
+        for pattern, method, policy in self.UNCHANGED_MANAGEMENT_ROUTES:
+            entry = derived.get(pattern, {}).get(method)
+            self.assertIsNotNone(entry, "%s %s" % (pattern, method))
+            self.assertEqual(entry["policy"], policy, "%s %s" % (pattern, method))
+            self.assertNotEqual(entry["policy"], "personal",
+                                "%s %s must not become a self surface"
+                                % (pattern, method))
+
+    def test_a_session_is_required_before_the_handler_runs(self):
+        """`personal` still authenticates: the gate's `require_tenant` is False,
+        but the context it resolves must exist. Asserted on the real gate so a
+        policy string alone cannot pass this."""
+        for pattern, method in self.PERSONAL_ROUTES:
+            entry, matched = http_policy._match_policy(
+                _sample_path(pattern), method)
+            self.assertTrue(matched, "%s %s" % (pattern, method))
+            self.assertEqual(entry["policy"], "personal", "%s %s" % (pattern, method))
 
 
 if __name__ == "__main__":

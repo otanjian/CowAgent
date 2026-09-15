@@ -196,6 +196,111 @@ class CreateInstanceTests(_ChannelServiceFixture):
         self.assertEqual(self._credential_rows(self.ta), [])
 
 
+class InstanceScopeTests(_ChannelServiceFixture):
+    """Scope and ownership constraints on channel instances.
+
+    Change ``enable-member-personal-console``: a member may own a *personal*
+    channel instance, which lives in the same table as a tenant one. These lock
+    the two properties the console depends on — a personal instance must always
+    name a real owner, and it must never surface in the public list.
+    """
+
+    def _add_member(self, username="acmemember"):
+        self.svc.create_member(
+            actor_user_id=self.root["id"], tenant_id=self.ta,
+            operation="create-new", username=username,
+            display_name=username.title(), temporary_password="MemTempPass1",
+            roles=["member"])
+        return [m for m in self.svc.list_members(self.ta)["items"]
+                if m["username"] == username][0]["user_id"]
+
+    def test_defaults_to_tenant_scope_without_an_owner(self):
+        created = self._as_root()
+        self.assertEqual(created["scope"], "tenant")
+        self.assertIsNone(created["owner_user_id"])
+        row = self._instance_row(created["id"])
+        self.assertEqual(row["scope"], "tenant")
+        self.assertIsNone(row["owner_user_id"])
+
+    def test_a_personal_instance_records_its_owner(self):
+        member = self._add_member()
+        created = self._as_root(scope="user", owner_user_id=member)
+        self.assertEqual(created["scope"], "user")
+        self.assertEqual(created["owner_user_id"], member)
+        row = self._instance_row(created["id"])
+        self.assertEqual(row["scope"], "user")
+        self.assertEqual(row["owner_user_id"], member)
+
+    def test_a_personal_instance_requires_an_owner(self):
+        _expect_error(self, "bad_request", 400, self._as_root, scope="user")
+
+    def test_a_tenant_instance_must_not_name_an_owner(self):
+        member = self._add_member()
+        _expect_error(self, "bad_request", 400, self._as_root,
+                      scope="tenant", owner_user_id=member)
+
+    def test_an_unknown_scope_is_rejected(self):
+        _expect_error(self, "bad_request", 400, self._as_root,
+                      scope="department")
+
+    def test_the_owner_must_be_a_known_member(self):
+        _expect_error(self, "bad_request", 400, self._as_root,
+                      scope="user", owner_user_id="ghost")
+
+    def test_the_owner_must_belong_to_this_tenant(self):
+        _expect_error(self, "bad_request", 400, self._as_root,
+                      scope="user", owner_user_id=self.admin_b)
+
+    def test_a_rejected_scope_leaves_no_instance_or_credential(self):
+        member = self._add_member()
+        _expect_error(self, "bad_request", 400, self._as_root, scope="user")
+        self.assertEqual(self._credential_rows(self.ta), [])
+        rows = self.svc._store.execute(
+            "SELECT COUNT(*) c FROM tenant_channel_instances")
+        self.assertEqual(rows[0]["c"], 0)
+
+    def test_the_public_list_does_not_expose_personal_instances(self):
+        """A personal instance is not the tenant's to administer."""
+        member = self._add_member()
+        self._as_root(display_name="Tenant Bot")
+        # A different application on purpose: a personal instance may not point
+        # at the tenant's app (task 6.3), and this test is about the *listing*.
+        self._as_root(display_name="Private Bot", scope="user",
+                      owner_user_id=member,
+                      credentials=dict(FEISHU_BUNDLE,
+                                       feishu_app_id="cli_private"))
+        listing = self.svc.list_tenant_channel_instances(
+            actor_user_id=self.root["id"], tenant_id=self.ta)
+        self.assertEqual([i["display_name"] for i in listing["items"]],
+                         ["Tenant Bot"])
+
+
+    def test_renaming_does_not_collide_with_a_personal_instance(self):
+        """The name check must use the same key as the index, or a rename would
+        be refused for a name that is free in its own scope."""
+        member = self._add_member()
+        tenant = self._as_root(display_name="Tenant Bot")
+        self._as_root(display_name="Private Bot", scope="user",
+                      owner_user_id=member,
+                      credentials=dict(FEISHU_BUNDLE,
+                                       feishu_app_id="cli_private"))
+        updated = self.svc.update_tenant_channel_instance(
+            actor_user_id=self.root["id"], tenant_id=self.ta,
+            instance_id=tenant["id"], expected_version=tenant["version"],
+            recent_password="Str0ngRootFinal", display_name="Private Bot")
+        self.assertEqual(updated["display_name"], "Private Bot")
+        self.assertEqual(updated["scope"], "tenant")
+
+    def test_the_runtime_row_exposes_scope_and_owner(self):
+        """Inbound routing has to know whether an instance is personal and
+        whose it is before it can resolve a sender."""
+        member = self._add_member()
+        created = self._as_root(scope="user", owner_user_id=member)
+        row = self.svc.get_tenant_channel_instance_row(created["id"])
+        self.assertEqual(row["scope"], "user")
+        self.assertEqual(row["owner_user_id"], member)
+
+
 class ListInstanceTests(_ChannelServiceFixture):
     def test_list_returns_masked_projection_without_any_secret(self):
         self._as_root()
@@ -493,17 +598,20 @@ class NoNewFunctionalPermissionTests(_ChannelServiceFixture):
         self.assertEqual(offenders, [])
 
     def test_builtin_role_defaults_are_unchanged(self):
-        from auth.policy import BUILTIN_ROLES, PERMISSION_CATALOG
+        # The channels capability adds no permission and the built-in seed still
+        # comes from the explicit policy defaults (single source of truth).
+        from auth.policy import (
+            BUILTIN_ROLES, TENANT_ADMIN_CODE, MEMBER_CODE, default_permissions_for,
+        )
         rows = self.svc._store.execute(
             "SELECT code, permissions_json FROM roles WHERE tenant_id=? AND builtin=1",
             (self.ta,))
         by_code = {r["code"]: json.loads(r["permissions_json"]) for r in rows}
         self.assertEqual(sorted(by_code), sorted(BUILTIN_ROLES))
-        self.assertEqual(by_code["tenant_admin"], list(PERMISSION_CATALOG))
-        self.assertEqual(by_code["member"], [
-            "tenant.info.read", "agent.read", "history.read", "knowledge.read",
-            "memory.read", "todo.read", "todo.write",
-        ])
+        self.assertEqual(by_code["tenant_admin"],
+                         sorted(default_permissions_for(TENANT_ADMIN_CODE)))
+        self.assertEqual(by_code["member"],
+                         sorted(default_permissions_for(MEMBER_CODE)))
 
 
 if __name__ == "__main__":

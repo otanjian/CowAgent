@@ -45,6 +45,28 @@ class MemberWriteGateTests(unittest.TestCase):
                 actor_user_id=self.root["id"], tenant_id=self.tid, operation="create-new",
                 username="bob", display_name="Bob", temporary_password="password", roles=[])
 
+    def test_member_create_short_password_is_structured_rejection(self):
+        # Regression: a temporary password shorter than MIN_PASSWORD_LENGTH used
+        # to reach hash_password first, whose PasswordError is not an
+        # IdentityServiceError — so it escaped the handler as a 500/HTML body
+        # and the console reported a generic "load-failed". The rejection must
+        # be the same structured weak_password the in-transaction validation
+        # produces.
+        with self.assertRaises(IdentityServiceError) as e:
+            self.svc.create_member(
+                actor_user_id=self.root["id"], tenant_id=self.tid, operation="create-new",
+                username="bob", display_name="Bob", temporary_password="123456", roles=[])
+        self.assertEqual(e.exception.code, "weak_password")
+
+    def test_member_create_blank_password_is_structured_rejection(self):
+        # A whitespace-only password passes the length check but hash_password
+        # rejects it as blank; that too must surface as weak_password, not a 500.
+        with self.assertRaises(IdentityServiceError) as e:
+            self.svc.create_member(
+                actor_user_id=self.root["id"], tenant_id=self.tid, operation="create-new",
+                username="bob", display_name="Bob", temporary_password="        ", roles=[])
+        self.assertEqual(e.exception.code, "weak_password")
+
     def test_non_admin_cannot_write_members(self):
         # a fresh non-admin user with no membership is rejected before any write
         with self.assertRaises(IdentityServiceError) as e:
@@ -464,6 +486,14 @@ class TenantAdminAccountCreateTests(unittest.TestCase):
         # No tenant_admin role => the binding step fails. The account INSERT
         # must roll back with it rather than leaving an orphan account.
         tid = self._bare()["id"]
+        # The built-in role now carries default menu grants, and
+        # ``role_resource_grants`` references ``roles`` by foreign key. The
+        # service's own ``delete_role`` clears grants before the role row; this
+        # fixture removes the role by hand, so it has to do the same.
+        self.svc._store.execute(
+            "DELETE FROM role_resource_grants WHERE tenant_id=? AND role_id IN"
+            " (SELECT id FROM roles WHERE tenant_id=? AND code=?)",
+            (tid, tid, "tenant_admin"))
         self.svc._store.execute(
             "DELETE FROM roles WHERE tenant_id=? AND code=?", (tid, "tenant_admin"))
         with self.assertRaises(IdentityServiceError) as e:

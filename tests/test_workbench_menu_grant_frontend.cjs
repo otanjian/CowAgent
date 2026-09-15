@@ -80,6 +80,9 @@ function boot({ mode = 'database', ctx = null, isPlatformAdmin = false, items = 
         _navAreaFromPath: () => area,
         _qualifyAdminConsoleEntry: ({ isPlatformAdmin: p, isTenantAdmin: t }) => !!(p || t),
         _openNavArea() {},
+        // Hosted by the account panel now; this slice only calls into it.
+        _renderAccountResources() {},
+        _syncAccountPersonalCurrent() {},
     };
     vm.runInNewContext(
         [fnSource('_consolePageForView'), fnSource('_viewNavDenied'),

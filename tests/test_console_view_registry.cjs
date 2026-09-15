@@ -53,10 +53,14 @@ test('the registry actually drives load and repaint', () => {
         'const CONSOLE_VIEW_REGISTRY = [];',
         extractFunction(consoleJs, 'registerConsoleView'),
         extractFunction(consoleJs, '_registeredConsoleView'),
+        extractFunction(consoleJs, '_activateViewContainer'),
         extractFunction(consoleJs, '_loadRegisteredView'),
         extractFunction(consoleJs, '_repaintRegisteredView'),
     ].join('\n');
-    const sandbox = {};
+    const sandbox = { currentView: 'sample', document: {
+        querySelectorAll: () => [],
+        getElementById: () => null,
+    } };
     vm.createContext(sandbox);
     vm.runInContext(source, sandbox);
 

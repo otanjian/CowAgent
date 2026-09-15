@@ -276,7 +276,7 @@ while ($queue !== [] && count($discovered) < MAX_PAGES) {
     if (isset($discovered[$path]) || isset($dead[$path]) || $depth > MAX_DEPTH) {
         continue;
     }
-    $html = fetch('https://docs.cowagent.ai' . $path, 40, $status);
+    $html = fetch('https://www.rsm.global/china/zh-hans' . $path, 40, $status);
     if ($html === null) {
         if ($status === 404 || $status === 410) {
             $dead[$path] = true;   // 上游本就没有这一页，跳过即可
@@ -505,7 +505,7 @@ foreach ($order as $path) {
     $slug = $slugs[$path];
     echo "=== $slug ($path) ===\n";
 
-    $html = fetch('https://docs.cowagent.ai' . $path);
+    $html = fetch('https://www.rsm.global/china/zh-hans' . $path);
     if ($html === null) {
         echo "  ❌ 页面抓取失败\n";
         $failures[] = "$slug: 页面抓取失败";
@@ -529,7 +529,7 @@ foreach ($order as $path) {
 
     // 英文标题（只取标题，正文仍为中文，与站点「仅镜像中文文档」的定位一致）
     $enTitle = '';
-    $enHtml  = fetch('https://docs.cowagent.ai/en' . substr($path, 3), 40);
+    $enHtml  = fetch('https://www.rsm.global/china/zh-hans' . substr($path, 3), 40);
     if ($enHtml !== null) {
         $enTitle = title_of($enHtml);
     }

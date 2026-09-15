@@ -34,6 +34,46 @@ PERMISSION_DENIED = "external_permission_denied"
 UNSUPPORTED_CHANNEL = "external_channel_unsupported"
 AGENT_UNAVAILABLE = "external_agent_unavailable"
 
+#: Member-owned (personal) channel denials (change enable-member-personal-console,
+#: task 7.1). Kept distinct from the shared-instance reasons because the fix is
+#: different: the member completes their own binding in the console, rather than
+#: asking an administrator to bind their account.
+PERSONAL_NOT_LINKED = "external_personal_not_linked"
+PERSONAL_SENDER_MISMATCH = "external_personal_sender_mismatch"
+PERSONAL_GROUP = "external_personal_group"
+PERSONAL_UNAVAILABLE = "external_personal_unavailable"
+PERSONAL_TARGET_INVALID = "external_personal_target_invalid"
+PERSONAL_CODE_INVALID = "external_personal_code_invalid"
+PERSONAL_LINKED = "external_personal_linked"
+
+
+def personal_deny_reason(reason: str) -> str:
+    """Map a service-side routing verdict onto a fixed, user-facing reason.
+
+    The service answers with what it checked ("sender_not_owner",
+    "target_not_owned", …); the author has to be told what to *do*, which is why
+    this collapses those verdicts into the few notices an IM card can carry. An
+    unknown verdict is treated as "not available" rather than as permission.
+    """
+    return {
+        "not_found": PERSONAL_UNAVAILABLE,
+        "not_personal": PERSONAL_UNAVAILABLE,
+        "instance_disabled": PERSONAL_UNAVAILABLE,
+        "governance_disabled": PERSONAL_UNAVAILABLE,
+        "credential_revoked": PERSONAL_UNAVAILABLE,
+        "member_inactive": NOT_MEMBER,
+        "not_linked": PERSONAL_NOT_LINKED,
+        "sender_not_owner": PERSONAL_SENDER_MISMATCH,
+        "group_not_personal": PERSONAL_GROUP,
+        "no_target_agent": PERSONAL_TARGET_INVALID,
+        "target_not_owned": PERSONAL_TARGET_INVALID,
+        "target_not_authorized": PERSONAL_TARGET_INVALID,
+        "identity_unavailable": PERSONAL_NOT_LINKED,
+        "channel_type_not_ready": PERSONAL_UNAVAILABLE,
+        "lookup_failed": PERSONAL_UNAVAILABLE,
+        "forbidden": PERSONAL_UNAVAILABLE,
+    }.get(reason, PERSONAL_UNAVAILABLE)
+
 
 def is_database_mode() -> bool:
     """True when the deployment runs database identity mode.
@@ -80,6 +120,36 @@ def deny_notice(reason: str) -> str:
             "该组织尚未配置可用的智能体，请联系管理员。",
             "No Agent is available for this organization yet. Contact an administrator.",
         ),
+        PERSONAL_NOT_LINKED: (
+            "你的账号尚未绑定这个个人渠道，请在网页端生成绑定码后从这里发送。",
+            "This personal channel is not linked to you yet. Generate a binding code "
+            "in the web console and send it here.",
+        ),
+        PERSONAL_SENDER_MISMATCH: (
+            "这个个人助手只服务其所有者本人，无法为你处理消息。",
+            "This personal assistant serves its owner only and cannot answer you.",
+        ),
+        PERSONAL_GROUP: (
+            "个人助手仅支持私聊，请单独向它发送消息。",
+            "A personal assistant only answers private chats. Message it directly.",
+        ),
+        PERSONAL_UNAVAILABLE: (
+            "该个人渠道当前不可用，请在网页端查看状态。",
+            "This personal channel is not available right now. Check its status in the web console.",
+        ),
+        PERSONAL_TARGET_INVALID: (
+            "该个人渠道绑定的智能体已不可用，请在网页端重新选择。",
+            "The Agent this personal channel points at is no longer usable. "
+            "Choose another one in the web console.",
+        ),
+        PERSONAL_CODE_INVALID: (
+            "绑定码无效或已过期，请在网页端重新生成后重试。",
+            "The binding code is invalid or expired. Generate a new one in the web console.",
+        ),
+        PERSONAL_LINKED: (
+            "绑定成功，现在可以在这里与你的个人助手对话了。",
+            "Linked. You can now chat with your personal assistant here.",
+        ),
     }.get(reason) or (
         "消息无法处理，请联系管理员。",
         "Message could not be processed. Contact an administrator.",
@@ -98,17 +168,71 @@ def instance_tenant_id(context: dict) -> str:
     read — in all of those cases the caller keeps the previous behavior of
     anchoring on the routed Agent's binding.
     """
+    return str((instance_row(context) or {}).get("tenant_id") or "").strip()
+
+
+def instance_row(context: dict) -> Optional[dict]:
+    """The stored row of the instance that carried this message, or ``None``.
+
+    Same trust rule as :func:`instance_tenant_id`: the row is the source of
+    truth for scope, owner and target. A lookup failure answers ``None`` so the
+    caller falls back to the previous (Agent-anchored) behavior rather than
+    treating an unreadable store as permission.
+    """
     instance_id = str((context or {}).get("instance_id") or "").strip()
     if not instance_id:
-        return ""
+        return None
     try:
         from auth.service import get_identity_service
 
-        row = get_identity_service().get_tenant_channel_instance_row(instance_id)
+        return get_identity_service().get_tenant_channel_instance_row(instance_id)
     except Exception as error:  # noqa: BLE001 - never let a lookup failure grant access
-        logger.warning("[external_identity] instance lookup failed id=%s: %s", instance_id, error)
-        return ""
-    return str((row or {}).get("tenant_id") or "").strip()
+        logger.warning("[external_identity] instance lookup failed id=%s: %s",
+                       instance_id, error)
+        return None
+
+
+def is_personal_instance(instance: Optional[dict]) -> bool:
+    """Whether this instance belongs to one member rather than the tenant."""
+    return str((instance or {}).get("scope") or "") == "user"
+
+
+def personal_route_for(context: dict, instance: Optional[dict]) -> Optional[dict]:
+    """The explicit personal route a *shared* instance carries for this sender.
+
+    ``None`` means "no personal route claims this sender", and the shared
+    instance keeps its own public behaviour. A dict means a route does claim
+    them, and its verdict decides the message: an unusable route refuses rather
+    than falling back to the shared Agent, because swapping the persona the
+    member explicitly chose is the substitution the requirement forbids.
+
+    Only private chats are consulted — a group has no single owner to prove —
+    and a lookup failure answers with a refusal rather than ``None``: a store
+    that cannot confirm the route must not silently downgrade it to the public
+    Agent (fail-closed).
+    """
+    if instance is None or is_personal_instance(instance):
+        return None
+    if bool((context or {}).get("isgroup")):
+        return None
+    instance_id = str((instance or {}).get("id") or "").strip()
+    if not instance_id:
+        return None
+    ext = (context or {}).get("external_identity") or {}
+    try:
+        from auth.service import get_identity_service
+
+        return get_identity_service().resolve_shared_personal_route(
+            instance_id=instance_id,
+            provider=str(ext.get("provider") or ""),
+            issuer=str(ext.get("issuer") or ""),
+            subject=str(ext.get("subject") or ""),
+        )
+    except Exception as error:  # noqa: BLE001 - a broken store is not "no route"
+        logger.warning("[external_identity] personal route lookup failed instance=%s: %s",
+                       instance_id, error)
+        return {"allowed": False, "reason": "lookup_failed",
+                "user_id": "", "agent_id": "", "personal_route": True}
 
 
 def stamp_external_identity(context: dict, *, provider: str, issuer: str,
@@ -212,6 +336,75 @@ def attempt_evidence(context: dict) -> dict:
     except Exception:  # noqa: BLE001
         pass
     return evidence
+
+
+def looks_like_binding_code(context: dict) -> bool:
+    """Whether a refused message looks like a self-service binding code (6.6).
+
+    A challenge code is a short all-digit string, and the message carrying it is
+    a *credential*: whoever reads it from an administrator's screen can bind the
+    member's identity. The instance scope already keeps personal traffic out of
+    the pending list, but a code can also arrive on a shared instance or before
+    the instance row can be read, so the shape is checked independently and the
+    attempt is stored with no content at all.
+
+    Deliberately narrow (digits only, challenge length): a false positive costs
+    an administrator one row's worth of preview on a message that was already
+    being refused, while a false negative would leak a live credential.
+    """
+    return bool(binding_code_token(context))
+
+
+def binding_code_token(context: dict) -> str:
+    """The all-digit challenge-shaped token of a message, or ``""``.
+
+    Split out from :func:`looks_like_binding_code` so the inbound path can
+    *redeem* the very token the redaction rule detects (task 7.1) without
+    re-reading the message body in a second place.
+    """
+    from auth.service import _CHALLENGE_CODE_LENGTH
+
+    msg = context.get("msg")
+    if msg is None:
+        return ""
+    text = ""
+    for reader in ("content", "content_with_quote"):
+        value = getattr(msg, reader, None)
+        if callable(value):
+            value = value()
+        if value:
+            text = str(value)
+            break
+    token = " ".join(text.split()).strip()
+    if len(token) == _CHALLENGE_CODE_LENGTH and token.isdigit():
+        return token
+    return ""
+
+
+def personal_owner_context(user_id: str, tenant_id: str):
+    """Resolve an allowed personal route's owner into a ``RequestContext``.
+
+    Returns ``(ctx, None)`` or ``(None, reason_code)``. The membership and the
+    web-chat gates are re-decided here for the same reason the public path does
+    them: the route proves *who* the sender is, not that they still hold the
+    right to run an agent today.
+    """
+    from auth.service import get_identity_service
+
+    try:
+        from auth.runtime import IdentityContextError, member_context
+
+        ctx = member_context(get_identity_service(), user_id, tenant_id)
+    except IdentityContextError as error:
+        if getattr(error, "code", "") == "password_change_required":
+            return None, PASSWORD_CHANGE_REQUIRED
+        return None, NOT_MEMBER
+    if ctx.must_change_password:
+        return None, PASSWORD_CHANGE_REQUIRED
+    if not (ctx.is_platform_admin or ctx.is_tenant_admin
+            or "chat.use" in (ctx.permissions or ())):
+        return None, PERMISSION_DENIED
+    return ctx, None
 
 
 def resolve_actor_for_context(context: dict, agent_id: Optional[str],

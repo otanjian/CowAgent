@@ -62,10 +62,30 @@ def test_console_carries_agent_id_through_existing_feature_requests():
 
 
 def test_workspace_scoped_web_services_resolve_selected_agent():
+    import re
+
     source = _read("channel/web/web_channel.py")
     assert "def _get_workspace_root(session_id: str = None, agent_id: str = None)" in source
     assert "project_store.get_project_dir(session_id, agent_id)" in source
     assert "get_agent_registry().get(agent_id).workspace" in source
-    assert "get_conversation_store(_get_workspace_root(agent_id=agent_id))" in source
-    assert "_get_workspace_root(agent_id=agent_id)" in source
+    assert "_get_workspace_root(agent_id=agent_id)" in source  # file panel / preview
     assert "get_scheduler_service(agent_id=agent_id)" in source
+
+
+def test_session_scoped_stores_resolve_the_addressed_agent():
+    """Sessions live one database per Agent workspace.
+
+    The conversation store must therefore be opened from that Agent's
+    workspace, never from a workspace root: in database mode the root is the
+    caller's tenant shared root, so writes would miss the sessions the list is
+    showing and answer ``session not found``.
+    """
+    import re
+
+    source = _read("channel/web/web_channel.py")
+    assert "def _conversation_store_for(agent_id: Optional[str])" in source
+    assert "get_agent_registry().get(agent_id or None).workspace" in source
+    assert "store = _conversation_store_for(agent_id)" in source
+    assert not re.search(r"get_conversation_store\(\s*_get_workspace_root\(", source), (
+        "a session store is resolved from the workspace root again"
+    )

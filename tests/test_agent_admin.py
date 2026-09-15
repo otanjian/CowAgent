@@ -11,6 +11,7 @@ from agent.admin import (
 )
 from agent import team
 from agent.registry import AgentRegistry, set_agent_registry
+from common import state_dir
 
 
 def _pin(settings):
@@ -475,11 +476,109 @@ def test_shared_sets_aside_a_non_empty_own_base_and_own_restores_it(admin):
     assert not stash.exists()
 
 
-def test_default_agent_cannot_switch_knowledge_mode(admin):
-    service, _, _ = admin
-    assert service.knowledge_mode("primary") == "shared"
-    with pytest.raises(AgentAdminError):
+def _write_roster(root, agents, default_id):
+    """Build a config with an explicit roster and pin the registry to it."""
+    settings = {
+        "agent_workspace": str(root),
+        "default_agent_id": default_id,
+        "agents": agents,
+        "channel_instances": [],
+    }
+    config_path = root / "config.json"
+    config_path.write_text(json.dumps(settings), encoding="utf-8")
+    _pin(settings)
+    return AgentAdminService(str(config_path))
+
+
+def test_default_agent_at_the_instance_root_owns_the_shared_base(tmp_path):
+    """The classic single-Agent layout, and the case the old rule was written for.
+
+    The default Agent's workspace *is* the instance root, so its ``knowledge/``
+    is the shared base itself. It must keep reporting "shared", and switching it
+    must be refused — ``shared`` mode would rename the whole team's base to
+    ``knowledge.own`` and replace it with an empty directory.
+    """
+    root = tmp_path
+    (root / "knowledge").mkdir(parents=True)
+    (root / "knowledge" / "shared.md").write_text("# shared\n", encoding="utf-8")
+    service = _write_roster(root, [
+        {"id": "primary", "name": "Primary", "workspace": str(root), "enabled": True},
+    ], "primary")
+    try:
+        assert service.knowledge_mode("primary") == "shared"
+
+        with pytest.raises(AgentAdminError):
+            service.set_knowledge_mode("primary", "own")
+
+        # Untouched: not moved aside, not replaced by a symlink.
+        assert (root / "knowledge" / "shared.md").is_file()
+        assert not (root / "knowledge").is_symlink()
+        assert not (root / "knowledge.own").exists()
+    finally:
+        set_agent_registry(None)
+
+
+def test_default_agent_moved_into_a_private_workspace_reports_and_switches_own(
+        tmp_path, monkeypatch):
+    """A default Agent given a workspace of its own reads its own base.
+
+    Reporting "shared" here lied about the data root and blocked the switch, so
+    the console showed a mode the Agent did not have and offered no way out.
+    ``shared_root`` is pinned to the instance root to stand in for the
+    tenant-aware resolution the console runs under — this deployment's layout:
+    the shared root is the instance root while the default Agent lives in
+    ``agents/``.
+    """
+    root = tmp_path
+    monkeypatch.setattr(state_dir, "shared_root", lambda: root)
+    ws = root / "agents" / "primary"
+    (ws / "knowledge").mkdir(parents=True)
+    (ws / "knowledge" / "note.md").write_text("keep me\n", encoding="utf-8")
+    service = _write_roster(root, [
+        {"id": "primary", "name": "Primary", "workspace": str(ws), "enabled": True},
+    ], "primary")
+    try:
+        assert service.knowledge_mode("primary") == "own"
+
+        result = service.set_knowledge_mode("primary", "shared")
+        assert result["mode"] == "shared"
+        assert (ws / "knowledge").is_symlink()
+        assert (ws / "knowledge.own" / "note.md").read_text(encoding="utf-8").strip() == "keep me"
+
         service.set_knowledge_mode("primary", "own")
+        assert service.knowledge_mode("primary") == "own"
+        assert (ws / "knowledge" / "note.md").read_text(encoding="utf-8").strip() == "keep me"
+    finally:
+        set_agent_registry(None)
+
+
+def test_agent_whose_workspace_is_the_instance_root_is_not_own(tmp_path, monkeypatch):
+    """A non-default Agent parked on the instance root reads the shared base too.
+
+    Reporting it as "own" (the old rule only special-cased the *default* Agent)
+    would let a switch move the team's base aside. ``shared_root`` is pinned to
+    the instance root so that is the base under test.
+    """
+    root = tmp_path
+    monkeypatch.setattr(state_dir, "shared_root", lambda: root)
+    (root / "knowledge").mkdir(parents=True)
+    (root / "knowledge" / "shared.md").write_text("# shared\n", encoding="utf-8")
+    service = _write_roster(root, [
+        {"id": "primary", "name": "Primary",
+         "workspace": str(root / "agents" / "primary"), "enabled": True},
+        {"id": "rogue", "name": "Rogue", "workspace": str(root), "enabled": True},
+    ], "primary")
+    try:
+        assert service.knowledge_mode("rogue") == "shared"
+
+        with pytest.raises(AgentAdminError):
+            service.set_knowledge_mode("rogue", "own")
+
+        assert (root / "knowledge" / "shared.md").is_file()
+        assert not (root / "knowledge").is_symlink()
+        assert not (root / "knowledge.own").exists()
+    finally:
+        set_agent_registry(None)
 
 
 def test_snapshot_reports_knowledge_mode(admin):

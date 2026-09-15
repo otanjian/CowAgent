@@ -117,9 +117,34 @@ async function wsApi(path) {
         }
     } catch (e) { /* globals not available yet */ }
     const res = await fetch(path);
-    const data = await res.json();
-    if (data.status !== 'success') throw new Error(data.message || 'Request failed');
+    let data = {};
+    try { data = await res.json(); } catch (e) { data = {}; }
+    if (!res.ok || data.status !== 'success') {
+        const err = new Error(data.message || `Request failed (HTTP ${res.status})`);
+        err.status = res.status;
+        err.code = data.code;
+        throw err;
+    }
     return data;
+}
+
+/**
+ * Turn a workspace request failure into a readable, localized message.
+ * The backend reports a stable `code` (e.g. `forbidden`, `database_unavailable`);
+ * fall back to the raw status/message when it is absent.
+ */
+function wsErrorMessage(e) {
+    const status = e && e.status;
+    const code = e && e.code;
+    const msg = String((e && e.message) || '');
+    if (code === 'forbidden' || status === 403 || /forbidden/i.test(msg)) {
+        return t('ws_forbidden');
+    }
+    if (code === 'database_unavailable' || status === 503
+            || /unavailable in database identity mode/i.test(msg)) {
+        return t('ws_unavailable');
+    }
+    return msg || t('ws_preview_failed');
 }
 
 // =====================================================================
@@ -248,7 +273,7 @@ async function openInPreview(target) {
             meta = (await wsApi(`/api/workspace/resolve?path=${encodeURIComponent(target)}`)).file;
         } catch (e) {
             openWorkspacePanel('preview');
-            wsSetPreviewEmpty(t('ws_preview_failed') + ': ' + e.message, 'fa-triangle-exclamation');
+            wsSetPreviewEmpty(wsErrorMessage(e), 'fa-triangle-exclamation');
             return;
         }
     }
@@ -341,7 +366,7 @@ async function wsRenderPreview(meta) {
             }
             applyHighlighting(body);
         } catch (e) {
-            wsSetPreviewEmpty(t('ws_preview_failed') + ': ' + e.message, 'fa-triangle-exclamation');
+            wsSetPreviewEmpty(wsErrorMessage(e), 'fa-triangle-exclamation');
         }
         return;
     }
@@ -465,7 +490,7 @@ async function startPreviewEdit() {
     try {
         data = await wsApi(`/api/workspace/read?path=${encodeURIComponent(wsEditTargetPath(target))}`);
     } catch (e) {
-        _wsToast(`${t('ws_edit_load_failed')}: ${e.message}`);
+        _wsToast(`${t('ws_edit_load_failed')}: ${wsErrorMessage(e)}`);
         await wsRenderPreview(target);
         return;
     }
@@ -585,7 +610,7 @@ async function savePreviewEdit(opts) {
             await wsExitEdit();
         }
     } catch (e) {
-        _wsToast(`${t('ws_edit_save_failed')}: ${e.message}`);
+        _wsToast(`${t('ws_edit_save_failed')}: ${wsErrorMessage(e)}`);
     } finally {
         wsSaving = false;
         btn?.classList.remove('ws-btn-busy');
@@ -897,7 +922,7 @@ async function loadWorkspaceDir(relPath) {
         renderWorkspaceEntries(data.entries, data.truncated);
     } catch (e) {
         list.innerHTML = `<div class="workspace-empty">
-            <i class="fas fa-triangle-exclamation"></i><span>${escapeHtml(e.message)}</span></div>`;
+            <i class="fas fa-triangle-exclamation"></i><span>${escapeHtml(wsErrorMessage(e))}</span></div>`;
     }
 }
 
@@ -985,7 +1010,7 @@ async function runWorkspaceSearch(query) {
         const list = document.getElementById('ws-file-list');
         if (list) {
             list.innerHTML = `<div class="workspace-empty">
-                <i class="fas fa-triangle-exclamation"></i><span>${escapeHtml(e.message)}</span></div>`;
+                <i class="fas fa-triangle-exclamation"></i><span>${escapeHtml(wsErrorMessage(e))}</span></div>`;
         }
     }
 }

@@ -117,11 +117,20 @@ class BridgeConstructionTests(unittest.TestCase):
 # --- real config helper parity --------------------------------------------
 
 class RealConfigHelperTests(unittest.TestCase):
-    def test_helper_defaults_to_legacy_when_key_missing(self):
-        # _is_database_identity uses `or "legacy"` so a missing key is legacy.
+    def test_database_is_the_only_identity_mode_even_without_the_key(self):
+        """The ``or "legacy"`` default was retired along with legacy auth.
+
+        A missing ``identity_mode`` used to mean legacy -- "no database has been
+        configured yet" -- and this helper said so, which made every consumer
+        read as open while the identity database went unused. After
+        retire-legacy-identity-mode there is no shared-password path left to be
+        open *to*, so an absent key now means database: reading it as legacy
+        would report every consumer closed on a config written before the key
+        existed. The helper is deliberately unconditional, and this pins that.
+        """
         with patch("config.conf",
                    return_value=MagicMock(get=lambda k, d=None: None)):
-            self.assertFalse(web_channel._is_database_identity())
+            self.assertTrue(web_channel._is_database_identity())
 
 
 if __name__ == "__main__":

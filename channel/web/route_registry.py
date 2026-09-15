@@ -50,6 +50,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from auth import capability_matrix
+
 #: HTTP methods the registry may declare.
 HTTP_METHODS: Tuple[str, ...] = ("GET", "POST", "PUT", "DELETE", "PATCH")
 
@@ -102,6 +104,17 @@ def P(policy: str, permission: str = "", comment: str = "",
 #: thin ``Auth*`` wrappers that delegate to database-only ``DbAuth*`` classes
 #: for route-class-name compatibility. Do not append REMOVED rows for these
 #: paths while the wrappers remain.
+def S(slice_id: str, action: str, **kwargs) -> dict:
+    """A policy entry derived from :mod:`auth.capability_matrix`.
+
+    The ten recovered methods use this instead of a literal so that "the route
+    is open" and "the consumer/page is open" are the same declaration. An
+    action the registry does not serve is ``closed`` and the HTTP gate refuses
+    it with 503 before any handler runs.
+    """
+    return capability_matrix.route(slice_id, action, **kwargs)
+
+
 ROUTES: Tuple[RouteEntry, ...] = (
     RouteEntry("/", "RootHandler", "upstream", {"GET": P("public", comment="console root")}),
     RouteEntry("/api/health", "HealthHandler", "upstream", {"GET": P("public", comment="health probe")}),
@@ -113,6 +126,9 @@ ROUTES: Tuple[RouteEntry, ...] = (
     RouteEntry("/auth/context", "DbAuthContextHandler", "fork:self-account", {"GET": P("tenant", comment="current-tenant capability")}),
     RouteEntry("/auth/profile", "DbSelfProfileHandler", "fork:self-account", {"PATCH": P("personal", comment="self profile edit")}),
     RouteEntry("/auth/profile/avatar", "DbSelfAvatarHandler", "fork:self-account", {"GET": P("personal", comment="fetch self avatar"), "POST": P("personal", comment="upload self avatar")}),
+    RouteEntry("/auth/desktop/authorize", "DesktopAuthorizeHandler", "fork:desktop-auth", {"GET": P("public", comment="Desktop browser consent page (Cookie session; a bare GET never mints a code)"), "POST": P("public", comment="Desktop consent confirm (CSRF/origin + live session + one-time request record)")}),
+    RouteEntry("/auth/desktop/token", "DesktopTokenHandler", "fork:desktop-auth", {"POST": P("public", comment="Desktop authorization-code + PKCE S256 exchange (exact origin, 60s single-use code, no-store)")}),
+    RouteEntry("/api/users/([^/]+)/avatar", "DbUserAvatarHandler", "fork:self-account", {"GET": P("personal", comment="read an account avatar by user id (self / platform admin / shared tenant)")}),
     RouteEntry("/api/platform/users", "PlatformUsersHandler", "fork:platform-console", {"GET": P("platform", comment="list accounts")}),
     RouteEntry("/api/platform/users/([^/]+)/password", "PlatformUserPasswordHandler", "fork:platform-console", {"POST": P("platform", comment="reset platform account password")}),
     RouteEntry("/api/platform/users/([^/]+)/external-identities", "PlatformUserExternalIdentitiesHandler", "fork:platform-console", {"GET": P("platform", comment="list external identity bindings for a user"), "POST": P("platform", comment="bind external identity to a user")}),
@@ -126,7 +142,7 @@ ROUTES: Tuple[RouteEntry, ...] = (
     RouteEntry("/api/platform/tenants/([^/]+)/roles/([^/]+)", "PlatformTenantRoleHandler", "fork:platform-console", {"POST": P("platform", comment="target-tenant role update (platform)"), "DELETE": P("platform", comment="target-tenant role delete (platform)")}),
     RouteEntry("/api/platform/tenants/([^/]+)/authorization/catalog", "PlatformTenantAuthorizationCatalogHandler", "fork:platform-console", {"GET": P("platform", comment="target-tenant auth catalog (platform)")}),
     RouteEntry("/api/platform/tenants/([^/]+)/resources", "PlatformTenantResourcesHandler", "fork:platform-console", {"GET": P("platform", comment="tenant global resource grants (platform)"), "PUT": P("platform", comment="set tenant global resource grants (platform)")}),
-    RouteEntry("/api/platform/tenants/([^/]+)", "PlatformTenantHandler", "fork:platform-console", {"GET": P("platform", comment="tenant detail"), "POST": P("platform", comment="edit tenant status")}),
+    RouteEntry("/api/platform/tenants/([^/]+)", "PlatformTenantHandler", "fork:platform-console", {"GET": P("platform", comment="tenant detail"), "POST": P("platform", comment="edit tenant status/restore"), "DELETE": P("platform", comment="archive tenant")}),
     RouteEntry("/api/tenant", "TenantInfoHandler", "fork:tenant-console", {"GET": P("tenant", "tenant.info.read", comment="current tenant info")}),
     RouteEntry("/api/tenant/members", "TenantMembersHandler", "fork:tenant-console", {"GET": P("tenant", "tenant.members.read", comment="list members"), "POST": P("tenant", comment="create/bind member (tenant_admin)")}),
     RouteEntry("/api/tenant/members/([^/]+)/external-identities", "TenantMemberExternalIdentitiesHandler", "fork:tenant-console", {"GET": P("tenant", "tenant.members.read", comment="list a member's external identity bindings"), "POST": P("tenant", comment="bind external identity to a member")}),
@@ -147,21 +163,24 @@ ROUTES: Tuple[RouteEntry, ...] = (
     RouteEntry("/api/admin/overview", "AdminOverviewHandler", "fork:admin-console", {"GET": P("tenant", comment="admin console KPI overview (platform/tenant_admin)")}),
     RouteEntry("/message", "MessageHandler", "upstream", {"POST": P("tenant", comment="send message")}),
     RouteEntry("/upload", "UploadHandler", "upstream", {"POST": P("tenant", comment="file upload")}),
-    RouteEntry("/uploads/(.*)", "UploadsHandler", "upstream", {"GET": P("tenant", comment="serve upload")}),
-    RouteEntry("/api/file", "FileServeHandler", "upstream", {"GET": P("tenant", comment="file serve")}),
+    RouteEntry("/uploads/(.*)", "UploadsHandler", "upstream", {"GET": P("tenant", comment="serve upload (tenant derived from the addressed agent: the console reads this as an <img>/<audio> subresource, which cannot send X-Tenant-ID)", tenant_from_resource=True)}),
+    RouteEntry("/api/file", "FileServeHandler", "upstream", {"GET": P("tenant", comment="file serve (the console reads this as an <img>/<a download>/<a href> navigation, which cannot send X-Tenant-ID; tenant derived from the addressed file's workspace)", tenant_from_resource=True)}),
     RouteEntry("/preview/(.+)", "PreviewHandler", "upstream", {"GET": P("public", comment="preview (capability token)")}),
-    RouteEntry("/api/workspace/tree", "WorkspaceTreeHandler", "upstream", {"GET": P("closed", comment="workspace tree (deferred)")}),
-    RouteEntry("/api/workspace/search", "WorkspaceSearchHandler", "upstream", {"GET": P("closed", comment="workspace search (deferred)")}),
-    RouteEntry("/api/workspace/resolve", "WorkspaceResolveHandler", "upstream", {"GET": P("closed", comment="workspace resolve (deferred)")}),
-    RouteEntry("/api/workspace/meta", "WorkspaceMetaHandler", "upstream", {"GET": P("closed", comment="workspace meta (deferred)")}),
-    RouteEntry("/api/workspace/read", "WorkspaceReadHandler", "upstream", {"GET": P("closed", comment="workspace read (deferred)")}),
-    RouteEntry("/api/workspace/write", "WorkspaceWriteHandler", "upstream", {"POST": P("closed", comment="workspace write (deferred)")}),
+    RouteEntry("/api/workspace/tree", "WorkspaceTreeHandler", "upstream", {"GET": P("tenant", comment="workspace tree (console file panel; handler scopes to the caller's tenant root)")}),
+    RouteEntry("/api/workspace/search", "WorkspaceSearchHandler", "upstream", {"GET": P("tenant", comment="workspace search (console file panel; handler scopes to the caller's tenant root)")}),
+    RouteEntry("/api/workspace/resolve", "WorkspaceResolveHandler", "upstream", {"GET": P("tenant", comment="workspace resolve (console preview; absolute paths authorized against the caller's tenant roots)")}),
+    RouteEntry("/api/workspace/meta", "WorkspaceMetaHandler", "upstream", {"GET": P("tenant", comment="workspace meta (console file panel; handler scopes to the caller's tenant root)")}),
+    RouteEntry("/api/workspace/read", "WorkspaceReadHandler", "upstream", {"GET": P("tenant", comment="workspace read (console editor; handler scopes to the caller's tenant root)")}),
+    RouteEntry("/api/workspace/write", "WorkspaceWriteHandler", "upstream", {"POST": P("tenant", comment="workspace write (console editor save; origin/CSRF + tenant root boundary)")}),
     RouteEntry("/api/projects", "ProjectsHandler", "upstream", {"GET": P("tenant", comment="projects")}),
     RouteEntry("/api/projects/select", "ProjectSelectHandler", "upstream", {"POST": P("tenant", comment="project select")}),
     RouteEntry("/api/projects/create", "ProjectCreateHandler", "upstream", {"POST": P("tenant", comment="project create")}),
-    RouteEntry("/api/projects/browse", "ProjectBrowseHandler", "upstream", {"GET": P("closed", comment="project browse (deferred)")}),
+    RouteEntry("/api/projects/browse", "ProjectBrowseHandler", "upstream", {"GET": S("project_browse", "browse", permission="", comment="project browse (personal root of the caller's current tenant+user; relative ids, breadcrumbs and a bounded parent; handler re-resolves every path through common.safe_fs against the verified identity)")}),
     RouteEntry("/api/projects/order", "ProjectOrderHandler", "upstream", {"POST": P("tenant", comment="project order")}),
     RouteEntry("/api/projects/manage", "ProjectManageHandler", "upstream", {"PUT": P("tenant", comment="project rename"), "DELETE": P("tenant", comment="project delete")}),
+    RouteEntry("/api/projects/import/preview", "ProjectImportPreviewHandler", "fork:project-import", {"POST": S("project_browse", "import", permission="", comment="project import preview (local: loopback + per-start token + owned session; remote: multipart manifest, no server path interpreted)")}),
+    RouteEntry("/api/projects/import", "ProjectImportHandler", "fork:project-import", {"POST": S("project_browse", "import", permission="", comment="project import publish (requires the one-time handle the preview issued for the same source; staging + atomic publish + quota reservation)")}),
+    RouteEntry("/api/projects/import/cancel", "ProjectImportCancelHandler", "fork:project-import", {"POST": S("project_browse", "import", permission="", comment="project import cancel (the caller's own handle; a cancelled handle is no longer redeemable)")}),
     RouteEntry("/api/voice/asr", "VoiceAsrHandler", "upstream", {"POST": P("tenant", comment="voice ASR")}),
     RouteEntry("/api/voice/tts", "VoiceTtsHandler", "upstream", {"POST": P("tenant", comment="voice TTS")}),
     RouteEntry("/poll", "PollHandler", "upstream", {"POST": P("tenant", comment="poll response")}),
@@ -173,23 +192,28 @@ ROUTES: Tuple[RouteEntry, ...] = (
     RouteEntry("/config", "ConfigHandler", "upstream", {"GET": P("platform", comment="platform config"), "POST": P("platform", comment="platform config save")}),
     RouteEntry("/api/models", "ModelsHandler", "upstream", {"GET": P("platform", comment="models (platform admin)"), "POST": P("platform", comment="models save (platform admin)")}),
     RouteEntry("/api/channels", "ChannelsHandler", "upstream", {"GET": P("platform", comment="instance-level channels (platform admin)"), "POST": P("platform", comment="instance-level channels save/connect")}),
-    RouteEntry("/api/weixin/qrlogin", "WeixinQrHandler", "upstream", {"GET": P("closed", comment="weixin qr (deferred)"), "POST": P("closed", comment="poll QR status / start channel after login")}),
+    RouteEntry("/api/weixin/qrlogin", "WeixinQrHandler", "upstream", {"GET": S("weixin_scan", "qr"), "POST": S("weixin_scan", "poll")}),
     RouteEntry("/api/feishu/register", "FeishuRegisterHandler", "upstream", {"GET": P("personal", comment="start a feishu register session"), "POST": P("personal", comment="poll the caller's own register session")}),
     RouteEntry("/api/tools", "ToolsHandler", "upstream", {"GET": P("tenant", comment="tools")}),
     RouteEntry("/api/skills", "SkillsHandler", "upstream", {"GET": P("tenant", comment="skills"), "POST": P("tenant", comment="skills toggle")}),
     RouteEntry("/api/skills/content", "SkillContentHandler", "upstream", {"GET": P("tenant", comment="skill content"), "POST": P("tenant", comment="skill content write")}),
-    RouteEntry("/api/memory", "MemoryHandler", "upstream", {"GET": P("closed", comment="memory (deferred)")}),
-    RouteEntry("/api/memory/content", "MemoryContentHandler", "upstream", {"GET": P("closed", comment="memory content (deferred)")}),
-    RouteEntry("/api/knowledge/list", "KnowledgeListHandler", "upstream", {"GET": P("closed", comment="knowledge (deferred)")}),
-    RouteEntry("/api/knowledge/read", "KnowledgeReadHandler", "upstream", {"GET": P("closed", comment="knowledge read (deferred)")}),
-    RouteEntry("/api/knowledge/graph", "KnowledgeGraphHandler", "upstream", {"GET": P("closed", comment="knowledge graph (deferred)")}),
-    RouteEntry("/api/knowledge/action", "KnowledgeActionHandler", "upstream", {"POST": P("closed", comment="knowledge action (deferred)")}),
-    RouteEntry("/api/knowledge/import", "KnowledgeImportHandler", "upstream", {"POST": P("closed", comment="knowledge import (deferred)")}),
-    RouteEntry("/api/scheduler", "SchedulerHandler", "upstream", {"GET": P("closed", comment="scheduler (group 5)")}),
-    RouteEntry("/api/scheduler/run", "SchedulerRunHandler", "upstream", {"POST": P("closed", comment="scheduler run (group 5)")}),
-    RouteEntry("/api/scheduler/toggle", "SchedulerToggleHandler", "upstream", {"POST": P("closed", comment="scheduler toggle (group 5)")}),
-    RouteEntry("/api/scheduler/update", "SchedulerUpdateHandler", "upstream", {"POST": P("closed", comment="scheduler update (group 5)")}),
-    RouteEntry("/api/scheduler/delete", "SchedulerDeleteHandler", "upstream", {"POST": P("closed", comment="scheduler delete (group 5)")}),
+    RouteEntry("/api/memory/personal/content", "PersonalMemoryContentHandler", "fork:member-personal-console", {"GET": P("personal", comment="read one of my personal memory entries (current tenant+user)")}),
+    RouteEntry("/api/memory/personal", "PersonalMemoryHandler", "fork:member-personal-console", {"GET": P("personal", comment="list my personal memory (current tenant+user)"), "POST": P("personal", comment="edit/delete/clear my personal memory (version-conditional)")}),
+    RouteEntry("/api/personal/channels/([^/]+)", "PersonalChannelInstanceHandler", "fork:member-personal-console", {"GET": P("personal", comment="read one of my personal channel instances, with its masked credential state and binding"), "POST": P("personal", comment="edit/enable/disable/revoke/start_binding/unlink one of my personal channel instances (tenant+owner fixed from the session)")}),
+    RouteEntry("/api/personal/channels", "PersonalChannelHandler", "fork:member-personal-console", {"GET": P("personal", comment="list my personal channel instances (current tenant+user) and the types open for onboarding"), "POST": P("personal", comment="register a personal channel instance owned by the caller (tenant+owner fixed from the session)")}),
+    RouteEntry("/api/personal/resources", "PersonalResourceHandler", "fork:member-personal-console", {"GET": P("personal", comment="list the resources I may configure personally (grant-filtered) with my saved parameters"), "POST": P("personal", comment="save or clear my own parameters for a granted resource (owner fixed from the session; public install/body/credentials untouched)")}),
+    RouteEntry("/api/memory", "MemoryHandler", "upstream", {"GET": S("memory_browse", "list")}),
+    RouteEntry("/api/memory/content", "MemoryContentHandler", "upstream", {"GET": S("memory_browse", "content")}),
+    RouteEntry("/api/knowledge/list", "KnowledgeListHandler", "upstream", {"GET": P("tenant", comment="knowledge list (knowledge.read; tenant-bound Agent + owner scoped)")}),
+    RouteEntry("/api/knowledge/read", "KnowledgeReadHandler", "upstream", {"GET": P("tenant", comment="knowledge read (knowledge.read; tenant-bound Agent + owner scoped)")}),
+    RouteEntry("/api/knowledge/graph", "KnowledgeGraphHandler", "upstream", {"GET": P("tenant", comment="knowledge graph (knowledge.read; tenant-bound Agent + owner scoped)")}),
+    RouteEntry("/api/knowledge/action", "KnowledgeActionHandler", "upstream", {"POST": P("tenant", comment="knowledge write (data root + agent ownership)")}),
+    RouteEntry("/api/knowledge/import", "KnowledgeImportHandler", "upstream", {"POST": P("tenant", comment="knowledge import (data root + agent ownership)")}),
+    RouteEntry("/api/scheduler", "SchedulerHandler", "upstream", {"GET": S("scheduler", "list")}),
+    RouteEntry("/api/scheduler/run", "SchedulerRunHandler", "upstream", {"POST": S("scheduler", "run")}),
+    RouteEntry("/api/scheduler/toggle", "SchedulerToggleHandler", "upstream", {"POST": S("scheduler", "toggle")}),
+    RouteEntry("/api/scheduler/update", "SchedulerUpdateHandler", "upstream", {"POST": S("scheduler", "update")}),
+    RouteEntry("/api/scheduler/delete", "SchedulerDeleteHandler", "upstream", {"POST": S("scheduler", "delete")}),
     RouteEntry("/api/todos", "TodosHandler", "fork:todos", {"GET": P("tenant", comment="todos (own)"), "POST": P("tenant", comment="create (auth + CSRF enforced in handler)")}),
     RouteEntry("/api/todos/summary", "TodoSummaryHandler", "fork:todos", {"GET": P("tenant", comment="todo summary")}),
     RouteEntry("/api/todos/(.*)/events", "TodoEventsHandler", "fork:todos", {"GET": P("tenant", comment="todo events")}),

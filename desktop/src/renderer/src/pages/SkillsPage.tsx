@@ -13,7 +13,7 @@ interface SkillsPageProps {
   baseUrl: string
 }
 
-const SKILL_HUB_URL = 'https://skills.cowagent.ai/'
+const SKILL_HUB_URL = 'https://www.rsm.global/china/zh-hans'
 
 /**
  * Skills are addressed by name, not by path: which file a name resolves to is

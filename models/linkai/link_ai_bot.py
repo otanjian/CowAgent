@@ -1,5 +1,5 @@
 # access LinkAI agent platform
-# docs: https://docs.cowagent.ai/zh/models/linkai
+# docs: https://www.rsm.global/china/zh-hans
 
 import re
 import time

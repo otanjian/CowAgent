@@ -19,6 +19,7 @@ import re
 import shutil
 import tempfile
 import unittest
+from pathlib import Path
 
 from agent import team
 from agent.admin import AgentAdminError, AgentAdminService
@@ -26,11 +27,18 @@ from agent.registry import AgentRegistry, set_agent_registry
 from agent.tenant_provisioning import (
     TenantAgentProvisioner,
     TenantProvisioningError,
+    _persona_rewrites,
     get_tenant_agent_provisioner,
 )
 from auth.service import IdentityService, IdentityServiceError
 
 AGENT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+
+def _mentions(text, agent_id):
+    """True when ``agent_id`` appears as a whole id-like token in ``text``."""
+    return re.search(r"(?<![A-Za-z0-9_-])%s(?![A-Za-z0-9_-])" % re.escape(agent_id),
+                     text) is not None
 
 
 class _Base(unittest.TestCase):
@@ -377,6 +385,94 @@ class DefaultAgentTakeoverTests(_Base):
         self.assertEqual((result["copied"], result["skipped"]), (0, 1))
         self.assertIsNone(result["default_agent_id"])
         self.assertEqual(self.svc.tenant_default_agent_id(self.target_id), "alpha-globex")
+
+
+class PersonaRewriteTests(_Base):
+    """A clone carries the source's behaviour, not its coordinates.
+
+    The persona files copy verbatim, so the copy step rewrites the references a
+    clone cannot keep: the source shared root becomes the target's, and an Agent
+    id from this selection becomes that agent's clone id. Bounded on purpose --
+    ids outside the selection are another tenant's business, not this copy's.
+    """
+
+    def _write_persona(self, agent_id, filename, text):
+        workspace = (self.instance if agent_id == "alpha"
+                     else os.path.join(self.instance, "agents", agent_id))
+        with open(os.path.join(workspace, filename), "w", encoding="utf-8") as handle:
+            handle.write(text)
+
+    def _clone_file(self, clone_id, filename):
+        with open(os.path.join(self.target_root, "agents", clone_id, filename),
+                  encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_source_root_paths_are_rewritten_to_the_target_root(self):
+        self._write_persona(
+            "beta", "AGENT.md",
+            "我的工作区：%s\n" % os.path.join(self.instance, "agents", "beta"))
+        self._write_persona("beta", "USER.md", "共享根：%s\n" % self.instance)
+        self._write_persona("beta", "RULE.md", "知识库在 %s/knowledge/\n" % self.instance)
+
+        self._copy(["beta"])
+
+        self.assertIn(os.path.join(self.target_root, "agents", "beta-globex"),
+                      self._clone_file("beta-globex", "AGENT.md"))
+        for filename in ("AGENT.md", "USER.md", "RULE.md"):
+            self.assertNotIn(self.instance, self._clone_file("beta-globex", filename))
+
+    def test_selected_colleague_ids_are_rewritten_to_their_clone_ids(self):
+        self._write_persona("alpha", "AGENT.md", "取数问 beta，制度也问 beta。\n")
+
+        self._copy(["alpha", "beta"])
+
+        alpha = self._clone_file("alpha-globex", "AGENT.md")
+        self.assertIn("beta-globex", alpha)
+        self.assertFalse(_mentions(alpha, "beta"))
+        self.assertEqual(self._clone_file("beta-globex", "AGENT.md"), "# Beta persona")
+
+    def test_unselected_colleagues_keep_their_source_id(self):
+        self._write_persona("alpha", "AGENT.md", "取数问 beta。\n")
+
+        self._copy(["alpha"])
+
+        self.assertTrue(_mentions(self._clone_file("alpha-globex", "AGENT.md"), "beta"))
+
+    def test_ids_that_are_not_agents_at_all_are_left_alone(self):
+        self._write_persona("alpha", "AGENT.md", "报表口径见 gamma 文档。\n")
+
+        self._copy(["alpha"])
+
+        self.assertTrue(_mentions(self._clone_file("alpha-globex", "AGENT.md"), "gamma"))
+
+    def test_already_copied_colleagues_map_to_the_existing_clone(self):
+        self._copy(["beta"])
+        self._write_persona("alpha", "AGENT.md", "取数问 beta。\n")
+
+        self._copy(["alpha"])
+
+        alpha = self._clone_file("alpha-globex", "AGENT.md")
+        self.assertIn("beta-globex", alpha)
+        self.assertFalse(_mentions(alpha, "beta"))
+
+    def test_an_id_that_already_names_the_clone_is_not_rewritten_twice(self):
+        self._write_persona(
+            "alpha", "AGENT.md", "交接给 beta-globex，源租户的 beta 不用管。\n")
+
+        self._copy(["alpha", "beta"])
+
+        alpha = self._clone_file("alpha-globex", "AGENT.md")
+        self.assertIn("beta-globex", alpha)
+        self.assertNotIn("beta-globex-globex", alpha)
+
+    def test_rewrites_cover_the_tilde_form_of_the_source_root(self):
+        source_root = str(Path.home() / "fake-source")
+
+        rewrites = _persona_rewrites(source_root, "/srv/target", {})
+
+        literals = [literal for _regex, literal, _replacement in rewrites]
+        self.assertIn(source_root, literals)
+        self.assertIn("~/fake-source", literals)
 
 
 class _FailingAdminService:

@@ -169,34 +169,79 @@ PERMISSION_METADATA: Dict[str, Dict[str, object]] = {
     },
 }
 
-#: Business-read permissions a ``member`` (and thus a custom role on top of
-#: member) gets by default. Namespace/member/org listing requires explicit grant.
+#: Default permission set for the built-in ``member``. This is the "use plus
+#: create-your-own-resources" tier from the product plan: a member can run the
+#: chat / agents / skills / tools / models they were given, keep their own
+#: personal reads and todos, and create tenant-owned resources. Tenant-wide
+#: identity management (member/org listing) and the *management* actions that
+#: only make sense over the whole tenant stay with ``tenant_admin``.
+#:
+#: Explicitly enumerated (not derived from ``PERMISSION_CATALOG``) so a future
+#: catalogue addition never silently widens an already-provisioned member.
 MEMBER_DEFAULT_PERMISSIONS: Tuple[str, ...] = (
     "tenant.info.read",
     "agent.read",
+    "agent.use",
+    "agent.edit",
     "history.read",
     "knowledge.read",
     "memory.read",
     "todo.read",
     "todo.write",
+    "skill.read",
+    "skill.use",
+    "skill.edit",
+    "tool.read",
+    "tool.execute",
+    "tool.configure",
+    "model.read",
+    "model.use",
+    "chat.use",
 )
 
-#: Explicit default set for the built-in ``tenant_admin``. This is a *fixed*
-#: list of the nine catalogue ids — NOT the whole catalogue, so that adding a
-#: future permission to the catalogue never auto-grants it to an existing admin.
+#: Explicit default set for the built-in ``tenant_admin``. This is the whole
+#: catalogue *as of this change*, spelled out id-by-id — NOT ``PERMISSION_CATALOG``
+#: — so that adding a future permission to the catalogue never auto-grants it to
+#: an existing admin. It is a strict superset of ``MEMBER_DEFAULT_PERMISSIONS``.
 TENANT_ADMIN_DEFAULT_PERMISSIONS: Tuple[str, ...] = (
     "tenant.info.read",
     "tenant.members.read",
     "tenant.org.read",
     "agent.read",
+    "agent.use",
+    "agent.edit",
+    "agent.enable",
     "history.read",
     "knowledge.read",
     "memory.read",
     "todo.read",
     "todo.write",
+    "skill.read",
+    "skill.use",
+    "skill.edit",
+    "skill.enable",
+    "tool.read",
+    "tool.execute",
+    "tool.configure",
+    "model.read",
+    "model.use",
+    "chat.use",
 )
 
-#: Built-in role codes. These cannot be modified or deleted.
+#: Permissions a built-in ``tenant_admin`` must keep when edited. These gate the
+#: identity workbench's own read pages (roles/members/org); removing them would
+#: lock the tenant out of the console that would let them undo it. The admin
+#: *qualification* itself is code-derived and never at risk, but the read pages
+#: are permission-gated, so this is a deliberate self-lock guard.
+TENANT_ADMIN_MINIMUM_PERMISSIONS: Tuple[str, ...] = (
+    "tenant.info.read",
+    "tenant.members.read",
+    "tenant.org.read",
+)
+
+#: Built-in role codes. Their code is immutable and they cannot be deleted; the
+#: tenant-scoped pair (``tenant_admin``/``member``) *is* editable (name,
+#: permissions, resource grants, model defaults).
 TENANT_ADMIN_CODE = "tenant_admin"
 MEMBER_CODE = "member"
 
@@ -262,22 +307,24 @@ def permissions_for_roles(
 ) -> Set[str]:
     """Union the permissions of the given role codes.
 
-    ``role_permissions`` maps a role code to its explicitly stored permissions
-    for custom roles. Built-ins use their explicit default set; tenant_admin is
-    treated as holding its nine-id default set. The union is the effective
-    permission set for a membership. Admin *qualification* stays independent of
-    this union (it is decided by ``is_admin_role`` / the tenant_admin membership
-    role), so a custom role can never be crafted into an administrator here.
+    ``role_permissions`` maps a role code to its *persisted* permission set and
+    is authoritative for every role, built-ins included: a built-in role whose
+    set was edited (or explicitly cleared) is honoured verbatim, so the console
+    display and the enforcement path read the same fact. A code with no
+    persisted entry falls back to the explicit default set for the built-in
+    codes; a custom role with no entry contributes nothing.
+
+    Admin *qualification* stays independent of this union (it is decided by
+    ``is_admin_role`` / the tenant_admin membership role), so editing a built-in
+    role's permissions can never grant or revoke administrator status.
     """
     result: Set[str] = set()
     for code in role_codes:
-        if code == TENANT_ADMIN_CODE:
-            result |= default_permissions_for(TENANT_ADMIN_CODE)
+        if code in role_permissions:
+            result |= set(role_permissions[code])
             continue
-        if code == MEMBER_CODE:
-            result |= default_permissions_for(MEMBER_CODE)
-            continue
-        result |= set(role_permissions.get(code, set()))
+        if code in BUILTIN_ROLES:
+            result |= default_permissions_for(code)
     return result
 
 
@@ -313,6 +360,24 @@ RESOURCE_ACTIONS: Dict[str, Tuple[str, ...]] = {
     "model": ("read", "use"),
     "agent": ("read", "use", "edit", "enable"),
 }
+
+#: The agent actions a private owner holds by virtue of ownership. Reading and
+#: launching the agent one was given must not require a hand-written
+#: ``agent:<id>`` grant; neither must *maintaining* it. The member role
+#: deliberately does not carry ``agent.enable`` — that is a tenant-wide
+#: maintenance permission, and granting it globally would let a member switch on
+#: any Agent they hold a grant for. So the owner's maintenance authority comes
+#: from ownership of *that object*, which is why ``edit``/``enable`` are here.
+#: Kept next to :data:`RESOURCE_ACTIONS` because it is a narrowing of the
+#: ``agent`` row.
+PRIVATE_AGENT_OWNER_ACTIONS: Tuple[str, ...] = ("read", "use", "edit", "enable")
+
+#: The owner actions that ownership *alone* authorises, without the functional
+#: permission. ``read``/``use`` keep their existing requirement (every member
+#: already holds both); ``enable`` does not, because the member role
+#: intentionally lacks ``agent.enable`` and must still be able to switch its own
+#: agent on and off. Listed explicitly so widening the exemption is deliberate.
+PRIVATE_AGENT_OWNER_EXEMPT_ACTIONS: Tuple[str, ...] = ("enable",)
 
 #: A stable resource_id namespace marks the origin/source of a resource so a
 #: rename never loses an authorization and two same-name resources from different
@@ -399,3 +464,144 @@ def resource_ids_for(grants: Iterable[Dict[str, str]], kind: str, action: str) -
         g["resource_id"] for g in grants
         if g["resource_kind"] == kind and g["action"] == action
     }
+
+
+#: The five personal console pages registered by
+#: ``enable-member-personal-console`` (design D1). Kept here, in the
+#: dependency-free policy module, because the default-grant table below is
+#: consumed by both the identity service and the storage migrations, and the
+#: latter must not import the former.
+PERSONAL_CONSOLE_PAGES: Tuple[str, ...] = (
+    "personal.agents",
+    "personal.channels",
+    "personal.memory",
+    "personal.tools",
+    "personal.skills",
+)
+
+#: Default ``menu`` grants for the built-in roles, as ``nav:<page>`` ids.
+#:
+#: Menu grants are *restrictive*: once a role carries any, the console is bound
+#: to that set (design D1). Built-in roles carried none, so they were governed by
+#: functional permissions alone. Adding only the five personal pages would have
+#: flipped every member into restricted mode and silently hidden everything they
+#: could already open (会话历史 / 知识库 / 我的待办 / …). So each role's set is
+#: "the pages it could already reach, plus the five new personal pages": the
+#: gating turns on without removing a page anyone had, and without widening
+#: anything either — a page no role could reach is not listed.
+#:
+#: ``tenant_admin`` is a strict superset of ``member`` and needs its management
+#: pages listed for the same reason: it carries menu grants now, so its
+#: ``admin.*`` surface must be explicit or it would disappear. The three
+#: ``_TENANT_ADMIN_CORE_PAGES`` remain hard-exempt in the projection.
+BUILTIN_MENU_DEFAULTS: Dict[str, Tuple[str, ...]] = {
+    "member": tuple("nav:%s" % pid for pid in (
+        "personal.agents", "personal.channels", "personal.memory",
+        "personal.tools", "personal.skills",
+        "workbench.agents", "workbench.history", "workbench.knowledge",
+        "workbench.todos",
+        "admin.agents", "admin.memory",
+    )),
+    "tenant_admin": tuple("nav:%s" % pid for pid in (
+        "personal.agents", "personal.channels", "personal.memory",
+        "personal.tools", "personal.skills",
+        "workbench.agents", "workbench.history", "workbench.knowledge",
+        "workbench.todos",
+        "admin.agents", "admin.memory",
+        "admin.channels", "admin.members", "admin.organization",
+        "admin.roles", "admin.skills",
+    )),
+}
+
+
+#: The independent capability switches of ``enable-member-personal-console``
+#: (design D5, task 9.1). A switch decides whether a capability is *offered* —
+#: never whether authorization is checked: the owner, membership and permission
+#: rules behind every one of these surfaces stay in force with the switch on, so
+#: turning a switch off only ever narrows what the console shows and accepts.
+PERSONAL_CAPABILITY_SWITCHES: Tuple[str, ...] = (
+    "member_personal_console",
+    "user_private_agent_management",
+    "personal_memory_write",
+    "personal_channel_onboarding",
+    "personal_channel_runtime",
+)
+
+#: Shipped default per switch. The four slices with recorded Stage 4–8 evidence
+#: ship on; the runtime switch ships off because no channel type has a recorded
+#: real end-to-end acceptance yet (task 7.5). It is deliberately *separate* from
+#: ``PERSONAL_RUNTIME_ACCEPTED_TYPES``: that one is per type, this one is the
+#: deployment-wide master a rollback pulls first.
+PERSONAL_CAPABILITY_DEFAULTS: Dict[str, bool] = {
+    "member_personal_console": True,
+    "user_private_agent_management": True,
+    "personal_memory_write": True,
+    "personal_channel_onboarding": True,
+    "personal_channel_runtime": False,
+}
+
+#: The switches that must all be on for each personal console page. The first is
+#: the console-wide switch (withdrawing it withdraws every personal page at
+#: once); the second, where present, is the slice the page belongs to, so one
+#: capability can be withdrawn without touching the accepted catalogue.
+PERSONAL_PAGE_CAPABILITIES: Dict[str, Tuple[str, ...]] = {
+    "personal.agents": ("member_personal_console",
+                        "user_private_agent_management"),
+    "personal.channels": ("member_personal_console",
+                          "personal_channel_onboarding"),
+    "personal.memory": ("member_personal_console", "personal_memory_write"),
+    "personal.tools": ("member_personal_console",),
+    "personal.skills": ("member_personal_console",),
+}
+
+
+def _capability_config(config=None) -> Dict[str, object]:
+    """The live configuration mapping, or ``{}`` when it cannot be read.
+
+    An unreadable configuration must not silently *enable* a capability the
+    deployment withdrew, and must not silently *disable* one it ships: the
+    per-switch default decides, which is exactly
+    :data:`PERSONAL_CAPABILITY_DEFAULTS`.
+    """
+    if config is not None:
+        return config
+    try:
+        from config import conf
+        return conf() or {}
+    except Exception:  # noqa: BLE001 - policy must stay importable without config
+        return {}
+
+
+def personal_capability_enabled(name: str, *, config=None) -> bool:
+    """Whether one personal capability switch is on.
+
+    Unknown names are ``False`` (fail closed): a typo in a caller must not read
+    as "enabled". ``config`` is injectable so tests do not have to mutate global
+    configuration.
+    """
+    if name not in PERSONAL_CAPABILITY_SWITCHES:
+        return False
+    settings = _capability_config(config)
+    default = PERSONAL_CAPABILITY_DEFAULTS.get(name, False)
+    raw = settings.get(name, default)
+    if raw is None:
+        return default
+    if isinstance(raw, str):
+        return raw.strip().lower() in ("1", "true", "yes", "on", "enabled")
+    return bool(raw)
+
+
+def personal_page_capabilities(pid: str, *, config=None) -> Dict[str, bool]:
+    """Resolve every switch one personal page depends on.
+
+    Returns ``{switch: enabled}`` so a caller can both decide and *explain* the
+    state (the projection reports the switch name, never a bare boolean).
+    """
+    return {name: personal_capability_enabled(name, config=config)
+            for name in PERSONAL_PAGE_CAPABILITIES.get(pid, ())}
+
+
+def personal_page_enabled(pid: str, *, config=None) -> bool:
+    """Whether every switch behind a personal page is on."""
+    switches = personal_page_capabilities(pid, config=config)
+    return bool(switches) and all(switches.values())

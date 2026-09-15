@@ -131,6 +131,28 @@ class RoleGrantTests(unittest.TestCase):
                 resource_grants=[{"resource_kind": "skill", "resource_id": "", "action": "read"}])
         self.assertEqual([r for r in svc.list_roles(tenant["id"]) if r["code"] == "bad"], [])
 
+    def test_delete_custom_role_with_grants_succeeds_and_removes_grants(self):
+        # A role with no member reference is deletable even when it carries
+        # resource grants (rbac-authorization: custom roles are deletable when
+        # no member references them). The role's grants must be cleaned up in
+        # the same transaction so the composite FK does not block the delete.
+        svc = IdentityService(_db())
+        root, tenant = _seed(svc)
+        role = self._make_custom_role(svc, root, tenant)
+        before = svc._store.execute(
+            "SELECT COUNT(*) AS c FROM role_resource_grants WHERE role_id=?",
+            (role["id"],))[0]["c"]
+        self.assertEqual(before, 3)
+
+        result = svc.delete_role(root["id"], tenant["id"], role["id"])
+
+        self.assertTrue(result["deleted"])
+        self.assertEqual([r for r in svc.list_roles(tenant["id"]) if r["code"] == "buyer"], [])
+        leftover = svc._store.execute(
+            "SELECT COUNT(*) AS c FROM role_resource_grants WHERE role_id=?",
+            (role["id"],))[0]["c"]
+        self.assertEqual(leftover, 0)
+
 
 class MultiRoleUnionTests(unittest.TestCase):
     def test_two_roles_union_grants(self):
@@ -200,6 +222,43 @@ class CatalogTests(unittest.TestCase):
         self.assertGreater(cat["total"], 0)
         self.assertIn("agent:acme-agent", [i["resource_id"] for i in cat["items"]])
         self.assertTrue(all(i.get("name") for i in cat["items"]))
+
+    def test_project_tools_loads_lazily_when_instance_is_empty(self):
+        # Regression: the tool catalog projection must not depend on some other
+        # request having already booted the ToolManager. On a fresh process the
+        # per-state-root instance has no ``tool_classes`` (they are filled by
+        # ``load_tools()`` at Agent boot), so returning [] here left the tenant
+        # 工具授权 tab blank until an Agent chat happened to start.
+        from unittest import mock
+
+        calls = {"load": 0}
+
+        class _FakeTool:
+            description = "a fake tool"
+
+            def get_json_schema(self):
+                return {}
+
+        class _FakeToolManager:
+            def __init__(self):
+                self.tool_classes = {}
+                self._mcp_tool_instances = {}
+
+            def load_tools(self):
+                calls["load"] += 1
+                self.tool_classes = {"read": _FakeTool}
+
+            def list_tools(self):
+                return {name: {"description": cls.description}
+                        for name, cls in self.tool_classes.items()}
+
+        fake = _FakeToolManager()
+        with mock.patch("agent.tools.tool_manager.ToolManager", return_value=fake):
+            svc = IdentityService(_db())
+            tools = svc._project_tools()
+
+        self.assertEqual(calls["load"], 1)
+        self.assertEqual([t["resource_id"] for t in tools], ["builtin:read"])
 
 
 class RuntimeAssemblyTests(unittest.TestCase):

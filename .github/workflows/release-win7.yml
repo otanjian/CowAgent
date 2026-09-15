@@ -225,7 +225,7 @@ jobs:
               echo "attempt $attempt failed, retrying in $((attempt * 10))s..."
               sleep $((attempt * 10))
             done
-            echo "==> Download URL: https://cdn.cowagent.ai/${key}"
+            echo "==> Download URL: https://www.rsm.global/china/zh-hans"
           done
 
       # Register the win-legacy row in D1 (is_latest=0). register-releases.mjs

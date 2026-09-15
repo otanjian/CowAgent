@@ -241,6 +241,13 @@
                     </div>
                 </div>
 
+                <!-- The five member pages (「我的」) no longer live in the main
+                     navigation: change move-personal-menu-to-account moved them
+                     into the bottom account menu (「我的资源」), which both the
+                     workbench and the console share. Keep them out of
+                     #sidebar-nav so no duplicate group and no stale current-item
+                     marker can survive. -->
+
                 <div id="sidebar-recent" class="sidebar-recent open">
                     <div class="sidebar-recent-header">
                         <button type="button" id="sidebar-recent-label"
@@ -256,6 +263,8 @@
                         </button>
                     </div>
                     <div id="sidebar-recent-list" class="sidebar-recent-list" role="list"></div>
+                    <button type="button" id="sidebar-recent-archived" class="sidebar-recent-archived"
+                            data-i18n="sidebar_history_archived">已归档</button>
                     <button type="button" id="sidebar-recent-more" class="sidebar-recent-more hidden"
                             data-i18n="sidebar_history_view_all">查看全部</button>
                 </div>
@@ -392,10 +401,15 @@
                 </a>
             </div>
 
-            <!-- Account card stays outside the independently scrolling navigation. -->
+            <!-- Account card stays outside the independently scrolling navigation.
+                 The trigger name, its「个人资源与设置」hint and the personal-area
+                 description are all owned by the trigger; the panel below holds a
+                 single copy of the identity, personal resources and account
+                 actions for the workbench and the console alike. -->
             <div id="sidebar-account-footer" class="sidebar-account-footer">
                 <button id="sidebar-account-toggle" type="button" class="sidebar-account-toggle"
-                        onclick="toggleAccountMenu()" aria-controls="sidebar-account-menu" aria-expanded="false">
+                        onclick="toggleAccountMenu()" aria-controls="sidebar-account-menu" aria-expanded="false"
+                        aria-describedby="sidebar-account-region">
                     <span class="sidebar-account-avatar" aria-hidden="true">
                         <span id="sidebar-account-avatar" class="hidden"></span>
                         <i id="sidebar-account-avatar-icon" class="fas fa-user"></i>
@@ -404,11 +418,19 @@
                         <span id="sidebar-account-name" class="sidebar-account-name">账号信息加载中</span>
                         <span id="sidebar-account-subtitle" class="sidebar-account-subtitle"></span>
                     </span>
+                    <span id="sidebar-account-region" class="account-menu-sr hidden" data-i18n="account_menu_region_personal">当前位于个人区域</span>
                     <svg class="sidebar-account-chevron" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                         <circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>
                     </svg>
                 </button>
                 <div id="sidebar-account-menu" class="sidebar-account-menu hidden" role="group" aria-labelledby="sidebar-account-name">
+                    <div id="account-menu-sheet-head" class="account-menu-sheet-head hidden">
+                        <p class="account-menu-sheet-title" data-i18n="account_menu_title">账号</p>
+                        <button id="account-menu-sheet-close" type="button" class="account-menu-sheet-close hidden"
+                                onclick="closeAccountMenu(true)" data-i18n-aria-label="close" aria-label="关闭">
+                            <i class="fas fa-xmark" aria-hidden="true"></i>
+                        </button>
+                    </div>
                     <div id="account-menu-identity" class="account-menu-identity hidden">
                         <span id="account-menu-avatar" class="sidebar-account-avatar account-menu-avatar" aria-hidden="true"></span>
                         <div class="account-menu-identity-copy">
@@ -422,7 +444,46 @@
                         <svg class="account-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 17.9 17"/></svg>
                         <span data-i18n="account_retry">重新检查</span>
                     </button>
+                    <!-- 我的资源: the member's own objects, scoped by the session
+                         (current tenant + current user). One DOM for both areas;
+                         the authoritative /auth/context projection decides what is
+                         offered. -->
+                    <div id="account-menu-resources" class="account-menu-group hidden">
+                        <p class="account-menu-group-title" data-i18n="account_menu_resources">我的资源</p>
+                        <p id="account-menu-resources-status" class="account-menu-resources-status hidden" role="status"></p>
+                        <button id="account-menu-resources-retry" type="button" class="account-menu-action hidden"
+                                onclick="refreshAccountResources()">
+                            <svg class="account-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 17.9 17"/></svg>
+                            <span data-i18n="account_menu_resources_retry">重新检查</span>
+                        </button>
+                        <a class="account-menu-action account-menu-item account-menu-personal hidden"
+                           data-view="personal-agents" role="link" tabindex="0">
+                            <i class="fas fa-user-gear account-menu-icon" aria-hidden="true"></i>
+                            <span data-i18n="menu_personal_agents">我的智能体</span>
+                        </a>
+                        <a class="account-menu-action account-menu-item account-menu-personal hidden"
+                           data-view="personal-channels" role="link" tabindex="0">
+                            <i class="fas fa-tower-broadcast account-menu-icon" aria-hidden="true"></i>
+                            <span data-i18n="menu_personal_channels">我的渠道</span>
+                        </a>
+                        <a class="account-menu-action account-menu-item account-menu-personal hidden"
+                           data-view="personal-memory" role="link" tabindex="0">
+                            <i class="fas fa-brain account-menu-icon" aria-hidden="true"></i>
+                            <span data-i18n="menu_personal_memory">我的记忆</span>
+                        </a>
+                        <a class="account-menu-action account-menu-item account-menu-personal hidden"
+                           data-view="personal-tools" role="link" tabindex="0">
+                            <i class="fas fa-screwdriver-wrench account-menu-icon" aria-hidden="true"></i>
+                            <span data-i18n="menu_personal_tools">我的工具</span>
+                        </a>
+                        <a class="account-menu-action account-menu-item account-menu-personal hidden"
+                           data-view="personal-skills" role="link" tabindex="0">
+                            <i class="fas fa-bolt account-menu-icon" aria-hidden="true"></i>
+                            <span data-i18n="menu_personal_skills">我的技能</span>
+                        </a>
+                    </div>
                     <div id="account-menu-settings" class="account-menu-group hidden">
+                        <p class="account-menu-group-title" data-i18n="account_menu_settings">账号设置</p>
                         <button id="account-menu-profile" type="button" class="account-menu-action account-menu-item hidden"
                                 onclick="openAccountProfile()">
                             <svg class="account-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 20v-2a7 7 0 0 1 14 0v2"/></svg>
@@ -463,6 +524,13 @@
         <!-- Mobile Overlay -->
         <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-40 hidden lg:hidden cursor-pointer" onclick="toggleSidebar()"></div>
 
+        <!-- Backdrop for the mobile account bottom sheet. It lives outside #sidebar
+             on purpose: the off-canvas sidebar carries a transform, which would
+             make a fixed-position panel inside it be clipped/moved with the
+             drawer. The sheet reuses the one account panel DOM (moved here while
+             the sheet is open) instead of cloning its contents. -->
+        <div id="account-menu-backdrop" class="account-menu-backdrop hidden" aria-hidden="true"></div>
+
         <!-- ================================================================ -->
         <!-- Multi-agent new-chat modal: pick who joins, then start          -->
         <!-- ================================================================ -->
@@ -498,13 +566,19 @@
                 </div>
                 <!-- Avatar header -->
                 <div class="account-profile-hero">
-                    <button type="button" id="account-profile-avatar" class="account-profile-avatar account-profile-avatar-btn" onclick="document.getElementById('account-profile-avatar-input').click()" aria-label="上传头像">
+                    <div class="account-profile-avatar-wrap">
+                        <button type="button" id="account-profile-avatar" class="account-profile-avatar account-profile-avatar-btn" onclick="handleAccountProfileAvatarActivate(event)" data-i18n-aria-label="account_profile_avatar_hint" data-i18n-title="account_profile_avatar_hint" aria-label="双击可更换头像">
+                        </button>
+                        <span class="account-profile-avatar-edit" aria-hidden="true"><i class="fas fa-camera"></i></span>
+                        <!-- The file input MUST stay a sibling of the disc, never a
+                             child: the disc's innerHTML is fully repainted on every
+                             profile load, which would delete a nested input and
+                             silently break the picker. -->
                         <input id="account-profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onchange="uploadAccountProfileAvatar(this.files && this.files[0])">
-                    </button>
+                    </div>
                     <div class="account-profile-hero-copy">
                         <p id="account-profile-hero-name" class="account-profile-hero-name">—</p>
                         <p id="account-profile-hero-username" class="account-profile-hero-username">—</p>
-                        <p class="account-profile-avatar-tip" data-i18n="account_profile_avatar_hint">点击可更换头像</p>
                     </div>
                     <button id="account-profile-edit-btn" type="button" class="agent-btn agent-btn-text account-profile-edit-btn" onclick="startAccountProfileEdit()">
                         <i class="fas fa-pen mr-1"></i><span data-i18n="account_profile_edit">编辑资料</span>
@@ -595,46 +669,6 @@
 
                 <div class="flex-1"></div>
 
-                <!-- Workspace panel toggle (chat view only) -->
-                <button id="workspace-toggle-btn" class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 cursor-pointer transition-colors duration-150"
-                        onclick="toggleWorkspacePanel()" data-tooltip="工作空间" data-tooltip-pos="bottom">
-                    <i class="fas fa-folder-tree text-slate-500 dark:text-slate-400"></i>
-                </button>
-
-                <!-- Language Selector (dropdown) -->
-                <div id="lang-selector" class="relative">
-                    <button id="lang-toggle" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium
-                                                     text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/10
-                                                     cursor-pointer transition-colors duration-150"
-                            onclick="toggleLangMenu(event)">
-                        <i class="fas fa-globe text-xs"></i>
-                        <span id="lang-label" class="lang-label-full">English</span><span id="lang-label-short" class="lang-label-short">EN</span>
-                        <i class="fas fa-chevron-down text-[10px] opacity-60"></i>
-                    </button>
-                    <div id="lang-menu" class="hidden absolute right-0 mt-1 min-w-[120px] py-1 rounded-lg z-50
-                                               bg-white dark:bg-slate-800 shadow-lg ring-1 ring-black/5 dark:ring-white/10">
-                        <button class="lang-menu-item w-full text-left px-3 py-1.5 text-sm text-slate-600 dark:text-slate-300
-                                       hover:bg-slate-100 dark:hover:bg-white/10 cursor-pointer" data-lang="zh"
-                                onclick="selectLanguage('zh')">简体中文</button>
-                        <button class="lang-menu-item w-full text-left px-3 py-1.5 text-sm text-slate-600 dark:text-slate-300
-                                       hover:bg-slate-100 dark:hover:bg-white/10 cursor-pointer" data-lang="zh-Hant"
-                                onclick="selectLanguage('zh-Hant')">繁體中文</button>
-                        <button class="lang-menu-item w-full text-left px-3 py-1.5 text-sm text-slate-600 dark:text-slate-300
-                                       hover:bg-slate-100 dark:hover:bg-white/10 cursor-pointer" data-lang="en"
-                                onclick="selectLanguage('en')">English</button>
-                    </div>
-                </div>
-
-                <!-- Appearance preferences -->
-                <button id="theme-toggle" class="p-2 rounded-lg text-slate-500 dark:text-slate-400
-                                                  hover:bg-slate-100 dark:hover:bg-white/10
-                                                  cursor-pointer transition-colors duration-150"
-                        type="button" onclick="openAppearancePreferences(this)"
-                        aria-haspopup="dialog" aria-controls="appearance-dialog"
-                        data-i18n-title="appearance_title" data-i18n-aria-label="appearance_title">
-                    <i id="theme-icon" class="fas fa-moon"></i>
-                </button>
-
                 <!-- Tenant Selector (database identity mode, hidden by default) -->
                 <div id="tenant-selector" class="relative hidden">
                     <button id="tenant-selector-btn" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium
@@ -650,13 +684,19 @@
                     </div>
                 </div>
 
-                <!-- Logout Button (hidden by default) -->
-                <button id="logout-btn-header" class="p-2 rounded-lg text-slate-500 dark:text-slate-400
-                                                       hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10 dark:hover:text-red-400
-                                                       cursor-pointer transition-colors duration-150 hidden"
-                        onclick="handleLogout()" title="Logout" data-i18n-title="logout">
-                    <i class="fas fa-sign-out-alt text-base"></i>
+                <!-- Workspace panel toggle (chat view only). It is the last entry
+                     in the top bar so the action owned by the current view keeps
+                     the right edge. Its tooltip goes through the floating portal
+                     (data-tip-float) so the text is clamped inside the viewport
+                     instead of hanging off the right edge. -->
+                <button id="workspace-toggle-btn" class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 cursor-pointer transition-colors duration-150"
+                        onclick="toggleWorkspacePanel()" data-tooltip="工作空间" data-tooltip-pos="bottom" data-tip-float>
+                    <i class="fas fa-folder-tree text-slate-500 dark:text-slate-400"></i>
                 </button>
+
+                <!-- Language, appearance and logout entries live in the account
+                     menu, so the top bar does not repeat them here. Logout keeps
+                     the account menu as its single main entry. -->
             </header>
 
             <!-- Content Area -->
@@ -1409,7 +1449,7 @@
                                         <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100" data-i18n="skills_title">技能管理</h2>
                                         <p class="text-sm text-slate-500 dark:text-slate-400 mt-1" data-i18n="skills_desc">查看、启用或禁用 Agent 技能</p>
                                     </div>
-                                    <a href="https://skills.cowagent.ai/" target="_blank"
+                                    <a href="https://www.rsm.global/china/zh-hans" target="_blank"
                                        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-primary-500 bg-primary-50 dark:bg-primary-900/20 hover:bg-primary-100 dark:hover:bg-primary-900/30 transition-colors">
                                         <i class="fas fa-puzzle-piece text-[10px]"></i>
                                         <span data-i18n="skills_hub_btn">探索技能广场</span>
@@ -1598,7 +1638,7 @@
                             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 md:mb-6 md:flex-shrink-0">
                                 <div>
                                     <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100" data-i18n="knowledge_title">知识库</h2>
-                                    <p class="text-sm text-slate-500 dark:text-slate-400 mt-1" data-i18n="knowledge_shared_hint">知识库默认全员共享，在侧栏「知识」查看和编辑。</p>
+                                    <p class="text-sm text-slate-500 dark:text-slate-400 mt-1" data-i18n="knowledge_shared_hint">知识库按智能体共享或独立（见「智能体管理」）；租户级智能体由租户管理员维护，私有智能体由本人维护。</p>
                                 </div>
                                 <div class="flex items-center gap-2">
                                     <span id="knowledge-stats" class="text-xs text-slate-400 dark:text-slate-500 hidden sm:inline"></span>
@@ -2092,8 +2132,14 @@
                 <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100" data-i18n="tenant_title">租户管理</h2>
                 <button id="tenant-create-btn" class="px-4 py-2 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium hidden" data-i18n="tenant_create">创建租户</button>
             </div>
-            <div class="mb-4">
-                <input id="tenant-search" type="text" class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-white/5 text-sm text-slate-800 dark:text-slate-100 focus:outline-none focus:border-primary-500" placeholder="搜索租户名称 / 编码" data-i18n-placeholder="tenant_search_placeholder">
+            <div class="mb-4 flex items-center gap-3">
+                <input id="tenant-search" type="text" class="flex-1 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-white/5 text-sm text-slate-800 dark:text-slate-100 focus:outline-none focus:border-primary-500" placeholder="搜索租户名称 / 编码" data-i18n-placeholder="tenant_search_placeholder">
+                <select id="tenant-status-filter" class="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-white/5 text-sm text-slate-800 dark:text-slate-100 focus:outline-none focus:border-primary-500">
+                    <option value="" data-i18n="tenant_filter_default">未归档</option>
+                    <option value="active" data-i18n="tenant_filter_active">启用</option>
+                    <option value="inactive" data-i18n="tenant_filter_inactive">停用</option>
+                    <option value="archived" data-i18n="tenant_filter_archived">已归档</option>
+                </select>
             </div>
             <div id="tenant-list" class="space-y-2">
                 <div class="text-sm text-slate-400 dark:text-slate-500" data-i18n="tenant_loading">加载中…</div>
@@ -2744,6 +2790,7 @@
     <script defer src="assets/js/i18n/identity-admin.js"></script>
     <script defer src="assets/js/i18n/models-config.js"></script>
     <script defer src="assets/js/i18n/navigation.js"></script>
+    <script defer src="assets/js/i18n/personal-console.js"></script>
     <script defer src="assets/js/i18n/tasks-records.js"></script>
     <script defer src="assets/js/i18n/tenant-channel.js"></script>
     <script defer src="assets/js/i18n/todos.js"></script>
@@ -2755,6 +2802,7 @@
     <script defer src="assets/js/scenes/index.js"></script>
     <script defer src="assets/js/workspace.js"></script>
     <script defer src="assets/js/identity-admin.js"></script>
+    <script defer src="assets/js/personal-console.js"></script>
     <script defer src="assets/js/todos.js"></script>
 </body>
 </html>

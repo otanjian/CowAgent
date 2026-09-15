@@ -7,6 +7,22 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../channel/web/static/js/identity-admin.js'), 'utf8');
+const consoleSource = fs.readFileSync(path.join(__dirname, '../channel/web/static/js/console.js'), 'utf8');
+
+// identity-admin.js calls the global `userAvatarHTML` declared by console.js.
+// Run the shipped helper block (not a reimplementation) ahead of it so the list
+// rows are rendered by the real logic, then the IIFE can see the function.
+function consoleAvatarHelpers() {
+    const from = consoleSource.indexOf('/* ---- User account avatars');
+    const to = consoleSource.indexOf('function _emptyAccount(phase)');
+    assert.ok(from >= 0 && to > from, 'missing console.js avatar helper block');
+    return consoleSource.slice(from, to);
+}
+
+function runAdmin(ctx) {
+    vm.runInNewContext(consoleAvatarHelpers() + '\n' + source, ctx, { filename: 'identity-admin.js' });
+}
+
 const catalog = ['tenant.info.read', 'tenant.members.read', 'tenant.org.read'];
 const role = {
     id: 'role-reviewer', code: 'reviewer', name: 'Organization reviewer',
@@ -127,6 +143,9 @@ function setup(permissionResponse = () => response({ status: 'success', permissi
         sessionStorage: { getItem: () => 'test-tenant' },
         setTimeout() {},
         confirm: () => true,
+        escapeHtml: value => String(value == null ? '' : value)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;'),
         fetch: async (url, options) => {
             calls.push({ url, options });
             if (opts.onWrite && options && options.method && options.method !== 'GET') {
@@ -134,7 +153,7 @@ function setup(permissionResponse = () => response({ status: 'success', permissi
                 if (handled) return handled;
             }
             if (url === '/api/tenant/permissions') return permissionResponse();
-            if (url === '/api/tenant/roles') return response({ status: 'success', items: [role] });
+            if (url === '/api/tenant/roles') return response({ status: 'success', items: opts.roles || [role] });
             if (url === '/api/tenant/roles/' + role.id) return response({ status: 'success' });
             if (url.startsWith('/api/tenant/authorization/catalog?')) {
                 const parsed = new URL(url, 'http://test');
@@ -151,7 +170,7 @@ function setup(permissionResponse = () => response({ status: 'success', permissi
         },
     };
     ctx.window = ctx;
-    vm.runInNewContext(source, ctx, { filename: 'identity-admin.js' });
+    runAdmin(ctx);
     document.dispatch('DOMContentLoaded');
     return {
         ctx, calls, node: id => document.getElementById(id),
@@ -433,6 +452,15 @@ const flush = async () => { for (let i = 0; i < 8; i++) await settle(); };
 
 function setupMembers(opts = {}) {
     const calls = [];
+    const logs = [];
+    // Capture console errors so failure-path cases stay quiet and the recorded
+    // evidence can be asserted (see the weak-password case).
+    const quietConsole = {
+        logs,
+        error: (...args) => logs.push(args),
+        warn: (...args) => logs.push(args),
+        log: () => {}, info: () => {}, debug: () => {},
+    };
     const document = { ...eventTarget(), body: element('body'), createElement: element };
     document.getElementById = id => document.body.querySelector('#' + id);
     for (const id of ['member-list', 'member-status', 'member-create-btn', 'member-pagination']) {
@@ -450,10 +478,13 @@ function setupMembers(opts = {}) {
         user_id: 'usr-alice',
     };
     const ctx = {
-        document, console,
+        document, console: quietConsole,
         sessionStorage: { getItem: () => 't1' },
         setTimeout() {},
         confirm: () => true,
+        escapeHtml: value => String(value == null ? '' : value)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;'),
         fetch: async (url, options) => {
             calls.push({ url, options });
             if (url === '/api/tenant/roles') return response({ status: 'success', items: [
@@ -482,13 +513,17 @@ function setupMembers(opts = {}) {
             }
             if (url.startsWith('/api/tenant/members/')) return response({ status: 'success' });
             if (url === '/api/tenant/members') {
+                if (opts.createMemberResponse && options && options.method === 'POST') {
+                    const r = opts.createMemberResponse;
+                    return response(r.data, r.status);
+                }
                 return response({ status: 'success', member: { membership_id: 'mem-new', user_id: 'usr-new' } });
             }
             throw Error('Unexpected request: ' + url);
         },
     };
     ctx.window = ctx;
-    vm.runInNewContext(source, ctx, { filename: 'identity-admin.js' });
+    runAdmin(ctx);
     document.dispatch('DOMContentLoaded');
     return { ctx, calls, node: id => document.getElementById(id) };
 }
@@ -523,6 +558,35 @@ test('member create issues create-new for the first tenant and bind-existing for
     assert.equal(second.operation, 'bind-existing');
     assert.equal(second.username, 'alice');
     assert.equal(posts[1].options.headers['X-Tenant-ID'], 't2');
+});
+
+test('member create surfaces the weak-password reason instead of a generic failure', async () => {
+    // Regression: a too-short temporary password made the server answer 500 with
+    // an HTML body; apiFetch could not parse it and the modal showed the bare
+    // "load-failed". The server now returns a structured weak_password, and the
+    // modal must turn that code into the actionable reason.
+    const h = setupMembers({
+        createMemberResponse: {
+            status: 400,
+            data: { status: 'error', code: 'weak_password', message: 'weak temporary password' },
+        },
+    });
+    h.node('member-create-btn').dispatch('click');
+    await flush();
+    h.node('adm-fld-username').value = 'rock';
+    h.node('adm-fld-display_name').value = 'Rock';
+    h.node('adm-fld-temporary_password').value = '123456';
+    h.node('admin-modal-submit').dispatch('click');
+    await flush();
+    const err = h.node('admin-modal-error');
+    assert.equal(err.classList.contains('hidden'), false, 'the reason stays visible in the modal');
+    assert.equal(err.textContent, 'tenant_admin_weak_password',
+        'the modal shows the actionable reason, not the raw server message or load-failed');
+    assert.equal(h.node('admin-modal').classList.contains('hidden'), false,
+        'the modal stays open so the input can be corrected');
+    const evidence = h.ctx.console.logs.map(args => args.join(' ')).join('\n');
+    assert.match(evidence, /http 400 weak_password/,
+        'the underlying status and server code are recorded for later diagnosis');
 });
 
 test('member tenant edit binds a newly-selected tenant and leaves existing memberships alone', async () => {
@@ -576,4 +640,195 @@ test('member tenant edit deactivates a deselected tenant with its expected_versi
     const body = JSON.parse(posts[0].options.body);
     assert.equal(body.active, false);
     assert.equal(body.expected_version, 5);
+});
+
+// ---- list rows render the account face (default or uploaded) --------------
+// The tenant member list and the platform account list replaced their generic
+// `fa-user` / `fa-user-cog` glyphs with the account's real face: the uploaded
+// picture through the read-only by-id route, otherwise the id-stable bundled
+// default. The default bytes are static assets, so only the upload hits HTTP.
+
+function setupPlatformUsers(users) {
+    const calls = [];
+    const document = { ...eventTarget(), body: element('body'), createElement: element };
+    document.getElementById = id => document.body.querySelector('#' + id);
+    for (const id of ['platform-user-list', 'platform-user-pagination',
+        'platform-user-search', 'platform-user-status']) {
+        const el = element(id.startsWith('platform-user-s') ? 'input' : 'div');
+        el.id = id;
+        document.body.appendChild(el);
+    }
+    const ctx = {
+        document, console,
+        sessionStorage: { getItem: () => 'tenant-1' },
+        setTimeout() {},
+        confirm: () => true,
+        escapeHtml: value => String(value == null ? '' : value)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;'),
+        fetch: async url => {
+            calls.push({ url });
+            if (url === '/auth/me') {
+                return response({ status: 'success', user: { is_platform_admin: true } });
+            }
+            if (url.startsWith('/api/platform/users?')) {
+                return response({ status: 'success', items: users, total: users.length, page: 1 });
+            }
+            throw Error('Unexpected request: ' + url);
+        },
+    };
+    ctx.window = ctx;
+    runAdmin(ctx);
+    document.dispatch('DOMContentLoaded');
+    return { ctx, calls, node: id => document.getElementById(id) };
+}
+
+test('platform account rows render the id-stable bundled default, not a glyph', async () => {
+    const h = setupPlatformUsers([
+        { id: 'usr-alice', username: 'alice', display_name: 'Alice', active: true },
+        { id: 'usr-bob', username: 'bob', display_name: 'Bob', active: true, is_platform_admin: true },
+    ]);
+    await h.ctx.loadPlatformUsersView();
+    await flush();
+    const html = h.node('platform-user-list').innerHTML;
+    assert.match(html, /<img class="user-avatar"/);
+    assert.match(html, /src="\/assets\/avatars\/default-3\.svg"/, 'usr-alice -> default-3');
+    assert.match(html, /src="\/assets\/avatars\/default-5\.svg"/, 'usr-bob -> default-5');
+    assert.doesNotMatch(html, /fa-user-cog/, 'the generic account glyph is gone');
+});
+
+test('platform account rows prefer an uploaded picture through the by-id route', async () => {
+    const h = setupPlatformUsers([
+        { id: 'usr-bob', username: 'bob', display_name: 'Bob', active: true, avatar: 'image' },
+    ]);
+    await h.ctx.loadPlatformUsersView();
+    await flush();
+    const html = h.node('platform-user-list').innerHTML;
+    assert.match(html, /src="\/api\/users\/usr-bob\/avatar"/);
+    // A missing upload file still degrades to the default, never a broken img.
+    assert.match(html, /default-5\.svg/);
+});
+
+test('tenant member rows render the account face instead of a generic icon', async () => {
+    const h = setupMembers({
+        member: {
+            id: 'm1', username: 'alice', display_name: 'Alice', active: true,
+            role_codes: ['member'], department_id: '', position_text: '', version: 3,
+            user_id: 'usr-alice',
+        },
+    });
+    await h.ctx.loadMembersView();
+    await flush();
+    const html = h.node('member-list').innerHTML;
+    assert.match(html, /<img class="user-avatar"/);
+    assert.match(html, /src="\/assets\/avatars\/default-3\.svg"/);
+    assert.doesNotMatch(html, /fa-user\b/, 'the generic member glyph is gone');
+});
+
+test('tenant member rows prefer an uploaded picture through the by-id route', async () => {
+    const h = setupMembers({
+        member: {
+            id: 'm1', username: 'alice', display_name: 'Alice', active: true, avatar: 'image',
+            role_codes: ['member'], department_id: '', position_text: '', version: 3,
+            user_id: 'usr-alice',
+        },
+    });
+    await h.ctx.loadMembersView();
+    await flush();
+    const html = h.node('member-list').innerHTML;
+    assert.match(html, /src="\/api\/users\/usr-alice\/avatar"/);
+    assert.match(html, /default-3\.svg/);
+});
+
+// ---- built-in role editing ---------------------------------------------
+
+test('built-in roles expose edit but never delete, and lock their code', async () => {
+    const h = setup(undefined, { roles: [
+        { id: 'r-member', code: 'member', name: '成员', builtin: true, version: 1, permissions: ['chat.use'] },
+        { id: 'r-admin', code: 'tenant_admin', name: '租户管理员', builtin: true, version: 1, permissions: ['chat.use'] },
+        { id: 'r-custom', code: 'reviewer', name: 'Reviewer', builtin: false, version: 2, permissions: [] },
+    ] });
+    await h.ctx.loadRolesView();
+    const html = h.node('role-list').innerHTML;
+    const edits = (html.match(/adminRowAction\('role','edit'/g) || []).length;
+    const deletes = (html.match(/adminRowAction\('role','delete'/g) || []).length;
+    assert.equal(edits, 3, 'every role, built-in included, offers edit');
+    assert.equal(deletes, 1, 'only the custom role offers delete');
+
+    // Editing a built-in opens the real editor with its code locked.
+    h.ctx.adminRowAction('role', 'edit', 'r-member');
+    await settle();
+    await settle();
+    assert.equal(h.editorOpen(), true, 'the built-in role editor opens');
+    assert.equal(h.node('adm-fld-code').tagName, 'div', 'built-in role code is locked');
+});
+
+// ---- organization view: empty state and the create entry point -----------
+// Every tenant owns a virtual `__root__` department, so /api/tenant/departments
+// is never an empty list. The view therefore has to decide emptiness from the
+// *visible* departments, and it has to expose the create control (which ships
+// hidden in chat.html) or the operator cannot extend the tree at all.
+
+function setupOrg(items) {
+    const calls = [];
+    const document = { ...eventTarget(), body: element('body'), createElement: element };
+    document.getElementById = id => document.body.querySelector('#' + id);
+    for (const [id, tag] of [['org-tree', 'div'], ['org-status', 'div'], ['dept-create-btn', 'button']]) {
+        const el = element(tag);
+        el.id = id;
+        // chat.html ships the create button hidden; mirror that so the test
+        // exercises the reveal path instead of a pre-visible control.
+        if (id === 'dept-create-btn') el.classList.add('hidden');
+        document.body.appendChild(el);
+    }
+    const ctx = {
+        document, console,
+        sessionStorage: { getItem: () => 't1' },
+        setTimeout() {},
+        confirm: () => true,
+        escapeHtml: value => String(value == null ? '' : value)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;'),
+        fetch: async (url, options) => {
+            calls.push({ url, options });
+            if (url === '/api/tenant/departments') return response({ status: 'success', items });
+            throw Error('Unexpected request: ' + url);
+        },
+    };
+    ctx.window = ctx;
+    runAdmin(ctx);
+    document.dispatch('DOMContentLoaded');
+    return { ctx, calls, node: id => document.getElementById(id) };
+}
+
+const rootOnly = [{ id: 'd-root', code: '__root__', name: '组织根', parent_id: '', active: 1 }];
+
+test('organization view renders the empty state when only the virtual root exists', async () => {
+    const h = setupOrg(rootOnly);
+    await h.ctx.loadOrgView();
+    const html = h.node('org-tree').innerHTML.trim();
+    assert.notEqual(html, '', 'the tree area must never render blank');
+    assert.match(html, /org_empty/, 'the empty state is shown when there are no departments');
+});
+
+test('organization view exposes the create control so the tree can be maintained', async () => {
+    // chat.html ships the button hidden; nothing used to reveal it, so the page
+    // offered no way to create a department even for a tenant admin.
+    const h = setupOrg(rootOnly);
+    assert.equal(h.node('dept-create-btn').classList.contains('hidden'), true,
+        'precondition: the create button starts hidden');
+    await h.ctx.loadOrgView();
+    assert.equal(h.node('dept-create-btn').classList.contains('hidden'), false,
+        'loading the org view reveals the create-department button');
+});
+
+test('organization view still lists real departments after the empty-state fix', async () => {
+    const h = setupOrg([
+        { id: 'd-root', code: '__root__', name: '组织根', parent_id: '', active: 1 },
+        { id: 'd-eng', code: 'eng', name: '工程部', parent_id: 'd-root', active: 1, sort_order: 1 },
+    ]);
+    await h.ctx.loadOrgView();
+    const html = h.node('org-tree').innerHTML;
+    assert.match(html, /工程部/);
+    assert.doesNotMatch(html, /org_empty/);
 });

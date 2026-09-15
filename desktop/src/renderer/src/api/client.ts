@@ -29,39 +29,27 @@ import type {
   RosterSnapshot,
 } from '../types'
 import { getLang } from '../i18n'
+import desktopContext, { ContextError } from './context'
 
 export interface ApiResult {
   status: string
   message?: string
 }
 
-const AUTH_TOKEN_KEY = 'cow_session'
+//: Best-effort document types the pasted-image helper accepts, mirroring the
+//: backend's upload allow-list.
 
 class ApiClient {
   private baseUrl = 'http://127.0.0.1:9876'
-  // Bearer session token for database identity. The desktop renderer runs from
-  // a file:// origin, where cross-origin cookies to http://127.0.0.1 aren't
-  // sent reliably, so we authenticate via an Authorization header instead.
-  // Persisted in localStorage so it survives reloads.
-  private authToken: string | null =
-    typeof localStorage !== 'undefined' ? localStorage.getItem(AUTH_TOKEN_KEY) : null
 
   setBaseUrl(url: string) {
     this.baseUrl = url
+    // The authoritative context owns the origin used by the broker fallback.
+    desktopContext.setBaseUrl(url)
   }
 
   getBaseUrl() {
     return this.baseUrl
-  }
-
-  setAuthToken(token: string | null) {
-    this.authToken = token
-    try {
-      if (token) localStorage.setItem(AUTH_TOKEN_KEY, token)
-      else localStorage.removeItem(AUTH_TOKEN_KEY)
-    } catch {
-      // localStorage may be unavailable; in-memory token still works this session
-    }
   }
 
   // The Agent whose workspace scoped endpoints (skills/knowledge/scheduler,
@@ -126,31 +114,29 @@ class ApiClient {
     return { path: url, options: opts }
   }
 
+  /**
+   * The request decorator seam (tasks 8.1/8.4/8.6).
+   *
+   * Every business call goes through here: the plan (path, method, body, epoch)
+   * comes from the authoritative context, the credential is attached by the main
+   * process, and a response is only rendered when it still belongs to the current
+   * context epoch. Callers keep their signatures and their JSON bodies; none of
+   * them has to know a header exists.
+   */
   private async request<T>(path: string, rawOptions?: RequestInit): Promise<T> {
-    const { path: url, options } = this.carryAgent(path, rawOptions)
-    const res = await fetch(`${this.baseUrl}${url}`, {
-      ...options,
-      // Cookies still work for browser access; the desktop app relies on the
-      // Authorization header below.
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(this.authToken ? { Authorization: `Bearer ${this.authToken}` } : {}),
-        ...options?.headers,
-      },
-    })
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}: ${res.statusText}`)
-    }
-    return res.json()
+    const { path: scopedPath, options } = this.carryAgent(path, rawOptions)
+    return desktopContext.send<T>(
+      desktopContext.plan(scopedPath, (options?.method || 'GET').toUpperCase(), options?.body as string | undefined),
+      (reply) => JSON.parse(reply.body || '{}') as T,
+    )
   }
 
-  /** POST multipart form data.
+  /** POST multipart form data through the same decorator.
    *
-   * `request()` can't be reused: it forces a JSON content type, while FormData
-   * must set its own multipart boundary. The auth header still has to be wired
-   * up by hand — the desktop app renders from file://, so it authenticates via
-   * the header, never the cookie.
+   * `request()` can't be reused: it carries a JSON body while FormData must keep
+   * its own multipart boundary. The credential handling is identical, though --
+   * the main process reassembles the form and attaches the bearer, so the
+   * renderer never holds one.
    */
   private async postFormData<T>(path: string, formData: FormData): Promise<T> {
     // Multipart bodies must NOT get a copy of agent_id when the query already
@@ -158,47 +144,17 @@ class ApiClient {
     // into a list, which breaks handlers expecting a string. So scope via the
     // query only, and only when the form doesn't already name an Agent.
     const scopedPath = formData.has('agent_id') ? path : this.carryAgent(path).path
-    const url = `${this.baseUrl}${scopedPath}`
-    // A plain `fetch` that never reaches the backend throws a bare
-    // `TypeError: Failed to fetch`, which is useless in a bug report. The most
-    // common cause here is a transient connection refusal (the local backend
-    // still booting, or briefly restarting), so retry once after a short delay
-    // and, on a persistent network failure, raise an actionable message that
-    // names the target URL instead of the opaque browser error.
-    let lastErr: unknown
-    for (let attempt = 0; attempt < 2; attempt++) {
-      if (attempt > 0) await new Promise((r) => setTimeout(r, 600))
-      try {
-        const res = await fetch(url, {
-          method: 'POST',
-          body: formData,
-          credentials: 'include',
-          headers: this.authToken ? { Authorization: `Bearer ${this.authToken}` } : undefined,
-        })
-        if (!res.ok) {
-          // The backend returns JSON errors even on failure; surface its message
-          // when present so the user sees the real reason (e.g. file too large).
-          let detail = res.statusText
-          try {
-            const body = await res.clone().json()
-            if (body?.message) detail = body.message
-          } catch {
-            /* non-JSON error body */
-          }
-          throw new Error(`HTTP ${res.status}: ${detail}`)
-        }
-        return res.json()
-      } catch (e) {
-        lastErr = e
-        // Only retry the network-level failure; a real HTTP error is final.
-        const isNetwork = e instanceof TypeError
-        if (!isNetwork) throw e
+    try {
+      return await desktopContext.sendForm<T>(scopedPath, formData, (reply) => JSON.parse(reply.body || '{}') as T)
+    } catch (e) {
+      // A plain failure to reach the backend is useless in a bug report. Name the
+      // target so a "backend still booting" report is actionable.
+      if (e instanceof ContextError && e.kind === 'network') {
+        console.error(`[api] upload network failure to ${scopedPath}:`, e.message)
+        throw new Error(`无法连接到本地服务 (${scopedPath})，请确认客户端后台正在运行后重试`)
       }
+      throw e
     }
-    console.error(`[api] upload network failure to ${url}:`, lastErr)
-    throw new Error(
-      `无法连接到本地服务 (${url})，请确认客户端后台正在运行后重试`,
-    )
   }
 
   // ---------------------------------------------------------
@@ -259,16 +215,17 @@ class ApiClient {
     })
   }
 
-  // EventSource can't set an Authorization header, so append the auth token as
-  // a query param for SSE endpoints (the backend accepts it there).
-  private withToken(url: string): string {
-    if (!this.authToken) return url
-    const sep = url.includes('?') ? '&' : '?'
-    return `${url}${sep}token=${encodeURIComponent(this.authToken)}`
+  // EventSource and `<img>`/download requests cannot carry an Authorization
+  // header, so they go through the main process's loopback asset proxy: the
+  // renderer gets an opaque, short-lived URL that carries no session token, and
+  // the proxy attaches the current credential (and the current tenant) when the
+  // URL is actually requested. No AuthSession ever appears in a URL (design D8).
+  private assetUrl(path: string, kind: 'get' | 'stream' = 'get'): string {
+    return desktopContext.assetUrl(path, kind)
   }
 
   createSSEStream(requestId: string): EventSource {
-    return new EventSource(this.withToken(`${this.baseUrl}/stream?request_id=${requestId}`))
+    return new EventSource(this.assetUrl(`/stream?request_id=${encodeURIComponent(requestId)}`, 'stream'))
   }
 
   async deleteMessage(opts: {
@@ -325,13 +282,13 @@ class ApiClient {
 
   getFileUrl(previewUrl: string): string {
     if (/^https?:\/\//.test(previewUrl)) return previewUrl
-    // Served via <img src>, which can't set headers — carry the session token
-    // in the query so protected file endpoints still load.
-    return this.withToken(`${this.baseUrl}${previewUrl}`)
+    // Served via <img src>, which cannot set a header: the main process mints a
+    // token-free loopback URL that it re-authenticates on fetch.
+    return this.assetUrl(previewUrl, 'get')
   }
 
   getServeFileUrl(absPath: string): string {
-    return this.withToken(`${this.baseUrl}/api/file?path=${encodeURIComponent(absPath)}`)
+    return this.assetUrl(`/api/file?path=${encodeURIComponent(absPath)}`, 'get')
   }
 
   // ---------------------------------------------------------
@@ -590,11 +547,12 @@ class ApiClient {
 
   // A cache-busting URL for an Agent's uploaded avatar. `version` should change
   // whenever the image is replaced so the <img> refetches (the roster revision
-  // works well as the token). Carries the auth token for password-protected
-  // backends, like the other file endpoints.
+  // works well as the token). Like the other header-less endpoints it resolves
+  // through the loopback asset proxy, so it carries no session token.
   agentAvatarUrl(agentId: string, version: string): string {
-    return this.withToken(
-      `${this.baseUrl}/api/agents/${encodeURIComponent(agentId)}/avatar?v=${encodeURIComponent(version)}`
+    return this.assetUrl(
+      `/api/agents/${encodeURIComponent(agentId)}/avatar?v=${encodeURIComponent(version)}`,
+      'get'
     )
   }
 
@@ -907,13 +865,13 @@ class ApiClient {
   // ---------------------------------------------------------
 
   createLogStream(): EventSource {
-    return new EventSource(this.withToken(`${this.baseUrl}/api/logs`))
+    return new EventSource(this.assetUrl('/api/logs', 'stream'))
   }
 
-  // Full run.log as a downloadable attachment. Carries the session token in the
-  // query string like the other file endpoints.
+  // Full run.log as a downloadable attachment, through the loopback asset proxy
+  // (no session token in the URL; the proxy attaches the credential).
   getLogDownloadUrl(): string {
-    return this.withToken(`${this.baseUrl}/api/logs/download`)
+    return this.assetUrl('/api/logs/download', 'get')
   }
 
   async getVersion(): Promise<string> {
@@ -924,36 +882,44 @@ class ApiClient {
   // ---------------------------------------------------------
   // Auth (database identity session)
   // ---------------------------------------------------------
+  //
+  // The renderer no longer signs in with a password and no longer receives a
+  // token. It asks the main process for the authoritative context and, when the
+  // account is not signed in, opens the system browser for the
+  // authorization-code + PKCE flow (design D8). The gate state itself is read
+  // from ``desktopContext`` so every surface sees the same answer.
 
+  /** Resolve the backend's authentication mode (no credentials involved). */
   async authCheck(): Promise<{
     status: string
     auth_required: boolean
     authenticated?: boolean
     identity_mode?: string
   }> {
-    return this.request('/auth/check')
+    await desktopContext.probe()
+    const snapshot = desktopContext.getSnapshot()
+    return {
+      status: 'success',
+      auth_required: snapshot.identityMode !== 'legacy' && !snapshot.session,
+      authenticated: !!snapshot.session,
+      identity_mode: snapshot.identityMode,
+    }
   }
 
-  async authLogin(
-    username: string,
-    password: string,
-  ): Promise<ApiResult & { token?: string; identity_mode?: string }> {
-    const res = await this.request<ApiResult & { token?: string; identity_mode?: string }>(
-      '/auth/login',
-      {
-        method: 'POST',
-        body: JSON.stringify({ username, password }),
-      },
-    )
-    if (res.status === 'success' && res.token) {
-      this.setAuthToken(res.token)
-    }
-    return res
+  /** Open the system browser and complete the native authorization. */
+  async beginDesktopSignIn(): Promise<ApiResult> {
+    await desktopContext.beginAuthorization()
+    return { status: 'success' }
   }
 
   async authLogout(): Promise<ApiResult> {
-    this.setAuthToken(null)
-    return this.request('/auth/logout', { method: 'POST' })
+    await desktopContext.logout()
+    return { status: 'success' }
+  }
+
+  /** The current authoritative context (projection only; never a credential). */
+  get context() {
+    return desktopContext
   }
 }
 

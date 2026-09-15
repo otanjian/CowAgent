@@ -68,24 +68,53 @@ class HttpPolicyTests(unittest.TestCase):
         self.assertEqual(resp.status, "405 Method Not Allowed")
 
     def test_closed_consumer_503_in_database(self):
-        # Consumers still without a tenant boundary (scheduler is opened only
-        # with its own slice, group 5) stay 503 database_unavailable.
+        # A consumer whose slice is not open stays 503 database_unavailable. The
+        # route is *closed by this test* rather than looked up: see
+        # ``_a_still_closed_route`` for why.
         self._patch_db()
-        resp = self._request("/api/scheduler", method="GET")
+        pattern = self._a_still_closed_route()
+        resp = self._request(pattern, method="GET")
         self.assertEqual(resp.status, "503 Service Unavailable")
         self.assertIn("database_unavailable", resp.data.decode("utf-8"))
 
+    #: The route the closed-consumer rules are asserted against.
+    _CLOSED_PROBE = "/api/projects"
+
+    def _a_still_closed_route(self):
+        """Close a registered route for this test and return its pattern.
+
+        This used to *find* a closed route in the registry, which stopped being
+        possible once the last closed slice landed (every recovered entry point
+        is open now) -- and it also failed every time a slice landed, instead of
+        asserting the rule it exists for: a closed consumer is refused by the
+        gate, in database mode, before any handler runs, regardless of who
+        asks. Closing a route here pins that rule instead of the accident that
+        some slice happened to still be closed.
+        """
+        from auth import http_policy
+
+        entry, matched = http_policy._match_policy(self._CLOSED_PROBE, "GET")
+        self.assertTrue(matched, self._CLOSED_PROBE)
+        closed = dict(entry or {})
+        closed["policy"] = "closed"
+        closed.pop("permission", None)
+        patcher = patch.object(
+            http_policy, "ROUTE_POLICY",
+            {**http_policy.ROUTE_POLICY, self._CLOSED_PROBE: {"GET": closed}})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return self._CLOSED_PROBE
+
     def test_file_serve_requires_auth_in_database(self):
-        # /api/file is now open under a tenant policy (task 2.4); an anonymous
-        # database request must be rejected by the gate, not a blanket 503.
-        #
-        # tenant selection is resolved before the session (design D2), so the
-        # anonymous rejection order is: no selection -> 400, selection but no
-        # session -> 401. Both are asserted so the order is pinned, not loosened.
+        # /api/file backs a browser navigation (<a download>) and <img>
+        # subresources, which cannot attach X-Tenant-ID. Like /stream and
+        # /uploads, its tenant is derived from the addressed resource, so the
+        # gate authenticates without demanding a selection: an anonymous
+        # database request is rejected with 401, not a blanket 503, and not
+        # 400 missing_tenant. A selection does not change that.
         self._patch_db()
         resp = self._request("/api/file", method="GET")
-        self.assertEqual(resp.status, "400 Bad Request")
-        self.assertIn(b"missing_tenant", resp.data)
+        self.assertEqual(resp.status, "401 Unauthorized")
 
         resp = self._request("/api/file", method="GET", headers={"X-Tenant-ID": self.tid})
         self.assertEqual(resp.status, "401 Unauthorized")
@@ -118,13 +147,29 @@ class HttpPolicyTests(unittest.TestCase):
         )
 
     def test_admin_cannot_override_still_closed_consumer(self):
-        # A valid database login must NOT let admin status bypass closure of a
-        # consumer that remains closed (scheduler until its slice lands).
+        # A valid database login must NOT let admin status bypass the closure of
+        # a consumer whose slice has not landed.
         self._patch_db()
+        pattern = self._a_still_closed_route()
         token = self.svc.login("root", "Str0ngAdminPass").token
-        resp = self._request("/api/scheduler", method="GET",
+        resp = self._request(pattern, method="GET",
                              headers={"Cookie": f"cow_session={token}"})
         self.assertEqual(resp.status, "503 Service Unavailable")
+
+    def test_the_scheduler_surface_is_open_and_authenticates(self):
+        """The slice open here is the caller's own tasks (task 9.2).
+
+        Asserted on the wire so it cannot drift from the registry: the route
+        answers 401 (no session) rather than 503 (closed), and a member's
+        session reaches the handler instead of being gated out.
+        """
+        self._patch_db()
+        # A tenant is named so the answer is about the session, not about a
+        # missing selection: the gate resolves the tenant first (400) and the
+        # session second (401) for every tenant-scoped route.
+        anonymous = self._request("/api/scheduler", method="GET",
+                                  headers={"X-Tenant-ID": self.tid})
+        self.assertEqual(anonymous.status, "401 Unauthorized")
 
     def test_platform_account_routes_classified_platform(self):
         # Platform account detail / password routes (tasks 4.1-4.3) must be
@@ -272,15 +317,25 @@ class HttpPolicyTests(unittest.TestCase):
             with patch("channel.web.auth_handlers._require_context", return_value=_ctx(True)):
                 web_channel._require_platform_console()  # must not raise
 
-    def test_still_closed_interactive_channel_actions(self):
-        """Weixin QR login stays closed; the Feishu register flow is now open
-        under a ``personal`` policy with both methods declared (the start call is
-        a GET, so an unregistered GET would have been a 405, not a 503)."""
+    def test_scan_and_register_surfaces_are_open_and_authenticate(self):
+        """The scan surface is no longer a closed consumer, and the Feishu
+        register flow keeps its ``personal`` policy with both methods declared
+        (the start call is a GET, so an unregistered GET would have been a 405,
+        not a 503).
+
+        ``/api/weixin/qrlogin`` used to answer 503 for every caller; it now runs
+        under the ``weixin_scan`` slice's ``tenant`` policy, so an anonymous
+        request is refused by the *gate* (tenant selection, then session) and
+        never reaches the handler. The 503-for-everyone assertion is not lost --
+        it moved to ``test_closed_consumer_503_in_database``, which pins it
+        against a route that is still closed instead of hard-coding one that has
+        since been opened.
+        """
         from auth.http_policy import _match_policy
 
         entry, matched = _match_policy("/api/weixin/qrlogin", "GET")
         self.assertTrue(matched)
-        self.assertEqual(entry["policy"], "closed")
+        self.assertEqual(entry["policy"], "tenant")
 
         for method in ("GET", "POST"):
             entry, matched = _match_policy("/api/feishu/register", method)
@@ -288,10 +343,15 @@ class HttpPolicyTests(unittest.TestCase):
             self.assertIsNotNone(entry, f"{method} is not registered for /api/feishu/register")
             self.assertEqual(entry["policy"], "personal", method)
 
-        # The deferred consumer is untouched: still a 503 in database mode.
+        # The scan surface is open: an anonymous GET is refused by the gate
+        # (400 without a named tenant, 401 with one) rather than as a closed
+        # consumer, and the handler is never reached.
         self._patch_db()
         resp = self._request("/api/weixin/qrlogin", method="GET")
-        self.assertEqual(resp.status, "503 Service Unavailable")
+        self.assertEqual(resp.status, "400 Bad Request")
+        resp = self._request("/api/weixin/qrlogin", method="GET",
+                             headers={"X-Tenant-ID": self.tid})
+        self.assertEqual(resp.status, "401 Unauthorized")
 
     def test_register_route_rejects_unregistered_method(self):
         """Opening the route must not open every method on it.
@@ -455,11 +515,24 @@ class HttpPolicyTests(unittest.TestCase):
             self.assertEqual(resp.status, "401 Unauthorized",
                              f"{path} {method} got {resp.status}")
 
-    def test_projects_browse_still_closed_in_database(self):
+    def test_projects_browse_is_open_in_database(self):
+        """The picker's browse route is served now (tasks 6.1/6.6).
+
+        It used to be the last closed ``/api/projects*`` route: the console could
+        *create* a project but never re-open one, because the legacy handler
+        walked the whole host filesystem. The scoped replacement browses only the
+        caller's own tenant+user projects root, so it is a tenant-domain route
+        like its siblings -- the gate resolves the selection and the session, and
+        the handler refuses everything outside that root.
+        """
         self._patch_db()
-        resp = self._request("/api/projects/browse", method="GET")
-        self.assertEqual(resp.status, "503 Service Unavailable")
-        self.assertIn("database_unavailable", resp.data.decode("utf-8"))
+        anonymous = self._request("/api/projects/browse", method="GET")
+        self.assertEqual(anonymous.status, "400 Bad Request")
+        self.assertIn(b"missing_tenant", anonymous.data)
+        unauthenticated = self._request("/api/projects/browse", method="GET",
+                                        headers={"X-Tenant-ID": self.tid})
+        self.assertEqual(unauthenticated.status, "401 Unauthorized")
+        self.assertNotIn(b"database_unavailable", unauthenticated.data)
 
     def test_agent_write_routes_registered(self):
         """The whole agent management surface is POST/PUT, but only GET was

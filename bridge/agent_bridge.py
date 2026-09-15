@@ -938,6 +938,7 @@ class AgentBridge:
             self._apply_scene_context(agent, session_id)
             self._apply_employee_context(agent)
             self._apply_user_persona_context(agent, session_id)
+            self._apply_user_identity_context(agent, session_id)
             return agent
 
     def _apply_session_project(self, agent, session_id: str, agent_id: str) -> None:
@@ -1017,6 +1018,38 @@ class AgentBridge:
         existing = getattr(agent, "extra_system_suffix", None) or ""
         agent.extra_system_suffix = f"{existing}\n\n{suffix}".strip() if existing else suffix
 
+    def _session_speaker_user_id(
+        self, agent, session_id: Optional[str]
+    ) -> Optional[str]:
+        """The user a session's prompt may be personalised for, else ``None``.
+
+        The single definition of "whose session is this", shared by every
+        per-user segment so they cannot disagree about a shared conversation.
+        The caller's own session qualifies, and so does a session nobody has
+        written yet — it is assumed to be the caller's, since they are about to
+        write it. Anything else returns ``None``: ``get_agent()`` is cached per
+        ``(agent_id, session_id)``, so a segment decided by whoever built the
+        prompt last would carry one member's context into another's chat.
+        """
+        from common.runtime_identity import current_user_id
+        uid = current_user_id()
+        if not uid or not session_id:
+            return None
+        try:
+            from agent.memory import get_conversation_store
+            store = get_conversation_store(getattr(agent, "workspace_dir", None))
+            owner = store.get_session_owner(session_id)
+        except Exception as e:
+            # Without a provable owner we cannot safely personalise the prompt,
+            # so we skip the segment rather than risk a cross-user leak.
+            logger.debug(f"[AgentBridge] session ownership check failed: {e}")
+            return None
+        if owner is not None and owner != uid:
+            # Someone else's (or a shared) session: nothing of the caller's may
+            # leak in, and nothing may be decided by the last visitor.
+            return None
+        return uid
+
     def _apply_user_persona_context(self, agent, session_id: Optional[str]) -> None:
         """Append the *end user's* personal persona, last of the three layers.
 
@@ -1025,32 +1058,14 @@ class AgentBridge:
         segment is how this person wants to be talked to. Appended after the
         others so it can refine them without replacing either.
 
-        Injection is guarded on ownership (design D3): the result of
-        ``get_agent()`` is cached per ``(agent_id, session_id)``, so a shared or
-        team session would otherwise carry whichever member happened to build it
-        last. A session owned by someone else therefore gets no personal
-        segment, and a session with no owner yet (a brand-new conversation) is
-        assumed to be the caller's, since that is who is about to write it.
+        Ownership gates it (see ``_session_speaker_user_id``): a session owned by
+        someone else gets no personal segment, so a shared or team session never
+        carries whichever member happened to build it last.
 
         The profile is read per build, so an edit applies on the next turn; no
         file exists -> no segment (never an empty one).
         """
-        from common.runtime_identity import current_user_id
-        uid = current_user_id()
-        if not uid or not session_id:
-            return
-        try:
-            from agent.memory import get_conversation_store
-            store = get_conversation_store(getattr(agent, "workspace_dir", None))
-            owner = store.get_session_owner(session_id)
-            if owner is not None and owner != uid:
-                # Someone else's (or a shared) session: the persona must not
-                # leak in, and must not be decided by the last visitor.
-                return
-        except Exception as e:
-            # Without a provable owner we cannot safely personalise the prompt,
-            # so we skip the segment rather than risk a cross-user leak.
-            logger.debug(f"[AgentBridge] user persona ownership check failed: {e}")
+        if not self._session_speaker_user_id(agent, session_id):
             return
 
         try:
@@ -1066,6 +1081,57 @@ class AgentBridge:
             return
 
         suffix = f"## 🪞 该用户的个人偏好\n{text}"
+        existing = getattr(agent, "extra_system_suffix", None) or ""
+        agent.extra_system_suffix = f"{existing}\n\n{suffix}".strip() if existing else suffix
+
+    def _apply_user_identity_context(self, agent, session_id: Optional[str]) -> None:
+        """Tell the Agent *who* it is talking to, so it can record facts about them.
+
+        The account is what a ledger needs: display names change and nicknames
+        collide, so ``username`` leads and the display names follow as context.
+        It is resolved from the verified runtime identity through the identity
+        service — never from a tool argument, a request field or the message
+        text, any of which a caller controls — and only for a session that
+        belongs to the caller (``_session_speaker_user_id``).
+
+        Deliberately separate from the persona segment: identity is a fact that
+        holds for every user, whereas a persona is an opt-in profile, so a user
+        with no persona file must still be named. Deliberately inert too — it
+        consults no resource grants and the text says so, because a name in the
+        prompt must never be read as a permission.
+
+        Fails closed: no identity, no tenant, no longer a member, or an
+        unreachable identity service all add nothing and leave the session
+        building exactly as before.
+        """
+        uid = self._session_speaker_user_id(agent, session_id)
+        if not uid:
+            return
+        try:
+            from auth.runtime import member_context
+            from auth.service import get_identity_service
+            from common.runtime_identity import current_identity
+
+            tenant_id = current_identity().tenant_id
+            if not tenant_id:
+                return
+            ctx = member_context(get_identity_service(), uid, tenant_id)
+        except Exception as e:
+            # Fail closed: an unverifiable speaker is reported as no speaker.
+            logger.debug(f"[AgentBridge] user identity resolution failed: {e}")
+            return
+        if not (ctx.username or ctx.display_name):
+            return
+
+        lines = ["## 👤 当前用户身份", "", f"- 账号: {ctx.username or '-'}"]
+        if ctx.display_name:
+            lines.append(f"- 显示名: {ctx.display_name}")
+        member_display = (ctx.membership or {}).get("display_name")
+        if member_display and member_display != ctx.display_name:
+            lines.append(f"- 成员显示名: {member_display}")
+        lines.append("- 说明: 仅用于如实记录与称呼，不改变任何权限判定。")
+        suffix = "\n".join(lines)
+
         existing = getattr(agent, "extra_system_suffix", None) or ""
         agent.extra_system_suffix = f"{existing}\n\n{suffix}".strip() if existing else suffix
 
@@ -2022,6 +2088,24 @@ class AgentBridge:
                 f"[AgentBridge] Clearing session: agent={resolved_agent_id}, "
                 f"session={session_id}"
             )
+
+    def has_live_agent(self, agent_id: str) -> bool:
+        """True when ``agent_id`` still has a live runtime instance.
+
+        Used by the private-Agent delete path (task 4.5): deleting an object a
+        running task is still using would pull the ground from under it, so the
+        member is told to stop it first rather than have the delete race the run.
+
+        An Agent the roster does not know has no runtime by definition, so a
+        lookup miss answers ``False`` instead of raising — that is not the
+        fail-closed case; an unanswerable probe is handled by the caller.
+        """
+        try:
+            resolved = self._resolve_agent_id(agent_id)
+        except KeyError:
+            return False
+        with self._agents_lock:
+            return any(key[0] == resolved for key in self._agent_instances)
 
     def clear_agent(self, agent_id: str) -> int:
         """Evict every live runtime instance for one agent workspace."""

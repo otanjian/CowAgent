@@ -13,6 +13,17 @@
             "tenant_loading": "加载中…",
             "tenant_empty": "暂无租户",
             "tenant_version_label": "版本",
+            "tenant_filter_default": "未归档",
+            "tenant_filter_active": "启用",
+            "tenant_filter_inactive": "停用",
+            "tenant_filter_archived": "已归档",
+            "tenant_archived_tag": "已归档",
+            "tenant_delete": "删除",
+            "tenant_restore": "恢复",
+            "tenant_archive_title": "删除租户",
+            "tenant_archive_subtitle": "删除后租户将立即停用，并从所有登录与业务中移除；数据会保留，可随时恢复。",
+            "tenant_archived": "租户已删除，可在「已归档」筛选中恢复。",
+            "tenant_restored": "租户已恢复。",
             "users_title": "用户管理",
             "member_create": "新建成员",
             "member_section_account": "账号信息",
@@ -149,7 +160,8 @@
             "perm_workspace_write_desc": "在当前工作空间内自由读写，空间之外的写入会被拒绝",
             "perm_full_access_desc": "不加限制，可修改任意位置（当前默认）",
             "perm_denied_hint": "当前权限为「{name}」，此操作被拒绝。",
-            "perm_denied_role_hint": "此操作未被授权。执行权限由你的角色决定，如需使用请联系管理员。"
+            "perm_denied_role_hint": "此操作未被授权。执行权限由你的角色决定，如需使用请联系管理员。",
+            "perm_denied_isolation_hint": "此操作被隔离策略拒绝：只能访问本租户的工作根与状态目录。"
         },
         "zh-Hant": {
             "tenant_title": "租戶管理",
@@ -158,6 +170,17 @@
             "tenant_loading": "載入中…",
             "tenant_empty": "暫無租戶",
             "tenant_version_label": "版本",
+            "tenant_filter_default": "未封存",
+            "tenant_filter_active": "啟用",
+            "tenant_filter_inactive": "停用",
+            "tenant_filter_archived": "已封存",
+            "tenant_archived_tag": "已封存",
+            "tenant_delete": "刪除",
+            "tenant_restore": "還原",
+            "tenant_archive_title": "刪除租戶",
+            "tenant_archive_subtitle": "刪除後租戶將立即停用，並從所有登入與業務中移除；資料會保留，可隨時還原。",
+            "tenant_archived": "租戶已刪除，可於「已封存」篩選中還原。",
+            "tenant_restored": "租戶已還原。",
             "users_title": "用戶管理",
             "member_create": "新增成員",
             "member_section_account": "帳號資訊",
@@ -294,7 +317,8 @@
             "perm_workspace_write_desc": "在目前工作空間內自由讀寫，空間之外的寫入會被拒絕",
             "perm_full_access_desc": "不加限制，可修改任意位置（目前預設）",
             "perm_denied_hint": "目前權限為「{name}」，此操作被拒絕。",
-            "perm_denied_role_hint": "此操作未獲授權。執行權限由你的角色決定，如需使用請聯絡管理員。"
+            "perm_denied_role_hint": "此操作未獲授權。執行權限由你的角色決定，如需使用請聯絡管理員。",
+            "perm_denied_isolation_hint": "此操作被隔離策略拒絕：只能存取本租戶的工作根與狀態目錄。"
         },
         "en": {
             "tenant_title": "Tenants",
@@ -303,6 +327,17 @@
             "tenant_loading": "Loading…",
             "tenant_empty": "No tenants",
             "tenant_version_label": "Version",
+            "tenant_filter_default": "Not archived",
+            "tenant_filter_active": "Active",
+            "tenant_filter_inactive": "Disabled",
+            "tenant_filter_archived": "Archived",
+            "tenant_archived_tag": "Archived",
+            "tenant_delete": "Delete",
+            "tenant_restore": "Restore",
+            "tenant_archive_title": "Delete tenant",
+            "tenant_archive_subtitle": "Deleting disables the tenant and removes it from sign-in and business immediately. Data is retained and can be restored at any time.",
+            "tenant_archived": "Tenant deleted. Restore it from the Archived filter.",
+            "tenant_restored": "Tenant restored.",
             "users_title": "Users",
             "member_create": "New member",
             "member_section_account": "Account Information",
@@ -439,7 +474,8 @@
             "perm_workspace_write_desc": "Write freely inside this workspace; writes outside it are refused",
             "perm_full_access_desc": "No limits, anywhere on the machine (current default)",
             "perm_denied_hint": "This session is “{name}”, so the action was refused.",
-            "perm_denied_role_hint": "This action is not authorized. Execution is decided by your role; ask an administrator to grant it."
+            "perm_denied_role_hint": "This action is not authorized. Execution is decided by your role; ask an administrator to grant it.",
+            "perm_denied_isolation_hint": "This action was refused by the execution isolation boundary: only this tenant's workspace and state directories are reachable."
         }
     };
 })();

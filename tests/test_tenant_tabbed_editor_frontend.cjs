@@ -79,6 +79,7 @@ function element(tag = 'div') {
             return null;
         },
         getAttribute(name) { return this[name] != null ? String(this[name]) : null; },
+        setAttribute(name, value) { this[name] = String(value); },
         removeAttribute(name) { delete this[name]; },
         matches(selector) {
             if (selector.startsWith('#')) return this.id === selector.slice(1);
@@ -112,8 +113,9 @@ function element(tag = 'div') {
                     if (name === 'class') child.className = content;
                     else if (['id', 'value', 'type', 'data-kind', 'data-tab', 'data-cap',
                               'data-group', 'data-user-id', 'data-user-name', 'data-mode',
-                              'data-res-kind'].includes(name)) child[name] = content;
-                    else if (['checked', 'disabled'].includes(name)) child[name] = true;
+                              'data-res-kind', 'autocomplete', 'data-lpignore'].includes(name)) child[name] = content;
+                    else if (['checked', 'disabled', 'data-1p-ignore',
+                              'readonly'].includes(name)) child[name] = true;
                 }
                 stack[stack.length - 1].appendChild(child);
                 if (!['input', 'br', 'hr', 'img', 'meta', 'link'].includes(child.tagName)) stack.push(child);
@@ -260,7 +262,12 @@ function setup(opts = {}) {
             if (url.startsWith('/api/platform/tenants/tnt-1/authorization/catalog')) {
                 const parsed = new URL(url, 'http://test');
                 const kind = parsed.searchParams.get('kind');
-                const items = catalogs[kind] || [];
+                const q = (parsed.searchParams.get('q') || '').toLowerCase();
+                // Mirror the real endpoint, which filters by name/provider: a
+                // term that matches nothing must yield an empty page, not the
+                // whole catalog, or a search bug cannot be reproduced here.
+                const all = catalogs[kind] || [];
+                const items = q ? all.filter(i => i.name.toLowerCase().includes(q)) : all;
                 return response({ status: 'success', kind, items, total: items.length, page: 1 });
             }
             if (url === '/api/platform/tenants/tnt-1/admins' && method === 'GET') {
@@ -678,6 +685,79 @@ test('the tool tab loads the tool catalog and grants read+execute+configure', as
     const tool = body.grants.filter(g => g.resource_kind === 'tool');
     assert.deepEqual(tool.map(g => g.action).sort(), ['configure', 'execute', 'read'],
         'a granted tool keeps its full action set');
+});
+
+function grantSearch(h, kind) {
+    return h.node('tenant-grant-' + kind).querySelector('.resource-kind-search');
+}
+
+function grantListHtml(h, kind) {
+    const list = h.node('tenant-grant-' + kind).querySelector('.resource-kind-list');
+    return list ? list.innerHTML : '';
+}
+
+// The model/tool tabs sit in a panel that also renders password inputs, so a
+// browser password manager can autofill this non-credential search box. A stray
+// term there filters the whole catalog away, which is exactly how the tab came
+// to look empty with the models still granted.
+test('the grant search box is not autofillable by a password manager', async () => {
+    const h = setup();
+    await openEditor(h);
+    h.node('tenant-editor-tab-model').dispatch('click');
+    await flush();
+
+    const search = grantSearch(h, 'model');
+    assert.equal(String(search.autocomplete), 'off');
+    assert.equal(search.getAttribute('data-lpignore'), 'true');
+    assert.ok(search.getAttribute('data-1p-ignore') != null, '1Password opt-out is present');
+    // A readonly field is not autofilled, and it is released on first contact so
+    // the operator can still type.
+    assert.equal(search.getAttribute('readonly'), 'readonly');
+    search.dispatch('focus');
+    assert.equal(search.getAttribute('readonly'), null, 'focus releases the field');
+});
+
+test('a search that matches nothing says so instead of "no resources selected"', async () => {
+    const h = setup();
+    await openEditor(h);
+    h.node('tenant-editor-tab-model').dispatch('click');
+    await flush();
+
+    const search = grantSearch(h, 'model');
+    search.value = 'admin';
+    search.dispatch('keyup', { key: 'Enter' });
+    await flush();
+
+    assert.deepEqual(grantBoxes(h, 'model'), [], 'no model matches "admin"');
+    assert.match(grantListHtml(h, 'model'), /admin_resources_no_match/,
+        'the empty state names the filter, so the cause is visible');
+    assert.ok(!/admin_resources_none/.test(grantListHtml(h, 'model')),
+        'it must not claim nothing is selected while a filter hides the catalog');
+});
+
+test('clearing the picker also clears the search, so the catalog comes back', async () => {
+    const h = setup();
+    await openEditor(h);
+    h.node('tenant-editor-tab-model').dispatch('click');
+    await flush();
+
+    const search = grantSearch(h, 'model');
+    search.value = 'gpt';
+    search.dispatch('keyup', { key: 'Enter' });
+    await flush();
+    assert.equal(grantBoxes(h, 'model').length, 1, 'the search does narrow the list');
+
+    search.value = 'admin';
+    search.dispatch('keyup', { key: 'Enter' });
+    await flush();
+    assert.equal(grantBoxes(h, 'model').length, 0);
+
+    // "清空" used to deselect only, so the term stayed and the list stayed
+    // empty: the button looked broken and the models stayed invisible.
+    h.node('tenant-grant-model').querySelector('.resource-kind-clear').dispatch('click');
+    await flush();
+    assert.equal(search.value, '', 'the search term is cleared too');
+    assert.equal(grantBoxes(h, 'model').length, 2, 'the whole catalog is visible again');
 });
 
 test('grant candidate sets come from the platform catalog, not the tenant limits', async () => {

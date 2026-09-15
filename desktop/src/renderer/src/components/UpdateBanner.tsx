@@ -11,7 +11,7 @@ function releaseNotesUrl(version: string): string {
   const lang = getLang()
   const override = product.links?.releaseNotesUrl?.(version, lang)
   if (override) return override
-  const base = lang === 'zh' ? 'https://docs.cowagent.ai/zh' : 'https://docs.cowagent.ai'
+  const base = lang === 'zh' ? 'https://www.rsm.global/china/zh-hans' : 'https://www.rsm.global/china/zh-hans'
   return `${base}/releases/v${version}`
 }
 

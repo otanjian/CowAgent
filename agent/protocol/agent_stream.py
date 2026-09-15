@@ -2047,8 +2047,9 @@ class AgentStreamExecutor:
             # Fine-grained resource authorization: the tool must be granted for
             # ``tool.execute`` to the current identity. Recomputed per call
             # (never cached) so a grant made mid-session applies to the very
-            # next invocation.
-            denial = self._resource_tool_denial(tool_name)
+            # next invocation. The arguments ride along because one narrow
+            # exemption (identity-scoped memory writes) depends on them.
+            denial = self._resource_tool_denial(tool_name, arguments)
             if denial:
                 self._last_denial_kind = "role"
                 return denial
@@ -2062,7 +2063,20 @@ class AgentStreamExecutor:
             quota_denial = self._quota_tool_denial(tool_name)
             if quota_denial:
                 self._last_denial_kind = "quota"
-            return quota_denial
+                return quota_denial
+
+            # Single-action approval, consumed last (task 7.9): the action is
+            # declared applicable or not by the *deployment*, and when it is
+            # applicable the approval is verified and consumed here — after
+            # identity, isolation, per-resource authorization and quota, which is
+            # what "re-check identity, resource, quota and approval status right
+            # before executing" means in one place. A refused call never reaches
+            # the tool, and the approval reference itself is stripped from the
+            # arguments either way, so transport never becomes a parameter.
+            approval_denial = self._approval_tool_denial(tool_name, arguments)
+            if approval_denial:
+                self._last_denial_kind = "approval"
+            return approval_denial
         except Exception as e:
             logger.warning(f"[Permission] Check failed for {tool_name}: {e}")
             self._last_denial_kind = "identity"
@@ -2071,6 +2085,26 @@ class AgentStreamExecutor:
                 "执行授权校验异常，工具调用已拒绝。",
                 "Tool call refused: the execution authorization check could not be completed.",
             )
+
+    def _approval_tool_denial(self, tool_name: str,
+                              arguments: Optional[Dict] = None) -> Optional[str]:
+        """Refuse a tool call whose declared approval is missing or unusable.
+
+        The applicability decision and the consumption both live in
+        ``agent.approval_gate`` — this method only adapts the dispatch seam to
+        it, so the same policy governs every seam that dispatches an action out
+        of the process. ``arguments`` is updated in place with the gateway's
+        sanitized copy: the approval reference is transport and must not reach
+        the tool or the emitted events.
+        """
+        from agent.approval_gate import approval_decision, tool_action_id
+
+        decision = approval_decision(tool_action_id(tool_name),
+                                     parameters=arguments)
+        if decision.parameters is not None and isinstance(arguments, dict):
+            arguments.clear()
+            arguments.update(decision.parameters)
+        return None if decision.allowed else decision.reason
 
     def _quota_tool_denial(self, tool_name: str) -> Optional[str]:
         """Charge one tool call against the current identity's ``tool_calls``
@@ -2097,13 +2131,22 @@ class AgentStreamExecutor:
             logger.warning(f"[Permission] Quota meter skipped for {tool_name}: {error}")
             return None
 
-    def _resource_tool_denial(self, tool_name: str) -> Optional[str]:
+    def _resource_tool_denial(self, tool_name: str,
+                              arguments: Optional[Dict] = None) -> Optional[str]:
         """Return a denial reason when tool.execution is not authorized.
 
         A *self-authorized* tool is exempt: it resolves the caller's identity
         and refuses on its own (personal todo, scheduler act only on the
         caller's own data), so the coarse ``tool.execute`` grant is not also
-        required. Every other tool still needs the grant.
+        required. Every other tool still needs the grant, except that a tenant
+        administrator runs the tenant's available tools without a per-resource
+        grant -- the same management trust the tenant-bound Agent exemption
+        extends (see ``IdentityService.tenant_admin_may_execute_tool``).
+
+        ``arguments`` is the call's arguments, used by the identity-scoped
+        memory exemption only (a ``memory_add`` write must stay in the caller's
+        own scope). The name is checked against the code-fixed set here so no
+        other tool even consults that exemption.
 
         Fails closed: an unresolvable identity is refused rather than read as
         "no user dimension", and an identity-service exception refuses the
@@ -2122,12 +2165,40 @@ class AgentStreamExecutor:
             )
         resource_id = self._tool_resource_id(tool_name)
         try:
-            from auth.service import get_identity_service
+            from auth.service import PERSONAL_MEMORY_TOOLS, get_identity_service
             svc = get_identity_service()
             ok = svc.check_resource_action(
                 ident.user_id, ident.tenant_id, "tool", resource_id, "execute",
                 permission="tool.execute",
             )
+            if not ok:
+                # Tenant-admin management exemption: the tenant_admin
+                # qualification runs the tools its tenant manages without a
+                # per-resource grant (platform-open builtin tools and tenant-owned
+                # MCP tools). Ordinary members and non-tenant tools stay
+                # grant-gated. ``ident.agent_id`` is forwarded because the
+                # service needs the Agent binding to prove an ``mcp:`` connection
+                # belongs to this tenant -- the id alone does not say so. A
+                # service without the method, or one that raises, keeps the
+                # original refusal (fail closed).
+                exempt = getattr(svc, "tenant_admin_may_execute_tool", None)
+                if callable(exempt) and exempt(
+                        ident.user_id, ident.tenant_id, resource_id,
+                        agent_id=ident.agent_id):
+                    ok = True
+            if not ok and tool_name in PERSONAL_MEMORY_TOOLS:
+                # Identity-scoped memory exemption: these tools are injected per
+                # Agent and absent from the allocatable tool catalog, so no grant
+                # can exist for them; membership plus ``tool.execute`` and
+                # ``memory.read`` stand in. Only the resource grant is skipped --
+                # isolation, quota and the Agent's tool scope are enforced
+                # elsewhere. Same fail-closed shape as above: no method, or a
+                # raising one, keeps the original refusal.
+                memory_exempt = getattr(
+                    svc, "personal_memory_tool_may_execute", None)
+                if callable(memory_exempt) and memory_exempt(
+                        ident.user_id, ident.tenant_id, tool_name, arguments):
+                    ok = True
         except Exception as e:
             logger.warning(f"[Permission] Tool auth check failed for {tool_name}: {e}")
             return _fail_closed_denial(

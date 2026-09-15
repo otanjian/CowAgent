@@ -37,6 +37,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 HOOK_IDENTITY_MODE_CONSISTENCY = "identity_mode_consistency"
 HOOK_DATABASE_BOOTSTRAP = "database_bootstrap"
 HOOK_TENANT_CONVERSATION_BACKFILL = "tenant_conversation_backfill"
+HOOK_SCHEDULER_TASK_MIGRATION = "scheduler_task_migration"
 
 #: One-shot initial admin password under the data root (mode 0600).
 BOOTSTRAP_PASSWORD_FILENAME = ".bootstrap_admin_password"
@@ -88,6 +89,58 @@ def register_startup_hook(name: str, fn: Callable[[], None],
 
 def is_registered(name: str) -> bool:
     return name in _HOOKS
+
+
+#: The authorization seams a boot MUST find armed before it serves anything
+#: (task R5). Declared here, *with the registry* rather than inside the
+#: extensions being checked: an extension that deletes its own registration, or
+#: a merge that drops one line of ``register_fork_startup_hooks``, would
+#: otherwise degrade that seam to a silent no-op -- the identity guard, the
+#: first-run bootstrap, the tenant backfill and the scheduled-task ownership
+#: migration would simply stop happening, with the console still answering.
+#:
+#: The manifest is checked by :func:`verify_required_seams`, which the boot
+#: assembly calls *directly* (not through :func:`run_startup_hook`): a check
+#: that is itself a hook could be skipped by exactly the failure it exists to
+#: catch.
+REQUIRED_HOOKS: Tuple[str, ...] = (
+    HOOK_IDENTITY_MODE_CONSISTENCY,
+    HOOK_DATABASE_BOOTSTRAP,
+    HOOK_TENANT_CONVERSATION_BACKFILL,
+    HOOK_SCHEDULER_TASK_MIGRATION,
+)
+
+
+def missing_required_hooks(
+        required: Optional[Tuple[str, ...]] = None) -> List[str]:
+    """Names in the required-seam manifest that are not registered."""
+    manifest = REQUIRED_HOOKS if required is None else required
+    return [name for name in manifest if not is_registered(name)]
+
+
+def verify_required_seams(required: Optional[Tuple[str, ...]] = None) -> None:
+    """Refuse the boot when a required authorization seam is not armed (R5).
+
+    rdai is *not* upstream: the seams in the manifest carry identity, tenant,
+    owner and task-execution authorization, so a missing one is a missing
+    authorization boundary, not a missing convenience. The two permitted
+    answers are "refuse to start" (here) or "close the affected capability";
+    silently booting without the seam is the one answer that is NOT permitted,
+    and it is the answer a dropped registration would otherwise give.
+    """
+    missing = missing_required_hooks(required)
+    if not missing:
+        return
+    from common.log import logger
+    logger.error(
+        "[App] Refusing to start: required authorization seam(s) not "
+        "registered: %s. rdai cannot serve identity, tenant or task execution "
+        "without them; restore the fork's startup assembly "
+        "(common/startup_hooks.py) before starting." % ", ".join(missing)
+    )
+    raise RuntimeError(
+        "required startup seam(s) missing: %s" % ", ".join(missing)
+    )
 
 
 def registered_hooks() -> List[str]:
@@ -267,6 +320,146 @@ def _tenant_conversation_backfill() -> None:
         logger.warning(f"[App] Conversation tenancy backfill skipped: {e}")
 
 
+def _scheduler_task_migration() -> None:
+    """Stamp owner/scope onto historical tasks, quarantining the unattributable.
+
+    A task written before owner tracking has no member owner, and the runtime
+    refuses to execute an ownerless task on database identity (task 4.2): it
+    would fire as the Agent itself, under nobody's grants. So the boot classifies
+    every stored task once —
+
+    * a task that already carries an owner gets ``scope=personal`` stamped (its
+      schedule, action and id are untouched, so nothing starts running twice);
+    * a task with neither an owner nor an explicit ``public`` scope is
+      *quarantined*: disabled, with a redacted reason and a recovery hint. It is
+      never handed to the administrator running the boot, which is the rule this
+      migration exists to keep;
+    * a task already declaring ``scope`` is left exactly as it is.
+
+    Idempotent by construction: the second boot finds everything classified and
+    reports ``unchanged``. A migration that is interrupted mid-way is therefore
+    safe to re-run — the tasks it did not reach are still unclassified, and the
+    ones it did reach keep their stamps.
+
+    The migration runs in the boot's single-threaded phase, before any scheduler
+    loop starts, so it never races a fire. Its failures are the one exception to
+    "hooks propagate": a store that cannot be read leaves the tasks in their
+    current (unclassified but *not executing*) state, which is safe, while
+    aborting the boot would take the whole console down over one bad file.
+    """
+    from common.log import logger
+    try:
+        from agent.registry import get_agent_registry
+        from agent.tools.scheduler.authorization import (
+            TaskAccessService, TaskActor,
+        )
+        from agent.tools.scheduler.task_store import TaskStore
+        from common import state_dir
+        from common.runtime_identity import RuntimeIdentity
+
+        agent_ids = [p.id for p in get_agent_registry().list(include_disabled=False)]
+        if not agent_ids:
+            return
+
+        def store_for(_actor, agent_id):
+            identity = RuntimeIdentity(agent_id=agent_id)
+            return TaskStore(str(state_dir.scheduler_file(identity)))
+
+        service = TaskAccessService(
+            store_resolver=store_for,
+            agent_ids=lambda _actor: agent_ids,
+            coordinator="migration",
+        )
+        # Plan first, back up what the plan would touch, then apply (task 4.3's
+        # "consistent backup" requirement). The dry run is the same query the
+        # apply uses, so the backup covers exactly the files that change; a boot
+        # that finds everything classified writes no backup at all.
+        plan = service.migrate_tasks(
+            TaskActor(source="migration"), agent_ids=agent_ids, apply=False)
+        backups = []
+        if plan["stamped"] or plan["quarantined"]:
+            backups = _backup_task_stores(
+                state_dir, agent_ids, plan, source="pre-migration")
+        report = service.migrate_tasks(
+            TaskActor(source="migration"), agent_ids=agent_ids, apply=True)
+        if report["stamped"] or report["quarantined"]:
+            logger.info(
+                "[App] Scheduled-task ownership migration: %(stamped)s stamped, "
+                "%(quarantined)s quarantined, %(unchanged)s unchanged "
+                "(quarantined tasks are disabled; their owners recreate them in chat)"
+                % report
+            )
+        if backups:
+            logger.info(
+                "[App] Scheduled-task migration backup written: %s "
+                "(remove after the drill is recorded)" % ", ".join(backups))
+    except Exception as error:
+        logger.warning(f"[App] Scheduled-task ownership migration skipped: {error}")
+
+
+#: How many scheduled-task backups to keep per Agent. Enough for the drill's
+#: "restore to before this migration" step without growing the data directory
+#: boot after boot.
+TASK_STORE_BACKUP_KEEP = 5
+
+
+def _backup_task_stores(state_dir, agent_ids, plan, *, source: str) -> List[str]:
+    """Copy every task store the migration is about to rewrite (task 4.3).
+
+    The migration mutates one ``tasks.json`` per Agent. Copying the file before
+    the first write is the whole point of the drill's backup evidence: the copy
+    is taken while nothing is firing (the hook runs in the boot's
+    single-threaded phase, before any timer starts), so it is a consistent
+    snapshot of the pre-migration state.
+
+    Best effort on purpose: a backup that cannot be written must not stop the
+    migration (the quarantine is the safety property; the copy is the recovery
+    convenience), but it is logged loudly.
+    """
+    from datetime import datetime
+
+    from common import log as _log
+    from common.runtime_identity import RuntimeIdentity
+
+    touched = {entry["agent_id"] for entry in plan.get("agents", [])
+               if entry.get("stamped") or entry.get("quarantined")}
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    written: List[str] = []
+    for agent_id in sorted(touched or set(agent_ids)):
+        if touched and agent_id not in touched:
+            continue
+        path = str(state_dir.scheduler_file(RuntimeIdentity(agent_id=agent_id)))
+        if not os.path.isfile(path):
+            continue
+        target = "%s.bak-%s-%s" % (path, source, stamp)
+        try:
+            with open(path, "rb") as src, open(target, "wb") as dst:
+                dst.write(src.read())
+            os.chmod(target, 0o600)
+            written.append(target)
+            _prune_task_store_backups(path, source)
+        except OSError as error:
+            _log.logger.warning(
+                "[App] Scheduled-task backup failed for %s: %s" % (path, error))
+    return written
+
+
+def _prune_task_store_backups(path: str, source: str) -> None:
+    """Keep the newest ``TASK_STORE_BACKUP_KEEP`` backups of one store."""
+    prefix = os.path.basename(path) + ".bak-" + source + "-"
+    directory = os.path.dirname(path)
+    try:
+        found = sorted(name for name in os.listdir(directory)
+                       if name.startswith(prefix))
+    except OSError:
+        return
+    for stale in found[:-TASK_STORE_BACKUP_KEEP]:
+        try:
+            os.remove(os.path.join(directory, stale))
+        except OSError:
+            pass
+
+
 def register_fork_startup_hooks() -> None:
     """Idempotently arm this fork's hooks."""
     register_startup_hook(HOOK_IDENTITY_MODE_CONSISTENCY,
@@ -275,6 +468,8 @@ def register_fork_startup_hooks() -> None:
                           _database_bootstrap_auto_init, order=15)
     register_startup_hook(HOOK_TENANT_CONVERSATION_BACKFILL,
                           _tenant_conversation_backfill, order=20)
+    register_startup_hook(HOOK_SCHEDULER_TASK_MIGRATION,
+                          _scheduler_task_migration, order=25)
 
 
 register_fork_startup_hooks()

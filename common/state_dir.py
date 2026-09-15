@@ -78,13 +78,30 @@ def _contains(a: str, b: str) -> bool:
         return False
 
 
-def _engineering_root() -> Optional[str]:
-    """The verified default workspace root (e.g. ``~/cow``), realpath'd.
+def _instance_root() -> Optional[str]:
+    """The deployment's instance root (``agent_workspace``), realpath'd.
 
-    This is the one root a default tenant legitimately lives in. It is exempt
-    from the home/global escape check so a real install (where the default
-    tenant's shared root IS ``~/cow``) is not falsely rejected. Mirrors the
-    default-Agent workspace that ``state_root()`` resolves for an absent id.
+    This is where a default tenant's shared root legitimately is (e.g.
+    ``~/cow``). It is read from config rather than from the default Agent's
+    workspace on purpose: once the default Agent has been given a private
+    workspace of its own (``agents/<id>``), deriving the exemption from that
+    Agent would shrink it to the subdirectory and falsely reject the instance
+    root the default tenant actually uses.
+    """
+    try:
+        from common.utils import expand_path
+        from config import conf
+        return _real(expand_path(str(conf().get("agent_workspace") or "~/cow")))
+    except Exception:
+        return None
+
+
+def _default_agent_workspace() -> Optional[str]:
+    """The default Agent's own workspace, realpath'd.
+
+    Equal to the instance root on the usual single-Agent layout, so this is a
+    second, independent way to recognise a legitimate root -- and the only one
+    available when config was never loaded (as in tests).
     """
     try:
         from agent.registry import get_agent_registry
@@ -108,16 +125,32 @@ def _tenant_base_real() -> Optional[str]:
         return None
 
 
-def _is_home_or_global_escape(path: str, home: str, engineering: Optional[str]) -> bool:
+def _trusted_roots() -> list:
+    """Roots exempt from the home/global escape check, realpath'd.
+
+    Three verified sources, none of them user-supplied: the deployment instance
+    root, the default Agent's workspace, and the operator-configured tenant data
+    base. They overlap on a plain single-Agent install; the instance root is the
+    one that keeps a default tenant resolving after the default Agent moves into
+    a private ``agents/<id>`` workspace.
+    """
+    roots: list = []
+    for candidate in (_instance_root(), _default_agent_workspace(),
+                      _tenant_base_real()):
+        if candidate and candidate not in roots:
+            roots.append(candidate)
+    return roots
+
+
+def _is_home_or_global_escape(path: str, home: str, trusted: list) -> bool:
     """True when ``path`` escapes into home/config/global areas.
 
     Rejects a path that is (or sits inside) the user's home or a global data
-    root, unless it is the verified engineering/workspace root (or a descendant)
-    or the operator-configured tenant data base (or a descendant) -- a default
-    tenant legitimately lives in the former and new tenants derive under the
-    latter, and both roots are verified rather than user-controlled.
+    root, unless it is (or sits inside) one of the caller's verified roots (see
+    ``_trusted_roots``) -- a default tenant legitimately lives in the instance
+    root and new tenants derive under the configured tenant base, and both are
+    verified rather than user-controlled.
     """
-    trusted = [t for t in (engineering, _tenant_base_real()) if t]
     if _contains(home, path) and not any(_contains(t, path) for t in trusted):
         return True
     # Global data/config root: tenant data must never be stored in the config/
@@ -169,8 +202,9 @@ def _assert_tenant_roots_do_not_contain(ident, root) -> None:
 
     ``shared_root()`` and the tenant base resolvers must never return a path
     that (a) is/falls inside the user's home or a global data/config root
-    (unless it is the verified engineering/workspace root or the configured
-    tenant base), or (b) equals or contains / is contained by another tenant's
+    (unless it is/falls inside one of ``_trusted_roots()``: the instance root,
+    the default Agent's workspace, or the configured tenant base), or (b) equals
+    or contains / is contained by another tenant's
     shared root. Both checks use ``os.path.realpath`` so symlinks cannot smuggle
     a path out. Throws ``StateDirError`` on violation. Same-tenant historical
     nesting is allowed -- only *other* tenants' roots are compared.
@@ -179,10 +213,9 @@ def _assert_tenant_roots_do_not_contain(ident, root) -> None:
     if not ident.tenant_id:
         return
     home = _real(Path.home())
-    engineering = _engineering_root()
 
     target = _real(root)
-    if _is_home_or_global_escape(target, home, engineering):
+    if _is_home_or_global_escape(target, home, _trusted_roots()):
         raise StateDirError(
             f"tenant {ident.tenant_id!r} shared root {target!r} resolves inside "
             f"the home/global workspace root; refusing to fall back"
@@ -213,7 +246,7 @@ def _resolve_tenant_shared_root(ident) -> Path:
     )
 
 
-def shared_root() -> Path:
+def shared_root(identity: Optional[RuntimeIdentity] = None) -> Path:
     """Root of the assets every Agent draws on.
 
     Implicitly the default Agent's workspace rather than a configured path of
@@ -222,13 +255,17 @@ def shared_root() -> Path:
     there instead of needing its own copies. Add a setting if someone ever
     wants the shared area somewhere else.
 
-    In database mode the current identity's tenant resolves its trusted shared
-    root (task 3.9): a tenant never falls back to another tenant's (or the
-    default Agent's) shared assets, and the root is rejected when it escapes
-    into home/global or overlaps another tenant.
+    In database mode the identity's tenant resolves its trusted shared root
+    (task 3.9): a tenant never falls back to another tenant's (or the default
+    Agent's) shared assets, and the root is rejected when it escapes into
+    home/global or overlaps another tenant.
+
+    ``identity`` must be passed whenever the caller already holds one. Resolving
+    it from the ambient identity instead is how "validate against this tenant,
+    read from that tenant" becomes possible: the two agree while a handler
+    installs the same identity and diverge the moment anything else does.
     """
-    from common.runtime_identity import current_identity
-    ident = current_identity()
+    ident = _resolve(identity)
     if ident.tenant_id:
         return _resolve_tenant_shared_root(ident)
     from agent.registry import get_agent_registry
@@ -282,7 +319,7 @@ def user_root(identity: Optional[RuntimeIdentity] = None) -> Path:
     """
     ident = _resolve(identity)
     if ident.user_id:
-        return shared_root() / "users" / ident.user_id
+        return shared_root(ident) / "users" / ident.user_id
     return state_root(ident)
 
 
@@ -320,7 +357,7 @@ def _shared_or_own(identity, base, *parts: str) -> Path:
     own = _agent_base(identity, base).joinpath(*parts)
     if own.exists():
         return own
-    return shared_root().joinpath(*parts)
+    return shared_root(identity).joinpath(*parts)
 
 
 # ``base`` lets value objects that already carry a resolved root (MemoryConfig,

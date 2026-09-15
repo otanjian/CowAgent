@@ -140,8 +140,8 @@ function setup(transport = async () => response(database()), { agentWrapper = fa
     node('sidebar-version').tagName = 'A';
     node('sidebar-version').setAttribute('href', 'https://www.rsm.global/china/zh-hans');
     for (const id of ['sidebar-account-menu', 'account-menu-identity', 'account-menu-status',
-        'account-menu-retry', 'account-menu-logout', 'auth-check-retry', 'login-form', 'logout-btn-header',
-        'tenant-menu', 'lang-menu']) node(id).classList.add('hidden');
+        'account-menu-retry', 'account-menu-logout', 'auth-check-retry', 'login-form',
+        'tenant-menu']) node(id).classList.add('hidden');
     node('login-overlay').appendChild(node('auth-check-panel'));
     node('auth-check-panel').appendChild(node('auth-check-message'));
     node('auth-check-panel').appendChild(node('auth-check-retry'));
@@ -228,10 +228,9 @@ async function appearanceSetup(identity = database()) {
     }
     h.document.querySelectorAll = selector => radios[selector.match(/^input\[name="([^"]+)"\]$/)?.[1]] || [];
     dialog.querySelector = selector => selector.includes('web-palette') ? radios['web-palette'].find(input => input.checked) : null;
-    h.node('app').appendChild(h.node('theme-toggle'));
     h.node('sidebar-account-menu').appendChild(h.node('account-menu-prefs'));
     h.node('account-menu-prefs').tagName = 'BUTTON';
-    for (const id of ['sidebar-account-toggle', 'theme-toggle']) h.node(id).isConnected = true;
+    h.node('sidebar-account-toggle').isConnected = true;
     h.ctx.CowAppearance = createAppearanceController({ storage: localStorage, root: h.document.documentElement,
         matchMedia: () => ({ matches: false }) });
     h.ctx.rerenderDynamicViews = () => {};
@@ -242,7 +241,7 @@ async function appearanceSetup(identity = database()) {
     return { ...h, localStore, radios, dialog };
 }
 
-test('account and header preferences share the controller, dialog and full persisted selection', async () => {
+test('account preferences open the shared controller, dialog and full persisted selection', async () => {
     const h = await appearanceSetup();
     h.ctx.toggleAccountMenu();
     h.ctx.openAccountPrefs();
@@ -255,12 +254,14 @@ test('account and header preferences share the controller, dialog and full persi
     assert.equal(h.radios['web-mode'].find(input => input.checked).value, 'dark');
     h.ctx.closeAccountPrefs();
     assert.equal(h.document.activeElement, h.node('sidebar-account-toggle'));
-    h.ctx.openAppearancePreferences(h.node('theme-toggle'));
+    // Logout and appearance have exactly one entry each, so reopening the same
+    // entry must show the persisted selection instead of a second panel.
+    h.ctx.openAppearancePreferences(h.node('sidebar-account-toggle'));
     assert.equal(h.dialog.open, true);
     h.ctx.setAccountTheme('system');
     assert.equal(h.radios['web-mode'].find(input => input.checked).value, 'system');
     h.ctx.closeAppearancePreferences();
-    assert.equal(h.document.activeElement, h.node('theme-toggle'));
+    assert.equal(h.document.activeElement, h.node('sidebar-account-toggle'));
     const restored = createAppearanceController({ storage: h.ctx.localStorage });
     assert.equal(restored.getState().palette, 'business');
     assert.equal(restored.getState().mode, 'system');
@@ -388,13 +389,13 @@ test('legacy responses distinguish password protection and explicit anonymous ac
     await settle();
     assert.equal(h.state().mode, 'legacy');
     assert.equal(h.state().authRequired, true);
-    assert.equal(h.node('logout-btn-header').classList.contains('hidden'), false);
+    assert.equal(h.node('account-menu-logout').classList.contains('hidden'), false);
     payload = { status: 'success', auth_required: false };
     await h.ctx.refreshAccountIdentity();
     assert.equal(h.state().mode, 'legacy');
     assert.equal(h.state().authRequired, false);
     assert.equal(h.state().username, '');
-    assert.equal(h.node('logout-btn-header').classList.contains('hidden'), true);
+    assert.equal(h.node('account-menu-logout').classList.contains('hidden'), true);
 });
 
 test('HTTP, business and incomplete check responses cannot masquerade as anonymous access', async () => {
@@ -450,7 +451,6 @@ test('authenticated database response without user still permits logout and neve
     await h.ctx.refreshAccountIdentity();
     assert.equal(h.state().authenticated, true);
     assert.equal(h.state().username, '');
-    assert.equal(h.node('logout-btn-header').classList.contains('hidden'), false);
     assert.equal(h.node('account-menu-logout').classList.contains('hidden'), false);
     assert.equal(h.node('account-menu-retry').classList.contains('hidden'), false);
     await h.ctx.handleLogout(); await settle();
@@ -586,7 +586,7 @@ test('current business 401 survives an ordinary retry, including confirmed login
     }
 });
 
-test('logout is single-flight across both entries; a business error provides recovery and retry can succeed', async () => {
+test('logout stays single-flight on the single main entry; a business error provides recovery and retry can succeed', async () => {
     const pending = deferred(); let logouts = 0;
     const h = setup(async url => url === '/auth/logout'
         ? (++logouts === 1 ? pending.promise : response({ status: 'success' })) : response(database()));
@@ -596,11 +596,11 @@ test('logout is single-flight across both entries; a business error provides rec
     await settle();
     assert.equal(h.fetches('/auth/logout').length, 1);
     assert.equal(h.state().username, '');
-    assert.equal(h.node('logout-btn-header').disabled, true);
+    assert.equal(h.node('account-menu-logout').disabled, true);
     pending.resolve(response({ status: 'error', message: 'Logout was not completed' }));
     await first; await second; await settle();
     assert.equal(h.counter.reload, 0);
-    assert.equal(h.node('logout-btn-header').disabled, false);
+    assert.equal(h.node('account-menu-logout').disabled, false);
     assert.equal(h.node('account-menu-retry').classList.contains('hidden'), false);
     assert.equal(h.node('account-menu-logout').classList.contains('hidden'), false);
     await h.ctx.handleLogout(); await settle();
@@ -646,7 +646,7 @@ test('valid version survives invalid responses, and a brand repaint changes only
         assert.doesNotMatch(h.node('sidebar-version').textContent, /undefined|999/);
     }
     const before = h.state().username;
-    const focus = h.node('logout-btn-header'); focus.focus();
+    const focus = h.node('account-menu-logout'); focus.focus();
     h.ctx.brandName = 'Published Brand';
     h.run(section('function applyBrandToDocument()', 'function applyBrandToAgentAvatars()'));
     h.ctx.applyBrandToDocument();
@@ -685,10 +685,8 @@ test('account and tenant menus are mutually exclusive and repeated opening does 
     const h = setup();
     await settle();
     h.node('tenant-menu').classList.remove('hidden');
-    h.node('lang-menu').classList.remove('hidden');
     h.ctx.toggleAccountMenu();
     assert.equal(h.node('tenant-menu').classList.contains('hidden'), true);
-    assert.equal(h.node('lang-menu').classList.contains('hidden'), true);
     const listeners = h.document.listenerCount('pointerdown');
     h.ctx.toggleTenantMenu({ stopPropagation() {} });
     assert.equal(h.node('tenant-menu').classList.contains('hidden'), false);
@@ -699,6 +697,491 @@ test('account and tenant menus are mutually exclusive and repeated opening does 
     }
     h.ctx.toggleAccountMenu();
     assert.equal(h.document.listenerCount('pointerdown'), listeners);
+});
+
+// ---- 「我的资源」 in the account panel (change move-personal-menu-to-account) ----
+//
+// The five member entries moved out of #sidebar-nav into the account panel. These
+// tests pin the three things that make the move safe: the visibility verdict still
+// comes from the authoritative projection (recomputed, never accumulated), the
+// panel never starts a personal consumer by being opened or retried, and the
+// current-page marker exists exactly once, on the account entry.
+
+const PERSONAL_VIEW_IDS = ['personal-agents', 'personal-channels', 'personal-memory',
+    'personal-tools', 'personal-skills'];
+
+function mountAccountResources(h) {
+    // _consolePageForView reads VIEW_META, which lives in a section this VM does
+    // not load; the stub mirrors the shipped mapping for the five personal ids.
+    h.run("_consolePageForView = v => 'personal.' + v.slice('personal-'.length)");
+    const group = h.node('account-menu-resources');
+    group.appendChild(h.node('account-menu-resources-status'));
+    group.appendChild(h.node('account-menu-resources-retry'));
+    const entries = PERSONAL_VIEW_IDS.map(id => {
+        const entry = element(h.document, 'a');
+        entry.className = 'account-menu-action account-menu-item account-menu-personal hidden';
+        entry.dataset.view = id;
+        entry.id = 'account-entry-' + id;
+        group.appendChild(entry);
+        return entry;
+    });
+    h.node('sidebar-account-menu').appendChild(group);
+    return {
+        group, entries,
+        byView: id => entries[PERSONAL_VIEW_IDS.indexOf(id)],
+        setCurrent: view => { h.ctx.currentView = view; h.ctx._syncAccountPersonalCurrent(); },
+    };
+}
+
+const projectPages = (h, pages) => h.run(`_authContext = ${JSON.stringify({
+    status: 'success', authorization_mode: 'role', console_pages: pages,
+})}`);
+
+const readable = () => ({ available: true, read_allowed: true });
+
+test('the account 「我的资源」 group is recomputed from the authoritative projection', async () => {
+    const h = setup();
+    h.storage.set('cow_tenant_id', 't1');
+    await settle();
+    const { group, byView } = mountAccountResources(h);
+    // Nothing in this path may reach for the old main-navigation host.
+    const selectors = [];
+    h.document.querySelectorAll = selector => { selectors.push(selector); return []; };
+
+    // A withheld menu grant hides its entry; a withdrawn capability does too;
+    // pages the backend did not sign are left as-is (never hidden on a guess).
+    projectPages(h, {
+        'personal.agents': readable(),
+        'personal.channels': { menu_denied: true, available: true, read_allowed: true },
+        'personal.tools': { reason: 'capability_disabled', available: true, read_allowed: true },
+    });
+    h.ctx._renderAccountResources();
+    assert.equal(byView('personal-agents').classList.contains('hidden'), false);
+    assert.equal(byView('personal-channels').classList.contains('hidden'), true);
+    assert.equal(byView('personal-tools').classList.contains('hidden'), true);
+    assert.equal(byView('personal-memory').classList.contains('hidden'), false, 'unsigned stays');
+    assert.equal(group.classList.contains('hidden'), false);
+
+    // Re-granting brings the entry back: visibility is computed, not accumulated.
+    projectPages(h, {
+        'personal.agents': readable(), 'personal.channels': readable(),
+        'personal.memory': readable(), 'personal.tools': readable(), 'personal.skills': readable(),
+    });
+    h.ctx._renderAccountResources();
+    for (const id of PERSONAL_VIEW_IDS) {
+        assert.equal(byView(id).classList.contains('hidden'), false, id);
+    }
+
+    // All five refused: the empty group (title and box) goes with them.
+    projectPages(h, {
+        'personal.agents': { menu_denied: true }, 'personal.channels': { menu_denied: true },
+        'personal.memory': { menu_denied: true }, 'personal.tools': { menu_denied: true },
+        'personal.skills': { menu_denied: true },
+    });
+    h.ctx._renderAccountResources();
+    assert.equal(group.classList.contains('hidden'), true);
+    assert.ok(selectors.every(selector => !/sidebar-nav/.test(selector)),
+        'the account projector never filters through #sidebar-nav');
+});
+
+test('an unconfirmed projection offers no activatable entry and no personal request', async () => {
+    const contextRequest = deferred();
+    const h = setup(async url => {
+        if (url === '/auth/check') return response(database());
+        if (url === '/auth/context') return contextRequest.promise;
+        return response({ status: 'success', identity_mode: 'database' });
+    });
+    h.storage.set('cow_tenant_id', 't1');
+    await settle();
+    const { byView } = mountAccountResources(h);
+
+    // The authoritative answer is still in flight: every entry stays
+    // unconfirmed, the panel says so, and no retry is offered yet.
+    h.ctx._fetchTenantAuthorization();
+    await settle();
+    h.ctx._renderAccountResources();
+    for (const id of PERSONAL_VIEW_IDS) {
+        assert.equal(byView(id).classList.contains('hidden'), true, `${id} stays unconfirmed`);
+    }
+    assert.equal(h.node('account-menu-resources-status').classList.contains('hidden'), false);
+    assert.equal(h.node('account-menu-resources-retry').classList.contains('hidden'), true);
+
+    // A failed read is reported as failed, with a retry that only re-reads.
+    contextRequest.resolve(response({ status: 'error' }, 503));
+    await settle();
+    await settle();
+    h.ctx._renderAccountResources();
+    assert.equal(h.node('account-menu-resources-status').classList.contains('hidden'), false);
+    assert.equal(h.node('account-menu-resources-retry').classList.contains('hidden'), false);
+    for (const id of PERSONAL_VIEW_IDS) {
+        assert.equal(byView(id).classList.contains('hidden'), true);
+    }
+
+    // Opening (and re-rendering) the panel loads no personal page data.
+    h.ctx.toggleAccountMenu();
+    await settle();
+    await h.flushTimers();
+    const personalCalls = h.calls.filter(call => /^\/api\/(agents|personal|memory)/.test(call.url));
+    assert.deepEqual(personalCalls, [], 'no personal consumer starts from the panel');
+});
+
+test('an identity without a confirmed tenant offers no personal entry either', async () => {
+    // Database mode with no selected tenant is a restricted state: the shell
+    // keeps it behind the tenant picker, so the account panel must not hand out
+    // an activatable personal entry that could bypass it.
+    const h = setup();
+    await settle();
+    const { group, byView } = mountAccountResources(h);
+
+    // The panel's own retry marks the summary as in flight *before* it can know
+    // whether a tenant-scoped read is even possible: the entries must not become
+    // activatable in that window, and the state must be stated, not guessed away.
+    h.run("_authContextPhase = 'checking'");
+    h.ctx._renderAccountResources();
+    for (const id of PERSONAL_VIEW_IDS) {
+        assert.equal(byView(id).classList.contains('hidden'), true, `${id} stays unconfirmed (retry in flight)`);
+    }
+    assert.equal(group.classList.contains('hidden'), false, 'the group explains the state');
+    assert.equal(h.node('account-menu-resources-status').classList.contains('hidden'), false);
+    assert.equal(h.node('account-menu-resources-status').textContent, 'account_menu_resources_checking');
+
+    // A read that fails without a tenant keeps the same verdict. No retry is
+    // offered: the tenant picker owns that recovery, and a retry that cannot
+    // read a tenant-scoped summary would only look like it works.
+    h.run("_authContextPhase = 'failed'");
+    h.ctx._renderAccountResources();
+    for (const id of PERSONAL_VIEW_IDS) {
+        assert.equal(byView(id).classList.contains('hidden'), true, `${id} stays unconfirmed (read failed)`);
+    }
+    assert.equal(h.node('account-menu-resources-retry').classList.contains('hidden'), true);
+});
+
+test('a personal page carries exactly one current marker, on its account entry', async () => {
+    const h = setup();
+    h.storage.set('cow_tenant_id', 't1');
+    await settle();
+    const { byView, setCurrent } = mountAccountResources(h);
+    projectPages(h, Object.fromEntries(PERSONAL_VIEW_IDS.map(id => ['personal.' + id.slice(9), readable()])));
+    h.ctx._renderAccountResources();
+
+    setCurrent('personal-memory');
+    assert.equal(byView('personal-memory').getAttribute('aria-current'), 'page');
+    for (const id of PERSONAL_VIEW_IDS.filter(id => id !== 'personal-memory')) {
+        assert.equal(byView(id).getAttribute('aria-current'), null, id);
+    }
+    assert.equal(h.node('sidebar-account-footer').classList.contains('is-personal'), true);
+    assert.equal(h.node('sidebar-account-region').classList.contains('hidden'), false);
+    // The trigger carries no second current-page marker.
+    assert.equal(h.node('sidebar-account-toggle').getAttribute('aria-current'), null);
+
+    // Losing eligibility for the current page clears entry and region state.
+    projectPages(h, { 'personal.memory': { menu_denied: true } });
+    h.ctx._renderAccountResources();
+    h.ctx._syncAccountPersonalCurrent();
+    assert.equal(byView('personal-memory').getAttribute('aria-current'), null);
+    assert.equal(h.node('sidebar-account-footer').classList.contains('is-personal'), false);
+    assert.equal(h.node('sidebar-account-region').classList.contains('hidden'), true);
+
+    // Leaving for a non-personal page clears it too.
+    projectPages(h, Object.fromEntries(PERSONAL_VIEW_IDS.map(id => ['personal.' + id.slice(9), readable()])));
+    h.ctx._renderAccountResources();
+    setCurrent('personal-agents');
+    assert.equal(byView('personal-agents').getAttribute('aria-current'), 'page');
+    setCurrent('chat');
+    for (const id of PERSONAL_VIEW_IDS) assert.equal(byView(id).getAttribute('aria-current'), null, id);
+    assert.equal(h.node('sidebar-account-footer').classList.contains('is-personal'), false);
+});
+
+test('an account or tenant change clears the entries, the marker and the cached projection', async () => {
+    const h = setup();
+    h.storage.set('cow_tenant_id', 't1');
+    await settle();
+    const { group, byView, setCurrent } = mountAccountResources(h);
+    projectPages(h, Object.fromEntries(PERSONAL_VIEW_IDS.map(id => ['personal.' + id.slice(9), readable()])));
+    h.ctx._renderAccountResources();
+    setCurrent('personal-channels');
+    h.ctx.toggleAccountMenu();
+    assert.equal(h.node('sidebar-account-menu').classList.contains('hidden'), false);
+
+    h.ctx._invalidateAccountIdentity('unauthenticated');
+    assert.equal(h.node('sidebar-account-menu').classList.contains('hidden'), true, 'panel closes');
+    assert.equal(group.classList.contains('hidden'), true);
+    for (const id of PERSONAL_VIEW_IDS) {
+        assert.equal(byView(id).classList.contains('hidden'), true, `${id} is forgotten`);
+        assert.equal(byView(id).getAttribute('aria-current'), null);
+    }
+    assert.equal(h.node('sidebar-account-footer').classList.contains('is-personal'), false);
+    assert.equal(h.node('sidebar-account-region').classList.contains('hidden'), true);
+    assert.equal(h.run('_authContext'), null, 'the old projection is dropped');
+    assert.equal(h.run('_authContextPhase'), 'unknown');
+
+    // A late render with the stale projection cannot bring the old entries back.
+    h.ctx._renderAccountResources();
+    assert.equal(group.classList.contains('hidden'), true);
+    for (const id of PERSONAL_VIEW_IDS) assert.equal(byView(id).classList.contains('hidden'), true);
+});
+
+test('the mobile account panel is a modal bottom sheet outside the transformed sidebar', async () => {
+    const h = setup();
+    await settle();
+    const menu = h.node('sidebar-account-menu');
+    h.ctx.innerWidth = 390;
+    h.ctx.innerHeight = 700;
+    h.ctx.toggleAccountMenu();
+    assert.equal(menu.parentNode, h.document.body, 'hosted outside the off-canvas sidebar');
+    assert.equal(menu.classList.contains('account-menu-sheet'), true);
+    assert.equal(menu.getAttribute('role'), 'dialog');
+    assert.equal(menu.getAttribute('aria-modal'), 'true');
+    assert.equal(h.node('account-menu-sheet-head').classList.contains('hidden'), false);
+    assert.equal(h.node('account-menu-sheet-close').classList.contains('hidden'), false);
+    assert.equal(h.node('account-menu-backdrop').classList.contains('hidden'), false);
+    assert.equal(h.document.body.classList.contains('account-menu-sheet-open'), true);
+
+    // Tab cycles inside the sheet instead of reaching the page behind it.
+    const focusable = h.ctx._accountMenuFocusable(menu);
+    assert.ok(focusable.length >= 2, 'the sheet has more than one stop');
+    focusable[focusable.length - 1].focus();
+    h.document.dispatch('keydown', { key: 'Tab', shiftKey: false, target: focusable[focusable.length - 1] });
+    assert.equal(h.document.activeElement, focusable[0], 'Tab wraps to the first stop');
+    h.document.dispatch('keydown', { key: 'Tab', shiftKey: true, target: focusable[0] });
+    assert.equal(h.document.activeElement, focusable[focusable.length - 1], 'Shift+Tab wraps back');
+
+    // Closing puts the single panel node back on the desktop host and drops the
+    // chrome with it.
+    h.ctx.closeAccountMenu();
+    assert.equal(menu.parentNode, h.node('sidebar-account-footer'));
+    assert.equal(menu.classList.contains('account-menu-sheet'), false);
+    assert.equal(menu.getAttribute('role'), 'group');
+    assert.equal(h.node('account-menu-backdrop').classList.contains('hidden'), true);
+    assert.equal(h.document.body.classList.contains('account-menu-sheet-open'), false);
+});
+
+test('an entry inside a hidden group is not focusable, and the panel is sized to the room it has', async () => {
+    const h = setup();
+    await settle();
+    const menu = h.node('sidebar-account-menu');
+    const { group, byView } = mountAccountResources(h);
+    h.ctx.toggleAccountMenu();
+    const focusable = () => h.ctx._accountMenuFocusable(menu);
+    byView('personal-agents').classList.remove('hidden');
+    group.classList.add('hidden');
+    assert.ok(!focusable().includes(byView('personal-agents')),
+        'an entry inside a hidden group is not focusable');
+    group.classList.remove('hidden');
+    assert.ok(focusable().includes(byView('personal-agents')), 'a visible entry joins the order');
+
+    // The popover is capped by the space between the account card and the top of
+    // the viewport, so the last entry stays reachable in a short window.
+    const footer = h.node('sidebar-account-footer');
+    const footerRect = footer.getBoundingClientRect;
+    footer.getBoundingClientRect = () => ({ top: 120, left: 0, width: 224, height: 72, bottom: 192 });
+    h.ctx._applyAccountMenuHeight();
+    assert.equal(menu.style.maxHeight, '108px');
+    footer.getBoundingClientRect = footerRect;
+    h.ctx._applyAccountMenuHeight();
+    assert.equal(menu.style.maxHeight, '768px', 'the default popover clears the account card');
+    h.node('app').classList.add('sidebar-collapsed');
+    h.ctx.innerHeight = 900;
+    h.ctx._applyAccountMenuHeight();
+    assert.equal(menu.style.maxHeight, '876px', 'the icon-sidebar panel uses the viewport');
+    h.node('app').classList.remove('sidebar-collapsed');
+    // Below the sidebar breakpoint the panel is remounted as a sheet, whose size
+    // is bounded by CSS (80% of the visual viewport) instead of an inline value.
+    h.ctx.closeAccountMenu();
+    h.ctx.innerWidth = 390;
+    h.ctx.toggleAccountMenu();
+    h.ctx._applyAccountMenuHeight();
+    assert.equal(menu.style.maxHeight, '', 'the sheet is bounded by CSS');
+});
+
+// ---- the account entry -> shared protected navigation adapter -----------------
+//
+// ``openPersonalEntry`` is the only way an account personal entry navigates. The
+// marked block is executed here on its own so the ordering contract — the leave
+// decision completes before an area switch, a commit, or a consumer start, and the
+// nested area switch does not ask a second time — is asserted against the shipped
+// code.
+
+const PERSONAL_NAV_BEGIN = '// === ACCOUNT_PERSONAL_NAV_BEGIN ===';
+const PERSONAL_NAV_END = '// === ACCOUNT_PERSONAL_NAV_END ===';
+
+function accountPersonalNav(options = {}) {
+    const calls = { openArea: [], committed: [], unavailable: [], closed: 0, focused: [], syncedAt: [] };
+    let deferred = null;
+    let readCurrent = () => null;
+    // navigateTo paints the breadcrumb, the account region and the view
+    // containers. A view node reports itself active with a focusable heading, so
+    // the post-commit focus move is observable on the shipped code path.
+    const nodes = new Map();
+    const stubNode = rawId => {
+        const id = String(rawId);
+        if (nodes.has(id)) return nodes.get(id);
+        const node = {
+            textContent: '', dataset: {}, style: {},
+            classList: {
+                add() {}, remove() {}, toggle() {},
+                contains: name => id.indexOf('view-') === 0 && name === 'active',
+            },
+            setAttribute() {}, getAttribute: () => null, removeAttribute() {},
+            querySelector: () => null, querySelectorAll: () => [],
+            addEventListener() {}, focus() {},
+        };
+        if (id.indexOf('view-') === 0) {
+            const viewId = id.slice('view-'.length);
+            node.querySelector = () => ({
+                hasAttribute: () => true, setAttribute() {}, focus: () => calls.focused.push(viewId),
+            });
+        }
+        nodes.set(id, node);
+        return node;
+    };
+    const sandbox = {
+        console,
+        document: { getElementById: stubNode, querySelectorAll: () => [] },
+        location: { pathname: '/admin', hash: '' },
+        window: {
+            innerWidth: 1440,
+            location: { pathname: '/admin' },
+            history: { pushState: () => {} },
+        },
+        sessionStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+        setTimeout: fn => { deferred = fn; },
+        t: key => key,
+        UNAVAILABLE_VIEWS: { has: () => false },
+        VIEW_META: { chat: {}, roles: {}, 'personal-agents': {}, 'personal-memory': {} },
+        _navAreaFromPath: path => (String(path).startsWith('/admin') ? 'admin' : 'workbench'),
+        _viewTargetArea: () => 'workbench',
+        _openNavArea: () => {
+            calls.openArea.push('workbench');
+            // The real switch re-boots the target area in the same document,
+            // which re-enters navigateTo for the pending view.
+            sandbox.location.pathname = '/chat';
+            vm.runInContext("navigateTo('personal-agents')", context);
+        },
+        _viewNavDenied: () => options.deny || null,
+        showUnavailableView: (viewId, reason) => calls.unavailable.push([viewId, reason]),
+        _activateViewContainer: viewId => calls.committed.push(viewId),
+        _syncAccountPersonalCurrent: () => calls.syncedAt.push(readCurrent()),
+        _loadRegisteredView: () => {},
+        initAdminHomeView: () => {}, initBrandingView: () => {},
+        closeAgentDetail: () => {}, loadAgentCatalog: () => {},
+        loadAgentWorkbench: () => {}, loadSessionList: () => {},
+        _renderHistoryStatus: () => {}, _cancelHistoryRequest: () => {},
+        _closeSessionActionMenu: () => {}, closeSidebar: () => {},
+        cancelAgentStart: () => {}, fetchPublicBrand: () => {},
+        closeAccountMenu: () => { calls.closed += 1; },
+        _accountPersonalEntries: () => options.entries || [],
+        _accountPersonalEntry: viewId => (options.entries || [])
+            .filter(item => item.dataset.view === viewId)[0] || null,
+        _isPersonalView: viewId => PERSONAL_VIEW_IDS.indexOf(viewId) >= 0,
+    };
+    vm.createContext(sandbox);
+    const context = sandbox;
+    sandbox.window.__personalConsoleDirtyGuard__ = () => {
+        calls.leaveChecks = (calls.leaveChecks || 0) + 1;
+        return options.allowLeave !== false;
+    };
+    const source = fs.readFileSync(path.join(__dirname, '../channel/web/static/js/console.js'), 'utf8');
+    const from = source.indexOf(PERSONAL_NAV_BEGIN);
+    const to = source.indexOf(PERSONAL_NAV_END, from);
+    assert.ok(from >= 0 && to > from, 'the account personal navigation block is marked');
+    vm.runInContext(source.slice(from, to), context, { filename: 'console.account-personal-nav.js' });
+    readCurrent = () => vm.runInContext('currentView', context);
+    return {
+        sandbox, calls,
+        read: expression => vm.runInContext(expression, context),
+        run: code => vm.runInContext(code, context),
+        deferred: () => deferred,
+    };
+}
+
+// An account-panel entry stub: the class list answers `hidden` and the click /
+// keydown wiring is observable.
+function personalEntry(view, hidden = false) {
+    const listeners = new Map();
+    return {
+        dataset: { view },
+        classList: { contains: name => (name === 'hidden' ? hidden : false) },
+        addEventListener(type, fn) { listeners.set(type, fn); },
+        dispatch(type, extra = {}) {
+            const event = { type, preventDefault() {}, stopPropagation() {}, ...extra };
+            listeners.get(type)?.(event);
+        },
+    };
+}
+
+test('an account entry navigates through the shared protected path, checking the leave once', () => {
+    const nav = accountPersonalNav({ entries: [personalEntry('personal-agents')] });
+    nav.run("currentView = 'roles'");           // an admin page in the other area
+    nav.run("openPersonalEntry('personal-agents')");
+
+    assert.equal(nav.calls.closed, 1, 'the account panel is released first');
+    assert.equal(nav.calls.leaveChecks, 1, 'the leave decision runs exactly once');
+    assert.equal(nav.calls.openArea.length, 1, 'the area switch happens after the check');
+    assert.deepEqual(nav.calls.committed, ['personal-agents'], 'the target commits once');
+    assert.deepEqual(nav.calls.unavailable, []);
+    assert.deepEqual(nav.calls.focused, ['personal-agents'], 'focus moves to the target');
+    assert.equal(nav.read('currentView'), 'personal-agents');
+    // The marker is synced with the *committed* view (the entry list and the
+    // region state follow the same call), never with the previous page.
+    assert.deepEqual(nav.calls.syncedAt, ['personal-agents'],
+        'the marker is synced after the commit, not before it');
+});
+
+test('a cancelled leave keeps the original area, page, address and current item', () => {
+    const nav = accountPersonalNav({ allowLeave: false, entries: [personalEntry('personal-agents')] });
+    nav.run("currentView = 'roles'");
+    nav.run("openPersonalEntry('personal-agents')");
+
+    assert.equal(nav.calls.leaveChecks, 1);
+    assert.equal(nav.calls.closed, 1, 'the panel is released so the trigger can take focus back');
+    assert.deepEqual(nav.calls.openArea, [], 'no area switch before the answer');
+    assert.deepEqual(nav.calls.committed, [], 'no target is committed');
+    assert.deepEqual(nav.calls.focused, []);
+    assert.deepEqual(nav.calls.syncedAt, [], 'the current marker never moves on a cancelled leave');
+    assert.equal(nav.read('currentView'), 'roles', 'the original page stays current');
+    assert.equal(nav.sandbox.location.pathname, '/admin', 'the address is untouched');
+});
+
+test('a denied target renders the denial without starting its consumer', () => {
+    const nav = accountPersonalNav({
+        deny: { reason: 'denied' },
+        entries: [personalEntry('personal-agents')],
+    });
+    nav.run("currentView = 'roles'");
+    nav.run("openPersonalEntry('personal-agents')");
+
+    assert.deepEqual(nav.calls.unavailable, [['personal-agents', 'denied']]);
+    assert.deepEqual(nav.calls.committed, []);
+    assert.deepEqual(nav.calls.openArea, []);
+    assert.equal(nav.read('currentView'), 'roles');
+});
+
+test('a hidden account entry never navigates, and click/Enter/Space activate the visible ones', () => {
+    const visible = personalEntry('personal-agents');
+    const nav = accountPersonalNav({ entries: [visible] });
+    nav.run("currentView = 'roles'");
+    nav.run("openPersonalEntry('personal-agents')");
+    assert.equal(nav.calls.committed.length, 1);
+
+    // A withdrawn entry is inert, even if its id is invoked directly.
+    const inert = accountPersonalNav({ entries: [personalEntry('personal-memory', true)] });
+    inert.run("currentView = 'roles'");
+    inert.run("openPersonalEntry('personal-memory')");
+    assert.equal(inert.calls.closed, 0);
+    assert.deepEqual(inert.calls.committed, []);
+
+    // The wiring translates click and Enter, and ignores other keys.
+    const wired = accountPersonalNav({ entries: [visible] });
+    wired.run('_initAccountMenuResources()');
+    visible.dispatch('keydown', { key: 'a' });
+    assert.equal(wired.calls.committed.length, 0, 'an unrelated key is ignored');
+    visible.dispatch('keydown', { key: 'Enter' });
+    assert.equal(wired.calls.committed.length, 1, 'Enter activates');
+    visible.dispatch('click');
+    assert.equal(wired.calls.committed.length, 2, 'a click activates');
+    visible.dispatch('keydown', { key: ' ' });
+    assert.equal(wired.calls.committed.length, 3, 'Space activates');
 });
 
 test('forced password login shows the change gate and never starts tenant/business init', async () => {
@@ -1085,4 +1568,225 @@ test('sidebar ignores the member name when no tenant is selected or the account 
     await h.ctx.refreshAccountIdentity();
     await settle();
     assert.equal(h.node('sidebar-account-name').textContent, 'ADMIN');
+});
+
+// ---- bundled default account avatars -------------------------------------
+// Five static SVGs stand in for an account that never uploaded a picture. The
+// disc is chosen from the account id alone, so it is stable across refreshes,
+// tenants and list order, and an uploaded picture always wins.
+
+test('the default avatar mapping is bounded, stable and derived from the id', async () => {
+    const h = setup();
+    await settle();
+    // Pinned values: a formula change must fail loudly, not silently reshuffle
+    // everyone's default face.
+    assert.equal(h.run("userDefaultAvatarIndex('usr-alice')"), 3);
+    assert.equal(h.run("userDefaultAvatarIndex('usr-bob')"), 5);
+    assert.equal(h.run("userDefaultAvatarIndex('usr-carol')"), 2);
+    assert.equal(h.run("userDefaultAvatarURL('usr-bob')"), '/assets/avatars/default-5.svg');
+    for (const id of ['', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']) {
+        const n = h.run(`userDefaultAvatarIndex(${JSON.stringify(id)})`);
+        assert.ok(n >= 1 && n <= 5, `index ${n} out of range for ${JSON.stringify(id)}`);
+    }
+});
+
+test('sidebar and account-menu discs render the bundled default when nothing was uploaded', async () => {
+    const h = setup(async () => response(database('alice',
+        { user: { id: 'usr-alice', username: 'alice', display_name: 'Alice' } })));
+    await settle();
+    const html = h.node('sidebar-account-avatar').innerHTML;
+    assert.match(html, /<img class="user-avatar"/);
+    assert.match(html, /src="\/assets\/avatars\/default-3\.svg"/);
+    // The 404-on-missing-upload path degrades to the same default.
+    assert.match(html, /onerror=/);
+    assert.equal(h.node('account-menu-avatar').innerHTML, html);
+});
+
+test('an uploaded picture takes priority and is read from the personal endpoint', async () => {
+    const h = setup(async () => response(database('alice',
+        { user: { id: 'usr-alice', username: 'alice', display_name: 'Alice', avatar: 'image' } })));
+    await settle();
+    const html = h.node('sidebar-account-avatar').innerHTML;
+    assert.match(html, /src="\/auth\/profile\/avatar"/);
+    assert.doesNotMatch(html, /\/api\/users\//);
+    // Even then a broken upload falls back to the id-stable default.
+    assert.match(html, /default-3\.svg/);
+});
+
+test('the default avatar is stable for one id across refreshes and name changes', async () => {
+    let user = { id: 'usr-alice', username: 'alice', display_name: 'Alice' };
+    const h = setup(async () => response(database('alice', { user })));
+    await settle();
+    const first = h.node('sidebar-account-avatar').innerHTML;
+    assert.match(first, /default-3\.svg/);
+    // A rename must not reshuffle the default face.
+    user = { id: 'usr-alice', username: 'alice', display_name: 'Completely Different Name' };
+    await h.ctx.refreshAccountIdentity();
+    await settle();
+    assert.equal(h.node('sidebar-account-avatar').innerHTML, first);
+});
+
+test('another account\'s upload is read through the by-id route, with a default fallback', async () => {
+    const h = setup();
+    await settle();
+    const html = h.run("userAvatarHTML({ id: 'usr-carol', avatar: 'image' })");
+    assert.match(html, /src="\/api\/users\/usr-carol\/avatar"/);
+    assert.match(html, /default-2\.svg/);
+    // An upload that 404s (flag set, file gone) falls back, never a broken img.
+    assert.match(html, /onerror=/);
+});
+
+// ---- profile identity chips ----------------------------------------------
+// Platform identity and tenant roles are attributes, not prose: they render as
+// rounded chips so the profile dialog has a visible hierarchy. Role names come
+// from the identity store, so they must be escaped like any other projection.
+
+test('profile renders platform identity and tenant roles as escaped chips', async () => {
+    const h = setup();
+    await settle();
+    h.storage.set('cow_tenant_id', 't1');
+    h.run(`_accountSelf = { status: 'success', user: { id: 'usr-alice', username: 'alice',
+        display_name: 'Alice', is_platform_admin: true }, tenants: [{ id: 't1', name: 'Tenant One',
+        membership: { display_name: 'Alice',
+            roles: [{ name: '租户管理员' }, { name: '<img src=x onerror=alert(1)>' }],
+            department: null, position_text: '' } }] };`);
+    h.ctx.renderAccountProfile();
+    const platform = h.node('ap-platform');
+    assert.match(platform.innerHTML, /<span class="account-profile-chip">/);
+    assert.match(platform.innerHTML, /platform_admin_badge/);
+    const role = h.node('ap-role');
+    assert.match(role.innerHTML, /<span class="account-profile-chip">租户管理员<\/span>/);
+    assert.equal((role.innerHTML.match(/class="account-profile-chip"/g) || []).length, 2);
+    assert.ok(!role.innerHTML.includes('<img'), 'role names must not inject markup');
+    assert.match(role.innerHTML, /&lt;img/);
+});
+
+test('profile falls back to plain copy when identity or roles are absent', async () => {
+    const h = setup();
+    await settle();
+    h.storage.set('cow_tenant_id', 't1');
+    h.run(`_accountSelf = { status: 'success', user: { id: 'usr-bob', username: 'bob',
+        display_name: 'Bob', is_platform_admin: false }, tenants: [{ id: 't1', name: 'Tenant One',
+        membership: { display_name: 'Bob', roles: [], department: null, position_text: '' } }] };`);
+    h.ctx.renderAccountProfile();
+    assert.equal(h.node('ap-platform').textContent, 'account_public_mode');
+    assert.equal(h.node('ap-platform').innerHTML, '');
+    assert.equal(h.node('ap-role').textContent, 'account_profile_empty');
+    assert.equal(h.node('ap-role').innerHTML, '');
+});
+
+// ---- avatar change gesture -----------------------------------------------
+// Changing the avatar is a double-click so a casual single click in the hero
+// cannot fire a native file dialog. Keyboard activation stays available.
+
+test('the avatar picker ignores the first click and opens on the second or via keyboard', async () => {
+    const h = setup();
+    await settle();
+    const input = h.node('account-profile-avatar-input');
+    let opens = 0;
+    input.click = () => { opens++; };
+    // First click of a pointer double-click: must not open, must not clear.
+    input.value = 'already-picked.png';
+    h.ctx.handleAccountProfileAvatarActivate({ detail: 1 });
+    assert.equal(opens, 0, 'the first click of a double-click must not open');
+    assert.equal(input.value, 'already-picked.png');
+    // Second click: opens, and the value is cleared so re-picking works.
+    h.ctx.handleAccountProfileAvatarActivate({ detail: 2 });
+    assert.equal(opens, 1);
+    assert.equal(input.value, '', 'the input is cleared so the same file can be re-picked');
+    // Keyboard activation reports detail 0 and must keep working.
+    h.ctx.handleAccountProfileAvatarActivate({ detail: 0 });
+    assert.equal(opens, 2);
+    // A synthetic event without a click count is treated as keyboard, not dead.
+    h.ctx.handleAccountProfileAvatarActivate(undefined);
+    assert.equal(opens, 3);
+});
+
+test('the avatar picker does not stack while an upload is in flight', async () => {
+    const h = setup();
+    await settle();
+    const input = h.node('account-profile-avatar-input');
+    let opens = 0;
+    input.click = () => { opens++; };
+    h.run('_accountProfileAvatarUploading = true;');
+    h.ctx.handleAccountProfileAvatarActivate({ detail: 2 });
+    assert.equal(opens, 0);
+    h.run('_accountProfileAvatarUploading = false;');
+    h.ctx.handleAccountProfileAvatarActivate({ detail: 2 });
+    assert.equal(opens, 1);
+});
+
+test('the avatar file input lives outside the repainted disc in chat.html', () => {
+    // renderAccountProfileAvatar rewrites the disc's innerHTML on every load; an
+    // input nested inside it would be deleted and the picker would silently die.
+    const html = fs.readFileSync(path.join(__dirname, '../channel/web/chat.html'), 'utf8');
+    const buttonId = html.indexOf('id="account-profile-avatar"');
+    const input = html.indexOf('id="account-profile-avatar-input"');
+    assert.ok(buttonId >= 0 && input >= 0, 'both the disc and the input must exist');
+    assert.ok(input > buttonId, 'the input documents after the disc');
+    // Slice from the disc's own `<button` tag, so the pairing below is a real
+    // nesting check rather than an artifact of where the id attribute sits.
+    const elementStart = html.lastIndexOf('<button', buttonId);
+    assert.ok(elementStart >= 0 && elementStart < buttonId, 'the disc is a <button>');
+    const between = html.slice(elementStart, input);
+    const opened = (between.match(/<button\b/g) || []).length;
+    const closed = (between.match(/<\/button>/g) || []).length;
+    assert.equal(opened, 1, 'exactly the disc button opens before the input');
+    assert.equal(closed, 1, 'the disc button is closed, so the input is not nested inside it');
+    // The disc carries the double-click semantics through the handler name.
+    assert.match(between, /handleAccountProfileAvatarActivate\(event\)/);
+});
+
+test('the account panel keeps its region order and adds no personal page tab', () => {
+    // The migration is a *host* change: the five entries are flattened into the
+    // existing account panel, so the region order stays identity → personal
+    // resources → account settings → help/logout → brand version, and nothing
+    // new is introduced on the personal pages themselves (optimization detail 3
+    // is explicitly not implemented).
+    const html = fs.readFileSync(path.join(__dirname, '../channel/web/chat.html'), 'utf8');
+    const order = ['account-menu-identity', 'account-menu-resources', 'account-menu-settings',
+        'account-menu-about', 'account-menu-logout', 'sidebar-version']
+        .map(id => html.indexOf('id="' + id + '"'));
+    assert.ok(order.every(index => index >= 0), 'every region must exist');
+    assert.deepEqual([...order].sort((a, b) => a - b), order,
+        'identity → personal resources → account settings → help/logout → version');
+    const menuStart = html.indexOf('id="sidebar-account-menu"');
+    const menuEnd = html.indexOf('id="account-menu-backdrop"', menuStart);
+    assert.ok(menuStart >= 0 && menuEnd > menuStart, 'the panel markup is delimited');
+    const menu = html.slice(menuStart, menuEnd);
+    assert.doesNotMatch(menu, /role="tablist"/, 'the panel adds no tab strip');
+    assert.doesNotMatch(html, /id="personal-console-tabs"/, 'no personal top tabs');
+    assert.doesNotMatch(html, /id="personal-shortcuts"/, 'no in-page personal shortcut bar');
+    // Group titles exist exactly once each, and both groups are labels rather
+    // than disclosures: the entries under them are directly actionable.
+    assert.equal((html.match(/data-i18n="account_menu_resources"/g) || []).length, 1);
+    assert.equal((html.match(/data-i18n="account_menu_settings"/g) || []).length, 1);
+    assert.doesNotMatch(menu, /<details/, 'the resource group is not a disclosure');
+});
+
+test('the console top bar does not repeat the logout, appearance or language entries', () => {
+    // console-entry-consistency: the account menu owns profile, account
+    // security, preferences, help/about and logout, so the new layout must not
+    // keep duplicate logout, standalone language or appearance entries in the
+    // top bar. This pins the removal so the duplicate entries cannot come back
+    // without deleting the test.
+    const html = fs.readFileSync(path.join(__dirname, '../channel/web/chat.html'), 'utf8');
+    const start = html.indexOf('<header class="workbench-header');
+    const end = html.indexOf('</header>', start);
+    assert.ok(start >= 0 && end > start, 'the workbench header must exist');
+    const header = html.slice(start, end);
+    assert.doesNotMatch(header, /id="logout-btn-header"/, 'no duplicate logout entry in the top bar');
+    assert.doesNotMatch(header, /id="theme-toggle"/, 'no duplicate appearance entry in the top bar');
+    assert.doesNotMatch(header, /id="lang-selector"/, 'no standalone language entry in the top bar');
+    assert.doesNotMatch(header, /id="lang-menu"/, 'no standalone language menu in the top bar');
+    assert.match(header, /id="tenant-selector"/, 'the tenant context stays in the top bar');
+    // The view-level workspace action owns the right edge of the top bar, so it
+    // must follow the tenant context instead of sitting in front of it.
+    const tenantIndex = header.indexOf('id="tenant-selector"');
+    const workspaceIndex = header.indexOf('id="workspace-toggle-btn"');
+    assert.ok(tenantIndex > 0 && workspaceIndex > tenantIndex,
+        'the workspace toggle must be the right-most entry in the top bar');
+    // The removed entries keep exactly one home: the account menu.
+    assert.match(html, /id="account-menu-logout"/);
+    assert.match(html, /id="account-menu-prefs"/);
 });

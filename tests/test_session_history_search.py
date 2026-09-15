@@ -216,7 +216,8 @@ def test_single_agent_search_scopes_project_metadata_to_user(agent_environment, 
         ("mine", "needle", "u1", "web", 1, 1, 0),
         ("legacy", "needle", "", "web", 2, 1, 0),
     ])
-    monkeypatch.setattr(web_channel, "_get_workspace_root", lambda **kwargs: "a")
+    # No ``_get_workspace_root`` stub: the single-Agent branch must open the
+    # addressed Agent's own store, exactly like the merged ``scope=all`` branch.
     monkeypatch.setattr(project_store, "get_project_map", lambda agent_id: {"mine": "/work/mine"})
     monkeypatch.setattr(project_store, "display_name_for", lambda path: "My project")
     _, result = _request(monkeypatch, env.ctx, agent_id="a", q="needle")

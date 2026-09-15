@@ -225,6 +225,73 @@ def _preview_shared_default_corrections(svc, tenant_code=None):
     return rows
 
 
+@management.command("personalize-personal-agents")
+@click.option("--tenant-code", default=None,
+              help="Limit to one tenant. Defaults to every tenant.")
+@click.option("--dry-run", is_flag=True, default=False,
+              help="Report what would change without writing.")
+def personalize_personal_agents(tenant_code, dry_run):
+    """Re-author the owner-facing wording of existing personal assistants.
+
+    Each member's private assistant inherits the source template's prose, which
+    describes whoever that template was written for. Copies made before the
+    owner-facing templates existed therefore call their owner "管理员" even when
+    the owner is an ordinary member -- and nothing re-runs provisioning for an
+    existing member, so those copies keep the wrong wording until corrected.
+
+    Scoped to Agents that a binding marks as privately owned, so the source
+    template, the tenant's shared default and every ordinary Agent are out of
+    reach. Idempotent: a second run reports 0. Back up ``identity.db`` and the
+    roster first when running without ``--dry-run``.
+    """
+    ensure_sys_path()
+    from auth.service import IdentityService, IdentityServiceError
+    from agent.personal_assistant import get_personal_assistant_provisioner
+
+    db_path = _identity_db_path()
+    svc = IdentityService(db_path)
+
+    tenant_id = None
+    if tenant_code:
+        matches = [t for t in svc.list_tenants(status="all")
+                   if t.get("code") == tenant_code]
+        if not matches:
+            click.echo(click.style(
+                f"Tenant '{tenant_code}' does not exist.", fg="red"))
+            raise click.Abort()
+        tenant_id = matches[0]["id"]
+
+    try:
+        report = get_personal_assistant_provisioner().personalize_existing(
+            tenant_id=tenant_id, dry_run=dry_run)
+    except IdentityServiceError as e:
+        click.echo(click.style(f"Failed: {e}", fg="red"))
+        raise click.Abort()
+
+    verb = "would be updated" if dry_run else "updated"
+    for tid, agent_id, name in report["changed"]:
+        click.echo(f"  tenant {tid}: '{agent_id}' ({name}) -> {verb}")
+    for tid, agent_id, reason in report["failed"]:
+        click.echo(click.style(
+            f"  tenant {tid}: '{agent_id}' -> skipped ({reason})", fg="yellow"))
+
+    if report["failed"]:
+        click.echo(click.style(
+            f"{len(report['failed'])} assistant(s) could not be examined; "
+            f"see the reasons above.", fg="yellow"))
+    if dry_run and report["changed"]:
+        click.echo(click.style(
+            f"{len(report['changed'])} personal assistant(s) would be re-authored. "
+            f"Re-run without --dry-run to apply.", fg="yellow"))
+    elif dry_run:
+        click.echo("No personal assistant needs re-authoring.")
+    else:
+        click.echo(click.style(
+            f"Updated {len(report['changed'])} personal assistant(s). "
+            f"Safe to re-run (a second run reports 0).", fg="green"))
+
+
+
 @management.command("bootstrap")
 @click.option("--tenant-code", prompt="Tenant code", default="default")
 @click.option("--tenant-name", prompt="Tenant name", default="默认租户")

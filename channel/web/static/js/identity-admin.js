@@ -28,6 +28,14 @@
     // previous tenant are discarded (task 3.7 late-response guard).
     function bumpTenantGeneration() {
         _generation += 1;
+        // The member personal pages cache per-tenant lists and objects too, so a
+        // reply from the previous tenant must not repaint a page that now
+        // belongs to another one (task 8.4). The personal console owns its own
+        // counters and is invalidated through its published hook.
+        if (window.PersonalConsole
+            && typeof window.PersonalConsole.invalidatePersonalViews === 'function') {
+            window.PersonalConsole.invalidatePersonalViews();
+        }
     }
 
     async function apiFetch(path, options) {
@@ -409,7 +417,9 @@
             manage.innerHTML =
                 '<div class="pt-1 pb-2">' +
                 '<div class="flex gap-2 items-center pb-2">' +
-                '<input type="text" class="agent-input resource-kind-search" placeholder="' + escapeHtml(t('admin_resource_search_placeholder')) + '" value="' + escapeHtml(st.q || '') + '">' +
+                '<input type="text" class="agent-input resource-kind-search" autocomplete="off"' +
+                ' data-1p-ignore data-lpignore="true" spellcheck="false"' +
+                ' placeholder="' + escapeHtml(t('admin_resource_search_placeholder')) + '" value="' + escapeHtml(st.q || '') + '">' +
                 '<button type="button" class="admin-row-btn resource-kind-clear">' + escapeHtml(t('admin_resource_clear')) + '</button>' +
                 '</div>' +
                 '<div class="grid grid-cols-2 gap-x-2 resource-kind-list">' + listHtml + '</div>' +
@@ -561,7 +571,13 @@
         return '<div id="' + id + '" class="tenant-model-grant grant-picker" data-res-kind="' + escapeHtml(kind) + '">' +
             label +
             '<div class="flex gap-2 items-center pb-2">' +
-            '<input type="text" class="agent-input resource-kind-search" placeholder="' + escapeHtml(t('admin_resource_search_placeholder')) + '">' +
+            // Not a credential field, but it sits in a panel that also renders
+            // password inputs, so browser password managers have autofilled it
+            // (a stray "admin" here filtered every model out of the list).
+            // Mirror the cfg key field's opt-out attributes.
+            '<input type="text" class="agent-input resource-kind-search" autocomplete="off"' +
+            ' data-1p-ignore data-lpignore="true" spellcheck="false"' +
+            ' placeholder="' + escapeHtml(t('admin_resource_search_placeholder')) + '">' +
             '<button type="button" class="admin-row-btn resource-kind-clear">' + escapeHtml(t('admin_resource_clear')) + '</button>' +
             '</div>' +
             '<div class="grid grid-cols-2 gap-x-2 resource-kind-list">' +
@@ -599,6 +615,15 @@
         const search = node.querySelector('.resource-kind-search');
         const selCount = node.querySelector('.resource-kind-selcount');
         if (!list || !search) return;
+        // Second line of defence against the password-manager autofill above: a
+        // readonly field is not autofilled, and it is released on the first
+        // interaction so typing still works and it never looks disabled
+        // (``.agent-input`` has explicit colours, so ``readonly`` does not grey it).
+        search.setAttribute('readonly', 'readonly');
+        ['focus', 'click', 'keydown'].forEach(function (evt) {
+            search.addEventListener(evt, function () { search.removeAttribute('readonly'); },
+                { once: true });
+        });
         let q = '';
         let page = 1;
         const pageSize = 12;
@@ -612,7 +637,14 @@
                 st.catalog = data.items || [];
                 const total = data.total || 0;
                 if (!st.catalog.length) {
-                    list.innerHTML = '<div class="py-1 text-xs text-slate-400 col-span-2">' + escapeHtml(t('admin_resources_none')) + '</div>';
+                    // An empty *search result* must not read as "you have
+                    // selected nothing". Reusing ``admin_resources_none`` here
+                    // hid the real cause: a filter was on, so the tab looked
+                    // broken with no hint that clearing the box would fix it.
+                    const msg = q
+                        ? t('admin_resources_no_match').replace('{q}', q)
+                        : t('admin_resources_none');
+                    list.innerHTML = '<div class="py-1 text-xs text-slate-400 col-span-2">' + escapeHtml(msg) + '</div>';
                 } else {
                     list.innerHTML = st.catalog.map(function (r) {
                         const checked = st.sel.has(r.resource_id);
@@ -648,7 +680,12 @@
         });
         search.addEventListener('keyup', function (e) { if (e.key === 'Enter') { setSearch(search.value); render(); } });
         node.querySelector('.resource-kind-clear').addEventListener('click', function () {
+            // "清空" must return the picker to a clean, fully visible state.
+            // Deselecting alone left any search term in place, so the list
+            // stayed empty and the button looked like it did nothing.
             st.sel.clear();
+            setSearch('');
+            search.value = '';
             dirty();
             updateCount();
             render();
@@ -967,7 +1004,17 @@
             } else if (err.status === 401) {
                 showAdminErr(err.message || t('account_credentials_error'));
             } else {
-                showAdminErr((err.data && err.data.message) || err.message || t('admin_save_failed'));
+                // A rejected write may carry a server code the operator can act
+                // on (e.g. `weak_password`). Map it to the actionable reason
+                // before falling back to the raw server message, so a
+                // correctable input never reads as an unexplained failure. The
+                // underlying evidence is logged for later diagnosis.
+                try {
+                    console.error('[admin-write] failed:', 'http ' + (err.status || '?'),
+                        err.code || '', err.message || '');
+                } catch (e) { /* logging must never mask the failure */ }
+                const reason = _tenantAdminNewReason(err);
+                showAdminErr(reason || (err.data && err.data.message) || err.message || t('admin_save_failed'));
             }
         } finally {
             btn.disabled = false;
@@ -1153,7 +1200,10 @@
         try {
             const searchEl = document.getElementById('tenant-search');
             const q = searchEl ? searchEl.value : '';
-            const data = await apiFetch('/api/platform/tenants' + (q ? '?' + qs({ q: q }) : ''));
+            const filterEl = document.getElementById('tenant-status-filter');
+            const status = (filterEl && filterEl.value) || '';
+            const query = qs({ q: q, status: status });
+            const data = await apiFetch('/api/platform/tenants' + (query ? '?' + query : ''));
             if (!data.items || !data.items.length) {
                 list.innerHTML = '';
                 empty.classList.remove('hidden');
@@ -1163,15 +1213,33 @@
             empty.classList.add('hidden');
             btn.classList.remove('hidden');
             _tenantById = {};
+            const currentTenantId = sessionStorage.getItem('cow_tenant_id') || '';
             const rows = data.items.map(function (tn) {
                 _tenantById[tn.id] = tn;
+                const archived = !!tn.archived;
+                const actions = [];
+                if (archived) {
+                    actions.push('<span class="text-xs px-2 py-0.5 rounded bg-slate-100 dark:bg-white/10 text-slate-500 dark:text-slate-400">' + escapeHtml(t('tenant_archived_tag')) + '</span>');
+                    actions.push('<button class="admin-row-btn" onclick="adminRowAction(\'tenant\',\'restore\',\'' + escapeHtml(tn.id) + '\')"><i class="fas fa-rotate-left mr-1"></i>' + escapeHtml(t('tenant_restore')) + '</button>');
+                } else {
+                    actions.push('<button class="admin-row-btn" onclick="adminRowAction(\'tenant\',\'edit\',\'' + escapeHtml(tn.id) + '\')"><i class="fas fa-pen mr-1"></i>' + escapeHtml(t('admin_edit')) + '</button>');
+                    // The default tenant and the operator's own current tenant are
+                    // protected server-side; hide the entry point so the UI never
+                    // offers an action that is guaranteed to fail.
+                    if (tn.code !== 'default' && tn.id !== currentTenantId) {
+                        actions.push('<button class="admin-row-btn danger" onclick="adminRowAction(\'tenant\',\'delete\',\'' + escapeHtml(tn.id) + '\')"><i class="fas fa-trash mr-1"></i>' + escapeHtml(t('tenant_delete')) + '</button>');
+                    }
+                }
+                const subtitle = archived
+                    ? escapeHtml(tn.code) + ' · ' + escapeHtml(t('tenant_archived_tag'))
+                    : escapeHtml(tn.code) + ' · ' + fmtActive(tn.active);
                 return '<div class="flex items-center justify-between px-4 py-3 rounded-lg border border-slate-200 dark:border-white/10">'
                     + '<div class="flex items-center gap-3"><div class="w-9 h-9 rounded-lg bg-primary-50 dark:bg-primary-900/30 flex items-center justify-center">'
                     + '<i class="fas fa-building text-primary-500"></i></div>'
                     + '<div><div class="text-sm font-medium text-slate-800 dark:text-slate-100">' + escapeHtml(tn.name) + '</div>'
-                    + '<div class="text-xs text-slate-400">' + escapeHtml(tn.code) + ' · ' + fmtActive(tn.active) + '</div></div></div>'
+                    + '<div class="text-xs text-slate-400">' + subtitle + '</div></div></div>'
                     + '<div class="flex items-center gap-2"><div class="text-xs text-slate-400">' + t('tenant_version_label') + ' ' + tn.version + '</div>'
-                    + '<button class="admin-row-btn" onclick="adminRowAction(\'tenant\',\'edit\',\'' + escapeHtml(tn.id) + '\')"><i class="fas fa-pen mr-1"></i>' + escapeHtml(t('admin_edit')) + '</button>'
+                    + actions.join('')
                     + '</div></div>';
             }).join('');
             list.innerHTML = rows;
@@ -1207,6 +1275,82 @@
             list.innerHTML = '<div class="text-sm text-red-500">' + t('load_error') + ': ' + escapeHtml(err.message) + '</div>';
             status(document.getElementById('tenant-status'), err.message, false);
         }
+    }
+
+    // Soft-delete (archive) a tenant. Deleting requires only the platform
+    // admin's current password: the password prompt is the confirmation for a
+    // destructive-but-reversible action (the tenant and all its data are kept
+    // and can be restored). The server re-validates the password, the released
+    // version and the protected-tenant rules in ``archive_tenant``.
+    function archiveTenant(id) {
+        const tn = _tenantById[id];
+        if (!tn) return;
+        openAdminModal({
+            title: t('tenant_archive_title'),
+            subtitle: t('tenant_archive_subtitle'),
+            icon: 'fa-trash',
+            submitLabel: t('tenant_delete'),
+            statusEl: document.getElementById('tenant-status'),
+            successMsg: t('tenant_archived'),
+            fields: [
+                { type: 'password', name: 'recent_password',
+                  label: t('admin_field_recent_password'),
+                  required: true, hint: t('admin_field_recent_password_hint') },
+            ],
+            submit: async function (body) {
+                try {
+                    await apiFetch('/api/platform/tenants/' + encodeURIComponent(id), {
+                        method: 'DELETE',
+                        body: {
+                            expected_version: tn.version,
+                            recent_password: body.recent_password,
+                        },
+                        suppressAuthOverlay: true,
+                    });
+                } catch (e) {
+                    if (e && e.status === 401) {
+                        // A rejected password keeps the dialog open for a retry;
+                        // clear the field and say what was wrong instead of the
+                        // generic "unauthorized" the request helper throws.
+                        const input = document.getElementById('adm-fld-recent_password');
+                        if (input) input.value = '';
+                        const retry = new Error(t('tenant_password_wrong'));
+                        retry.status = 401;
+                        throw retry;
+                    }
+                    throw e;
+                }
+                await loadTenantView();
+            },
+            onConflictReload: function () { loadTenantView(); },
+        });
+    }
+
+    // Restore an archived tenant. Reuses the shared password prompt (which
+    // reopens on a wrong password so a typo costs a retry, not the whole flow).
+    async function restoreTenant(id) {
+        const tn = _tenantById[id];
+        if (!tn) return;
+        const outcome = await withTenantPassword(async function (pw) {
+            await apiFetch('/api/platform/tenants/' + encodeURIComponent(id), {
+                method: 'POST',
+                body: {
+                    operation: 'restore',
+                    expected_version: tn.version,
+                    recent_password: pw,
+                },
+                suppressAuthOverlay: true,
+            });
+        });
+        if (outcome.cancelled) return;
+        if (!outcome.ok) {
+            const err = outcome.error || {};
+            status(document.getElementById('tenant-status'), err.message || t('admin_save_failed'), false);
+            if (err.status === 409 || err.code === 'conflict') loadTenantView();
+            return;
+        }
+        status(document.getElementById('tenant-status'), t('tenant_restored'), true);
+        await loadTenantView();
     }
 
     // ---- Tenant create/edit page (tabbed editor) --------------------------
@@ -2503,8 +2647,8 @@
                     return (rolesByCode[c] && rolesByCode[c].name) || c;
                 }).join(', ');
                 return '<div class="flex items-center justify-between px-4 py-3 rounded-lg border border-slate-200 dark:border-white/10">'
-                    + '<div class="flex items-center gap-3"><div class="w-9 h-9 rounded-lg bg-indigo-50 dark:bg-indigo-900/30 flex items-center justify-center">'
-                    + '<i class="fas fa-user text-indigo-500"></i></div>'
+                    + '<div class="flex items-center gap-3"><div class="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-slate-100 dark:bg-white/10">'
+                    + userAvatarHTML({ id: m.user_id, avatar: m.avatar }) + '</div>'
                     + '<div><div class="text-sm font-medium text-slate-800 dark:text-slate-100">' + escapeHtml(m.display_name) + '</div>'
                     + '<div class="text-xs text-slate-400">' + escapeHtml(m.username) + ' · ' + fmtActive(m.active) + (roleNames ? ' · ' + escapeHtml(roleNames) : '') + '</div></div></div>'
                     + '<div class="flex items-center gap-2"><div class="text-xs text-slate-400">' + escapeHtml(m.position_text || '') + '</div>'
@@ -2744,8 +2888,8 @@
                 if (u.is_platform_admin) badges.push('<span class="px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-300 text-[10px]">' + escapeHtml(t('platform_admin_badge')) + '</span>');
                 if (u.must_change_password) badges.push('<span class="px-1.5 py-0.5 rounded bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-300 text-[10px]">' + escapeHtml(t('filter_restricted')) + '</span>');
                 return '<div class="flex items-center justify-between px-4 py-3 rounded-lg border border-slate-200 dark:border-white/10">'
-                    + '<div class="flex items-center gap-3"><div class="w-9 h-9 rounded-lg bg-slate-50 dark:bg-white/10 flex items-center justify-center">'
-                    + '<i class="fas fa-user-cog text-slate-500"></i></div>'
+                    + '<div class="flex items-center gap-3"><div class="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-slate-100 dark:bg-white/10">'
+                    + userAvatarHTML({ id: u.id, avatar: u.avatar }) + '</div>'
                     + '<div><div class="text-sm font-medium text-slate-800 dark:text-slate-100">' + escapeHtml(u.display_name) + '</div>'
                     + '<div class="text-xs text-slate-400">' + escapeHtml(u.username) + ' · ' + fmtActive(u.active) + ' ' + badges.join(' ') + '</div></div></div>'
                     + '<div class="flex items-center gap-2">'
@@ -3172,7 +3316,7 @@
                     + '<div class="flex items-center gap-2">'
                     + '<button class="admin-row-btn" onclick="adminRowAction(\'role\',\'members\',\'' + escapeHtml(r.code) + '\')"><i class="fas fa-users mr-1"></i>' + escapeHtml(t('role_view_members')) + '</button>'
                     + '<button class="admin-row-btn" onclick="adminRowAction(\'role\',\'copy\',\'' + escapeHtml(r.id) + '\')"><i class="fas fa-copy mr-1"></i>' + escapeHtml(t('role_copy')) + '</button>'
-                    + (builtin ? '' : '<button class="admin-row-btn" onclick="adminRowAction(\'role\',\'edit\',\'' + escapeHtml(r.id) + '\')"><i class="fas fa-pen mr-1"></i>' + escapeHtml(t('admin_edit')) + '</button>')
+                    + '<button class="admin-row-btn" onclick="adminRowAction(\'role\',\'edit\',\'' + escapeHtml(r.id) + '\')"><i class="fas fa-pen mr-1"></i>' + escapeHtml(t('admin_edit')) + '</button>'
                     + (builtin ? '' : '<button class="admin-row-btn danger" onclick="adminRowAction(\'role\',\'delete\',\'' + escapeHtml(r.id) + '\')"><i class="fas fa-trash mr-1"></i>' + escapeHtml(t('admin_delete')) + '</button>')
                     + '</div></div>'
                     + '<div class="mt-1 text-xs text-slate-400">' + t('role_permissions_label') + ': ' + grouped + '</div>'
@@ -3852,18 +3996,26 @@
     // ---- Organization view (task 5.6) -------------------------------------
     async function loadOrgView() {
         const org = document.getElementById('org-tree');
+        const btn = document.getElementById('dept-create-btn');
         if (!org) return;
         org.innerHTML = '<div class="text-sm text-slate-400 dark:text-slate-500">' + t('tenant_loading') + '</div>';
         try {
             const data = await apiFetch('/api/tenant/departments');
-            if (!data.items || !data.items.length) {
-                org.innerHTML = '<div class="text-sm text-slate-400">' + t('org_empty') + '</div>';
-                return;
-            }
             _deptById = {};
             _depts = data.items || [];
             _depts.forEach(function (d) { _deptById[d.id] = d; });
-            org.innerHTML = buildOrgTree();
+            // The virtual `__root__` department always exists and is never drawn
+            // as a node, so an empty tree is decided by the visible departments
+            // rather than the raw item count (an untouched tenant still returns
+            // __root__). Without this the area rendered blank and the page gave
+            // no hint that the tree was simply empty.
+            const hasDepts = _depts.some(function (d) { return d.code !== '__root__'; });
+            const tree = hasDepts ? buildOrgTree() : '';
+            org.innerHTML = tree || '<div class="text-sm text-slate-400">' + t('org_empty') + '</div>';
+            // chat.html ships the control hidden; reveal it with the view so the
+            // page actually offers 新增 instead of a tree nobody can extend
+            // (the server still re-authorizes every tenant_admin write).
+            if (btn) btn.classList.remove('hidden');
         } catch (err) {
             if (err.message === 'stale-response') return;
             org.innerHTML = '<div class="text-sm text-red-500">' + t('load_error') + ': ' + escapeHtml(err.message) + '</div>';
@@ -4056,6 +4208,9 @@
         } else if (action === 'delete') {
             if (kind === 'role') deleteRole(id);
             else if (kind === 'dept') deleteDept(id);
+            else if (kind === 'tenant') archiveTenant(id);
+        } else if (action === 'restore') {
+            if (kind === 'tenant') restoreTenant(id);
         } else if (action === 'admin') {
             // Tenant admin configuration now lives in the editor's tenant
             // management tab; no row-level entry point remains for it.
@@ -4125,6 +4280,8 @@
         // Tenant search.
         const tsearch = document.getElementById('tenant-search');
         if (tsearch) { let deb; tsearch.addEventListener('input', function () { clearTimeout(deb); deb = setTimeout(function () { loadTenantView(); }, 300); }); }
+        const tfilter = document.getElementById('tenant-status-filter');
+        if (tfilter) tfilter.addEventListener('change', function () { loadTenantView(); });
 
         // Audit apply button + inputs.
         const applyBtn = document.getElementById('audit-apply');

@@ -17,9 +17,9 @@ touch" to a checked tenant boundary:
   Agent workspace, the user root, system temp). ``..``, symlinks and absolute
   paths are resolved with ``realpath`` before containment is judged.
 * Reads (``read``/``ls``/``search_files``, bash path tokens) may be anywhere
-  except a *blocked* area: the user's home (outside the verified workspace),
-  the global data root (identity.db, private tenant data) and any *other*
-  tenant's shared root.
+  except a *blocked* area: the user's home (except paths inside a legal tenant
+  root under it), the global data root (identity.db, private tenant data) and
+  any *other* tenant's shared root.
 * When the isolation slice is not yet validated (conf ``execution_isolation``
   false) the gate refuses arbitrary-code tools in database mode instead of
   falling back to unrestricted execution.
@@ -156,8 +156,14 @@ def resolve_boundary(ident=None) -> _Boundary:
         except Exception:
             raise
 
-        # Home and the global data root are blocked unless they *are* the
-        # verified workspace root (default tenant lives there legitimately).
+        # Home and the global data root are blocked areas. They are added
+        # unconditionally: a blocked root may be an ancestor of a legal tenant
+        # root (the default instance root ``~/cow`` and the tenant base
+        # ``~/.cow/tenant-roots`` both live under home), so the deny checks
+        # carve legal roots out of the blocked area instead of picking a single
+        # workspace to exempt. Relying on the default Agent's workspace here
+        # shrank the exemption once that workspace moved to
+        # ``<instance root>/agents/<id>``, which shadowed the tenant's own root.
         home = os.path.realpath(os.path.expanduser("~"))
         engineering = None
         try:
@@ -169,8 +175,7 @@ def resolve_boundary(ident=None) -> _Boundary:
         except Exception:
             engineering = None
         boundary.engineering = engineering
-        if not (engineering and _contains(engineering, home)):
-            _append_unique(boundary.blocked, home)
+        _append_unique(boundary.blocked, home)
         try:
             from config import get_data_root
 
@@ -212,6 +217,21 @@ def resolve_boundary(ident=None) -> _Boundary:
 
 def _outside(real: str, roots: Sequence[str]) -> bool:
     return not any(_contains(root, real) for root in roots if root)
+
+
+def _in_blocked(boundary: _Boundary, real: str, roots: Sequence[str]) -> bool:
+    """True when ``real`` sits in a blocked area outside every legal root.
+
+    A blocked root can be an ancestor of a legal tenant root: the instance root
+    ``~/cow`` and the tenant base ``~/.cow/tenant-roots`` live under home, so a
+    blanket home block would shadow the tenant's own workspace (the
+    ``fix-instance-root-trust`` bug). Paths inside a legal root are therefore
+    carved out of the blocked area; home paths outside every legal root
+    (credentials, other tenants, the data root) stay refused.
+    """
+    if not any(_contains(blocked, real) for blocked in boundary.blocked if blocked):
+        return False
+    return _outside(real, roots)
 
 
 def _deny(what: str) -> Decision:
@@ -313,13 +333,13 @@ def _check_bash(boundary: _Boundary, args: Dict[str, Any],
 
     for token in writes:
         real = _real(token, cwd)
-        if any(_contains(blocked, real) for blocked in boundary.blocked if blocked):
+        if _in_blocked(boundary, real, boundary.write_roots):
             return _deny(f"写入目标 {token!r} 位于隔离根之外")
         if _outside(real, boundary.write_roots):
             return _deny(f"写入目标 {token!r} 超出本租户可写范围")
     for token in reads:
         real = _real(token, cwd)
-        if any(_contains(blocked, real) for blocked in boundary.blocked if blocked):
+        if _in_blocked(boundary, real, boundary.read_roots):
             return _deny(f"读取目标 {token!r} 位于隔离根之外")
     return Decision(True)
 
@@ -373,7 +393,7 @@ def isolation_decision(tool_name: str, arguments: Dict[str, Any],
             boundary = resolve_boundary(ident)
             if not boundary.active:
                 return _deny("多租户隔离边界不可用，文件访问已拒绝")
-            if any(_contains(blocked, real) for blocked in boundary.blocked if blocked):
+            if _in_blocked(boundary, real, boundary.read_roots):
                 return _deny(f"目标路径 {path!r} 位于隔离根之外")
             if tool_name in WRITE_TOOLS and _outside(real, boundary.write_roots):
                 return _deny(f"写入目标 {path!r} 超出本租户可写范围")

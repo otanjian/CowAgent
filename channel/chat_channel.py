@@ -233,6 +233,194 @@ class ChatChannel(Channel):
             return False  # already scoped by an upstream handler
         return True
 
+    def _preflight_personal_inbound(self, context: Context, instance: dict) -> bool:
+        """Decide a member-owned instance's inbound; never fall back.
+
+        Returns True when the message was consumed (a notice or a link
+        confirmation was queued), False when the context is scoped to the owner.
+        Every branch is a decision *for this instance*: a personal instance has
+        no tenant default and no platform default to fall back to, so a missing
+        or unusable route is refused with a notice that names the fix.
+        """
+        from auth.service import get_identity_service
+        from channel import external_identity as ex
+
+        tenant_id = str(instance.get("tenant_id") or "")
+        instance_id = str(instance.get("id") or "")
+        ext = context.get("external_identity") or {}
+        if not ext:
+            self._send_reply(
+                context, Reply(ReplyType.TEXT, ex.deny_notice(ex.UNSUPPORTED_CHANNEL)))
+            return True
+
+        # The binding code is the proof of control, and it arrives *as* the
+        # message: redeem it before deciding so the sender's own private chat is
+        # what completes the link. The code is never fed to the Agent — it is a
+        # live credential and a model context outlives its validity.
+        redemption = self._redeem_route_code(context, instance)
+        if redemption:
+            self._send_reply(
+                context,
+                Reply(ReplyType.TEXT, ex.deny_notice(
+                    ex.PERSONAL_LINKED if redemption == "linked"
+                    else ex.PERSONAL_CODE_INVALID)),
+            )
+            return True
+
+        decision = get_identity_service().resolve_personal_channel_inbound(
+            instance_id=instance_id,
+            provider=str(ext.get("provider") or ""),
+            issuer=str(ext.get("issuer") or ""),
+            subject=str(ext.get("subject") or ""),
+            is_group=bool(context.get("isgroup")),
+        )
+        if not decision.get("allowed"):
+            reason = str(decision.get("reason") or "")
+            logger.info(
+                f"[chat_channel] personal instance inbound denied reason={reason} "
+                f"instance={instance_id}"
+            )
+            self._send_reply(
+                context,
+                Reply(ReplyType.TEXT, ex.deny_notice(ex.personal_deny_reason(reason))),
+            )
+            return True
+        return self._scope_to_member(
+            context,
+            user_id=str(decision.get("owner_user_id") or ""),
+            tenant_id=tenant_id,
+            agent_id=str(decision.get("agent_id") or ""),
+        )
+
+    def _serve_personal_route(self, context: Context, route: dict) -> bool:
+        """Run a verified shared-instance personal route, or refuse it."""
+        from channel import external_identity as ex
+
+        instance = ex.instance_row(context) or {}
+        if not route.get("allowed"):
+            reason = str(route.get("reason") or "")
+            logger.info(
+                f"[chat_channel] personal route denied reason={reason} "
+                f"instance={context.get('instance_id')} "
+                f"user={route.get('user_id') or route.get('owner_user_id')}"
+            )
+            self._send_reply(
+                context,
+                Reply(ReplyType.TEXT, ex.deny_notice(ex.personal_deny_reason(reason))),
+            )
+            return True
+        return self._scope_to_member(
+            context,
+            user_id=str(route.get("user_id") or route.get("owner_user_id") or ""),
+            tenant_id=str(instance.get("tenant_id") or ""),
+            agent_id=str(route.get("agent_id") or ""),
+        )
+
+    def _scope_to_member(self, context: Context, *, user_id: str, tenant_id: str,
+                         agent_id: str) -> bool:
+        """Pin a run to one member + Agent; False when the run may proceed.
+
+        The member context is rebuilt from the store on every message, so a
+        deactivated member, a forced password change or a withdrawn ``chat.use``
+        grant takes effect on the *next* message instead of at the next restart
+        (task 7.3). The route is then re-checked through the router and must come
+        back unchanged: the router falls back to the default Agent when a
+        binding is unavailable, and answering as another persona is exactly what
+        a personal route must never do.
+        """
+        from bridge.bridge import Bridge
+        from channel import external_identity as ex
+
+        if not (user_id and tenant_id and agent_id):
+            self._send_reply(
+                context, Reply(ReplyType.TEXT, ex.deny_notice(ex.PERSONAL_UNAVAILABLE)))
+            return True
+        ctx, reason = ex.personal_owner_context(user_id, tenant_id)
+        if reason is not None:
+            logger.info(
+                f"[chat_channel] personal route owner refused reason={reason} "
+                f"user={user_id} tenant={tenant_id}"
+            )
+            self._send_reply(context, Reply(ReplyType.TEXT, ex.deny_notice(reason)))
+            return True
+        context["bound_agent_id"] = agent_id
+        try:
+            routed = Bridge().get_agent_bridge().route_context(context)
+        except AgentUnavailableError as e:
+            logger.warning(f"[chat_channel] {e}")
+            self._send_reply(
+                context,
+                Reply(ReplyType.TEXT, ex.deny_notice(ex.PERSONAL_TARGET_INVALID)))
+            return True
+        except Exception:
+            routed = None
+        if routed != agent_id:
+            logger.warning(
+                f"[chat_channel] personal route refused a routing fallback "
+                f"instance={context.get('instance_id')} pinned={agent_id} "
+                f"routed={routed}"
+            )
+            self._send_reply(
+                context,
+                Reply(ReplyType.TEXT, ex.deny_notice(ex.PERSONAL_TARGET_INVALID)))
+            return True
+        # Scope the run to the member. _identity_for rebuilds the full
+        # RuntimeIdentity from this snapshot, so conversation stores and
+        # state_dir resolve to the member's tenant — never to the bot owner's.
+        context["runtime_identity"] = {
+            "user_id": ctx.user_id,
+            "tenant_id": ctx.tenant_id,
+            "agent_id": agent_id,
+            "session_id": context.get("session_id") or "",
+        }
+        logger.info(
+            f"[chat_channel] personal route scoped user={ctx.user_id} "
+            f"tenant={ctx.tenant_id} agent={agent_id} "
+            f"instance={context.get('instance_id')}"
+        )
+        return False
+
+    def _redeem_route_code(self, context: Context, instance: dict) -> str:
+        """Redeem a binding code that arrived as this private message.
+
+        Returns ``""`` when the message is not a code, ``"linked"`` when it
+        completed a route, ``"invalid"`` when it was code-shaped but refused. The
+        code is *not* an inbound message in any other sense: whichever way it
+        turns out, the Agent is never given it.
+        """
+        from channel import external_identity as ex
+
+        if bool(context.get("isgroup")):
+            return ""
+        token = ex.binding_code_token(context)
+        if not token:
+            return ""
+        from auth.service import IdentityServiceError, get_identity_service
+
+        ext = context.get("external_identity") or {}
+        try:
+            get_identity_service().redeem_personal_channel_challenge(
+                tenant_id=str(instance.get("tenant_id") or ""),
+                instance_id=str(instance.get("id") or ""),
+                code=token,
+                provider=str(ext.get("provider") or ""),
+                issuer=str(ext.get("issuer") or ""),
+                subject=str(ext.get("subject") or ""),
+            )
+        except IdentityServiceError as e:
+            # Wrong, expired or already-consumed: the member is told to mint a
+            # new one, and nothing about the attempt is echoed back.
+            logger.info(
+                f"[chat_channel] binding code refused instance={instance.get('id')} "
+                f"code={getattr(e, 'code', 'bad_request')}"
+            )
+            return "invalid"
+        except Exception:  # noqa: BLE001 - a refusal must still be sent
+            logger.warning("[chat_channel] binding code redemption failed",
+                           exc_info=True)
+            return "invalid"
+        return "linked"
+
     def _preflight_external_inbound(self, context: Context) -> bool:
         """Resolve the external author; send the fixed notice on deny.
 
@@ -244,17 +432,28 @@ class ChatChannel(Channel):
         from channel import external_identity as ex
         from common import memory  # noqa: F401  (module import side effects)
 
+        # The instance row is read once here and reused below: it is the source
+        # of truth for scope/owner/target, and re-reading it per decision would
+        # let two decisions disagree about the same message.
+        instance = ex.instance_row(context)
+        if ex.is_personal_instance(instance):
+            # A member-owned instance is answered by its owner or by nobody:
+            # no tenant default, no platform default, no bot service account
+            # (tasks 7.1/7.2/7.3).
+            return self._preflight_personal_inbound(context, instance)
+
         # Which tenant owns this message? A tenant-owned channel instance owns
         # both the identity anchor and the Agent choice: its row is the source
         # of truth (never a context field, which a stale or forged stamp could
         # set), and its tenant default overrides the process-global default,
         # which belongs to whichever tenant was provisioned first.
-        instance_tenant = ex.instance_tenant_id(context)
+        instance_tenant = str((instance or {}).get("tenant_id") or "").strip()
         if instance_tenant:
             from auth.service import get_identity_service
 
             pinned = str(context.get("bound_agent_id") or "").strip() or \
-                get_identity_service().resolved_default_agent_id(instance_tenant)
+                get_identity_service().resolved_public_default_agent_id(
+                    instance_tenant)
             if not pinned:
                 logger.info(
                     f"[chat_channel] tenant channel instance has no Agent "
@@ -319,6 +518,32 @@ class ChatChannel(Channel):
             )
             return True
 
+        # A binding code is redeemed before anything else is decided: it is the
+        # proof that turns an unbound sender into the route's owner, and the
+        # message carrying it must never be handed to a model (it is a live
+        # credential). Only a shared instance reaches here — a personal instance
+        # was already handled above, with the same redemption inside it.
+        if instance is not None:
+            redemption = self._redeem_route_code(context, instance)
+            if redemption:
+                self._send_reply(
+                    context,
+                    Reply(ReplyType.TEXT, ex.deny_notice(
+                        ex.PERSONAL_LINKED if redemption == "linked"
+                        else ex.PERSONAL_CODE_INVALID)),
+                )
+                return True
+
+        if instance is not None:
+            # A shared instance may carry an explicit personal route for this
+            # verified private chat (task 7.2). It is resolved *before* the
+            # shared identity mapping so a member needs no grant on the public
+            # Agent to reach the private Agent they chose, and an unusable route
+            # refuses instead of quietly answering with the shared persona.
+            route = ex.personal_route_for(context, instance)
+            if route is not None:
+                return self._serve_personal_route(context, route)
+
         ctx, reason = ex.resolve_actor_for_context(context, agent_id, instance_tenant)
         if reason is not None:
             # The notice tells the author to ask an administrator, so the log
@@ -351,6 +576,7 @@ class ChatChannel(Channel):
                         tenant_id=instance_tenant,
                         channel_type=str(context.get("channel_type") or ""),
                         instance_id=str(context.get("instance_id") or ""),
+                        personal_flow=ex.looks_like_binding_code(context),
                         **attempt_evidence(context),
                     )
                 except Exception:  # noqa: BLE001 - a refusal must still be sent

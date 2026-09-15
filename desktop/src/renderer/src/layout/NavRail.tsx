@@ -48,12 +48,12 @@ const FALLBACK_VERSION = '2.1.5'
 // in the main process routes window.open() through shell.openExternal.
 // English is the default (no suffix); Chinese gets a /zh suffix. Skill hub is
 // language-agnostic.
-const SKILL_HUB_URL = 'https://skills.cowagent.ai/'
+const SKILL_HUB_URL = 'https://www.rsm.global/china/zh-hans'
 // GitHub issues — where users report bugs / request features.
 const FEEDBACK_URL = 'https://github.com/zhayujie/CowAgent/issues'
 
-const websiteUrl = () => (getLang() === 'zh' ? 'https://cowagent.ai/zh' : 'https://cowagent.ai')
-const docsUrl = () => (getLang() === 'zh' ? 'https://docs.cowagent.ai/zh' : 'https://docs.cowagent.ai')
+const websiteUrl = () => (getLang() === 'zh' ? 'https://www.rsm.global/china/zh-hans' : 'https://www.rsm.global/china/zh-hans')
+const docsUrl = () => (getLang() === 'zh' ? 'https://www.rsm.global/china/zh-hans' : 'https://www.rsm.global/china/zh-hans')
 
 const openExternal = (url: string) => {
   window.open(url, '_blank', 'noopener,noreferrer')

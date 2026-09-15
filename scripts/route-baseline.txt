@@ -122,12 +122,12 @@
 /api/voice/asr	POST	tenant	
 /api/voice/tts	POST	tenant	
 /api/weixin/qrlogin	GET	closed	
-/api/workspace/meta	GET	closed	
-/api/workspace/read	GET	closed	
-/api/workspace/resolve	GET	closed	
-/api/workspace/search	GET	closed	
-/api/workspace/tree	GET	closed	
-/api/workspace/write	POST	closed	
+/api/workspace/meta	GET	tenant	
+/api/workspace/read	GET	tenant	
+/api/workspace/resolve	GET	tenant	
+/api/workspace/search	GET	tenant	
+/api/workspace/tree	GET	tenant	
+/api/workspace/write	POST	tenant	
 /assets/(.*)	GET	public	
 /auth/check	GET	public	
 /auth/context	GET	tenant	
@@ -193,3 +193,131 @@
 # is also the pre-change effective behavior (the gate was a no-op for them).
 /chat	GET	public	-
 /admin	GET	public	-
+
+# --- Added by add-default-user-avatars ---
+# Per-account avatar read for the sidebar/menu/hero and the admin member /
+# platform-account lists. `personal` (any authenticated session); the handler
+# narrows to self OR platform admin OR a caller sharing an active tenant with
+# the target, and returns 404 (never the bundled default bytes) when the account
+# has no upload. The default avatars are static assets under /assets/avatars/.
+/api/users/([^/]+)/avatar	GET	personal	-
+
+# --- Added by add-tenant-archive ---
+# `DELETE /api/platform/tenants/{id}` archives (soft-deletes) a tenant: the
+# handler only sets `archived_at`/`active=0` and retains all data, so the route
+# is `platform` (it mutates platform-level data, like the other tenant writes on
+# this pattern). Restore reuses the existing `POST` on the same pattern via
+# `operation=restore`, so no new method entry is needed for it.
+/api/platform/tenants/([^/]+)	DELETE	platform	-
+
+# --- Changed by open-tenant-knowledge-console ---
+# The five knowledge consumers were `closed` (deferred), so database mode
+# short-circuited them to 503 `database_unavailable` and the console page hung
+# on its loading placeholder. They are now `tenant` consumers: the gate only
+# authenticates and requires a valid tenant selection, the handler enforces
+# `knowledge.read` for reads and a data-root + Agent-ownership decision for
+# writes, plus the tenant-Agent binding and private-owner
+# scoping. The policy entry carries no `permission` because one route serves
+# both a read and a write (different permissions).
+/api/knowledge/action	POST	tenant	-
+/api/knowledge/graph	GET	tenant	-
+/api/knowledge/import	POST	tenant	-
+/api/knowledge/list	GET	tenant	-
+/api/knowledge/read	GET	tenant	-
+
+# --- Added by enable-member-personal-console ---
+# The member personal console surface (task 9.3). `personal` (any authenticated
+# session) is the *whole* route-level claim: the gate proves a session, and the
+# handler then takes the tenant from the verified request context and the owner
+# from that session, so neither a body field nor an `X-Tenant-ID` can name
+# another member or another tenant. No permission is attached because the same
+# path serves several operations with different permissions (list vs edit vs
+# clear); the functional/resource checks run inside the handler. The public
+# management surfaces stay where they were: `/api/channels` is `platform`,
+# `/api/tenant/channels` is `tenant` (tenant_admin), `/api/agents` is `tenant`.
+/api/memory/personal	GET	personal	-
+/api/memory/personal	POST	personal	-
+/api/memory/personal/content	GET	personal	-
+/api/personal/channels	GET	personal	-
+/api/personal/channels	POST	personal	-
+/api/personal/channels/([^/]+)	GET	personal	-
+/api/personal/channels/([^/]+)	POST	personal	-
+/api/personal/resources	GET	personal	-
+/api/personal/resources	POST	personal	-
+
+# --- evolution ------------------------------------------------------------
+#
+# Append-only, same two rules as below the header: a later row for the same
+# pattern/method overrides the frozen row above it, so the historical value
+# stays readable and the change stays traceable. A section names the change,
+# the source of the new policy, the authorization behind it and the handler.
+#
+# 2026-09-15  change: complete-database-capability-parity (tasks 3.7 / 4.3 / 9.2)
+#   The five scheduler management methods leave `closed` and carry the slice's
+#   own policy. Source: auth/capability_matrix.py (the single capability
+#   registry) consumed by channel/web/route_registry.py through S(). Handler:
+#   the existing Scheduler*Handler classes in channel/web/web_channel.py, which
+#   now authorize through the one service shared with the Agent tool and the
+#   background loop (agent/tools/scheduler/authorization.py) instead of opening
+#   the task store themselves.
+#   Policy `tenant`: a task belongs to one tenant, and the slice declares no
+#   route-level permission, so the gate resolves the session *and* the tenant
+#   selection and hands that same context to the handler -- which is what the
+#   handlers ask for themselves. Owner/agent/resource checks stay per object in
+#   the handler, and `run` is additionally gated by the slice's acceptance
+#   evidence (R1).
+/api/scheduler	GET	tenant	
+/api/scheduler/delete	POST	tenant	
+/api/scheduler/run	POST	tenant	
+/api/scheduler/toggle	POST	tenant	
+/api/scheduler/update	POST	tenant	
+
+# 2026-09-15  change: complete-database-capability-parity (tasks 5.1-5.3 / 9.2)
+#   The two legacy memory reads leave `closed` and carry the slice's own policy
+#   and permission. Source: auth/capability_matrix.py (`memory_browse`) consumed
+#   by channel/web/route_registry.py through S(). Handler:
+#   channel/web/memory_console.py, which adapts the legacy surface onto the
+#   delivered personal memory service -- an explicit personal | private_agent |
+#   shared target, the owner check *before* the read, and a stable machine code
+#   for every refusal (never a 200 carrying an error message).
+#   Policy `tenant` + permission `memory.read`: the content belongs to one
+#   tenant, so the gate resolves the session and the tenant selection; which
+#   object the caller may read (their own memory, or a private Agent they own)
+#   stays a per-object decision inside the handler. The writes keep their
+#   existing `/api/memory/personal*` rows above.
+/api/memory	GET	tenant	memory.read
+/api/memory/content	GET	tenant	memory.read
+
+# 2026-09-15  change: complete-database-capability-parity (tasks 6.5-6.6 / 9.2)
+#   Project browsing leaves `closed` and the controlled local import becomes a
+#   first-class surface. Source: auth/capability_matrix.py (`project_browse`)
+#   consumed by channel/web/route_registry.py through S(). Handlers:
+#   channel/web/project_import.py (the import preview/publish/cancel seam) and
+#   the existing project handlers in channel/web/web_channel.py, whose upstream
+#   `_import_local_file` loopback + per-start token + owned-session contract is
+#   preserved and *added* to (one-time handle, staging, atomic publish, quota
+#   reservation) rather than replaced.
+#   Policy `tenant`: the projects belong to one tenant and one member, so the
+#   gate resolves the session and the tenant selection; the per-object owner,
+#   path and session checks stay in the handler, which re-resolves every path
+#   through common/safe_fs against the verified identity.
+/api/projects/browse	GET	tenant	
+/api/projects/import/preview	POST	tenant	
+/api/projects/import	POST	tenant	
+/api/projects/import/cancel	POST	tenant	
+
+# 2026-09-15  change: complete-database-capability-parity (tasks 7.6-7.7 / 9.2)
+#   The two WeChat scan methods leave `closed`. Source:
+#   auth/capability_matrix.py (`weixin_scan`) consumed by
+#   channel/web/route_registry.py through S(). Handler:
+#   channel/web/scan_onboarding.py, which replaces the process-global
+#   `_qr_state` with a session-bound state machine (actor/AuthSession/tenant/
+#   scope/owner/provider/target) and commits the authorization consumption, the
+#   instance/credential write, the quota reservation and the audit entry in one
+#   transaction.
+#   Policy `tenant` (config class): the caller must belong to a tenant, while
+#   whether *this* caller may bind *this* instance stays a per-object decision
+#   inside the handler; the QR result itself is a short-lived secret and is
+#   never part of a route-level grant.
+/api/weixin/qrlogin	GET	tenant	
+/api/weixin/qrlogin	POST	tenant	

@@ -66,16 +66,96 @@ let _accountAppVisible = false;
 let _accountEntryRequest = null;
 let _pendingTenantPicker = false;
 let _accountMenuOpen = false;
+// The mobile account surface is a bottom sheet: below the sidebar breakpoint the
+// one account panel DOM is hosted at the document root (outside the off-canvas
+// sidebar's transform) and behaves as a modal dialog. Desktop keeps the anchored
+// non-modal popover and its Tab-out behaviour.
+let _accountMenuSheet = false;
+// Current tenant's authoritative /auth/context capability summary, cached per
+// account/epoch. Declared with the rest of the account state because identity
+// invalidation has to drop it (and any late reply) in the same breath.
+let _authContext = null;
+let _authContextSeq = 0;
+let _authContextRequest = null;
+// 'unknown' until a tenant-scoped read is attempted, then 'checking' / 'ready' /
+// 'failed'. It drives the account panel's 「我的资源」 checking and retry states,
+// so an unconfirmed entry is never activatable and a failed read is not shown as
+// an empty resource list.
+let _authContextPhase = 'unknown';
 let _forcedPassword = false;   // must_change_password: block tenant/business until set
+// Bump on each successful self-avatar upload so the sidebar/menu/hero images
+// refetch instead of serving the stale bytes from the same URL.
+let _accountAvatarVersion = '';
 
 function _accountText(id, value) {
     const el = document.getElementById(id);
     if (el) el.textContent = value;
 }
 
+// Grouped identity values (platform role, tenant roles) render as chips so a
+// role reads as a distinct attribute instead of a line of plain text. Values
+// are escaped; an empty list falls back to the shared "not set" copy so the
+// empty-state contract matches a plain field.
+function _accountChips(id, values) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const list = (values || []).map(value => String(value == null ? '' : value).trim()).filter(Boolean);
+    if (!list.length) { el.textContent = t('account_profile_empty'); return; }
+    el.innerHTML = list.map(value =>
+        '<span class="account-profile-chip">' + escapeHtml(value) + '</span>').join('');
+}
+
 function _accountHidden(id, hidden) {
     const el = document.getElementById(id);
     if (el) el.classList.toggle('hidden', hidden);
+}
+
+// Avatar discs hold markup (an <img>), not text, so they need innerHTML. Any
+// text fallback (an initial) is escaped by the caller.
+function _accountAvatar(id, html) {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = html || '';
+}
+
+/* ---- User account avatars ------------------------------------------------
+   Five bundled default faces stand in for an account that never uploaded one.
+   The disc is picked from the account id alone, so the same account always
+   wears the same default across sessions, tenants, list order and refreshes;
+   the mapping is deliberately NOT keyed off the display name. An uploaded
+   picture always wins over the default. */
+
+/* How many bundled default account avatars exist (default-1 .. default-N). */
+const USER_AVATAR_DEFAULTS = 5;
+
+function userDefaultAvatarIndex(userId) {
+    const key = String(userId || '');
+    let hash = 0;
+    for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+    return (hash % USER_AVATAR_DEFAULTS) + 1;
+}
+
+function userDefaultAvatarURL(userId) {
+    return `/assets/avatars/default-${userDefaultAvatarIndex(userId)}.svg`;
+}
+
+/* An account's face: the uploaded picture when it has one, otherwise the
+   stable default. `self` routes the upload through the personal
+   /auth/profile/avatar endpoint (the only one that serves the caller's own
+   bytes); another account's upload is read through /api/users/<id>/avatar.
+   A missing upload file degrades to the default rather than a broken image. */
+function userAvatarHTML(opts) {
+    const o = opts || {};
+    const id = o.id || '';
+    const fallback = userDefaultAvatarURL(id);
+    let src = fallback;
+    if (o.avatar === 'image' && id) {
+        src = o.self
+            ? '/auth/profile/avatar'
+            : `/api/users/${encodeURIComponent(id)}/avatar`;
+        if (o.self && o.version) src += `?v=${encodeURIComponent(o.version)}`;
+    }
+    return `<img class="user-avatar" src="${escapeHtml(src)}" alt=""`
+        + ` onerror="this.onerror=null;this.src='${fallback}'">`;
 }
 
 function _emptyAccount(phase) {
@@ -116,9 +196,27 @@ function _renderSidebarAccount() {
     _accountText('sidebar-account-name', name);
     _accountText('sidebar-account-subtitle', subtitle);
     const trigger = document.getElementById('sidebar-account-toggle');
-    if (trigger) trigger.title = [name, subtitle].filter(Boolean).join('\n');
-    _accountText('sidebar-account-avatar', hasUser ? Array.from(name.trim())[0] || '' : '');
-    _accountText('account-menu-avatar', hasUser ? Array.from(name.trim())[0] || '' : '');
+    // The trigger names the account *and* says what the entry offers
+    // (「个人资源与设置」): the hint is supplementary, never a replacement for the
+    // account name, and the compact row still shows avatar, name and chevron.
+    const identityLabel = [name, subtitle].filter(Boolean).join('\n');
+    const hint = t('account_menu_trigger_hint');
+    if (trigger) {
+        trigger.title = hasUser && hint ? [identityLabel, hint].join('\n') : identityLabel;
+        if (hasUser && hint) trigger.setAttribute('aria-label', name + ' · ' + hint);
+        else trigger.removeAttribute('aria-label');
+    }
+    const selfUser = ((_baseAccountSelf() || {}).user) || {};
+    // The uploaded picture (or the id-stable default) once /auth/me has given us
+    // the account id; until then keep the old initial so the disc does not flash
+    // a default-1 face for an account that is actually on another index.
+    const avatarHTML = hasUser
+        ? (selfUser.id
+            ? userAvatarHTML({ id: selfUser.id, avatar: selfUser.avatar, self: true, version: _accountAvatarVersion })
+            : escapeHtml(Array.from(name.trim())[0] || ''))
+        : '';
+    _accountAvatar('sidebar-account-avatar', avatarHTML);
+    _accountAvatar('account-menu-avatar', avatarHTML);
     _accountHidden('sidebar-account-avatar', !hasUser);
     _accountHidden('sidebar-account-avatar-icon', hasUser);
     _accountText('account-menu-name', hasUser ? name : '');
@@ -130,7 +228,6 @@ function _renderSidebarAccount() {
     _accountHidden('account-menu-retry', !['error', 'logout_error', 'loading'].includes(state.phase));
     _accountHidden('account-menu-logout', !canLogout);
     _accountText('account-menu-logout-label', t(leaving ? 'account_logging_out' : logoutError ? 'account_retry_logout' : 'account_logout'));
-    _accountHidden('logout-btn-header', !canLogout);
     // Six-item menu for an authenticated database account.
     const dbUser = hasUser;
     _accountHidden('account-menu-settings', !dbUser);
@@ -144,7 +241,7 @@ function _renderSidebarAccount() {
         if (el) el.disabled = !!_accountWritePending;
         _accountHidden(id, !dbUser);
     });
-    ['account-menu-logout', 'logout-btn-header'].forEach(id => {
+    ['account-menu-logout'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.disabled = !!_accountWritePending;
     });
@@ -161,6 +258,12 @@ function _renderSidebarAccount() {
         _accountText('login-btn', t(_pendingTenantPicker ? 'login_enter_tenant' : 'account_login'));
     }
     renderAccountVersion();
+    // The 「我的资源」 group and the account trigger's region state are part of
+    // the same identity repaint: a language switch, brand update or identity
+    // refresh must not lose the current personal marker or resurrect a stale
+    // entry (the verdict is recomputed from the authoritative projection).
+    _renderAccountResources();
+    _syncAccountPersonalCurrent();
     // A retry may disappear once data arrives. Keep focus inside the open
     // popover, instead of losing it to the page or focusing the chat input.
     if (_accountMenuOpen && active && ['account-menu-retry', 'account-menu-logout'].includes(active.id)
@@ -169,8 +272,259 @@ function _renderSidebarAccount() {
     }
 }
 
+/* ---- Personal resources inside the account panel --------------------------
+   change move-personal-menu-to-account: the five 「我的」 pages left the main
+   navigation and are now hosted by the account panel (「我的资源」), which the
+   workbench and the console share. The panel consumes the *same* authoritative
+   projection (/auth/context -> console_pages) as the rest of the shell; it never
+   keeps a second role list, grant list or capability copy. */
+
+const ACCOUNT_PERSONAL_VIEWS = ['personal-agents', 'personal-channels', 'personal-memory',
+    'personal-tools', 'personal-skills'];
+
+function _isPersonalView(viewId) {
+    return ACCOUNT_PERSONAL_VIEWS.indexOf(viewId) >= 0;
+}
+
+function _accountPersonalEntries() {
+    const group = document.getElementById('account-menu-resources');
+    if (!group || typeof group.querySelectorAll !== 'function') return [];
+    return Array.from(group.querySelectorAll('.account-menu-personal'))
+        .filter(el => el.dataset && el.dataset.view);
+}
+
+function _accountPersonalEntry(viewId) {
+    return _accountPersonalEntries().filter(el => el.dataset.view === viewId)[0] || null;
+}
+
+// The projection the member sees: 'checking' until the authoritative
+// /auth/context answer arrives, 'failed' when it could not be read, 'ready' when
+// it did, and 'unknown' while no answer applies (legacy identity, or a database
+// session that has not picked a tenant yet). Only 'ready' can show an entry:
+// every other phase counts as unconfirmed.
+function _accountProjectionPhase() {
+    if ((typeof _baseAuthContext === 'function') && _baseAuthContext()) return 'ready';
+    if (_authContextPhase === 'failed') return 'failed';
+    if (_authContextPhase === 'checking') return 'checking';
+    return 'unknown';
+}
+
+// One verdict per signed view id, shared by the main navigation and the account
+// panel so the two hosts cannot disagree. ``known: false`` means the backend did
+// not sign the page (or the projection is not loaded yet): never hide on a guess.
+function _consolePageEntryState(viewId) {
+    const ctx = (typeof _baseAuthContext === 'function') ? _baseAuthContext() : null;
+    const key = (typeof _consolePageForView === 'function') ? _consolePageForView(viewId) : '';
+    if (!ctx || !key) return { known: false, hidden: false };
+    const pages = (ctx.console_pages && typeof ctx.console_pages === 'object') ? ctx.console_pages : null;
+    const info = pages && pages[key];
+    if (!info) return { known: false, hidden: false };
+    // A withheld menu grant hides the entry in every area, including workbench
+    // pages: it is the authoritative server signal, not a client inference.
+    if (info.menu_denied === true) return { known: true, hidden: true };
+    // A capability the deployment withdrew is not offered either; the page body
+    // still names it when reached by a direct address.
+    if (info.reason === 'capability_disabled') return { known: true, hidden: true };
+    if (key.indexOf('admin.') !== 0) return { known: true, hidden: false };
+    const allMode = (ctx.authorization_mode === 'all');
+    const available = allMode ? true : !!(info.available);
+    const readOk = allMode ? true : !!(info.read_allowed);
+    return { known: true, hidden: !(available || readOk) };
+}
+
+// Full recompute of the 「我的资源」 group: visibility is *computed*, never
+// accumulated, so withdrawing a menu hides the entry and re-granting it brings it
+// back. All five entries refused (or no entry signed) removes the empty group and
+// leaves the account actions in place.
+function _renderAccountResources() {
+    const group = document.getElementById('account-menu-resources');
+    if (!group) return;
+    const status = document.getElementById('account-menu-resources-status');
+    const retry = document.getElementById('account-menu-resources-retry');
+    const entries = _accountPersonalEntries();
+    const hasUser = _accountState.phase !== 'loading' && _accountState.authenticated === true
+        && !!_accountState.username;
+    const isDb = (typeof _identityMode === 'function') && _identityMode() === 'database';
+    let tenant = '';
+    try { tenant = sessionStorage.getItem('cow_tenant_id') || ''; } catch (_) {}
+    const applies = isDb && hasUser;
+
+    if (!applies || !entries.length) {
+        group.classList.add('hidden');
+        _accountHidden('account-menu-resources-status', true);
+        _accountHidden('account-menu-resources-retry', true);
+        return;
+    }
+    entries.forEach(el => {
+        const state = _consolePageEntryState(el.dataset.view);
+        el.classList.toggle('hidden', state.known && state.hidden);
+    });
+    const phase = _accountProjectionPhase();
+    // A tenant-scoped projection that has not answered yet is a *checking* state,
+    // not an empty list, so an unconfirmed entry is never activatable. Database
+    // mode without a selected tenant is unconfirmed for the same reason: the
+    // shell keeps that state behind the tenant picker, and the account panel must
+    // never become a way around it.
+    const checking = !tenant || phase === 'checking' || phase === 'unknown';
+    const failed = !!tenant && phase === 'failed';
+    if (checking || failed) entries.forEach(el => el.classList.add('hidden'));
+    if (status) status.textContent = failed
+        ? t('account_menu_resources_failed') : t('account_menu_resources_checking');
+    _accountHidden('account-menu-resources-status', !(checking || failed));
+    _accountHidden('account-menu-resources-retry', !failed);
+    const visible = entries.some(el => !el.classList.contains('hidden'));
+    group.classList.toggle('hidden', !(visible || checking || failed));
+}
+
+// Re-read the capability projection behind the personal entries after a failed
+// read. Identity itself is untouched: this only re-asks the tenant-scoped
+// summary, and no personal page data is requested by opening or retrying.
+function refreshAccountResources() {
+    if (typeof _fetchTenantAuthorization !== 'function') return Promise.resolve(null);
+    // Drop the stale summary first, then mark the fresh read as in flight so the
+    // panel shows the checking state (not an empty list) while it is answered.
+    _invalidateAuthContext();
+    _authContextPhase = 'checking';
+    _renderAccountResources();
+    return _fetchTenantAuthorization().then(result => {
+        _applySidebarPermissions(_baseAccountSelf());
+        return result;
+    });
+}
+
+// The shell's single current-page marker: for a personal page it lives on the
+// account entry, never on the main navigation, and the account trigger only
+// shows a lightweight region state (no second aria-current).
+function _syncAccountPersonalCurrent() {
+    const viewId = (typeof currentView === 'string') ? currentView : '';
+    const onPersonal = _isPersonalView(viewId);
+    let marked = false;
+    _accountPersonalEntries().forEach(item => {
+        const selected = onPersonal && item.dataset.view === viewId
+            && !item.classList.contains('hidden');
+        if (selected) marked = true;
+        item.classList.toggle('active', selected);
+        if (selected) item.setAttribute('aria-current', 'page');
+        else item.removeAttribute('aria-current');
+    });
+    // The region state exists only while a *visible* account entry is the current
+    // page: an entry withdrawn by a new projection leaves no stale marking.
+    const footer = document.getElementById('sidebar-account-footer');
+    if (footer) footer.classList.toggle('is-personal', marked);
+    _accountHidden('sidebar-account-region', !marked);
+}
+
+// Forget every account-panel personal entry and the region state (account or
+// tenant change, logout, lost eligibility): a late reply from the previous
+// context must not restore an old entry or an old current item.
+function _clearAccountPersonalState() {
+    _accountPersonalEntries().forEach(item => {
+        item.classList.add('hidden');
+        item.classList.remove('active');
+        item.removeAttribute('aria-current');
+    });
+    const group = document.getElementById('account-menu-resources');
+    if (group) group.classList.add('hidden');
+    _accountHidden('account-menu-resources-status', true);
+    _accountHidden('account-menu-resources-retry', true);
+    const footer = document.getElementById('sidebar-account-footer');
+    if (footer) footer.classList.remove('is-personal');
+    _accountHidden('sidebar-account-region', true);
+}
+
 function _accountMenuOutside(event) {
-    if (!document.getElementById('sidebar-account-footer')?.contains(event.target)) closeAccountMenu();
+    // The panel may be hosted at the document root while the mobile sheet is
+    // open, so "inside" has to cover the panel itself as well as the footer.
+    const menu = document.getElementById('sidebar-account-menu');
+    if (menu && menu.contains(event.target)) return;
+    if (document.getElementById('sidebar-account-footer')?.contains(event.target)) return;
+    closeAccountMenu();
+}
+
+// A menu item is reachable only when neither it nor any ancestor group inside the
+// panel is hidden; a closed panel's content never joins the focus order.
+function _accountMenuHiddenAncestor(el, root) {
+    for (let node = el; node && node !== root; node = node.parentNode) {
+        if (node.classList && node.classList.contains('hidden')) return true;
+    }
+    return false;
+}
+
+function _accountMenuFocusable(menu) {
+    if (!menu || typeof menu.querySelectorAll !== 'function') return [];
+    return Array.from(menu.querySelectorAll('button, a'))
+        .filter(el => !el.disabled && !_accountMenuHiddenAncestor(el, menu));
+}
+
+function _accountMenuSheetMode() {
+    // The same breakpoint the off-canvas sidebar uses (Tailwind ``lg``).
+    return (window.innerWidth || 0) < 1024;
+}
+
+function _accountMenuSheetActive() {
+    return _accountMenuOpen && _accountMenuSheet;
+}
+
+// Move the single account panel node between the two hosts and switch its
+// semantics. On mobile it is mounted at the document root because the off-canvas
+// sidebar carries a transform: a fixed-position sheet inside it would be clipped
+// and dragged with the drawer. The panel content is never duplicated.
+function _mountAccountMenu(isSheet) {
+    const menu = document.getElementById('sidebar-account-menu');
+    const footer = document.getElementById('sidebar-account-footer');
+    if (!menu || !footer) return;
+    _accountMenuSheet = !!isSheet;
+    if (_accountMenuSheet) {
+        if (menu.parentNode !== document.body) document.body.appendChild(menu);
+        menu.classList.add('account-menu-sheet');
+        menu.setAttribute('role', 'dialog');
+        menu.setAttribute('aria-modal', 'true');
+    } else {
+        if (menu.parentNode !== footer) footer.appendChild(menu);
+        menu.classList.remove('account-menu-sheet');
+        menu.setAttribute('role', 'group');
+        menu.removeAttribute('aria-modal');
+    }
+    _accountHidden('account-menu-sheet-head', !_accountMenuSheet);
+    _accountHidden('account-menu-sheet-close', !_accountMenuSheet);
+}
+
+// Backdrop and background scroll lock belong to the open sheet only. Keeping the
+// teardown in one place is what makes "close the drawer / change breakpoint /
+// lose the session" leave no residue behind.
+function _accountMenuSheetChrome() {
+    const active = _accountMenuSheetActive();
+    const backdrop = document.getElementById('account-menu-backdrop');
+    if (backdrop) backdrop.classList.toggle('hidden', !active);
+    document.body.classList.toggle('account-menu-sheet-open', active);
+}
+
+// Size the panel from the space actually available. The icon sidebar opens its
+// panel to the side, so its limit is the viewport rather than the room above the
+// card; the mobile sheet is bounded by CSS (80% of the visual viewport).
+function _applyAccountMenuHeight() {
+    const menu = document.getElementById('sidebar-account-menu');
+    const footer = document.getElementById('sidebar-account-footer');
+    if (!menu || !menu.style) return;
+    if (_accountMenuSheet) { menu.style.maxHeight = ''; return; }
+    const viewport = window.innerHeight || 0;
+    const iconSidebar = (window.innerWidth || 0) >= 1024
+        && !!document.getElementById('app')
+        && document.getElementById('app').classList.contains('sidebar-collapsed');
+    const top = footer && typeof footer.getBoundingClientRect === 'function'
+        ? footer.getBoundingClientRect().top : viewport;
+    const available = iconSidebar ? Math.max(160, viewport - 24) : Math.max(0, top - 12);
+    menu.style.maxHeight = available + 'px';
+}
+
+// Re-opening the panel must show where the member currently is, even when the
+// entry sits at the end of the group.
+function _syncAccountMenuScroll() {
+    const current = _accountPersonalEntries()
+        .filter(el => el.getAttribute && el.getAttribute('aria-current') === 'page')[0];
+    if (current && typeof current.scrollIntoView === 'function') {
+        current.scrollIntoView({ block: 'nearest' });
+    }
 }
 
 function _accountMenuKey(event) {
@@ -178,6 +532,30 @@ function _accountMenuKey(event) {
         event.preventDefault();
         event.stopPropagation();
         closeAccountMenu(true);
+        return;
+    }
+    // The mobile sheet is a modal dialog: Tab cycles inside it instead of
+    // reaching the page behind the backdrop. Desktop keeps the existing
+    // non-modal Tab-out behaviour (the focusin listener closes the popover).
+    if (event.key === 'Tab' && _accountMenuSheetActive()) {
+        const menu = document.getElementById('sidebar-account-menu');
+        const items = _accountMenuFocusable(menu);
+        if (!items.length) return;
+        const first = items[0];
+        const last = items[items.length - 1];
+        const active = document.activeElement;
+        if (!menu.contains(active)) {
+            event.preventDefault();
+            first.focus();
+            return;
+        }
+        if (event.shiftKey && active === first) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && active === last) {
+            event.preventDefault();
+            first.focus();
+        }
     }
 }
 
@@ -189,6 +567,10 @@ function closeAccountMenu(returnFocus = false) {
     document.removeEventListener('pointerdown', _accountMenuOutside, true);
     document.removeEventListener('focusin', _accountMenuOutside);
     document.removeEventListener('keydown', _accountMenuKey, true);
+    // Release the sheet (backdrop, scroll lock, dialog role) and put the single
+    // panel node back where the desktop popover expects it.
+    if (_accountMenuSheet) _mountAccountMenu(false);
+    _accountMenuSheetChrome();
     if (returnFocus && _accountAppVisible) document.getElementById('sidebar-account-toggle')?.focus();
 }
 
@@ -197,17 +579,19 @@ function toggleAccountMenu() {
     if (!_accountAppVisible) return;
     const menu = document.getElementById('sidebar-account-menu');
     if (!menu) return;
-    ['lang-menu', 'tenant-menu'].forEach(id => _accountHidden(id, true));
+    ['tenant-menu'].forEach(id => _accountHidden(id, true));
+    _mountAccountMenu(_accountMenuSheetMode());
     _renderSidebarAccount();
     _accountMenuOpen = true;
     _accountHidden('sidebar-account-menu', false);
     document.getElementById('sidebar-account-toggle')?.setAttribute('aria-expanded', 'true');
-    const footer = document.getElementById('sidebar-account-footer');
-    if (footer && menu.style) menu.style.maxHeight = Math.max(0, footer.getBoundingClientRect().top - 12) + 'px';
+    _accountMenuSheetChrome();
+    _applyAccountMenuHeight();
+    _syncAccountMenuScroll();
     document.addEventListener('pointerdown', _accountMenuOutside, true);
     document.addEventListener('focusin', _accountMenuOutside);
     document.addEventListener('keydown', _accountMenuKey, true);
-    const first = Array.from(menu.querySelectorAll('button, a')).find(el => !el.disabled && !el.classList.contains('hidden'));
+    const first = _accountMenuFocusable(menu)[0];
     if (first) first.focus();
 }
 
@@ -228,10 +612,20 @@ function _invalidateAccountIdentity(phase) {
     _accountCheckRequest = null;
     _accountIdentityKey = null;
     _accountEntryRequest = null;
+    // Drop the cached capability summary and invalidate any in-flight reply from
+    // the previous context (bumping the sequence is what discards the late one).
+    ++_authContextSeq;
+    _authContext = null;
+    _authContextRequest = null;
+    _authContextPhase = 'unknown';
     _accountState = _emptyAccount(phase);
     if (_forcedPassword) _closeForcedPasswordModal();
     _clearTenantPicker();
     closeAccountMenu();
+    // Account switch / logout / lost eligibility: the old personal entries and
+    // the old personal current item go with the old context, and a late reply
+    // from it cannot bring either back.
+    _clearAccountPersonalState();
 }
 
 function _normalizeAccountCheck(data) {
@@ -332,6 +726,12 @@ function _enterAccountApp() {
                     // Re-apply with the authoritative projection when it arrives.
                     _applySidebarPermissions(_baseAccountSelf());
                     if (ctx) _applySidebarPermissions(_baseAccountSelf());
+                    // The knowledge write entry points depend on the selected
+                    // Agent's projected capability (can_write_knowledge) and
+                    // the admin qualification.
+                    if (typeof renderKnowledgeWriteAffordances === 'function') {
+                        renderKnowledgeWriteAffordances();
+                    }
                     if (typeof _bootAreaDefaultView === 'function') _bootAreaDefaultView();
                     if (typeof loadSidebarRecentSessions === 'function') loadSidebarRecentSessions();
                 });
@@ -752,10 +1152,9 @@ function applyI18n() {
         el.classList.add('opacity-0');
     });
     
-    _syncLangControls();
     // Point the docs link to the locale-specific documentation site.
     const docsLink = document.getElementById('docs-link');
-    if (docsLink) docsLink.href = currentLang === 'zh' ? 'https://docs.cowagent.ai/zh' : 'https://docs.cowagent.ai';
+    if (docsLink) docsLink.href = currentLang === 'zh' ? 'https://www.rsm.global/china/zh-hans' : 'https://www.rsm.global/china/zh-hans';
     // Workspace panel content is rendered by JS, not data-i18n attributes.
     if (typeof relocalizeWorkspacePanel === 'function') relocalizeWorkspacePanel();
     _renderSidebarAccount();
@@ -765,8 +1164,8 @@ function applyI18n() {
 // Single entry point for switching language.
 //
 // Two call paths share this:
-//   * Personal change (the top-right header toggle and the account Preferences
-//     modal): browser-local only (``cow_lang``). MUST NOT write instance config.
+//   * Personal change (the account Preferences modal): browser-local only
+//     (``cow_lang``). MUST NOT write instance config.
 //   * Config-page language picker (``cfg-lang-select``): preserves the original
 //     permission and still persists the instance default ``cow_lang``.
 // They are split so a personal switch never changes the instance (logs / CLI /
@@ -781,8 +1180,8 @@ function setLanguage(lang) {
     applyLanguage(next, /* writeToBackend */ true);
 }
 
-// Personal / browser-local switch (header toggle + preferences modal). Applies
-// the language locally and NEVER writes the instance ``cow_lang`` config.
+// Personal / browser-local switch (the account Preferences modal). Applies the
+// language locally and NEVER writes the instance ``cow_lang`` config.
 function setLanguageLocal(lang) {
     const next = (lang === 'en' || lang === 'zh' || lang === 'zh-Hant') ? lang : 'zh';
     applyLanguage(next, /* writeToBackend */ false);
@@ -801,7 +1200,8 @@ function applyLanguage(next, writeToBackend) {
     } catch (_) { languageStorageFailed = true; }
     applyI18n();
     _applyInputTooltips();
-    // Keep the language switch button and config selector visually in sync.
+    // Keep the config-page language selector in sync (the personal preference
+    // lives in the account menu's preferences dialog).
     try { updateLangControls(); } catch (e) {}
 
     if (writeToBackend) {
@@ -831,10 +1231,9 @@ function syncLanguageToBackend(lang, callback) {
     }
 }
 
-// Reflect the current language on both the top-right toggle and the config
-// selector (if present), so the two entry points stay synchronized.
+// Reflect the current language on the config selector (if present), so the
+// remaining entry points stay synchronized.
 function updateLangControls() {
-    _syncLangControls();
     // The config language picker is the custom .cfg-dropdown component. Only
     // sync it once it has been initialized (i.e. the config panel was opened).
     const sel = document.getElementById('cfg-lang-select');
@@ -851,47 +1250,6 @@ function updateLangControls() {
         });
     }
 }
-
-// Keep the full language name on desktop and a compact label on narrow screens.
-function _syncLangControls() {
-    const langLabel = document.getElementById('lang-label');
-    const shortLabel = document.getElementById('lang-label-short');
-    if (langLabel) langLabel.textContent = currentLang === 'zh-Hant' ? '繁體中文' : currentLang === 'zh' ? '简体中文' : 'English';
-    if (shortLabel) shortLabel.textContent = currentLang === 'zh-Hant' ? '繁' : currentLang === 'zh' ? '简' : 'EN';
-    document.querySelectorAll('#lang-menu .lang-menu-item').forEach(item => {
-        const active = item.dataset.lang === currentLang;
-        item.classList.toggle('text-blue-600', active);
-        item.classList.toggle('dark:text-blue-400', active);
-        item.classList.toggle('font-medium', active);
-    });
-}
-
-// Toggle the header language dropdown menu open/closed.
-function toggleLangMenu(event) {
-    closeAccountMenu();
-    if (event) event.stopPropagation();
-    const menu = document.getElementById('lang-menu');
-    if (menu) menu.classList.toggle('hidden');
-}
-
-// Pick a language from the dropdown, then close the menu.
-function selectLanguage(lang) {
-    const menu = document.getElementById('lang-menu');
-    if (menu) menu.classList.add('hidden');
-    // Top-right header toggle: personal, browser-local, never writes instance.
-    setLanguageLocal(lang);
-}
-window.toggleLangMenu = toggleLangMenu;
-window.selectLanguage = selectLanguage;
-
-// Close the language menu when clicking outside of it.
-document.addEventListener('click', (e) => {
-    const selector = document.getElementById('lang-selector');
-    const menu = document.getElementById('lang-menu');
-    if (menu && !menu.classList.contains('hidden') && selector && !selector.contains(e.target)) {
-        menu.classList.add('hidden');
-    }
-});
 
 // Refresh JS-rendered views after a language switch. Each branch uses the
 // lightweight in-memory re-render path (no extra network round-trips).
@@ -1021,8 +1379,6 @@ function renderAppearancePreferences() {
 
 window.CowAppearance.subscribe(state => {
     currentTheme = state.resolved;
-    const icon = document.getElementById('theme-icon');
-    if (icon) icon.className = 'fas fa-palette';
     const light = document.getElementById('hljs-light');
     const dark = document.getElementById('hljs-dark');
     if (light) light.disabled = state.resolved === 'dark';
@@ -1043,7 +1399,7 @@ function openAppearancePreferences(trigger) {
     if (!closeAccountPanels(false)) return;
     appearanceTrigger = trigger || document.activeElement;
     closeAccountMenu();
-    ['lang-menu', 'tenant-menu'].forEach(id => _accountHidden(id, true));
+    ['tenant-menu'].forEach(id => _accountHidden(id, true));
     renderAppearancePreferences();
     dialog.showModal();
     _setAccountPanel('prefs');
@@ -1067,7 +1423,12 @@ if (appearanceDialog) {
         // now-hidden workbench after its modal is dismissed.
         if (!appearanceTrigger) return;
         if (appearanceTrigger?.isConnected && appearanceTrigger.getClientRects().length) appearanceTrigger.focus();
-        else document.getElementById('theme-toggle')?.focus();
+        else {
+            // The trigger itself can be gone; return focus to the account entry
+            // that owns the preference panel, but never to a hidden workbench.
+            const fallback = document.getElementById('sidebar-account-toggle');
+            if (fallback && fallback.getClientRects().length) fallback.focus();
+        }
         appearanceTrigger = null;
     });
     appearanceDialog.addEventListener('click', event => {
@@ -1253,6 +1614,15 @@ const VIEW_META = {
     tasks:    { group: 'nav_workbench', page: 'menu_tasks', console: 'workbench.schedules' },
     knowledge:{ group: 'nav_workbench', page: 'menu_knowledge', console: 'workbench.knowledge' },
     scenes:   { group: 'nav_workbench', page: 'menu_scenes', console: 'workbench.scenes' },
+    // The member personal pages are self-scoped workbench entries: their console
+    // page ids all live under ``personal.``, so the sidebar's admin availability
+    // gate deliberately skips them and the page body reports read/config/execute
+    // separately (task 8.1/8.4).
+    'personal-agents':   { group: 'nav_group_personal', page: 'menu_personal_agents', console: 'personal.agents' },
+    'personal-channels': { group: 'nav_group_personal', page: 'menu_personal_channels', console: 'personal.channels' },
+    'personal-memory':   { group: 'nav_group_personal', page: 'menu_personal_memory', console: 'personal.memory' },
+    'personal-tools':    { group: 'nav_group_personal', page: 'menu_personal_tools', console: 'personal.tools' },
+    'personal-skills':   { group: 'nav_group_personal', page: 'menu_personal_skills', console: 'personal.skills' },
     agents:   { group: 'nav_group_agent_dev', page: 'menu_agent_config', console: 'admin.agents' },
     skills:   { group: 'nav_group_agent_dev', page: 'menu_skills', console: 'admin.skills' },
     memory:   { group: 'nav_group_agent_dev', page: 'menu_memory', console: 'admin.memory' },
@@ -1289,10 +1659,31 @@ function _registeredConsoleView(viewId) {
     return CONSOLE_VIEW_REGISTRY.find(entry => entry.id === viewId) || null;
 }
 
+// Apply the shell's "exactly one view is active" rule to a view id. Split out
+// because a registered view creates its container lazily inside its own loader:
+// ``navigateTo`` runs the toggle before the container exists, so the loader has
+// to be able to re-apply the state once the markup is there (otherwise a
+// fork-owned view renders hidden).
+function _activateViewContainer(viewId) {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    const target = document.getElementById('view-' + viewId);
+    if (target) target.classList.add('active');
+}
+
 // Load a registered view's data when it becomes the active view.
 function _loadRegisteredView(viewId) {
     const entry = _registeredConsoleView(viewId);
-    if (entry && typeof entry.load === 'function') entry.load();
+    if (entry && typeof entry.load === 'function') {
+        const pending = entry.load();
+        // The loader may build its container asynchronously; re-apply the active
+        // state afterwards, but only while this view is still the destination.
+        if (pending && typeof pending.then === 'function') {
+            pending.then(() => { if (currentView === viewId) _activateViewContainer(viewId); },
+                         () => {});
+        } else {
+            _activateViewContainer(viewId);
+        }
+    }
 }
 
 // Lightweight re-render of a registered view after a language switch.
@@ -1310,6 +1701,15 @@ function _viewTargetArea(viewId) {
 }
 
 function _bootAreaDefaultView() {
+    // A direct URL may name a view in the hash (``/chat#view-personal-memory``),
+    // so a bookmark or a pasted link to a personal page opens that page instead
+    // of the area default (task 8.4). Unknown hashes fall through to the existing
+    // pending-view behaviour, so nothing else changes.
+    const hashView = String(location.hash || '').replace(/^#view-/, '');
+    if (hashView && VIEW_META[hashView]) {
+        navigateTo(hashView);
+        return;
+    }
     const area = _navAreaFromPath(location.pathname);
     if (area === 'admin') {
         let pending = null;
@@ -1478,6 +1878,8 @@ function showUnavailableView(viewId, reason) {
         item.classList.remove('active');
         item.removeAttribute('aria-current');
     });
+    // A denied or unavailable target keeps no personal current marker either.
+    _syncAccountPersonalCurrent();
     document.getElementById('breadcrumb-group').textContent = t('nav_system');
     document.getElementById('breadcrumb-group').dataset.i18n = 'nav_system';
     const pageKey = denied ? 'nav_denied' : 'nav_unavailable';
@@ -1501,6 +1903,13 @@ function showUnavailableView(viewId, reason) {
     if (window.innerWidth < 1024) closeSidebar();
 }
 
+// === ACCOUNT_PERSONAL_NAV_BEGIN ===
+// Host migration (change move-personal-menu-to-account): the account-panel
+// personal entries are activated through this adapter and the shared protected
+// navigation. The marked block is executed on its own by
+// tests/test_sidebar_account_frontend.cjs, so the ordering contract (leave
+// decision before any commit) is asserted against the shipped code rather than
+// a paraphrase of it.
 let currentView = 'chat';
 let agentNavigationVersion = 0;
 
@@ -1512,17 +1921,6 @@ function navigateTo(viewId) {
         return;
     }
     if (!VIEW_META[viewId]) return;
-    // Cross-area: switch to the other area in the SAME window (no reload).
-    const here = _navAreaFromPath(location.pathname);
-    const want = _viewTargetArea(viewId);
-    if (want !== here) {
-        try {
-            if (want === 'admin') sessionStorage.setItem('cow_admin_pending_view', viewId);
-            else sessionStorage.setItem('cow_workbench_pending_view', viewId);
-        } catch (_) {}
-        _openNavArea(want);
-        return;
-    }
     // Authoritative availability gate (database mode only). A target the
     // identity may not read and that is not open is rendered as a denial, NOT
     // silently switched to another scope. Works only once the /auth/context
@@ -1532,22 +1930,25 @@ function navigateTo(viewId) {
         showUnavailableView(viewId, deny.reason);
         return;
     }
-    // Leaving the branding page with unsaved changes: ask to discard first.
-    if (currentView === 'branding' && viewId !== 'branding' && brandingDirty) {
-        brandingConfirmDiscard(() => {
-            _brandingResetDraftToBaseline();
-            navigateTo(viewId);
-        });
-        return;
-    }
-    // Leaving an identity-admin view with an unsaved create/edit form open:
-    // ask to discard before switching (see identity-admin.js).
-    const _adminLeaving = (currentView === 'tenant' || currentView === 'system_user'
-        || currentView === 'roles' || currentView === 'org'
-        || currentView === 'platform' || currentView === 'audit');
-    if (_adminLeaving && viewId !== currentView
-        && typeof window.__identityAdminDirtyGuard__ === 'function'
-        && !window.__identityAdminDirtyGuard__()) {
+    // The leave decision comes BEFORE any commit of the target. A cross-area
+    // target (console <-> workbench) must not push a new URL, re-render the area
+    // shell or start the target's consumer while an unsaved form is still asking
+    // to discard: the current region, address, draft and current item survive a
+    // cancel. The single check runs once per navigation, and the nested
+    // ``navigateTo`` that the area switch performs reuses the approval instead of
+    // asking twice.
+    if (!_viewLeaveApproved(viewId) && !_viewLeaveCheck(viewId)) return;
+    // Cross-area: switch to the other area in the SAME window (no reload).
+    const here = _navAreaFromPath(location.pathname);
+    const want = _viewTargetArea(viewId);
+    if (want !== here) {
+        try {
+            if (want === 'admin') sessionStorage.setItem('cow_admin_pending_view', viewId);
+            else sessionStorage.setItem('cow_workbench_pending_view', viewId);
+        } catch (_) {}
+        _navApprovedTarget = viewId;
+        _openNavArea(want);
+        _navApprovedTarget = null;
         return;
     }
     if (viewId !== currentView) {
@@ -1567,9 +1968,7 @@ function navigateTo(viewId) {
         _closeSessionActionMenu();
     }
 
-    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-    const target = document.getElementById('view-' + viewId);
-    if (target) target.classList.add('active');
+    _activateViewContainer(viewId);
     document.querySelectorAll('.sidebar-item').forEach(item => {
         const selected = item.dataset.view === viewId;
         item.classList.toggle('active', selected);
@@ -1582,12 +1981,19 @@ function navigateTo(viewId) {
             if (group) { group.classList.add('open'); group.querySelector('button')?.setAttribute('aria-expanded', 'true'); }
         }
     });
+    // A personal page gets its single current marker in the account panel, and
+    // the main navigation keeps none (see console-information-architecture). The
+    // marker is synced right after ``currentView`` is committed below, so a
+    // cancelled leave or a denial never moves it.
     const meta = VIEW_META[viewId];
     document.getElementById('breadcrumb-group').textContent = t(meta.group);
     document.getElementById('breadcrumb-group').dataset.i18n = meta.group;
     document.getElementById('breadcrumb-page').textContent = t(meta.page);
     document.getElementById('breadcrumb-page').dataset.i18n = meta.page;
     currentView = viewId;
+    // After the commit, so the account entry is the current page and a cancelled
+    // leave never moves the marker.
+    _syncAccountPersonalCurrent();
     document.getElementById('chat-agent-identity')?.classList.toggle('hidden', viewId !== 'chat');
     document.getElementById('workspace-toggle-btn')?.classList.toggle('hidden', viewId !== 'chat');
     if (viewId === 'branding') initBrandingView();
@@ -1628,7 +2034,100 @@ function navigateTo(viewId) {
     if (viewId === 'history') _renderHistoryStatus();
 
     if (window.innerWidth < 1024) closeSidebar();
+    // Focus the target only after the commit, so a cancelled leave keeps the
+    // original page (and its focus) untouched.
+    if (_isPersonalView(viewId)) _focusPersonalTarget(viewId);
 }
+
+// The leave check has already run for this target (the cross-area path commits
+// the area first and re-enters navigateTo for the same view).
+let _navApprovedTarget = null;
+
+function _viewLeaveApproved(viewId) {
+    return _navApprovedTarget === viewId;
+}
+
+// Ask the current view whether it may be left. Returns true when the caller may
+// commit the target, false when the current view asked to stay (a cancelled
+// discard) or will re-enter navigation itself after the confirmation.
+function _viewLeaveCheck(viewId) {
+    if (viewId === currentView) return true;
+    const adminViews = ['tenant', 'system_user', 'roles', 'org', 'platform', 'audit'];
+    if (currentView === 'branding' && brandingDirty) {
+        brandingConfirmDiscard(() => {
+            _brandingResetDraftToBaseline();
+            navigateTo(viewId);
+        });
+        return false;
+    }
+    if (adminViews.indexOf(currentView) >= 0
+        && typeof window.__identityAdminDirtyGuard__ === 'function'
+        && !window.__identityAdminDirtyGuard__()) {
+        return false;
+    }
+    if (typeof window.__personalConsoleDirtyGuard__ === 'function'
+        && !window.__personalConsoleDirtyGuard__()) {
+        return false;
+    }
+    return true;
+}
+
+// Put focus on the entered personal page once it is committed and visible. The
+// heading is focused (not the input area): a member lands on a described target
+// instead of the shell's chat composer.
+function _focusPersonalTarget(viewId) {
+    const place = () => {
+        const node = document.getElementById('view-' + viewId);
+        if (!node || !node.classList.contains('active')) return;
+        const heading = node.querySelector('h2') || node.querySelector('[data-personal-body]');
+        if (!heading) return;
+        if (!heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1');
+        heading.focus();
+    };
+    place();
+    // The page body is built by a registered loader, so the first paint may not
+    // exist yet; one deferred attempt covers it without polling.
+    setTimeout(place, 0);
+}
+
+// The five personal entries are activated through this adapter: it releases the
+// account surface (including the mobile focus trap) and then uses the *same*
+// protected navigation as every other entry, so the deny gate, the unsaved
+// checks and the single current-item update cannot drift apart.
+function openPersonalEntry(viewId) {
+    if (!_isPersonalView(viewId)) return;
+    const entry = _accountPersonalEntry(viewId);
+    if (!entry || entry.classList.contains('hidden')) return;
+    // Focus returns to the account trigger (a visible control on the original
+    // page) when the leave is cancelled; a successful commit moves focus to the
+    // target page instead.
+    closeAccountMenu(true);
+    navigateTo(viewId);
+}
+
+// The entries are anchors with ``role="link"`` (no href, so the address bar is
+// never touched), which means Enter/Space have to be translated into activation
+// the same way the main navigation items do. Wired once: the panel DOM is a
+// single copy shared by both areas.
+function _initAccountMenuResources() {
+    if (typeof document.getElementById !== 'function') return;
+    _accountPersonalEntries().forEach(item => {
+        const activate = event => {
+            if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            openPersonalEntry(item.dataset.view);
+        };
+        item.addEventListener('click', activate);
+        item.addEventListener('keydown', activate);
+    });
+    // Tapping the backdrop of the mobile sheet closes it, like the drawer behind
+    // it; the sheet itself never closes on an inner click.
+    document.getElementById('account-menu-backdrop')
+        ?.addEventListener('click', () => closeAccountMenu(true));
+}
+
+_initAccountMenuResources();
+// === ACCOUNT_PERSONAL_NAV_END ===
 
 function toggleSidebar() {
     if (window.innerWidth >= 1024) {
@@ -2002,6 +2501,17 @@ let agentWorkbench = [];
 let agentWorkbenchLoading = false;
 let agentWorkbenchSeq = 0;
 let _wbNoticeKey = '';
+// Why the last *successful* read came back empty, as the server's stable code
+// (``no_agents`` / ``no_reachable_agents``). Kept apart from ``_wbErrorKey``
+// because an empty list is a success: presenting it as a failure would report
+// an authorization gap as a broken page and invite a pointless retry.
+let _wbEmptyReason = '';
+
+function _wbEmptyKey() {
+    return _wbEmptyReason === 'no_reachable_agents'
+        ? 'agent_workbench_empty_unreachable'
+        : 'agent_workbench_empty';
+}
 
 function _wbContext() {
     return [activeAgentId, sessionId, currentView, agentNavigationVersion,
@@ -2064,7 +2574,7 @@ async function fetchAgentWorkbench() {
         throw _wbFailure('agent_workbench_failed', false,
             'workbench projection missing: management snapshot returned');
     }
-    return data.agents.map(a => ({
+    const agents = data.agents.map(a => ({
         id: a.id,
         name: /^cowagent$/i.test((a.name || '').trim()) ? 'RongAI' : (a.name || a.id),
         description: a.description || '', avatar: a.avatar || null,
@@ -2073,10 +2583,17 @@ async function fetchAgentWorkbench() {
         // Digital-employee projection fields (positioned to render on cards).
         position: a.position || '', category: a.category || '', tags: a.tags || [],
     })).sort((a, b) => Number(b.is_default) - Number(a.is_default));
+    // The server's diagnosis of an empty roster rides along on the array so the
+    // load/apply contract stays a plain list. ``no_agents`` and ``null`` (an
+    // older backend) both mean the plain empty message.
+    agents.emptyReason = data.empty_reason === 'no_reachable_agents'
+        ? 'no_reachable_agents' : '';
+    return agents;
 }
 
 function applyAgentWorkbench(agents) {
     agentWorkbench = agents;
+    _wbEmptyReason = agents.emptyReason || '';
     // Avatars can be replaced without changing their URL or roster revision.
     const version = String(Date.now());
     agents.forEach(a => { if (a.avatar === 'image') avatarVersions[a.id] = version; });
@@ -2155,8 +2672,11 @@ function renderAgentWorkbench() {
         return;
     }
     if (!agentWorkbench.length) {
+        // Success-but-empty: the reason code picks the wording, and the status
+        // line stays the success one. A notice about an unavailable target still
+        // wins (it is a response to a user action, not a read outcome).
         if (_wbNoticeKey) setWbError(t(_wbNoticeKey));
-        else setWbStatus(t('agent_workbench_empty'));
+        else setWbStatus(t(_wbEmptyKey()));
         grid.innerHTML = '';
         return;
     }
@@ -2210,6 +2730,7 @@ function loadAgentWorkbench(manualRefresh = false) {
     _wbLoadedError = false;
     _wbErrorKey = '';
     _wbNoticeKey = '';
+    _wbEmptyReason = '';
     // Even the first paint goes through the isolating wrapper: a fault raised
     // while drawing the loading state must not escape as a synchronous throw,
     // which would break the promise contract callers rely on.
@@ -2471,6 +2992,7 @@ function renderAgentDetail() {
         <div class="agent-detail-actions">
             <button type="button" onclick="saveAgentProfile()" class="agent-btn agent-btn-primary">${escapeHtml(t('save'))}</button>
             <button type="button" onclick="startChatWithAgent('${escapeHtml(agent.id)}')" class="agent-btn agent-btn-ghost">${escapeHtml(t('agents_chat'))}</button>
+            ${isDefault ? '' : `<button type="button" onclick="setAgentAsDefault('${escapeHtml(agent.id)}')" class="agent-btn agent-btn-ghost">${escapeHtml(t('agents_set_default'))}</button>`}
             ${isDefault ? '' : `<button type="button" onclick="deleteAgent('${escapeHtml(agent.id)}')" class="agent-btn agent-btn-danger agent-detail-delete">${escapeHtml(t('agents_delete'))}</button>`}
         </div>
         <div id="agent-profile-status" class="agent-field-hint mt-3"></div>`;
@@ -2840,6 +3362,10 @@ function renderAgentTasksPane() {
             const action = task.action || {};
             const taskContent = action.content || action.task_description || '';
             const toggleId = 'agent-task-toggle-' + task.id;
+            // Same rule as the tasks page: the server decides which verbs exist
+            // for this caller, the page only draws them. An admin looking at a
+            // member's personal task sees the row without controls.
+            const caps = task.capabilities || {run: false, manage: false, view: true};
             const card = document.createElement('div');
             card.className = 'agent-task-card' + (isEnabled ? '' : ' agent-task-card-disabled');
             card.dataset.taskId = task.id;
@@ -2854,20 +3380,21 @@ function renderAgentTasksPane() {
                 <div class="flex items-center gap-4 text-xs text-slate-400 dark:text-slate-500">
                     <span><i class="fas fa-clock mr-1"></i>${escapeHtml(t('task_next_run'))}: ${nextRun}</span>
                     <div class="flex-1"></div>
-                    <button type="button" class="task-run-now px-2 py-1 rounded-md text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors">
+                    ${caps.run ? `<button type="button" class="task-run-now px-2 py-1 rounded-md text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors">
                         <i class="fas fa-play mr-1"></i>${escapeHtml(t('task_run_now'))}
-                    </button>
-                    <label class="relative inline-flex items-center cursor-pointer" for="${toggleId}">
+                    </button>` : ''}
+                    ${caps.manage ? `<label class="relative inline-flex items-center cursor-pointer" for="${toggleId}">
                         <input type="checkbox" id="${toggleId}" class="sr-only peer" ${isEnabled ? 'checked' : ''}>
                         <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-500 dark:bg-slate-600 dark:peer-checked:bg-primary-500"></div>
-                    </label>
+                    </label>` : ''}
                 </div>`;
-            card.querySelector('.task-run-now').addEventListener('click', (e) => {
+            const runButton = card.querySelector('.task-run-now');
+            if (runButton) runButton.addEventListener('click', (e) => {
                 e.stopPropagation();
                 runTaskNow(task, e.currentTarget);
             });
             const checkbox = card.querySelector('#' + toggleId);
-            checkbox.addEventListener('change', function() {
+            if (checkbox) checkbox.addEventListener('change', function() {
                 const newEnabled = this.checked;
                 fetch('/api/scheduler/toggle', {
                     method: 'POST',
@@ -3156,6 +3683,48 @@ function uploadAgentAvatar(agentId, file) {
             const p = document.getElementById('agent-edit-avatar');
             if (p) p.classList.remove('is-uploading');
         });
+}
+
+/* Make one Agent the tenant's default — the entry an Agent-less conversation
+   anchors to, and the one whose badge leads the config grid and the workbench.
+   Tenant-scoped and administrator-only on the server; the config page is only
+   reachable by an administrator, so the button follows the same audience.
+
+   The default flag is derived server-side, so we reload the catalogue rather
+   than patching one Agent in place: the badge, the grid order and the remembered
+   default all have to move together. */
+function setAgentAsDefault(agentId) {
+    if (!agentId) return Promise.resolve(false);
+    const statusEl = () => document.getElementById('agent-profile-status')
+        || document.getElementById('agent-editor-status');
+    return fetch('/api/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'set_default', id: agentId }),
+    }).then(r => r.json()).then(data => {
+        if (data.status !== 'success') {
+            throw new Error(data.code === 'forbidden'
+                ? t('agents_set_default_forbidden')
+                : (data.message || t('agents_set_default_failed')));
+        }
+        return loadAgentCatalog().then(() => {
+            renderAgentsGrid();
+            if (selectedAdminAgentId) renderAgentDetail();
+            const status = statusEl();
+            if (status) {
+                status.textContent = t('agents_set_default_done');
+                status.classList.add('agent-status-ok');
+            }
+            return true;
+        });
+    }).catch(err => {
+        const status = statusEl();
+        if (status) {
+            status.classList.remove('agent-status-ok');
+            status.textContent = err.message;
+        }
+        return false;
+    });
 }
 
 function updateAgentWorkspace(agentId, updates, _retried) {
@@ -4202,6 +4771,19 @@ function activeSessionStorageKey() {
 // Carry the selected Agent through existing console requests without forcing
 // every feature panel to implement its own routing glue.
 const _nativeFetch = window.fetch.bind(window);
+
+// Database-mode transports that are NOT under /api but still resolve their
+// tenant from the X-Tenant-ID selection. Keep this list in step with the
+// `tenant`-policy, non-/api routes in channel/web/route_registry.py: a route
+// omitted here reaches the gate looking like "no tenant selected" (400
+// missing_tenant) and the feature fails with no visible reason. `/uploads/...`
+// is deliberately absent — the browser reads it as an <img>/<audio>
+// subresource, which cannot carry a header at all; its tenant is derived from
+// the addressed Agent instead (see _uploads_identity_scope).
+const _TENANT_TRANSPORT_PATHS = ['/message', '/stream', '/poll', '/cancel', '/upload'];
+const _TENANT_TRANSPORT_RE = new RegExp(
+    `^/(?:${_TENANT_TRANSPORT_PATHS.map(p => p.slice(1)).join('|')})\\b`);
+
 window.fetch = function(input, init) {
     init = init ? { ...init } : {};
     let url = typeof input === 'string' ? input : input.url;
@@ -4209,13 +4791,12 @@ window.fetch = function(input, init) {
     // selected tenant lives in sessionStorage (cow_tenant_id) but the core
     // console requests (agents / sessions / history / knowledge) do not
     // otherwise carry it, so the backend rejects them with a 400
-    // "tenant selection required". Inject the header for same-origin /api
-    // requests here, mirroring identity-admin.js / todos.js apiFetch. This is
+    // "tenant selection required". Inject the header for same-origin requests
+    // here, mirroring identity-admin.js / todos.js apiFetch. This is
     // a no-op in legacy mode (no tenant is ever stored).
     const tenantId = sessionStorage.getItem('cow_tenant_id');
     if (tenantId && typeof url === 'string' && url.startsWith('/')
-            && (/^\/api\//.test(url)
-                || /^\/(message|stream|poll|cancel)\b/.test(url))
+            && (/^\/api\//.test(url) || _TENANT_TRANSPORT_RE.test(url))
             && !/^\/api\/auth\//.test(url)) {
         const headers = init.headers instanceof Headers
             ? new Headers(init.headers)
@@ -5580,10 +6161,14 @@ function _appendPermissionDeniedHint(toolEl, mode, kind) {
         return;
     }
     // Only a legacy mode refusal names a mode; a role/isolation/quota refusal in
-    // database mode must not blame a session mode the user cannot change.
+    // database mode must not blame a session mode the user cannot change. Name
+    // the refusal's actual source where it is known: an isolation refusal is a
+    // tenant boundary, not an authorization gap the caller's role can close.
     const text = (kind === 'mode' && mode)
         ? t('perm_denied_hint').replace('{name}', _permLabel(mode))
-        : t('perm_denied_role_hint');
+        : (kind === 'isolation'
+            ? t('perm_denied_isolation_hint')
+            : t('perm_denied_role_hint'));
     const hint = document.createElement('div');
     hint.className = 'perm-denied-hint';
     hint.innerHTML = `
@@ -8430,22 +9015,73 @@ function renderSidebarRecentSessions() {
         return;
     }
     items.forEach(s => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'sidebar-recent-item';
-        btn.setAttribute('role', 'listitem');
         const ownerId = (s.agent && s.agent.id) || '';
         const title = s.title || t('untitled_session');
+        const isActive = s.session_id === sessionId && (!ownerId || ownerId === activeAgentId);
+
+        // The row is a container, not a single button: the archive control is a
+        // sibling so it can be reached by keyboard and never triggers the open
+        // click that the main button owns.
+        const row = document.createElement('div');
+        row.className = 'sidebar-recent-row' + (isActive ? ' active' : '');
+        row.setAttribute('role', 'listitem');
+        row.dataset.sessionId = s.session_id || '';
+        if (ownerId) row.dataset.agentId = ownerId;
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'sidebar-recent-item' + (isActive ? ' active' : '');
         btn.textContent = title;
         btn.title = title;
         btn.dataset.sessionId = s.session_id || '';
         if (ownerId) btn.dataset.agentId = ownerId;
-        const isActive = s.session_id === sessionId && (!ownerId || ownerId === activeAgentId);
-        btn.classList.toggle('active', isActive);
         btn.addEventListener('click', () => {
             switchSession(s.session_id, ownerId || undefined);
         });
-        list.appendChild(btn);
+        // Double-click (or F2 on the focused row) renames in place. A single
+        // click still opens the conversation, and `switchSession` never
+        // re-renders this list, so the dblclick lands on the same node.
+        btn.addEventListener('dblclick', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            renameSidebarSession(s.session_id, ownerId);
+        });
+        btn.addEventListener('keydown', (event) => {
+            if (event.key !== 'F2') return;
+            event.preventDefault();
+            event.stopPropagation();
+            renameSidebarSession(s.session_id, ownerId);
+        });
+
+        // A visible entry point for the same in-place rename that the
+        // double-click and F2 gestures trigger, sitting beside the archive
+        // control. Order is destructive-ness ascending: rename, then archive.
+        const rename = document.createElement('button');
+        rename.type = 'button';
+        rename.className = 'sidebar-recent-rename-btn';
+        rename.setAttribute('aria-label', t('rename_session') + ': ' + title);
+        rename.title = t('rename_session');
+        rename.innerHTML = '<i class="fas fa-pen" aria-hidden="true"></i>';
+        rename.addEventListener('click', (event) => {
+            event.stopPropagation();
+            renameSidebarSession(s.session_id, ownerId);
+        });
+
+        const archive = document.createElement('button');
+        archive.type = 'button';
+        archive.className = 'sidebar-recent-archive-btn';
+        archive.setAttribute('aria-label', t('archive_session') + ': ' + title);
+        archive.title = t('archive_session');
+        archive.innerHTML = '<i class="fas fa-box-archive" aria-hidden="true"></i>';
+        archive.addEventListener('click', (event) => {
+            event.stopPropagation();
+            archiveSidebarSession(s.session_id, ownerId);
+        });
+
+        row.appendChild(btn);
+        row.appendChild(rename);
+        row.appendChild(archive);
+        list.appendChild(row);
     });
     if (more) more.classList.toggle('hidden', items.length < 1);
 }
@@ -8519,8 +9155,316 @@ function _initSidebarRecent() {
         navigateTo('history');
     });
     more?.addEventListener('click', () => navigateTo('history'));
+    // The archived view is a compact dialog rather than another workbench page:
+    // restoring is rare and should not compete with the history page entry.
+    const archivedBtn = document.getElementById('sidebar-recent-archived');
+    archivedBtn?.addEventListener('click', (event) => {
+        event.preventDefault();
+        openArchivedSessionsModal();
+    });
     loadSidebarRecentSessions();
 }
+
+// Archive one conversation from the sidebar. It disappears from history but
+// keeps every message, its project binding and its pin until restored. The row
+// is removed optimistically; a failed write puts it back and explains why.
+function archiveSidebarSession(sessionId, agentId) {
+    if (!sessionId) return;
+    const owner = agentId || activeAgentId || '';
+    const index = _sidebarRecentItems.findIndex(
+        s => s.session_id === sessionId && (!owner || (s.agent && s.agent.id) === owner));
+    const removed = index >= 0 ? _sidebarRecentItems.splice(index, 1)[0] : null;
+    if (removed) renderSidebarRecentSessions();
+    const restoreRow = () => {
+        if (!removed) return;
+        _sidebarRecentItems.splice(Math.min(index, _sidebarRecentItems.length), 0, removed);
+        renderSidebarRecentSessions();
+    };
+    fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ archived: true, agent_id: owner }),
+    })
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'success') {
+                _wsToast(t('session_archived'));
+                loadSidebarRecentSessions();
+                return;
+            }
+            restoreRow();
+            _wsToast(data.message || t('session_archive_failed'));
+        })
+        .catch(() => {
+            restoreRow();
+            _wsToast(t('session_archive_failed'));
+        });
+}
+
+// Rename one sidebar conversation in place. Mirrors the history page's
+// `renameSession`: Enter saves, Escape cancels, blur saves; success is silent
+// and a failed write rolls the title back with a reason. Single-click still
+// opens the conversation, so this never has to steal the open click.
+function renameSidebarSession(sessionId, agentId) {
+    if (!sessionId) return;
+    const owner = agentId || activeAgentId || '';
+    const list = document.getElementById('sidebar-recent-list');
+    if (!list) return;
+    const row = [...list.querySelectorAll('.sidebar-recent-row')].find(el =>
+        el.dataset.sessionId === sessionId
+        && (!owner || el.dataset.agentId === owner));
+    if (!row) return;
+    const btn = row.querySelector('.sidebar-recent-item');
+    if (!btn || row.querySelector('.sidebar-recent-rename-input')) return;
+
+    const entry = _sidebarRecentItems.find(s => s.session_id === sessionId
+        && (!owner || (s.agent && s.agent.id) === owner));
+    const oldTitle = (entry && entry.title) || btn.textContent || '';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'sidebar-recent-rename-input';
+    input.value = oldTitle;
+    input.maxLength = 100;
+    input.setAttribute('aria-label', t('rename_session'));
+
+    // The row's main button owns the open click; interacting with the editor
+    // must never bubble into it.
+    const stop = event => event.stopPropagation();
+    input.addEventListener('click', stop);
+    input.addEventListener('mousedown', stop);
+
+    // An input cannot legally nest inside a button, so hide the button and put
+    // the editor beside it in the row.
+    btn.classList.add('hidden');
+    row.insertBefore(input, btn);
+    input.focus();
+    input.select();
+
+    let done = false;
+    const restore = (title) => {
+        done = true;
+        if (title !== undefined) btn.textContent = title;
+        input.remove();
+        btn.classList.remove('hidden');
+    };
+    const revert = (title) => {
+        if (entry) entry.title = title;
+        btn.textContent = title;
+    };
+    const commit = () => {
+        if (done) return;
+        const newTitle = input.value.trim();
+        if (!newTitle || newTitle === oldTitle) { restore(oldTitle); return; }
+        // Optimistic: the row and the cached entry both move to the new title.
+        if (entry) entry.title = newTitle;
+        restore(newTitle);
+        fetch(`/api/sessions/${encodeURIComponent(sessionId)}?agent_id=${encodeURIComponent(owner)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: newTitle, agent_id: owner }),
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'success') return;
+                revert(oldTitle);
+                _wsToast(data.message || t('session_settings_failed'));
+            })
+            .catch(() => {
+                revert(oldTitle);
+                _wsToast(t('session_settings_failed'));
+            });
+    };
+
+    input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) {
+            event.preventDefault();
+            commit();
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
+            restore(oldTitle);
+        }
+    });
+    input.addEventListener('blur', commit);
+}
+
+// === ARCHIVED_SESSIONS_BEGIN ===
+let _archivedSessionsSeq = 0;
+let _archivedSessionsBody = null;
+
+// Local, dependency-free time label: the archived dialog lives in its own
+// section, so it does not reach for the history page's formatter. ``typeof``
+// keeps it usable when ``currentLang`` is absent (unit harnesses).
+function _archivedTimeLabel(timestamp) {
+    const ts = Number(timestamp);
+    if (!ts) return '';
+    const date = new Date(ts * 1000);
+    if (Number.isNaN(date.getTime())) return '';
+    const lang = typeof currentLang === 'undefined' ? 'zh' : currentLang;
+    const locale = lang === 'en' ? 'en-US' : lang === 'zh-Hant' ? 'zh-TW' : 'zh-CN';
+    const ymd = date.toLocaleDateString(locale, { year: 'numeric', month: '2-digit', day: '2-digit' });
+    const hm = date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false });
+    return `${ymd} ${hm}`;
+}
+
+function _renderArchivedStatus(body, key, retry) {
+    if (!body) return;
+    body.innerHTML = '';
+    const status = document.createElement('div');
+    status.className = 'archived-sessions-status';
+    status.textContent = t(key);
+    body.appendChild(status);
+    if (retry) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'archived-session-retry';
+        button.textContent = t('archived_retry');
+        button.addEventListener('click', () => _loadArchivedSessions(body));
+        body.appendChild(button);
+    }
+}
+
+function _renderArchivedSessions(body, sessions) {
+    if (!body) return;
+    if (!sessions.length) {
+        _renderArchivedStatus(body, 'archived_empty', false);
+        return;
+    }
+    body.innerHTML = '';
+    sessions.forEach(s => {
+        const ownerId = (s.agent && s.agent.id) || '';
+        const title = s.title || t('untitled_session');
+        const meta = [
+            (s.agent && (s.agent.name || s.agent.id)) || '',
+            (s.project && s.project.name) || '',
+        ].filter(Boolean).join(' · ');
+
+        const row = document.createElement('div');
+        row.className = 'archived-session-row';
+        row.dataset.sessionId = s.session_id || '';
+        if (ownerId) row.dataset.agentId = ownerId;
+
+        const copy = document.createElement('span');
+        copy.className = 'archived-session-copy';
+        const titleEl = document.createElement('span');
+        titleEl.className = 'archived-session-title';
+        titleEl.textContent = title;
+        titleEl.title = title;
+        copy.appendChild(titleEl);
+        if (meta) {
+            const metaEl = document.createElement('span');
+            metaEl.className = 'archived-session-meta';
+            metaEl.textContent = meta;
+            copy.appendChild(metaEl);
+        }
+        const time = _archivedTimeLabel(s.last_active);
+        if (time) {
+            const timeEl = document.createElement('span');
+            timeEl.className = 'archived-session-time';
+            timeEl.textContent = time;
+            copy.appendChild(timeEl);
+        }
+
+        const restore = document.createElement('button');
+        restore.type = 'button';
+        restore.className = 'archived-session-restore';
+        restore.textContent = t('session_restore');
+        restore.addEventListener('click', () => restoreArchivedSession(s.session_id, ownerId));
+
+        row.appendChild(copy);
+        row.appendChild(restore);
+        body.appendChild(row);
+    });
+}
+
+function _loadArchivedSessions(body) {
+    if (!body) return;
+    const seq = ++_archivedSessionsSeq;
+    body.innerHTML = '';
+    const loading = document.createElement('div');
+    loading.className = 'archived-sessions-status';
+    loading.textContent = t('archived_loading');
+    body.appendChild(loading);
+    fetch('/api/sessions?scope=all&archived=1&page=1&page_size=50')
+        .then(async r => ({ ok: r.ok, data: await r.json().catch(() => ({})) }))
+        .then(({ ok, data }) => {
+            if (seq !== _archivedSessionsSeq) return;
+            if (!ok || !data || data.status !== 'success') {
+                _renderArchivedStatus(body, 'archived_load_failed', true);
+                return;
+            }
+            _renderArchivedSessions(body, data.sessions || []);
+        })
+        .catch(() => {
+            if (seq !== _archivedSessionsSeq) return;
+            _renderArchivedStatus(body, 'archived_load_failed', true);
+        });
+}
+
+function openArchivedSessionsModal() {
+    const existing = document.getElementById('confirm-modal-overlay');
+    if (existing) existing.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'confirm-modal-overlay';
+    overlay.className = 'confirm-overlay';
+
+    const modal = document.createElement('div');
+    modal.className = 'confirm-modal archived-sessions-modal';
+    const title = document.createElement('div');
+    title.className = 'confirm-title';
+    title.textContent = t('archived_sessions');
+    const body = document.createElement('div');
+    body.className = 'archived-sessions-body';
+    body.id = 'archived-sessions-body';
+    const actions = document.createElement('div');
+    actions.className = 'confirm-actions';
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'confirm-btn confirm-btn-cancel';
+    close.textContent = t('archived_close');
+    actions.appendChild(close);
+    modal.appendChild(title);
+    modal.appendChild(body);
+    modal.appendChild(actions);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('visible'));
+
+    const dismiss = () => {
+        _archivedSessionsSeq++;
+        _archivedSessionsBody = null;
+        overlay.classList.remove('visible');
+        setTimeout(() => overlay.remove(), 200);
+    };
+    overlay.addEventListener('click', (event) => { if (event.target === overlay) dismiss(); });
+    close.addEventListener('click', dismiss);
+
+    _archivedSessionsBody = body;
+    _loadArchivedSessions(body);
+}
+
+function restoreArchivedSession(sessionId, agentId) {
+    if (!sessionId) return;
+    const owner = agentId || activeAgentId || '';
+    fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ archived: false, agent_id: owner }),
+    })
+        .then(r => r.json())
+        .then(data => {
+            if (data.status !== 'success') {
+                _wsToast(data.message || t('session_restore_failed'));
+                return;
+            }
+            _wsToast(t('session_restored'));
+            loadSidebarRecentSessions();
+            _loadArchivedSessions(_archivedSessionsBody);
+        })
+        .catch(() => _wsToast(t('session_restore_failed')));
+}
+// === ARCHIVED_SESSIONS_END ===
+
 // Never run sidebar init inline during console.js evaluation: deferred scripts
 // can already be past `loading`, and sync init may call render paths that
 // reference lets declared later in this file.
@@ -10968,12 +11912,53 @@ function switchMemoryTab(tab) {
     loadMemoryView(1);
 }
 
+/**
+ * Render a refused memory read as a terminal state instead of an empty folder.
+ *
+ * Both memory reads used to `return` on `status !== 'success'`, which left the
+ * previous rows (or the "loading" copy) on screen and swallowed the catch: a
+ * 403, a 503 and "this Agent has no memory files yet" all ended up looking the
+ * same, and the console could not say which one happened. The reason now comes
+ * from the server payload and the stale rows are cleared, so what is displayed
+ * is the answer to the request that was actually made.
+ *
+ * `keepList` is for one *file* failing to open: the list is still the correct
+ * answer for the list request and must not be wiped over a single read.
+ */
+function _memoryRefusal(data, opts) {
+    const keepList = !!(opts && opts.keepList);
+    const message = (data && typeof data.message === 'string' && data.message.trim())
+        ? data.message.trim()
+        : (currentLang === 'zh' ? '读取记忆失败' : 'Failed to read memory');
+    const emptyEl = document.getElementById('memory-empty');
+    const listEl = document.getElementById('memory-list');
+    const pagEl = document.getElementById('memory-pagination');
+    const tbody = document.getElementById('memory-table-body');
+    if (tbody) tbody.innerHTML = '';
+    if (pagEl) pagEl.innerHTML = '';
+    if (!keepList && listEl) listEl.classList.add('hidden');
+    if (emptyEl) {
+        const icon = emptyEl.querySelector('i');
+        const title = emptyEl.querySelector('p');
+        const hint = emptyEl.querySelectorAll('p')[1];
+        if (icon) icon.className = 'fas fa-triangle-exclamation text-amber-500 text-xl';
+        if (title) title.textContent = message;
+        if (hint) {
+            hint.textContent = currentLang === 'zh'
+                ? '这不是「暂无记忆」；原因来自服务端。' : 'This is not "no memory files"; the reason comes from the server.';
+        }
+        if (!keepList) emptyEl.classList.remove('hidden');
+    }
+    _wsToast(message);
+    return message;
+}
+
 function loadMemoryView(page) {
     page = page || 1;
     memoryPage = page;
     const agent = viewingMemoryAgentId();
     fetch(`/api/memory?page=${page}&page_size=${memoryPageSize}&category=${memoryCategory}&agent_id=${encodeURIComponent(agent || '')}`).then(r => r.json()).then(data => {
-        if (data.status !== 'success') return;
+        if (data.status !== 'success') return _memoryRefusal(data);
         const emptyEl = document.getElementById('memory-empty');
         const listEl = document.getElementById('memory-list');
         const files = data.list || [];
@@ -11033,7 +12018,7 @@ function loadMemoryView(page) {
         if (page < totalPages) pagHtml += `<button onclick="loadMemoryView(${page + 1})" class="px-3 py-1 rounded-lg border border-slate-200 dark:border-white/10 hover:bg-slate-100 dark:hover:bg-white/10 text-xs">Next</button>`;
         pagHtml += '</div>';
         pagEl.innerHTML = pagHtml;
-    }).catch(() => {});
+    }).catch(() => _memoryRefusal(null));
 }
 
 // =====================================================================
@@ -11110,7 +12095,7 @@ function openMemoryFile(filename, category) {
     category = category || 'memory';
     const agent = viewingMemoryAgentId();
     fetch(`/api/memory/content?filename=${encodeURIComponent(filename)}&category=${category}&agent_id=${encodeURIComponent(agent || '')}`).then(r => r.json()).then(data => {
-        if (data.status !== 'success') return;
+        if (data.status !== 'success') return _memoryRefusal(data, { keepList: true });
         document.getElementById('memory-panel-list').classList.add('hidden');
         document.getElementById('memory-panel-viewer').classList.remove('hidden');
         memoryEditor.open({
@@ -11121,7 +12106,7 @@ function openMemoryFile(filename, category) {
             relPath: data.rel_path || filename,
             content: data.content || '',
         });
-    }).catch(() => {});
+    }).catch(() => _memoryRefusal(null, { keepList: true }));
 }
 
 function closeMemoryViewer() {
@@ -13184,9 +14169,43 @@ const TENANT_CHANNEL_SCAN_TYPES = {
     wecom_bot: 'startTenantWecomScan',
 };
 
+// The wording each scan flow uses. A scan flow creates one specific kind of app
+// with its own credentials, so the copy belongs to the type and not to the
+// shared panel: rendering a WeCom bot's entry with Feishu's "一键创建飞书应用"
+// tells the operator the wrong thing about what the button will do and which
+// app to expect afterwards. Declared beside the start function so a new type is
+// added in one place, and pinned by the card contract test.
+const TENANT_CHANNEL_SCAN_COPY = {
+    feishu: {
+        tab: 'feishu_mode_scan',
+        manualTab: 'feishu_mode_manual',
+        desc: 'feishu_scan_desc',
+        btn: 'feishu_scan_btn',
+    },
+    wecom_bot: {
+        tab: 'wecom_mode_scan',
+        manualTab: 'wecom_mode_manual',
+        desc: 'wecom_scan_desc',
+        btn: 'wecom_scan_btn',
+    },
+};
+
+// A type supports scanning only when both tables know it: the start function to
+// run and the copy to show. Requiring both means the two cannot drift into a
+// half-registered type — which is exactly how a WeCom card came to be rendered
+// with Feishu's wording — and the card contract test fails if one is added
+// without the other.
 function tenantChannelSupportsScan(channelType) {
-    return Object.prototype.hasOwnProperty.call(
-        TENANT_CHANNEL_SCAN_TYPES, channelType || '');
+    const type = channelType || '';
+    return Object.prototype.hasOwnProperty.call(TENANT_CHANNEL_SCAN_TYPES, type)
+        && Object.prototype.hasOwnProperty.call(TENANT_CHANNEL_SCAN_COPY, type);
+}
+
+// The scan copy for a type. Only called for types ``tenantChannelSupportsScan``
+// accepted, so the null branch is unreachable by construction; it stays explicit
+// rather than borrowing another type's wording.
+function tenantChannelScanCopy(channelType) {
+    return TENANT_CHANNEL_SCAN_COPY[channelType || ''] || null;
 }
 
 // Icon / colour come from the server's type description (the same declaration
@@ -13212,6 +14231,7 @@ function buildTenantChannelForm(inst) {
     const editing = !!(inst && inst.id);
     const supportsScan = tenantChannelSupportsScan(channelType);
     const scanStart = supportsScan ? TENANT_CHANNEL_SCAN_TYPES[channelType] : '';
+    const scanCopy = supportsScan ? tenantChannelScanCopy(channelType) : null;
     const mode = draft.mode === 'scan' && supportsScan ? 'scan' : 'manual';
     const scanStatusId = `tenant-channel-scan-status-${iid}`;
 
@@ -13222,12 +14242,12 @@ function buildTenantChannelForm(inst) {
             <button type="button" data-tenant-channel-mode="scan"
                 onclick="switchTenantChannelMode('${escapeHtml(iid)}', 'scan')"
                 class="flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${mode === 'scan' ? activeClasses : inactiveClasses}">
-                ${t('feishu_mode_scan')}
+                ${t(scanCopy.tab)}
             </button>
             <button type="button" data-tenant-channel-mode="manual"
                 onclick="switchTenantChannelMode('${escapeHtml(iid)}', 'manual')"
                 class="flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${mode === 'manual' ? activeClasses : inactiveClasses}">
-                ${t('feishu_mode_manual')}
+                ${t(scanCopy.manualTab)}
             </button>
         </div>` : `
         <div class="flex items-center justify-center gap-1 mb-5 bg-slate-100 dark:bg-white/5 rounded-lg p-1">
@@ -13243,11 +14263,11 @@ function buildTenantChannelForm(inst) {
     const scanPane = supportsScan ? `
         <div id="tenant-channel-pane-scan-${escapeHtml(iid)}" class="${mode === 'scan' ? '' : 'hidden'}">
             <div class="flex flex-col items-center py-4">
-                <p class="text-sm text-slate-600 dark:text-slate-300 mb-3 text-center">${t('feishu_scan_desc')}</p>
+                <p class="text-sm text-slate-600 dark:text-slate-300 mb-3 text-center">${t(scanCopy.desc)}</p>
                 <button type="button" onclick="${scanStart}('${scanStatusId}', '${escapeHtml(iid)}')"
                     class="mt-2 px-6 py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-medium
                            cursor-pointer transition-colors duration-150">
-                    <i class="fas fa-qrcode mr-2"></i>${t('feishu_scan_btn')}
+                    <i class="fas fa-qrcode mr-2"></i>${t(scanCopy.btn)}
                 </button>
                 <div id="${scanStatusId}" class="mt-4 w-full"></div>
             </div>
@@ -15231,10 +16251,16 @@ function runTaskNow(task, button) {
             const originalHtml = button.innerHTML;
             button.disabled = true;
             button.innerHTML = `<i class="fas fa-spinner fa-spin mr-1"></i>${t('task_run_now')}`;
+            // One key per click: the server treats the same key as the same
+            // request, so a retry after a lost response cannot queue a second
+            // fire (the task id alone cannot say "same request").
+            const runKey = (window.crypto && window.crypto.randomUUID)
+                ? window.crypto.randomUUID()
+                : String(Date.now()) + '-' + Math.random().toString(36).slice(2);
             fetch('/api/scheduler/run', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({task_id: task.id, agent_id: task.agent_id || ''})
+                body: JSON.stringify({task_id: task.id, run_key: runKey, agent_id: task.agent_id || ''})
             }).then(r => r.json()).then(res => {
                 if (res.status !== 'success') throw new Error(res.message || t('task_run_failed'));
                 button.innerHTML = `<i class="fas fa-check mr-1"></i>${t('task_run_started')}`;
@@ -15296,9 +16322,17 @@ function loadTasksView() {
 
         allTasks.forEach(task => {
             const isEnabled = task.enabled !== false;
+            // The per-task verbs come from the server's own authorization
+            // decision (`capabilities`, computed by the same service the five
+            // handlers call), so the buttons cannot offer an action the server
+            // would refuse: a task owned by someone else is listed with
+            // `run`/`manage` false instead of showing controls that 403.
+            const caps = task.capabilities || {run: false, manage: false, view: true};
+            const isMine = (task.scope || 'public') === 'personal';
             const card = document.createElement('div');
             card.className = 'bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10 p-4';
             card.dataset.taskId = task.id;
+            card.dataset.taskScope = task.scope || 'public';
             if (!isEnabled) card.classList.add('opacity-50');
             const schedule = task.schedule || {};
             let typeLabel = '';
@@ -15325,6 +16359,13 @@ function loadTasksView() {
             const action = task.action || {};
             const taskContent = action.content || action.task_description || '';
             const toggleId = 'toggle-' + task.id;
+            // Scope chip: "mine" vs the Agent's own schedule. The distinction is
+            // what the owner rules turn on, so the page has to show it.
+            const scopeChip = `<span class="text-[10px] leading-none px-1.5 py-0.5 rounded-full ${isMine
+                ? 'bg-primary-50 text-primary-500 dark:bg-primary-500/10'
+                : 'bg-slate-100 text-slate-400 dark:bg-white/10'}">${escapeHtml(isMine
+                    ? (currentLang === 'zh' ? '本人' : 'Mine')
+                    : (currentLang === 'zh' ? '公共' : 'Shared'))}</span>`;
             // Owner chip: only when several Agents exist (otherwise every task
             // carries the same face and it's just noise). Empty on a solo install.
             const owner = (multiAgentMode() && task.agent_id) ? findAgent(task.agent_id) : null;
@@ -15337,6 +16378,7 @@ function loadTasksView() {
                 <div class="flex items-center gap-2 mb-2">
                     <span class="w-2 h-2 rounded-full ${isEnabled ? 'bg-primary-400' : 'bg-slate-300 dark:bg-slate-600'}"></span>
                     <span class="font-medium text-sm text-slate-700 dark:text-slate-200">${escapeHtml(task.name || task.id || '--')}</span>
+                    ${scopeChip}
                     ${ownerChip}
                     <div class="flex-1"></div>
                     ${typeLabel}
@@ -15345,21 +16387,21 @@ function loadTasksView() {
                 <div class="flex items-center gap-4 text-xs text-slate-400 dark:text-slate-500">
                     <span><i class="fas fa-clock mr-1"></i>${currentLang === 'zh' ? '下次执行' : 'Next run'}: ${nextRun}</span>
                     <div class="flex-1"></div>
-                    <button type="button" class="task-run-now px-2 py-1 rounded-md text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors">
+                    ${caps.run ? `<button type="button" class="task-run-now px-2 py-1 rounded-md text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors">
                         <i class="fas fa-play mr-1"></i>${t('task_run_now')}
-                    </button>
-                    <label class="relative inline-flex items-center cursor-pointer" for="${toggleId}">
+                    </button>` : ''}
+                    ${caps.manage ? `<label class="relative inline-flex items-center cursor-pointer" for="${toggleId}">
                         <input type="checkbox" id="${toggleId}" class="sr-only peer" ${isEnabled ? 'checked' : ''}>
                         <div class="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-500 dark:bg-slate-600 dark:peer-checked:bg-primary-500"></div>
-                    </label>
+                    </label>` : ''}
                 </div>`;
             const runButton = card.querySelector('.task-run-now');
-            runButton.addEventListener('click', function(e) {
+            if (runButton) runButton.addEventListener('click', function(e) {
                 e.stopPropagation();
                 runTaskNow(task, runButton);
             });
             const checkbox = card.querySelector('#' + toggleId);
-            checkbox.addEventListener('change', function() {
+            if (checkbox) checkbox.addEventListener('change', function() {
                 const newEnabled = this.checked;
                 fetch('/api/scheduler/toggle', {
                     method: 'POST',
@@ -15572,6 +16614,50 @@ function selectKnowledgeAgent(agentId) {
     loadKnowledgeView();
 }
 
+// Knowledge writes (create/rename/delete/move/import) are authorized by the
+// selected Agent's data root and the caller's relation to it, which the server
+// projects as ``can_write_knowledge`` on every Agent (mirrors the server's
+// ``_knowledge_write_authorized``). A missing projection means "capability
+// unknown", NOT "denied": degrade to the admin qualification the write path
+// always honours, so a slow /api/agents never hides a management entry. The
+// server remains authoritative and still refuses a direct request.
+function canWriteKnowledge() {
+    const agent = findAgent(viewingKnowledgeAgentId());
+    if (agent && typeof agent.can_write_knowledge === 'boolean') {
+        return agent.can_write_knowledge;
+    }
+    const ctx = _baseAuthContext();
+    if (!ctx) return true;
+    if (ctx.authorization_mode === 'all') return true;
+    return ctx.is_tenant_admin === true;
+}
+
+function renderKnowledgeWriteAffordances() {
+    const menu = document.getElementById('knowledge-new-menu');
+    if (menu) menu.classList.toggle('hidden', !canWriteKnowledge());
+}
+
+// Replace the hardcoded "加载知识库中..." placeholder when the read call answers
+// anything but success. Before this, the handler-less closed consumer left the
+// page spinning forever with no explanation (the same defect /api/channels had).
+function renderKnowledgeUnavailable(data) {
+    const emptyEl = document.getElementById('knowledge-empty');
+    const docsPanel = document.getElementById('knowledge-panel-docs');
+    const statsEl = document.getElementById('knowledge-stats');
+    if (statsEl) statsEl.textContent = '';
+    if (docsPanel) docsPanel.classList.add('hidden');
+    if (!emptyEl) return;
+    const code = String((data && (data.code || data.message)) || '');
+    const key = (code === 'forbidden' || code === 'knowledge_write_required'
+        || /forbidden/i.test(code)) ? 'knowledge_forbidden' : 'knowledge_unavailable';
+    const lines = emptyEl.querySelectorAll('p');
+    if (lines[0]) lines[0].textContent = t(key);
+    if (lines[1]) lines[1].textContent = (data && data.message) ? String(data.message) : '';
+    const guideEl = document.getElementById('knowledge-empty-guide');
+    if (guideEl) guideEl.classList.add('hidden');
+    emptyEl.classList.remove('hidden');
+}
+
 function loadKnowledgeView(targetPath) {
     // Reset to docs tab
     switchKnowledgeTab('docs');
@@ -15584,9 +16670,13 @@ function loadKnowledgeView(targetPath) {
         removeScopedPreference('cow_knowledge_agent');
     }
     renderKnowledgeAgentSelect();
+    renderKnowledgeWriteAffordances();
 
     fetch(_kbUrl('/api/knowledge/list')).then(r => r.json()).then(data => {
-        if (data.status !== 'success') return;
+        if (data.status !== 'success') {
+            renderKnowledgeUnavailable(data);
+            return;
+        }
         initKnowledgeImportDropZone();
 
         const emptyEl = document.getElementById('knowledge-empty');
@@ -15744,11 +16834,13 @@ function _knowledgeActionButton(icon, title, handler) {
 
 function _knowledgeFileActions(path) {
     if (path === 'index.md' || path === 'log.md') return '';
+    if (!canWriteKnowledge()) return '';
     const value = JSON.stringify(path).replace(/"/g, '&quot;');
     return `<span class="knowledge-actions">${_knowledgeActionButton('fa-arrow-right-arrow-left', '移动', `moveKnowledgeDocument(${value})`)}${_knowledgeActionButton('fa-trash', '删除', `deleteKnowledgeDocument(${value})`)}</span>`;
 }
 
 function _knowledgeCategoryActions(path) {
+    if (!canWriteKnowledge()) return '';
     const value = JSON.stringify(path).replace(/"/g, '&quot;');
     return `<span class="knowledge-actions">${_knowledgeActionButton('fa-pen', '重命名', `renameKnowledgeCategory(${value})`)}${_knowledgeActionButton('fa-trash', '删除', `deleteKnowledgeCategory(${value})`)}</span>`;
 }
@@ -15996,6 +17088,7 @@ function selectKnowledgeImportFiles() {
 }
 
 function openKnowledgeImportDialog(files) {
+    if (!canWriteKnowledge()) return;
     const validationError = validateKnowledgeImportFiles(files);
     if (validationError) {
         _setKnowledgeStatus(validationError, true);
@@ -16086,7 +17179,7 @@ function initKnowledgeImportDropZone() {
             if (event.type === 'drop') {
                 event.preventDefault();
                 const files = Array.from(event.dataTransfer?.files || []);
-                if (files.length) openKnowledgeImportDialog(files);
+                if (files.length && canWriteKnowledge()) openKnowledgeImportDialog(files);
             }
             panel.classList.remove('knowledge-import-drag-over');
         });
@@ -16897,15 +17990,8 @@ function initApp() {
 let _accountSelf = null;
 let _accountSelfSeq = 0;
 let _accountSelfRequest = null;
-// Bump on each successful self-avatar upload so the hero image refetches.
-let _accountAvatarVersion = '';
-// Current tenant's authoritative /auth/context capability summary, cached per
-// account/epoch. This is the *display* projection used to gate the sidebar and
-// navigation availability (console_pages / authorization_mode / is_tenant_admin);
-// the server still independently authorizes every API call.
-let _authContext = null;
-let _authContextSeq = 0;
-let _authContextRequest = null;
+// Current tenant's authoritative /auth/context capability summary is declared
+// with the sidebar account state above (identity invalidation drops it there).
 let _activeAccountPanel = null;  // 'profile' | 'password' | 'prefs' | 'tenant' | 'about'
 
 function _db() { return _identityMode() === 'database'; }
@@ -17004,12 +18090,18 @@ function _baseAuthContext() {
 // epoch change (account switch/logout). No X-Tenant-ID present -> null (unknown);
 // this function never throws.
 async function _fetchTenantAuthorization() {
-    if (_identityMode() !== 'database') return null;
+    if (_identityMode() !== 'database') { _authContextPhase = 'unknown'; return null; }
     if (_authContextRequest) return _authContextRequest;
     const tenantId = sessionStorage.getItem('cow_tenant_id') || '';
-    if (!tenantId) return null;
+    if (!tenantId) { _authContextPhase = 'unknown'; return null; }
     const seq = ++_authContextSeq;
     const epoch = _authEpoch;
+    // From here on the member's personal entries have an authoritative answer
+    // pending: the account panel reports "checking" rather than an empty list,
+    // and never offers an unconfirmed entry (change
+    // move-personal-menu-to-account, task 3.2).
+    _authContextPhase = 'checking';
+    _renderAccountResources();
     const request = Promise.resolve().then(async () => {
         try {
             const resp = await fetch('/auth/context', {
@@ -17021,12 +18113,17 @@ async function _fetchTenantAuthorization() {
             if (epoch !== _authEpoch) return null;
             if (resp.status === 401 || resp.status === 403 || data.status !== 'success') {
                 _authContext = null;
+                _authContextPhase = 'failed';
                 return null;
             }
             _authContext = data;
+            _authContextPhase = 'ready';
             return data;
         } catch (_) {
-            if (seq === _authContextSeq && epoch === _authEpoch) _authContext = null;
+            if (seq === _authContextSeq && epoch === _authEpoch) {
+                _authContext = null;
+                _authContextPhase = 'failed';
+            }
             return null;
         } finally {
             if (_authContextRequest === request) _authContextRequest = null;
@@ -17037,9 +18134,12 @@ async function _fetchTenantAuthorization() {
 }
 
 // Reset the cached /auth/context when the tenant selection changes, so stale
-// capability data from a previous tenant is never used to gate navigation.
+// capability data from a previous tenant is never used to gate navigation. The
+// phase goes back to "unknown" with it: no summary is cached, so the next read
+// is a fresh check rather than a remembered verdict.
 function _invalidateAuthContext() {
     _authContext = null;
+    _authContextPhase = 'unknown';
 }
 
 // Map a view id to its authoritative console_pages key (or '' if none). Server
@@ -17151,6 +18251,14 @@ function _applySidebarPermissions(self) {
                 item.classList.add('hidden');
                 return;
             }
+            // A capability the deployment withdrew is not offered either (task
+            // 9.1): the entry is hidden, while a direct URL still reaches the
+            // page body, which names the capability instead of pretending the
+            // member lacks a grant.
+            if (pageInfo.reason === 'capability_disabled') {
+                item.classList.add('hidden');
+                return;
+            }
             // Workbench pages have no admin availability gate here.
             if (key.indexOf('admin.') !== 0) return;
             const available = allMode ? true : !!(pageInfo.available);
@@ -17172,6 +18280,15 @@ function _applySidebarPermissions(self) {
     // Per-item: platform entries only for a platform admin.
     const platformEl = document.querySelector('.sidebar-item[data-view="platform"]');
     if (platformEl) platformEl.classList.toggle('hidden', !isPlatformAdmin);
+
+    // The five 「我的」 entries no longer live in #sidebar-nav: they are hosted by
+    // the account panel, which consumes the *same* authoritative verdict through
+    // _consolePageEntryState. Recomputing it here keeps one owner for the
+    // projection, so withdrawing a menu hides the account entry, re-granting it
+    // brings it back, and no client-side role list is introduced (change
+    // move-personal-menu-to-account, task 3.1).
+    _renderAccountResources();
+    _syncAccountPersonalCurrent();
 }
 
 function openAccountProfile() {
@@ -17213,7 +18330,11 @@ function renderAccountProfile() {
     // Read mode values
     _accountText(_ACCOUNT_PROFILE_SEL.displayName, displayName);
     _accountText(_ACCOUNT_PROFILE_SEL.username, user.username || '—');
-    _accountText(_ACCOUNT_PROFILE_SEL.platform, user.is_platform_admin ? t('platform_admin_badge') : t('account_public_mode'));
+    if (user.is_platform_admin) {
+        _accountChips(_ACCOUNT_PROFILE_SEL.platform, [t('platform_admin_badge')]);
+    } else {
+        _accountText(_ACCOUNT_PROFILE_SEL.platform, t('account_public_mode'));
+    }
 
     // Resolve the selected tenant's membership from the self list.
     const tid = sessionStorage.getItem('cow_tenant_id');
@@ -17231,7 +18352,7 @@ function renderAccountProfile() {
     const m = entry.membership || {};
     _accountText(_ACCOUNT_PROFILE_SEL.tenant, entry.name || entry.code || entry.id);
     _accountText(_ACCOUNT_PROFILE_SEL.memberName, m.display_name || t('account_profile_empty'));
-    _accountText(_ACCOUNT_PROFILE_SEL.role, (m.roles || []).map(r => r.name || r.code).join(', ') || t('account_profile_empty'));
+    _accountChips(_ACCOUNT_PROFILE_SEL.role, (m.roles || []).map(r => r.name || r.code));
     _accountText(_ACCOUNT_PROFILE_SEL.department, m.department ? (m.department.name || m.department.id) : t('account_profile_empty'));
     _accountText(_ACCOUNT_PROFILE_SEL.position, m.position_text || t('account_profile_empty'));
 }
@@ -17248,17 +18369,41 @@ function closeAccountProfile() {
 let _accountProfileEditing = false;
 let _accountProfileAvatarUploading = false;
 
-// Render the caller's own avatar (or an initial disc) in the hero + menu.
+// Render the caller's own avatar (an uploaded picture, or the id-stable
+// default) in the hero + menu.
+//
+// NOTE: this repaints the disc's whole innerHTML. The file input and the edit
+// badge therefore live outside `#account-profile-avatar` (as siblings in
+// `.account-profile-avatar-wrap`); nesting them here would delete them on every
+// load and silently break the avatar picker.
 function renderAccountProfileAvatar(user) {
     const box = document.getElementById('account-profile-avatar');
     if (!box) return;
-    if (user && user.avatar === 'image') {
-        const v = _accountAvatarVersion || user.id || Date.now();
-        box.innerHTML = `<img src="/auth/profile/avatar?v=${encodeURIComponent(v)}" alt="">`;
-    } else {
-        const initial = avatarInitial(user && (user.display_name || user.id));
-        box.innerHTML = `<span class="account-profile-avatar-initial">${escapeHtml(initial)}</span>`;
-    }
+    const u = user || {};
+    const v = _accountAvatarVersion || u.id || Date.now();
+    box.innerHTML = userAvatarHTML({ id: u.id, avatar: u.avatar, self: true, version: v });
+}
+
+// Changing the avatar is deliberately a double-click gesture: the disc sits in
+// a hero the user also clicks at casually, and a stray single click must not
+// open a native file dialog. `MouseEvent.detail` carries the click count, so
+// the first click (1) is ignored and the second (2) opens the picker. Keyboard
+// activation (Enter/Space) reports 0, so the disc stays operable without a
+// pointer.
+function handleAccountProfileAvatarActivate(event) {
+    const detail = event && typeof event.detail === 'number' ? event.detail : 0;
+    if (detail === 1) return;
+    openAccountProfileAvatarPicker();
+}
+
+// Open the hidden file input for a new avatar.
+function openAccountProfileAvatarPicker() {
+    if (_accountProfileAvatarUploading) return;
+    const input = document.getElementById('account-profile-avatar-input');
+    if (!input) return;
+    // Clear first: re-picking the *same* file must still fire `change`.
+    input.value = '';
+    input.click();
 }
 
 // Reset to the read-only state (clean inputs, exit edit mode).
@@ -17446,8 +18591,6 @@ function uploadAccountProfileAvatar(file) {
             if (loader) loader.classList.remove('is-uploading');
         });
 }
-
-// Render the profile avatar picker (preview + upload trigger) in the hero.
 
 
 // --- change password ----------------------------------------------------
@@ -17726,6 +18869,8 @@ window.startAccountProfileEdit = startAccountProfileEdit;
 window.cancelAccountProfileEdit = cancelAccountProfileEdit;
 window.submitAccountProfile = submitAccountProfile;
 window.uploadAccountProfileAvatar = uploadAccountProfileAvatar;
+window.handleAccountProfileAvatarActivate = handleAccountProfileAvatarActivate;
+window.openAccountProfileAvatarPicker = openAccountProfileAvatarPicker;
 window.closeAccountPassword = closeAccountPassword;
 window.cancelAccountPassword = cancelAccountPassword;
 window.openAccountPrefs = openAccountPrefs;

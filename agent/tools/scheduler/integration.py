@@ -490,7 +490,25 @@ def _execute_send_message(task: dict, agent_bridge, agent_id: str = None) -> boo
         if not receiver:
             logger.error(f"[Scheduler] Task {task['id']}: No receiver specified")
             return True
-        
+
+        # Single-action approval at the delivery seam (task 7.9). Declared by the
+        # deployment, enforced here, and checked *after* the task's own owner and
+        # grant revalidation (the scheduler already ran that before dispatching):
+        # a task whose action is declared applicable delivers nothing until one
+        # approval covers exactly this channel type, receiver and content.
+        from agent.approval_gate import approval_decision, scheduler_action_id
+
+        verdict = approval_decision(
+            scheduler_action_id("send_message"),
+            parameters=action,
+            target=f"{channel_type}:{receiver}",
+        )
+        if not verdict.allowed:
+            logger.warning(
+                f"[Scheduler] Task {task['id']}: send_message refused by the "
+                f"action-approval gate ({verdict.code}); nothing was delivered")
+            return False
+
         # Create context for sending message
         context = Context(ContextType.TEXT, content)
         context["receiver"] = receiver

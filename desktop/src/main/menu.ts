@@ -2,8 +2,8 @@ import { app, Menu, BrowserWindow, shell } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
 
 const isMac = process.platform === 'darwin'
-const SKILL_HUB_URL = 'https://skills.cowagent.ai/'
-const DOCS_URL = 'https://docs.cowagent.ai'
+const SKILL_HUB_URL = 'https://www.rsm.global/china/zh-hans'
+const DOCS_URL = 'https://www.rsm.global/china/zh-hans'
 
 // Send a menu-triggered action to the renderer (e.g. new chat, open settings).
 function emit(win: BrowserWindow | null, action: string) {

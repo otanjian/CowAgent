@@ -52,10 +52,17 @@ class _Fixture(unittest.TestCase):
 
         self._mk_member("acmeadmin", "Acme Admin", ["tenant_admin"])
         self._mk_member("acmemember", "Acme Member", ["member"])
+        # The built-in ``member`` now carries skill.read/tool.read, so a member
+        # that must be refused the catalog is given a no-permission custom role.
+        no_perm = self.svc.create_role(
+            actor_user_id=self.root["id"], tenant_id=self.ta,
+            code="no_perm", name="No permission", permissions=[])
+        self._mk_member("acmeplain", "Acme Plain", [no_perm["code"]])
 
         self.token_root = self.svc.login("root", "Str0ngRootFinal").token
         self.token_admin = self.svc.login("acmeadmin", "MemPassFinal1").token
         self.token_member = self.svc.login("acmemember", "MemPassFinal1").token
+        self.token_plain = self.svc.login("acmeplain", "MemPassFinal1").token
 
     def _mk_member(self, username, display, roles):
         self.svc.create_member(
@@ -121,12 +128,12 @@ class InterfaceTests(_Fixture):
 
     def test_a_plain_member_is_refused_the_skills_catalog(self):
         self._patch_db()
-        resp = self._get("/api/skills", self.token_member)
+        resp = self._get("/api/skills", self.token_plain)
         self.assertTrue(str(resp.status).startswith("403"), resp.data[:300])
 
     def test_a_plain_member_is_refused_the_tools_catalog(self):
         self._patch_db()
-        resp = self._get("/api/tools", self.token_member)
+        resp = self._get("/api/tools", self.token_plain)
         self.assertTrue(str(resp.status).startswith("403"), resp.data[:300])
 
     def test_a_tenant_admin_may_browse_skill_content_read_only(self):

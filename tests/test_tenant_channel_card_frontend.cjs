@@ -11,6 +11,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { loadDictionaries } = require('./support/i18n_namespaces.cjs');
+
 const source = fs.readFileSync(path.join(__dirname, '../channel/web/static/js/console.js'), 'utf8');
 
 function fnSource(name) {
@@ -43,21 +45,31 @@ function constSource(name) {
     throw new Error(`Unbalanced ${name}`);
 }
 
+// Top-level `const` in a vm context is a lexical binding, not a property of the
+// sandbox, so the declarations are evaluated and returned by value instead of
+// being read off `sandbox`.
+function scanTables() {
+    const names = ['TENANT_CHANNEL_SCAN_TYPES', 'TENANT_CHANNEL_SCAN_COPY'];
+    const code = names.map(constSource).join('\n')
+        + `\n({ ${names.map(n => `${n}: ${n}`).join(', ')} })`;
+    return vm.runInNewContext(code, {});
+}
+
 const CORE = [
     'buildChannelCardShell', 'tenantChannelType', 'tenantChannelAppearance',
-    'tenantChannelSupportsScan', 'tenantChannelFieldInput',
+    'tenantChannelSupportsScan', 'tenantChannelScanCopy', 'tenantChannelFieldInput',
     'buildTenantChannelForm', 'renderTenantChannelCard',
     'channelTypeLabel', 'channelFieldLabel', 'tenantChannelAgentOptions',
     'channelsFailureKey', 'scanFailureText',
 ];
 
-const CORE_CONSTS = ['TENANT_CHANNEL_SCAN_TYPES'];
+const CORE_CONSTS = ['TENANT_CHANNEL_SCAN_TYPES', 'TENANT_CHANNEL_SCAN_COPY'];
 
-function boot({ types = [], instances = [], draft = null } = {}) {
+function boot({ types = [], instances = [], draft = null, i18n = null } = {}) {
     const sandbox = {
         console,
         currentLang: 'zh',
-        I18N: { zh: {}, en: {} },
+        I18N: i18n || { zh: {}, en: {} },
         tenantChannelTypes: types,
         tenantChannelInstances: instances,
         tenantChannelDraft: draft,
@@ -134,6 +146,61 @@ test('a wecom_bot tenant card offers a scan entry', () => {
     const html = sandbox.buildTenantChannelForm(inst);
     assert.match(html, /data-tenant-channel-mode="scan"/);
     assert.match(html, /startTenantWecomScan\(/);
+});
+
+// A scan flow creates one specific kind of app, so the wording belongs to the
+// type. The panel used to hard-code Feishu's copy for every scan-capable type,
+// so a WeCom bot's entry promised to create a Feishu app — the operator was told
+// the wrong thing about what the button would do.
+test('each scan type renders its own wording, not another type\'s', () => {
+    const dicts = loadDictionaries();
+    const sandbox = boot({ types: [FEISHU, WECOM], i18n: dicts });
+
+    const wecom = sandbox.buildTenantChannelForm(
+        Object.assign({}, FEISHU_INSTANCE, { channel_type: 'wecom_bot', id: 'i2' }));
+    const feishu = sandbox.buildTenantChannelForm(FEISHU_INSTANCE);
+
+    // The rendered text is the type's own, and the other type's never appears.
+    assert.match(wecom, /扫码创建企微机器人/);
+    assert.match(wecom, /使用企业微信扫码/);
+    assert.doesNotMatch(wecom, /飞书/, 'the WeCom entry still promises to create a Feishu app');
+    assert.match(feishu, /一键创建飞书应用/);
+    assert.doesNotMatch(feishu, /企业微信/, 'the Feishu entry was rendered with WeCom wording');
+
+    // Both types keep the start function they are supposed to run.
+    assert.match(wecom, /startTenantWecomScan\(/);
+    assert.match(feishu, /startFeishuRegister\(/);
+});
+
+test('every scan type declares both a start function and its copy', () => {
+    // Half-registering a type is what produced the wrong wording: the start
+    // function was per-type while the copy was shared. Both tables must know it.
+    const { TENANT_CHANNEL_SCAN_TYPES: start, TENANT_CHANNEL_SCAN_COPY: copy } = scanTables();
+    for (const type of Object.keys(start)) {
+        assert.ok(copy[type], `${type} starts a scan flow but declares no copy`);
+    }
+    for (const type of Object.keys(copy)) {
+        assert.ok(start[type], `${type} declares copy for a scan flow it cannot start`);
+    }
+    // A type in one table only is not offered at all, rather than offered wrong.
+    assert.equal(boot().tenantChannelSupportsScan('wechatcom_app'), false);
+});
+
+test('every key the scan copy names exists in all three languages', () => {
+    const { TENANT_CHANNEL_SCAN_COPY: copy } = scanTables();
+    const dicts = loadDictionaries();
+    const langs = ['zh', 'zh-Hant', 'en'];
+    for (const type of Object.keys(copy)) {
+        const entry = copy[type];
+        for (const slot of ['tab', 'manualTab', 'desc', 'btn']) {
+            assert.ok(entry[slot], `${type}.${slot} is not declared`);
+            for (const lang of langs) {
+                assert.ok(
+                    Object.prototype.hasOwnProperty.call(dicts[lang] || {}, entry[slot]),
+                    `${type}.${slot} = ${entry[slot]} is missing from the ${lang} dictionary`);
+            }
+        }
+    }
 });
 
 test('a type without scan support keeps the manual form only', () => {

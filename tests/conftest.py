@@ -55,3 +55,25 @@ def _forget_resolved_paths():
     set_agent_registry(None)
     reset_memory_configs()
     clear_conversation_store_cache()
+
+
+@pytest.fixture
+def web_app(tmp_path):
+    """Build real WSGI apps over private identity databases.
+
+    A factory rather than a single object because some tests need two tenants in
+    two databases to prove an isolation rule. Every app built here is torn down
+    (and its ``conf`` patch removed) at the end of the test.
+    """
+    from tests._helpers import WebAppHarness
+
+    built = []
+
+    def build(name="app", **kwargs):
+        harness = WebAppHarness(tmp_path / name, **kwargs)
+        built.append(harness)
+        return harness
+
+    yield build
+    for harness in reversed(built):
+        harness.close()

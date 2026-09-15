@@ -306,12 +306,19 @@ class MemoryFlushManager:
 
             import copy
             snapshot = copy.deepcopy(deduped)
+            # The scope generation is captured *here*, at dispatch, and carried
+            # into the worker. Summarisation runs in the background; by the time
+            # it writes, the member may have cleared their memory. Comparing the
+            # captured value against the live one at write time is what stops a
+            # queued task from restoring content the member deleted.
+            scope_generation = self._scope_generation_for(user_id)
             import contextvars
             _ctx = contextvars.copy_context()
             thread = threading.Thread(
                 target=lambda: _ctx.run(
                     self._flush_worker,
                     snapshot, user_id, reason, max_messages, context_summary_callback,
+                    scope_generation,
                 ),
                 daemon=True,
             )
@@ -324,6 +331,27 @@ class MemoryFlushManager:
             logger.warning(f"[MemoryFlush] Failed to dispatch flush (reason={reason}): {e}")
             return False
 
+    @staticmethod
+    def _scope_generation_for(user_id: Optional[str]) -> Optional[int]:
+        """The personal-memory generation a queued flush belongs to.
+
+        ``None`` means "no version to be stale against" (machine work, or an
+        identity without a user), and the write proceeds exactly as before.
+        """
+        if not user_id:
+            return None
+        try:
+            from agent.memory.personal import read_scope_generation
+            from common.runtime_identity import current_identity
+            if getattr(current_identity(), "user_id", None) != user_id:
+                # The ambient identity is not the user this flush belongs to, so
+                # resolving *their* generation here would compare the wrong
+                # scope. Leave the write ungated rather than gate it wrongly.
+                return None
+            return read_scope_generation()
+        except Exception:
+            return None
+
     def _flush_worker(
         self,
         messages: List[Dict],
@@ -331,6 +359,7 @@ class MemoryFlushManager:
         reason: str,
         max_messages: int,
         context_summary_callback: Optional[Callable[[str], None]] = None,
+        scope_generation: Optional[int] = None,
     ):
         """Background worker: summarize with LLM, write daily memory file."""
         try:
@@ -345,7 +374,17 @@ class MemoryFlushManager:
                 return
 
             # --- Write daily memory ---
-            self.write_daily_summary(daily_part, user_id=user_id, reason=reason)
+            # Carry the dispatch-time scope generation: if the member cleared
+            # their memory while this summary was being produced, the write is
+            # refused rather than restoring the cleared content.
+            wrote = self.write_daily_summary(
+                daily_part, user_id=user_id, reason=reason,
+                scope_generation=scope_generation)
+            if not wrote and scope_generation is not None:
+                logger.info(
+                    "[MemoryFlush] Discarded a stale summary (scope generation "
+                    "changed while summarising)")
+                return
 
             # --- Inject context summary into live messages (if callback provided) ---
             if context_summary_callback:
@@ -364,6 +403,7 @@ class MemoryFlushManager:
         summary: str,
         user_id: Optional[str] = None,
         reason: str = "trim",
+        scope_generation: Optional[int] = None,
     ) -> bool:
         """Append an already-produced summary to today's daily memory file.
 
@@ -374,11 +414,24 @@ class MemoryFlushManager:
         :param summary: Clean summary text (no [DAILY]/[MEMORY] markers).
         :param user_id: Optional user scope for the daily file.
         :param reason: "trim" | "overflow" | "daily_summary" | ... (picks header).
+        :param scope_generation: The personal-memory generation this summary was
+            produced under. A summary produced *before* a clear carries an older
+            generation and is refused, so a queued task cannot resurrect content
+            the member deleted. ``None`` means the caller has no version to be
+            stale against (synchronous writes).
         :return: True on success.
         """
         summary = (summary or "").strip()
         if not summary:
             return False
+        if user_id and scope_generation is not None:
+            current = self._scope_generation_for(user_id)
+            if current is not None and current != scope_generation:
+                logger.info(
+                    "[MemoryFlush] Refused a summary from generation %s; the "
+                    "personal memory is at generation %s (cleared meanwhile)",
+                    scope_generation, current)
+                return False
         try:
             daily_file = ensure_daily_memory_file(self.workspace_dir, user_id)
             headers = {

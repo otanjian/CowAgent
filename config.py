@@ -274,6 +274,30 @@ available_setting = {
     # agent todo tool are refused (but storage is preserved). Todo access
     # requires a real user/tenant/membership plus todo.read / todo.write.
     "todo_enabled": False,
+    # Member personal console capability switches (change
+    # enable-member-personal-console, design D5 / task 9.1). Five independent
+    # switches; a switch only controls whether a capability is *offered*, never
+    # whether authorization is checked — owner/membership/permission rules stay
+    # in force, so turning one off narrows and never widens. The four slices with
+    # recorded Stage 4-8 evidence ship on; personal_channel_runtime ships off
+    # because no channel type has a recorded real end-to-end acceptance yet
+    # (task 7.5). Withdrawing the runtime switch stops personal connections but
+    # must NOT hide an already-accepted catalogue or remove owner checks.
+    "member_personal_console": True,
+    "user_private_agent_management": True,
+    "personal_memory_write": True,
+    "personal_channel_onboarding": True,
+    "personal_channel_runtime": False,
+    # Action-approval applicability (change complete-database-capability-parity,
+    # task 7.9). Comma- or space-separated action ids the deployment requires a
+    # single-action approval for, checked and consumed at the real dispatch seams
+    # (Agent tool dispatch, scheduled delivery) by ``agent/approval_gate.py``.
+    # Shipped empty: the consumer enforces a *declared* policy, and an empty
+    # declaration is what keeps delivered behaviour unchanged. An id is
+    # ``tool:<tool name>`` / ``scheduler:<action type>`` / ``channel:<action>``,
+    # and an action that is declared here is refused — with no side effect —
+    # until one approved, matching, unconsumed approval covers it.
+    "approval_required_actions": "",
     # Identity: database only. Explicit identity_mode=legacy is refused at boot.
     # The key may be omitted (treated as database).
     "identity_mode": "database",
@@ -302,6 +326,29 @@ available_setting = {
     # Agent handling conversations that no channel instance binds. Defaults to
     # the first configured agent when unset.
     "default_agent_id": "",
+    # Adding a member gives that member a private copy of the tenant's assistant
+    # (product planning 3.1: the user level owns its own space). The template is
+    # looked up by display name among the tenant's own bound Agents; pin
+    # ``personal_assistant_agent_id`` to name one directly. During the copy the
+    # source's owner marker (its persona addresses one person) is rewritten to
+    # the new member, and ``personal_assistant_owner_aliases`` is that marker as
+    # a list or comma-separated string — whole-word matches only, so an
+    # unmatched persona is left byte-identical rather than guessed at.
+    "personal_assistant_agent_name": "智能办公助理",
+    "personal_assistant_agent_id": "",
+    "personal_assistant_owner_aliases": ["admin"],
+    # That marker pass cannot reach a *role word*: the stock assistant calls
+    # itself "管理员专属智能办公助理", and "管理员" is not a token any alias table
+    # can match — so a plain member's copy would claim to be an administrator's.
+    # These two templates therefore author the owner-facing lead from the
+    # member's display name instead of inheriting it, and both take:
+    #   {name}        — the member's display name (falls back to the username)
+    #   {source_tail} — the source field after its first "：" or ":", which
+    #                   preserves the substantive description the operator wrote
+    # Leave a template empty to keep that field exactly as the source wrote it,
+    # which is the escape hatch for an install that preferred the old wording.
+    "personal_assistant_description_template": "{name}的专属办公助理：{source_tail}",
+    "personal_assistant_persona_summary_template": "{name}的私人智能办公助理：{source_tail}",
     "agent_max_context_tokens": 64000,  # max context tokens in Agent mode
     "agent_max_context_turns": 30,  # max context memory turns in Agent mode
     "agent_max_steps": 30,  # max decision steps per run in Agent mode

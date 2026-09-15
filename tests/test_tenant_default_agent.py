@@ -124,6 +124,8 @@ class TenantDefaultAgentProjectionTests(unittest.TestCase):
         self.assertEqual(alpha["scene_id"], "erp")
         self.assertIn("is_default", alpha)
         self.assertIn("knowledge_mode", alpha)
+        self.assertIn("can_write_knowledge", alpha)
+        self.assertTrue(alpha["can_write_knowledge"])
         self.assertEqual(data["default_agent_id"], "alpha")
         # A tenant-facing read never leaks workspace paths, revision or the
         # instance-wide channel list.
@@ -215,13 +217,12 @@ class TenantDefaultAgentProjectionTests(unittest.TestCase):
         with self._patch_svc():
             agents_a = {a["id"]: a for a in _tenant_agents_projection(ctx_a)["agents"]}
             agents_b = {a["id"]: a for a in _tenant_agents_projection(ctx_b)["agents"]}
-        # Root is a platform admin, so it spans tenants and sees both agents —
-        # but only acme's bound default (alpha) is marked default in acme's
-        # context. betaadmin is an ordinary tenant admin: it sees only beta.
-        self.assertEqual(set(agents_a), {"alpha", "beta"})
+        # Each tenant's business read is its own bindings: the platform admin
+        # scoped to acme does not see beta's Agent, and no Agent is marked
+        # default in a tenant it is not bound to.
+        self.assertEqual(set(agents_a), {"alpha"})
         self.assertEqual(set(agents_b), {"beta"})
         self.assertTrue(agents_a["alpha"]["is_default"])
-        self.assertFalse(agents_a["beta"]["is_default"])
         self.assertTrue(agents_b["beta"]["is_default"])
 
     def test_fallback_to_single_bound_agent_when_no_default_configured(self):
@@ -243,27 +244,71 @@ class TenantDefaultAgentProjectionTests(unittest.TestCase):
         # global default is alpha, but tenant default is unambiguous -> neither.
         self.assertFalse(all(a["is_default"] for a in agents))
 
-    def test_platform_admin_sees_all_agents_across_tenants(self):
-        """A platform admin sees the whole roster, including unbound agents."""
+    def test_platform_admin_is_scoped_to_the_selected_tenant(self):
+        """Platform ``all`` skips grants, not the data scope.
+
+        The console's selected tenant decides which Agents are listed. An Agent
+        bound to no tenant is not part of any tenant's business read, so it must
+        not appear just because the caller is a platform administrator.
+        """
         # Bind only alpha to the tenant; beta stays unbound.
         self.svc.bind_agent(tenant_id=self.tid, agent_id="alpha")
         ctx = _ctx(self.svc, self.root["id"], self.tid)
         with self._patch_svc():
             ids = {a["id"] for a in _tenant_agents_projection(ctx)["agents"]}
-        # Both registered agents visible to the platform admin, even the unbound one.
-        self.assertEqual(ids, {"alpha", "beta"})
+        self.assertEqual(ids, {"alpha"})
 
-    def test_platform_admin_without_tenant_sees_all_agents(self):
-        """A platform admin with no tenant selection still sees every agent."""
+    def test_platform_admin_scoped_read_excludes_another_tenants_agent(self):
+        """Another tenant's Agent is invisible in this tenant's business read."""
+        other = self.svc.create_tenant(
+            actor_user_id=self.root["id"], code="beta", name="Beta",
+            shared_root="/s/beta", admin_username="betaadmin",
+            admin_display="Beta", admin_password="Str0ngPass2",
+            recent_password="Str0ngAdminPass")
+        self.svc.bind_agent(tenant_id=self.tid, agent_id="alpha")
+        self.svc.bind_agent(tenant_id=other["id"], agent_id="beta")
+        ctx = _ctx(self.svc, self.root["id"], self.tid)
+        with self._patch_svc():
+            ids = {a["id"] for a in _tenant_agents_projection(ctx)["agents"]}
+            admin_ids = {a["id"]
+                         for a in _tenant_agents_admin_projection(ctx)["agents"]}
+        self.assertEqual(ids, {"alpha"})
+        self.assertEqual(admin_ids, {"alpha"}, (
+            "the console's management read must obey the same tenant scope as "
+            "the workbench read"))
+
+    def test_platform_admin_without_tenant_sees_nothing(self):
+        """No tenant selection -> fail-closed empty scope, never the roster."""
         self.svc.bind_agent(tenant_id=self.tid, agent_id="alpha")
         ctx = _ctx(self.svc, self.root["id"], None)
         with self._patch_svc():
             projection = _tenant_agents_projection(ctx)["agents"]
-        self.assertEqual({a["id"] for a in projection}, {"alpha", "beta"})
-        # No tenant selected -> no tenant-bound default is resolved, so no
-        # agent is marked is_default; the console falls back to the global
-        # default via its own preference logic.
-        self.assertFalse(any(a["is_default"] for a in projection))
+        self.assertEqual(projection, [])
+
+    def test_readiness_allows_an_agent_bound_to_the_selected_tenant(self):
+        """Positive control: the binding gate does not block a legal target."""
+        self.svc.bind_agent(tenant_id=self.tid, agent_id="alpha")
+        ctx = _ctx(self.svc, self.root["id"], self.tid)
+        with self._patch_svc():
+            self.assertEqual(_workbench_chat_readiness(ctx, "alpha"), (True, None))
+
+    def test_readiness_refuses_an_agent_bound_to_another_tenant(self):
+        """The card's promise and the send path must agree.
+
+        A platform admin passes ``check_resource_action`` (``all``), so without an
+        explicit binding check the projection could advertise a chat whose send is
+        then refused with a 404. Binding — not platform identity — is the gate.
+        """
+        other = self.svc.create_tenant(
+            actor_user_id=self.root["id"], code="beta", name="Beta",
+            shared_root="/s/beta", admin_username="betaadmin",
+            admin_display="Beta", admin_password="Str0ngPass2",
+            recent_password="Str0ngAdminPass")
+        self.svc.bind_agent(tenant_id=other["id"], agent_id="beta")
+        ctx = _ctx(self.svc, self.root["id"], self.tid)
+        with self._patch_svc():
+            self.assertEqual(_workbench_chat_readiness(ctx, "beta"),
+                             (False, "permission_denied"))
 
 
 class SessionOwnerDefaultAgentTests(unittest.TestCase):

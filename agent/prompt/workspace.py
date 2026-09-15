@@ -6,6 +6,7 @@ Initializes the workspace, creates template files, and loads context files.
 
 from __future__ import annotations
 import os
+from pathlib import Path
 from typing import List, Optional, Dict
 from dataclasses import dataclass
 
@@ -79,7 +80,7 @@ def ensure_workspace(workspace_dir: str, create_templates: bool = True) -> Works
     if create_templates:
         _create_template_if_missing(agent_path, _get_agent_template())
         _create_template_if_missing(user_path, _get_user_template())
-        _create_template_if_missing(rule_path, _get_rule_template())
+        _create_template_if_missing(rule_path, _get_rule_template(workspace_dir))
         _create_template_if_missing(memory_path, _get_memory_template())
         if knowledge_enabled:
             _create_template_if_missing(
@@ -454,36 +455,225 @@ _USER_TEMPLATE_EN = """# USER.md - User basics
 """
 
 
-def _get_rule_template() -> str:
-    """Workspace rules template (zh/en by resolved language)."""
-    return _RULE_TEMPLATE_EN if _is_en_lang() else _RULE_TEMPLATE_ZH
+def _get_rule_template(workspace_dir: str) -> str:
+    """Workspace rules template (zh/en by resolved language).
+
+    The layout section is rendered from the workspace path this file lands in
+    rather than hardcoded: one template serves a single-Agent install, an Agent
+    under a shared root, and a tenant workspace, and a fixed tree is wrong in
+    two of those three. See ``workspace_layout_section``.
+    """
+    template = _RULE_TEMPLATE_EN if _is_en_lang() else _RULE_TEMPLATE_ZH
+    return template.replace(_LAYOUT_PLACEHOLDER,
+                            workspace_layout_section(workspace_dir))
+
+
+def _display_path(path: Path) -> str:
+    """``~``-shortened form, so the layout reads like the docs people write."""
+    try:
+        return "~/" + str(path.relative_to(Path.home()))
+    except ValueError:
+        return str(path)
+
+
+def _layout_kind(workspace: Path):
+    """Split a workspace path into ``(shared_root, agent_dir_name_or_None)``.
+
+    An Agent's private workspace is ``<shared_root>/agents/<id>``; any other
+    workspace *is* the shared root (the single-Agent layout, and the default
+    Agent before it gets a directory of its own).
+
+    Derived from the path instead of from runtime identity on purpose: this
+    runs while the workspace is being created, possibly before it is registered
+    and before a tenant identity is in scope, and the path is the only fact
+    available at that moment.
+    """
+    if workspace.parent.name == "agents":
+        return workspace.parent.parent, workspace.name
+    return workspace, None
+
+
+def workspace_layout_section(workspace_dir: str) -> str:
+    """The ``工作空间目录结构`` section for a workspace at ``workspace_dir``.
+
+    Public because the same facts are needed anywhere a workspace's layout is
+    described in prose. Renders the three ownership tiers (this Agent, the
+    shared root, each end user) and stays silent about the knowledge-base mode:
+    the mode is chosen per Agent after creation, and the section must be true
+    either way.
+    """
+    workspace = Path(workspace_dir)
+    root, agent_dir = _layout_kind(workspace)
+    display = _display_path(root)
+    if _is_en_lang():
+        if agent_dir is None:
+            section = _LAYOUT_ROOT_EN.format(root=display, tree=_root_tree_en(display))
+        else:
+            section = _LAYOUT_AGENT_EN.format(root=display, agent_id=agent_dir,
+                                              tree=_agent_tree_en(display, agent_dir))
+    elif agent_dir is None:
+        section = _LAYOUT_ROOT_ZH.format(root=display, tree=_root_tree_zh(display))
+    else:
+        section = _LAYOUT_AGENT_ZH.format(root=display, agent_id=agent_dir,
+                                          tree=_agent_tree_zh(display, agent_dir))
+    # No trailing newline: the template already supplies the blank line after
+    # the placeholder, and a second one would render as a stray empty line.
+    return section.rstrip("\n")
+
+
+_LAYOUT_PLACEHOLDER = "{{WORKSPACE_LAYOUT}}"
+
+
+def _tree_block(entries) -> str:
+    """Render ``(label, comment)`` rows with every comment in one column."""
+    width = max((len(label) for label, _ in entries), default=0) + 2
+    return "\n".join(label.ljust(width) + "# " + comment if comment else label
+                     for label, comment in entries)
+
+
+def _agent_tree_zh(root: str, agent_id: str) -> str:
+    return _tree_block([
+        ("%s/" % root, "共享根：本部署各智能体共用"),
+        ("├── agents/", ""),
+        ("│   └── %s/" % agent_id, "← 你的工作区（本智能体私有）"),
+        ("│       ├── AGENT.md", "你的身份和灵魂设定"),
+        ("│       ├── USER.md", "用户基本信息（静态）"),
+        ("│       ├── RULE.md", "工作空间规则（本文件）"),
+        ("│       ├── MEMORY.md", "长期记忆索引（会话启动时自动加载）"),
+        ("│       ├── memory/", "每日记忆 YYYY-MM-DD.md；long-term/index.db 为会话与长期记忆索引"),
+        ("│       ├── scheduler/", "定时任务 tasks.json"),
+        ("│       └── tmp/", "系统临时文件（自动管理，勿手动存放重要文件）"),
+        ("├── knowledge/", "知识库数据根（index.md 索引 + log.md 操作日志）"),
+        ("├── skills/", "共享技能"),
+        ("├── websites/", "共享网页产物"),
+        ("└── users/<user_id>/", "每位用户私有：MEMORY.md、memory/、output/、runs/"),
+    ])
+
+
+def _root_tree_zh(root: str) -> str:
+    return _tree_block([
+        ("%s/" % root, "← 你的工作区 = 共享根（本部署共享层）"),
+        ("├── AGENT.md", "你的身份和灵魂设定"),
+        ("├── USER.md", "用户基本信息（静态）"),
+        ("├── RULE.md", "工作空间规则（本文件）"),
+        ("├── MEMORY.md", "长期记忆索引（会话启动时自动加载）"),
+        ("├── memory/", "每日记忆 YYYY-MM-DD.md；long-term/index.db 为会话与长期记忆索引"),
+        ("├── knowledge/", "知识库数据根（index.md 索引 + log.md 操作日志）"),
+        ("├── skills/", "共享技能"),
+        ("├── websites/", "共享网页产物"),
+        ("├── scheduler/", "定时任务 tasks.json"),
+        ("├── tmp/", "系统临时文件（自动管理，勿手动存放重要文件）"),
+        ("└── agents/<id>/", "其它智能体的工作区（同一套人设与记忆文件，各自一份）"),
+    ])
+
+
+def _agent_tree_en(root: str, agent_id: str) -> str:
+    return _tree_block([
+        ("%s/" % root, "shared root: shared by every Agent here"),
+        ("├── agents/", ""),
+        ("│   └── %s/" % agent_id, "<- your workspace (private to this Agent)"),
+        ("│       ├── AGENT.md", "your identity and soul"),
+        ("│       ├── USER.md", "user basics (static)"),
+        ("│       ├── RULE.md", "workspace rules (this file)"),
+        ("│       ├── MEMORY.md", "long-term memory index (auto-loaded at session start)"),
+        ("│       ├── memory/", "daily memory YYYY-MM-DD.md; long-term/index.db indexes sessions and memory"),
+        ("│       ├── scheduler/", "scheduled tasks (tasks.json)"),
+        ("│       └── tmp/", "system temp files (auto-managed, don't store important files here)"),
+        ("├── knowledge/", "knowledge base root (index.md + log.md)"),
+        ("├── skills/", "shared skills"),
+        ("├── websites/", "shared web artifacts"),
+        ("└── users/<user_id>/", "private to each user: MEMORY.md, memory/, output/, runs/"),
+    ])
+
+
+def _root_tree_en(root: str) -> str:
+    return _tree_block([
+        ("%s/" % root, "<- your workspace = shared root (this deployment's shared layer)"),
+        ("├── AGENT.md", "your identity and soul"),
+        ("├── USER.md", "user basics (static)"),
+        ("├── RULE.md", "workspace rules (this file)"),
+        ("├── MEMORY.md", "long-term memory index (auto-loaded at session start)"),
+        ("├── memory/", "daily memory YYYY-MM-DD.md; long-term/index.db indexes sessions and memory"),
+        ("├── knowledge/", "knowledge base root (index.md + log.md)"),
+        ("├── skills/", "shared skills"),
+        ("├── websites/", "shared web artifacts"),
+        ("├── scheduler/", "scheduled tasks (tasks.json)"),
+        ("├── tmp/", "system temp files (auto-managed, don't store important files here)"),
+        ("└── agents/<id>/", "other Agents' workspaces (same persona and memory files, one set each)"),
+    ])
+
+
+_LAYOUT_AGENT_ZH = """## 工作空间目录结构
+
+写入前先对照本节：这是**本部署实际解析出**的布局。工作区在该共享根之下，不在实例根。
+
+```
+{tree}
+```
+
+归属分三档，写入前先想清楚是哪一档：
+
+- **本智能体私有**：工作区 `agents/{agent_id}/` 下的 `AGENT.md`、`USER.md`、`RULE.md`、`MEMORY.md`、`memory/`、`scheduler/`、`tmp/`——只有你能读写。
+- **共享层**：共享根下的 `skills/`、`websites/` 与知识库 `knowledge/`——同一共享根下的每个智能体都看得到。知识库模式决定 `knowledge/` 是哪一份：「共享」模式读写共享根的 `knowledge/`；「独立」模式只读写自己工作区内的 `knowledge/`。
+- **每位用户私有**：`users/<user_id>/`——当前用户的个人长期记忆与产出，其他用户看不到。
+"""
+
+
+_LAYOUT_ROOT_ZH = """## 工作空间目录结构
+
+写入前先对照本节：这是**本部署实际解析出**的布局。你的工作区就是共享根。
+
+```
+{tree}
+```
+
+归属分三档，写入前先想清楚是哪一档：
+
+- **本智能体私有**：本目录下的 `AGENT.md`、`USER.md`、`RULE.md`、`MEMORY.md`、`memory/`、`scheduler/`、`tmp/`——只有你能读写。
+- **共享层**：同一目录下的 `knowledge/`、`skills/`、`websites/`——`agents/<id>/` 下的其它智能体也读它；单智能体部署下这两档是同一处。知识库模式决定 `knowledge/` 是哪一份：「共享」模式读写共享根的 `knowledge/`；「独立」模式读写该智能体工作区内的 `knowledge/`。
+- **每位用户私有**：`users/<user_id>/`——当前用户的个人长期记忆与产出，其他用户看不到。
+"""
+
+
+_LAYOUT_AGENT_EN = """## Workspace directory structure
+
+Check this section before writing: it is the layout **this deployment actually
+resolves**. Your workspace sits under the shared root, not at the instance root.
+
+```
+{tree}
+```
+
+Ownership has three tiers; decide which one you are writing into:
+
+- **Private to this Agent**: `AGENT.md`, `USER.md`, `RULE.md`, `MEMORY.md`, `memory/`, `scheduler/` and `tmp/` under the workspace `agents/{agent_id}/` -- only you read and write them.
+- **Shared layer**: `skills/`, `websites/` and the knowledge base `knowledge/` under the shared root -- every Agent under the same shared root sees them. The knowledge-base mode decides which `knowledge/` applies: in **shared** mode you read and write the shared root's `knowledge/`; in **own** mode only the `knowledge/` inside your workspace.
+- **Private to each user**: `users/<user_id>/` -- the current user's personal long-term memory and artifacts, invisible to other users.
+"""
+
+
+_LAYOUT_ROOT_EN = """## Workspace directory structure
+
+Check this section before writing: it is the layout **this deployment actually
+resolves**. Your workspace *is* the shared root.
+
+```
+{tree}
+```
+
+Ownership has three tiers; decide which one you are writing into:
+
+- **Private to this Agent**: `AGENT.md`, `USER.md`, `RULE.md`, `MEMORY.md`, `memory/`, `scheduler/` and `tmp/` in this directory -- only you read and write them.
+- **Shared layer**: `knowledge/`, `skills/` and `websites/` in the same directory -- the other Agents under `agents/<id>/` read them too; on a single-Agent install the two tiers are the same place. The knowledge-base mode decides which `knowledge/` applies: in **shared** mode you read and write the shared root's `knowledge/`; in **own** mode the one inside that Agent's workspace.
+- **Private to each user**: `users/<user_id>/` -- the current user's personal long-term memory and artifacts, invisible to other users.
+"""
 
 
 _RULE_TEMPLATE_ZH = """# RULE.md - 工作空间规则
 
 这个文件夹是你的家。好好对待它。
 
-## 工作空间目录结构
-
-```
-~/cow/
-├── AGENT.md          # 你的身份和灵魂设定
-├── USER.md           # 用户基本信息（静态）
-├── RULE.md           # 工作空间规则（本文件）
-├── MEMORY.md         # 长期记忆索引（会话启动时自动加载）
-│
-├── memory/           # 每日对话记忆
-│   └── YYYY-MM-DD.md # 当天事件、进展、笔记
-│
-├── knowledge/        # 结构化知识库（持续积累的知识）
-│   ├── index.md      # 知识目录索引（必须维护）
-│   ├── log.md        # 知识操作日志
-│   └── <子目录>/     # 按需创建，参考 index.md 已有分类
-│
-├── skills/           # 技能
-├── websites/         # 网页产物
-└── tmp/              # 系统临时文件（自动管理，勿手动存放重要文件）
-```
+{{WORKSPACE_LAYOUT}}
 
 ## 记忆系统
 
@@ -562,27 +752,7 @@ _RULE_TEMPLATE_EN = """# RULE.md - Workspace rules
 
 This folder is your home. Treat it well.
 
-## Workspace directory structure
-
-```
-~/cow/
-├── AGENT.md          # Your identity and soul
-├── USER.md           # User basics (static)
-├── RULE.md           # Workspace rules (this file)
-├── MEMORY.md         # Long-term memory index (auto-loaded at session start)
-│
-├── memory/           # Daily conversation memory
-│   └── YYYY-MM-DD.md # Events, progress and notes of the day
-│
-├── knowledge/        # Structured knowledge base (continuously accumulated)
-│   ├── index.md      # Knowledge index (must be maintained)
-│   ├── log.md        # Knowledge operation log
-│   └── <subdirs>/    # Created on demand, see existing categories in index.md
-│
-├── skills/           # Skills
-├── websites/         # Web artifacts
-└── tmp/              # System temp files (auto-managed, don't store important files here)
-```
+{{WORKSPACE_LAYOUT}}
 
 ## Memory system
 

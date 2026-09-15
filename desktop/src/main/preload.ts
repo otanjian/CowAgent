@@ -1,4 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type {
+  BrokerAssetReply,
+  BrokerLogoutReply,
+  BrokerProbe,
+  BrokerRequestReply,
+  BrokerSessionReply,
+  BrokerStatusReply,
+  BrokerVoidReply,
+} from './broker-protocol'
 
 contextBridge.exposeInMainWorld('electronAPI', {
   getBackendPort: () => ipcRenderer.invoke('get-backend-port'),
@@ -70,6 +79,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Generic HTTPS relay via the main process (bypasses the renderer's CORS
   // restrictions for external endpoints). Optional extensions may use it.
+  //
+  // It is a foreign-endpoint relay only: the main process refuses any URL that
+  // points at the backend, the native auth endpoints or the loopback callback
+  // (design D8), so it cannot be turned into a bypass around the broker.
   httpRelay: (req: {
     url: string
     method?: string
@@ -82,6 +95,37 @@ contextBridge.exposeInMainWorld('electronAPI', {
       headers: Record<string, string>
       body: string
     }>,
+
+  // ---- Desktop identity broker (design D8) -------------------------------
+  //
+  // The session Bearer lives in the main process and is not reachable from
+  // here: there is no channel that returns a token, and no channel that accepts
+  // a header, an origin or an Authorization value. The renderer sees only the
+  // desensitized projection, a single business-request transport and an opaque
+  // asset URL for the transports that cannot carry a header (EventSource,
+  // <img>, download).
+  desktopAuthProbe: () =>
+    ipcRenderer.invoke('desktop-auth-probe') as Promise<BrokerProbe>,
+  desktopAuthStatus: () => ipcRenderer.invoke('desktop-auth-status') as Promise<BrokerStatusReply>,
+  desktopAuthBegin: () => ipcRenderer.invoke('desktop-auth-begin') as Promise<BrokerSessionReply>,
+  desktopAuthCancel: () => ipcRenderer.invoke('desktop-auth-cancel') as Promise<{ ok: boolean }>,
+  desktopAuthLogout: () => ipcRenderer.invoke('desktop-auth-logout') as Promise<BrokerLogoutReply>,
+  desktopAuthRefresh: () => ipcRenderer.invoke('desktop-auth-refresh') as Promise<BrokerSessionReply>,
+  desktopTenantSelect: (tenantId: string) =>
+    ipcRenderer.invoke('desktop-tenant-select', tenantId) as Promise<BrokerSessionReply>,
+  desktopPasswordChange: (payload: { oldPassword: string; newPassword: string }) =>
+    ipcRenderer.invoke('desktop-password-change', payload) as Promise<BrokerVoidReply>,
+  desktopRequest: (req: { path: string; method?: string; body?: string }) =>
+    ipcRenderer.invoke('desktop-request', req) as Promise<BrokerRequestReply>,
+  desktopUpload: (req: {
+    path: string
+    method?: string
+    form: { fields: Array<{ name: string; value: string }>; files: Array<{ name: string; filename: string; contentType: string; bytes: ArrayBuffer }> }
+  }) => ipcRenderer.invoke('desktop-upload', req) as Promise<BrokerRequestReply>,
+  desktopAssetUrl: (req: { path: string; kind?: 'get' | 'stream' }) =>
+    ipcRenderer.invoke('desktop-asset-url', req) as Promise<BrokerAssetReply>,
+  desktopAssetUrlSync: (req: { path: string; kind?: 'get' | 'stream' }) =>
+    ipcRenderer.sendSync('desktop-asset-url-sync', req) as BrokerAssetReply,
 
   // Auto-update: trigger checks/download/install and subscribe to status. The
   // optional lang routes installer downloads to the China CDN mirror (zh) or R2.

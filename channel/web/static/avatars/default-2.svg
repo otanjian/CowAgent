@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Default user avatar 2">
+  <defs><clipPath id="uav2clip"><circle cx="32" cy="32" r="32"/></clipPath></defs>
+  <g clip-path="url(#uav2clip)">
+    <rect width="64" height="64" fill="#079BD3"/>
+    <path d="M12 64c0-11 9-19 20-19s20 8 20 19z" fill="#ffffff"/>
+    <circle cx="32" cy="27" r="11" fill="#ffffff"/>
+    <g fill="none" stroke="#0B4F66" stroke-width="2" stroke-linecap="round">
+      <circle cx="27" cy="27" r="4.6"/>
+      <circle cx="37" cy="27" r="4.6"/>
+      <path d="M31.6 27h.8"/>
+      <path d="M22.4 25.4l-2.6-.9M41.6 25.4l2.6-.9"/>
+    </g>
+  </g>
+</svg>

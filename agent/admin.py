@@ -178,12 +178,14 @@ class AgentAdminService:
             settings = self._load()
             registry = self._registry(settings)
             default_id = registry.default_agent_id
+            shared_base = self._shared_knowledge_base(settings)
             agents = []
             for profile in registry.list():
                 data = profile.to_dict()
                 # Whether this Agent reads the shared knowledge base or its own,
-                # derived from the workspace so the UI can show the toggle state.
-                data["knowledge_mode"] = self._knowledge_mode_of(profile, default_id)
+                # derived from where its data root actually lands, so the UI can
+                # show the toggle state without inventing a second truth.
+                data["knowledge_mode"] = self._knowledge_mode_of(profile, shared_base)
                 agents.append(data)
             return {
                 "default_agent_id": default_id,
@@ -193,13 +195,73 @@ class AgentAdminService:
             }
 
     @staticmethod
-    def _knowledge_mode_of(profile: AgentProfile, default_id: str) -> str:
-        if profile.id == default_id:
-            return "shared"
+    def _shared_knowledge_base(settings: Optional[Mapping] = None) -> Optional[Path]:
+        """The shared knowledge base, resolved exactly as ``state_dir`` does.
+
+        ``state_dir`` is the single source of truth on purpose: it is the same
+        call that hands a fallback Agent its knowledge directory, so the mode
+        reported here cannot disagree with the directory an Agent (and the
+        knowledge console) actually reads. It is tenant-aware — a tenant in scope
+        (database mode) owns the shared assets, so the base is that tenant's
+        trusted shared root; without one it is the default Agent's workspace,
+        which is also the instance root on the classic single-Agent layout.
+
+        Only when no shared root can be resolved at all (a tenant without one)
+        does this fall back to the instance root, and ``None`` if that fails too.
+        ``None`` means no Agent is recognised as owning the shared base — every
+        real ``knowledge/`` then reads as "own" rather than guessing.
+        """
+        try:
+            from common import state_dir
+            return state_dir.shared_root() / "knowledge"
+        except Exception as e:
+            logger.debug("[AgentAdmin] shared root unresolved: %s", e)
+        try:
+            if settings is None:
+                from config import conf
+                settings = conf()
+            return AgentAdminService._instance_root(settings) / "knowledge"
+        except Exception as e:
+            logger.debug("[AgentAdmin] instance shared base unresolved: %s", e)
+            return None
+
+    @staticmethod
+    def _is_shared_base(kdir: Path, shared_base: Optional[Path]) -> bool:
+        """True when ``kdir`` *is* the shared knowledge base itself.
+
+        Compared resolved so a symlinked or non-normalised instance root still
+        matches. An unresolvable base is never a match — the caller then treats a
+        real directory as the Agent's own, which is the pre-existing behaviour.
+        """
+        if shared_base is None:
+            return False
+        try:
+            return os.path.realpath(str(kdir)) == os.path.realpath(str(shared_base))
+        except (OSError, ValueError):
+            return False
+
+    @staticmethod
+    def _knowledge_mode_of(profile: AgentProfile,
+                           shared_base: Optional[Path]) -> str:
+        """Whether this Agent reads the shared knowledge base or its own.
+
+        Decided by *data-root ownership*, not by roster position, so the answer
+        matches what the Agent (and the knowledge console) actually reads: a real
+        ``knowledge/`` directory that is not the shared base itself means "own";
+        a symlink to the shared copy, nothing at all (``state_dir`` falls back to
+        the shared copy), or the shared base itself means "shared".
+
+        The old rule returned "shared" for the default Agent unconditionally, on
+        the assumption that it owns the instance root. Once a default Agent is
+        given a workspace of its own that assumption breaks: it reads — and must
+        report — its own base like any other Agent.
+        """
         kdir = profile.workspace_path / "knowledge"
-        if kdir.is_dir() and not kdir.is_symlink():
-            return "own"
-        return "shared"
+        if kdir.is_symlink() or not kdir.is_dir():
+            return "shared"
+        if AgentAdminService._is_shared_base(kdir, shared_base):
+            return "shared"
+        return "own"
 
     @staticmethod
     def _normalise_workspace(workspace: str) -> str:
@@ -553,6 +615,7 @@ class AgentAdminService:
         name: str = None,
         workspace: str = None,
         revision: str = None,
+        knowledge_mode: str = None,
     ) -> Dict:
         """Create a new Agent that mirrors an existing one, 1:1 but for identity.
 
@@ -566,9 +629,12 @@ class AgentAdminService:
 
         It never copies runtime state: memory, sessions, credentials and the
         source's own skill/knowledge *entity* files stay behind. Knowledge
-        *mode* is replicated instead — a source that opts out of the shared
-        knowledge base gets its own (empty) base, resolved under the clone's
-        identity and therefore the clone's tenant.
+        *mode* is replicated from the source by default — a source that opts out
+        of the shared knowledge base gets its own (empty) base, resolved under
+        the clone's identity and therefore the clone's tenant. Pass
+        ``knowledge_mode="own"`` to force an independent base regardless of the
+        source (the personal-assistant flow does this, so a private Agent never
+        points at the tenant's shared base).
 
         The source may be disabled: the copy flow is how an operator seeds a
         tenant with agents that are kept parked in the source tenant.
@@ -576,6 +642,8 @@ class AgentAdminService:
         A failure after the workspace was created removes it again, so a caller
         can treat "raised" as "nothing happened" without inspecting the disk.
         """
+        if knowledge_mode not in (None, "shared", "own"):
+            raise AgentAdminError("knowledge mode must be 'shared' or 'own'")
         with self._lock:
             settings = self._load()
             registry = self._registry(settings)
@@ -610,7 +678,8 @@ class AgentAdminService:
             if destination.exists() and any(destination.iterdir()):
                 raise AgentAdminError("workspace must be empty for a new agent")
 
-            knowledge_mode = self._knowledge_mode_of(source_profile, registry.default_agent_id)
+            knowledge_mode = knowledge_mode or self._knowledge_mode_of(
+                source_profile, self._shared_knowledge_base(settings))
             created_destination = not destination.exists()
             try:
                 self._materialise_workspace(
@@ -904,16 +973,19 @@ class AgentAdminService:
         Derived from the filesystem, not a stored flag, so it can never drift
         from reality (the same "opt out by presence" rule the shared assets use):
         a real ``knowledge/`` directory in the Agent's workspace means "own"; a
-        symlink to the shared copy, or nothing at all, means "shared".
+        symlink to the shared copy, nothing at all, or the shared base itself
+        means "shared".
 
-        The default Agent owns the instance root, so its ``knowledge/`` *is* the
-        shared one — it is always reported as shared and cannot be switched.
+        Being the default Agent is not part of the answer — only whether its
+        ``knowledge/`` actually is the shared base. A default Agent moved into a
+        workspace of its own reads its own base and is reported (and switchable)
+        as such.
         """
         with self._lock:
             settings = self._load()
             registry = self._registry(settings)
             profile = registry.get(agent_id, require_enabled=False)
-            return self._knowledge_mode_of(profile, registry.default_agent_id)
+            return self._knowledge_mode_of(profile, self._shared_knowledge_base(settings))
 
     def set_knowledge_mode(self, agent_id: str, mode: str) -> Dict:
         """Switch an Agent between the shared knowledge base and its own.
@@ -932,24 +1004,32 @@ class AgentAdminService:
         """
         if mode not in ("shared", "own"):
             raise AgentAdminError("knowledge mode must be 'shared' or 'own'")
-        from common import state_dir
 
         with self._lock:
             settings = self._load()
             registry = self._registry(settings)
             profile = registry.get(agent_id, require_enabled=False)
-            if agent_id == registry.default_agent_id:
-                raise AgentAdminError(
-                    "the default Agent owns the shared knowledge base"
-                )
             workspace = profile.workspace_path
             kdir = workspace / "knowledge"
             # Where an own base waits while the Agent reads the shared one.
             stash = workspace / "knowledge.own"
-            # The shared base is the default Agent's knowledge/. Resolve it
-            # directly rather than through this Agent's own base, which in "own"
-            # mode would point back at the directory we're about to remove.
-            shared = state_dir.shared_root() / "knowledge"
+            # Resolve the shared base independently of this Agent's own base,
+            # which in "own" mode would point back at the directory we are about
+            # to remove. Resolved through state_dir so it follows the caller's
+            # tenant rather than a process-global guess.
+            shared = self._shared_knowledge_base(settings)
+            if shared is None:
+                raise AgentAdminError("shared knowledge base could not be resolved")
+            # The one Agent that must not be switched is the one whose
+            # knowledge/ *is* the shared base: "shared" would rename the whole
+            # team's base to knowledge.own and leave an empty directory behind,
+            # and "own" would make it vanish from everyone else. Being the
+            # default Agent is not the test — a default Agent given a workspace
+            # of its own reads and switches its own base like any other.
+            if kdir.is_dir() and not kdir.is_symlink() and self._is_shared_base(kdir, shared):
+                raise AgentAdminError(
+                    "this Agent's knowledge/ is the shared knowledge base"
+                )
 
             if mode == "own":
                 if kdir.is_dir() and not kdir.is_symlink():

@@ -15,7 +15,7 @@ import threading
 import time
 import uuid
 from queue import Queue, Empty
-from typing import Dict, List, Tuple, Optional, Iterator
+from typing import Dict, List, Tuple, Optional, Iterator, NoReturn
 from urllib.parse import quote
 from collections import OrderedDict, deque
 from contextlib import contextmanager
@@ -37,6 +37,9 @@ from channel.web.auth_handlers import (
     DbAuthPasswordHandler,
     DbSelfProfileHandler,
     DbSelfAvatarHandler,
+    DbUserAvatarHandler,
+    DesktopAuthorizeHandler,
+    DesktopTokenHandler,
 )
 from channel.web.admin_handlers import (
     PlatformUsersHandler,
@@ -69,6 +72,7 @@ from channel.web.admin_handlers import (
     TenantChannelsHandler,
     TenantChannelHandler,
     TenantChannelActiveHandler,
+    _int_or_zero,
 )
 from channel.web.admin_overview import AdminOverviewHandler
 from common import const
@@ -314,6 +318,117 @@ def _require_read_permission(ctx: "Optional[RequestContext]", permission: str) -
                                         "code": "forbidden"}))
 
 
+def _knowledge_data_root_is_own(agent_id: Optional[str]) -> bool:
+    """True when the addressed Agent reads a ``knowledge/`` of its own.
+
+    Reuses the same two facts the Agent-admin projection derives
+    ``knowledge_mode`` from — ``AgentAdminService._shared_knowledge_base()`` and
+    ``_knowledge_mode_of()`` — so the write gate can never disagree with the mode
+    the console shows or the directory ``KnowledgeService`` reads. This is
+    deliberately not a second "is the data root shared?" rule.
+
+    MUST be called inside ``_db_scope()``: the shared base resolves through
+    ``state_dir.shared_root()`` and is therefore tenant-scoped. An Agent that
+    cannot be resolved (a binding without a roster entry) is treated as shared,
+    which fails closed for the only caller that consults it without admin
+    qualification.
+    """
+    if not agent_id:
+        return False
+    from agent.admin import AgentAdminService
+    from agent.registry import get_agent_registry
+
+    try:
+        profile = get_agent_registry().get(agent_id, require_enabled=False)
+    except Exception as e:
+        logger.debug("[WebChannel] knowledge mode for %r: %s", agent_id, e)
+        return False
+    return AgentAdminService._knowledge_mode_of(
+        profile, AgentAdminService._shared_knowledge_base()) == "own"
+
+
+def _private_agent_owned_by_another(ctx: "Optional[RequestContext]",
+                                   agent_id: Optional[str]) -> bool:
+    """True when ``agent_id`` is private to a member other than the caller.
+
+    The one predicate that must run **before** any administrator shortcut. A
+    private Agent's content — its prompt, memory, sessions and files — belongs to
+    its owner; an admin reaching it through a gate that short-circuits on
+    ``is_platform_admin``/``is_tenant_admin`` would be reading or rewriting a
+    member's private workspace. An administrator's legitimate interest in a
+    private Agent is governance metadata, answered by the governance surface, not
+    by the content gates.
+
+    ``False`` for an unbound Agent, a shared Agent, or the caller's own — so this
+    only ever *narrows*, and only for the objects that are genuinely someone
+    else's (task 3.2).
+    """
+    if ctx is None or not agent_id:
+        return False
+    from auth.service import get_identity_service
+
+    binding = get_identity_service().get_agent_binding(agent_id)
+    if not binding or binding.get("tenant_id") != ctx.tenant_id:
+        return False
+    owner = binding.get("private_owner_user_id")
+    return bool(owner) and owner != getattr(ctx, "user_id", None)
+
+
+def _knowledge_write_authorized(ctx: "Optional[RequestContext]",
+                                agent_id: Optional[str]) -> bool:
+    """Whether ``ctx`` may write ``agent_id``'s knowledge base.
+
+    Authorization follows the *data root* and the *Agent's ownership*, not a
+    functional permission (``knowledge.write`` was retired for this reason):
+
+    * a private Agent is written by its owner only: the ownership refusal runs
+      first, so an administrator cannot rewrite a member's private knowledge even
+      though an administrator writes every *shared* data root;
+    * a platform admin, and a ``tenant_admin`` of the Agent's own tenant, may
+      write any shared data root;
+    * an ordinary member may write only an Agent that is private to them *and*
+      reads its own ``knowledge/`` — so a private Agent left on "shared" mode
+      can never be turned into a write channel into the tenant's shared base;
+    * a cross-tenant or unbound ``agent_id`` is refused (the caller's binding
+      gate already answers 404 before this runs).
+
+    Legacy mode (``ctx is None``) keeps its historical no-gate behaviour.
+    """
+    if ctx is None:
+        return True
+    if not agent_id:
+        return False
+    if _private_agent_owned_by_another(ctx, agent_id):
+        return False
+    from auth.service import get_identity_service
+
+    binding = get_identity_service().get_agent_binding(agent_id)
+    if not binding or binding.get("tenant_id") != ctx.tenant_id:
+        return False
+    if getattr(ctx, "is_platform_admin", False) or getattr(ctx, "is_tenant_admin", False):
+        return True
+    if binding.get("private_owner_user_id") != getattr(ctx, "user_id", None):
+        return False
+    return _knowledge_data_root_is_own(agent_id)
+
+
+def _require_knowledge_write(ctx: "Optional[RequestContext]",
+                             agent_id: Optional[str]) -> None:
+    """Gate knowledge writes (create/rename/delete/move/import).
+
+    The decision lives in :func:`_knowledge_write_authorized`; this wrapper only
+    turns a refusal into the stable ``403 forbidden`` the console already reads.
+    Cross-tenant and private-owner bounds are enforced by the caller via
+    ``_require_tenant_agent_binding`` / ``_require_private_owner`` *before* this
+    gate runs, so a refusal here is always a genuine write denial.
+    """
+    if _knowledge_write_authorized(ctx, agent_id):
+        return
+    raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
+                        json.dumps({"status": "error", "message": "forbidden",
+                                    "code": "forbidden"}))
+
+
 def _require_catalog_read(ctx: "Optional[RequestContext]", permission: str) -> None:
     """Gate the tenant skills/tools catalog read for the 工具与技能 console page.
 
@@ -360,6 +475,13 @@ def _require_resource_action(ctx: "Optional[RequestContext]", kind: str, resourc
         raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
                             json.dumps({"status": "error", "message": "forbidden",
                                         "code": "forbidden"}))
+
+
+def _raise_forbidden() -> NoReturn:
+    """Refuse with the JSON shape every other authorization gate already uses."""
+    raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
+                        json.dumps({"status": "error", "message": "forbidden",
+                                    "code": "forbidden"}))
 
 
 def _tenant_admin_owns_agent(ctx: "Optional[RequestContext]", agent_id: str) -> bool:
@@ -422,6 +544,44 @@ def _tenant_shared_default_agent(ctx: "Optional[RequestContext]", agent_id: str,
     return not binding.get("private_owner_user_id")
 
 
+def _require_deletable_provenance(ctx: "Optional[RequestContext]",
+                                  agent_id: Optional[str]) -> None:
+    """Refuse erasing the caller's own **supplied** assistant through delete.
+
+    Ownership answers *whose* object this is; provenance answers whether it can
+    be erased at all. The system-provisioned assistant is bound to a member as
+    theirs to use and to maintain, never as theirs to delete: it is the
+    Agent-less entry point the tenant handed them, and only the provisioner ever
+    creates one, so a member who deletes it has no way back to it.
+
+    The predicate is deliberately the same fact ``_personal_agents_projection``
+    advertises as ``actions.delete`` and ``PrivateAgentService.
+    delete_private_agent`` enforces on the owner-facing maintenance path — the
+    binding's ``origin`` for an object private to this caller — so the console's
+    projection, this route and the member service cannot answer the same
+    question three ways. ``unknown`` counts as supplied, exactly as
+    ``SUPPLIED_ASSISTANT_ORIGINS`` documents; a shared Agent (nobody's private
+    object) keeps the historical ``agent.edit``-only behaviour, so an operator
+    can still retire a tenant's own Agent.
+    """
+    if ctx is None or not agent_id:
+        return
+    from auth.service import SUPPLIED_ASSISTANT_ORIGINS, get_identity_service
+
+    binding = get_identity_service().get_agent_binding(agent_id) or {}
+    if binding.get("tenant_id") != ctx.tenant_id:
+        return
+    if binding.get("private_owner_user_id") != getattr(ctx, "user_id", None):
+        return
+    if str(binding.get("origin") or "unknown") not in SUPPLIED_ASSISTANT_ORIGINS:
+        return
+    raise web.HTTPError(
+        "403 Forbidden", {"Content-Type": "application/json"},
+        json.dumps({"status": "error",
+                    "message": "only a self-created agent can be deleted by its owner",
+                    "code": "forbidden"}))
+
+
 def _require_agent_action(ctx: "Optional[RequestContext]", agent_id: str, action: str,
                           permission: str) -> None:
     """Enforce fine-grained agent authorization for a single agent resource.
@@ -432,6 +592,12 @@ def _require_agent_action(ctx: "Optional[RequestContext]", agent_id: str, action
     """
     if ctx is None:
         return
+    # Ownership precedes the administrator shortcut (task 3.2): a private Agent is
+    # acted on by its owner, never by an admin who happens to pass an admin flag.
+    if _private_agent_owned_by_another(ctx, agent_id):
+        raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
+                            json.dumps({"status": "error", "message": "forbidden",
+                                        "code": "forbidden"}))
     if _tenant_admin_owns_agent(ctx, agent_id):
         return
     # The tenant's shared default Agent is the Agent-less entry point, so read and
@@ -440,6 +606,98 @@ def _require_agent_action(ctx: "Optional[RequestContext]", agent_id: str, action
     if action in ("read", "use") and _tenant_shared_default_agent(ctx, agent_id, permission):
         return
     _require_resource_action(ctx, "agent", f"agent:{agent_id}", action, permission)
+
+
+def _capability_name_list(value) -> list:
+    """Normalise a config field's raw value into the dependency names to check.
+
+    The console sends a list, but a save that names the field with ``None`` means
+    "all shared assets" — which is not a set of *chosen* dependencies and so has
+    nothing to authorize here. Anything else is coerced to trimmed strings; a
+    non-list is treated as empty rather than raising, because the shape error is
+    the agent-admin service's to report, not this gate's.
+    """
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _dependency_is_granted(name: str, allowed) -> bool:
+    """Whether ``name`` is covered by a resource-id grant set.
+
+    ``None`` means unrestricted (platform all / legacy). Otherwise the name must
+    equal a granted id or be its trailing ``:``-segment — the id carries an origin
+    namespace (``builtin:``, ``mcp:<conn>:``, ``provider:<pid>:``) that the config
+    field does not, so "search" must match ``builtin:search`` and ``mcp:crm:search``
+    without this gate inventing which connection the name came from.
+    """
+    if allowed is None:
+        return True
+    if name in allowed:
+        return True
+    tail = ":" + name
+    return any(str(rid).endswith(tail) for rid in allowed)
+
+
+def _refuse_unauthorized_dependency(kind: str, name: str) -> NoReturn:
+    """Name the offending resource, so the refusal explains itself (4.4)."""
+    raise web.HTTPError(
+        "403 Forbidden", {"Content-Type": "application/json"},
+        json.dumps({"status": "error",
+                    "message": f"not authorized to use {kind} '{name}'",
+                    "code": "forbidden"}, ensure_ascii=False))
+
+
+def _require_configured_capabilities(ctx: "Optional[RequestContext]",
+                                     agent_id: str, body) -> None:
+    """Re-verify the owner's authority for every dependency a save names (4.4).
+
+    Owning an Agent is authority over *that object* — not over the models, tools
+    and skills it is pointed at. The runtime re-checks each of those per call
+    (``agent_stream._resource_tool_denial``, the send-time model gate); this is
+    the *save* half of the same rule, so a configuration that could only ever be
+    refused at run time is refused when it is written, and the member is told
+    which resource is the problem.
+
+    Scope is deliberately narrow: only the caller's **own private** Agent. A
+    shared Agent's edit authority is its explicit ``agent.edit`` grant, and a
+    private Agent owned by someone else is refused before any dependency question
+    is asked. Administrators and legacy mode are unrestricted, exactly as they
+    are at run time.
+    """
+    if ctx is None:
+        return
+    if getattr(ctx, "is_platform_admin", False) or getattr(ctx, "is_tenant_admin", False):
+        return
+    if _private_agent_owned_by_another(ctx, agent_id):
+        _raise_forbidden()
+    if not agent_id or not isinstance(body, dict):
+        return
+    from auth.service import get_identity_service
+
+    svc = get_identity_service()
+    if not svc.is_private_agent_owner(ctx.tenant_id, ctx.user_id, agent_id):
+        return  # a shared Agent keeps its existing agent.edit authority
+
+    if "model" in body:
+        model = str(body.get("model") or "").strip()
+        if model:
+            allowed = svc.resource_ids_for(
+                ctx.user_id, ctx.tenant_id, "model", "use", permission="model.use")
+            if not _dependency_is_granted(model, allowed):
+                _refuse_unauthorized_dependency("model", model)
+    if "skills" in body:
+        allowed = svc.resource_ids_for(
+            ctx.user_id, ctx.tenant_id, "skill", "use", permission="skill.use")
+        for name in _capability_name_list(body.get("skills")):
+            if not _dependency_is_granted(name, allowed):
+                _refuse_unauthorized_dependency("skill", name)
+    if "tools_allowlist" in body:
+        allowed = svc.resource_ids_for(
+            ctx.user_id, ctx.tenant_id, "tool", "execute", permission="tool.execute")
+        for name in _capability_name_list(body.get("tools_allowlist")):
+            if not _dependency_is_granted(name, allowed):
+                _refuse_unauthorized_dependency("tool", name)
 
 
 def _require_agent_create(ctx: "Optional[RequestContext]") -> None:
@@ -768,6 +1026,162 @@ def _stream_identity_scope(channel, request_id):
         yield ctx
 
 
+@contextmanager
+def _uploads_identity_scope():
+    """Resolve an upload read-back's tenant from the addressed Agent.
+
+    The console renders an uploaded thumbnail or clip as an ``<img>``/``<audio>``
+    subresource, and a browser subresource request cannot carry ``X-Tenant-ID``.
+    The route is therefore declared ``tenant_from_resource`` in the roster, the
+    gate authenticates the caller without a tenant selection, and this scope
+    supplies the tenant from the addressed Agent's binding — the same shape as
+    ``_stream_identity_scope``, which derives it from the recorded request's
+    owner.
+
+    The *resource* decides the tenant, never the client: the binding is read
+    server-side and membership in that tenant is resolved through
+    ``resolve_context``. A caller-supplied selection is only cross-checked, and an
+    Agent that resolves to no tenant is reported as not-found so an unauthenticated
+    caller cannot probe which ids are bound. Object-level ownership and the
+    authoritative ``agent.read`` check stay in the handler.
+    """
+    from auth.runtime import resolve_context, to_runtime_identity, IdentityContextError
+    from channel.web.auth_handlers import _get_service, _session_token
+    from common.runtime_identity import use_identity
+
+    svc, token = _get_service(), _session_token()
+    if not token:
+        _chat_error("unauthorized", "401 Unauthorized", "unauthorized")
+    params = web.input(agent_id='', agent='', tenant_id='')
+    agent_id = _request_agent_id(params)
+
+    def _fail(exc: "IdentityContextError"):
+        from http import HTTPStatus
+        _chat_error(str(exc), f"{exc.status} {HTTPStatus(exc.status).phrase}", exc.code)
+
+    try:
+        # Authenticate before anything else: an unbound-Agent 404 must not be
+        # observable to a caller who has no valid session at all.
+        resolve_context(svc, token, None)
+    except IdentityContextError as e:
+        _fail(e)
+
+    binding = svc.get_agent_binding(agent_id) if agent_id else None
+    tenant_id = binding["tenant_id"] if binding else None
+    if not tenant_id:
+        raise web.notfound()
+
+    for selected in (web.ctx.env.get("HTTP_X_TENANT_ID", ""),
+                     getattr(params, "tenant_id", "") or ""):
+        if selected and selected != tenant_id:
+            _chat_error("conflicting tenant selection", "400 Bad Request",
+                        "conflicting_tenant")
+
+    try:
+        ctx = resolve_context(svc, token, tenant_id)
+    except IdentityContextError as e:
+        _fail(e)
+    if ctx.must_change_password:
+        _chat_error("password change required", code="password_change_required")
+
+    with use_identity(to_runtime_identity(ctx)):
+        yield ctx, agent_id
+
+
+def _tenant_owning_path(svc, real_path: str) -> "Optional[str]":
+    """The tenant whose workspace contains ``real_path`` (most specific root).
+
+    A file's authoritative owner is the tenant that holds its workspace, read
+    server-side from the store — never the client's claim. ``None`` when the
+    path belongs to no known tenant/Agent workspace (invisible, not a grant).
+    """
+    candidates = []
+    for rec in svc.tenant_shared_roots():
+        root = (rec or {}).get("shared_root")
+        if root:
+            candidates.append((os.path.realpath(root), rec["id"]))
+    try:
+        from agent.registry import get_agent_registry
+        registry = get_agent_registry()
+        for binding in svc.list_agent_bindings():
+            agent_id = (binding or {}).get("agent_id")
+            if not agent_id:
+                continue
+            try:
+                workspace = registry.get(agent_id).workspace
+            except (KeyError, ValueError, TypeError):
+                continue
+            if workspace:
+                candidates.append((os.path.realpath(workspace), binding["tenant_id"]))
+    except Exception as e:
+        logger.debug(f"[WebChannel] agent workspace lookup unavailable: {e}")
+
+    best_tenant, best_len = None, -1
+    for root, tenant_id in candidates:
+        try:
+            inside = os.path.commonpath([real_path, root]) == root
+        except ValueError:
+            continue
+        if inside and len(root) > best_len:
+            best_tenant, best_len = tenant_id, len(root)
+    return best_tenant
+
+
+@contextmanager
+def _file_identity_scope():
+    """Resolve a file read's tenant from the addressed file (its workspace).
+
+    ``GET /api/file`` backs a plain ``<a download>`` navigation and ``<img>``
+    subresources, so the browser issues it without ``X-Tenant-ID``. The route is
+    declared ``tenant_from_resource`` in the roster, the gate authenticates the
+    caller without a tenant selection, and this scope derives the tenant from
+    the file's own workspace and verifies membership through ``resolve_context``
+    — the same shape as ``_uploads_identity_scope``. A supplied selection is only
+    cross-checked; the resource stays authoritative.
+    """
+    from auth.runtime import resolve_context, to_runtime_identity, IdentityContextError
+    from channel.web.auth_handlers import _get_service, _session_token
+    from common.runtime_identity import use_identity
+
+    svc, token = _get_service(), _session_token()
+    if not token:
+        _chat_error("unauthorized", "401 Unauthorized", "unauthorized")
+
+    def _fail(exc: "IdentityContextError"):
+        from http import HTTPStatus
+        _chat_error(str(exc), f"{exc.status} {HTTPStatus(exc.status).phrase}", exc.code)
+
+    # Authenticate before anything else: an unresolvable path must not be
+    # observable to a caller who has no valid session at all.
+    try:
+        resolve_context(svc, token, None)
+    except IdentityContextError as e:
+        _fail(e)
+
+    params = web.input(path="", tenant_id="")
+    raw = params.path
+    real_path = os.path.realpath(raw) if raw else None
+    tenant_id = _tenant_owning_path(svc, real_path) if real_path else None
+    if not tenant_id:
+        raise web.notfound()
+
+    for selected in (web.ctx.env.get("HTTP_X_TENANT_ID", ""),
+                     getattr(params, "tenant_id", "") or ""):
+        if selected and selected != tenant_id:
+            _chat_error("conflicting tenant selection", "400 Bad Request",
+                        "conflicting_tenant")
+
+    try:
+        ctx = resolve_context(svc, token, tenant_id)
+    except IdentityContextError as e:
+        _fail(e)
+    if ctx.must_change_password:
+        _chat_error("password change required", code="password_change_required")
+
+    with use_identity(to_runtime_identity(ctx)):
+        yield ctx
+
+
 def _require_session_owner(ctx: "Optional[RequestContext]", session_id: str,
                            agent_id: Optional[str]) -> None:
     """Reject reads of a session whose agent is not visible to the caller.
@@ -850,6 +1264,27 @@ def _require_session_scope(ctx: "Optional[RequestContext]", session_id: str,
     return resolved
 
 
+def _conversation_store_for(agent_id: Optional[str]):
+    """Open the conversation store of the addressed Agent.
+
+    Conversations live one database per Agent workspace
+    (``<workspace>/memory/long-term/index.db``): the history list merges those
+    workspaces (``_list_sessions_across_agents``) and the ownership check reads
+    the addressed Agent's workspace (``_require_owned_session``), so every
+    read/write addressed by session id has to open the *same* file.
+
+    ``_get_workspace_root`` must NOT be used for this. In database mode it
+    resolves the caller's tenant *shared* root (that is its job: the file
+    panel, preview and uploads are tenant-scoped), so a session write would
+    land in a different database than the list it came from and answer
+    ``session not found`` for a session the user can plainly see.
+    """
+    from agent.memory import get_conversation_store
+    from agent.registry import get_agent_registry
+
+    return get_conversation_store(get_agent_registry().get(agent_id or None).workspace)
+
+
 def _require_tenant_agent_binding(ctx: "Optional[RequestContext]", agent_id: Optional[str]) -> str:
     """Validate that ``agent_id`` is bound to the caller's tenant (task 3.10).
 
@@ -880,30 +1315,36 @@ def _require_tenant_agent_binding(ctx: "Optional[RequestContext]", agent_id: Opt
                         json.dumps({"status": "error", "message": "default agent ambiguous"}))
 
 
-def _require_private_owner(ctx: "Optional[RequestContext]", agent_id: str) -> None:
-    """Enforce private-owner read scoping for an agent's assets (task 3.10).
+def _db_path_owner_forbidden(ctx: "Optional[RequestContext]", agent_id: "Optional[str]") -> bool:
+    """True when the caller may not read ``agent_id``'s assets.
 
     In database mode, if the agent is privately owned (``private_owner_user_id``
-    set) only that owner (self) and a ``tenant_admin`` of the same tenant may
-    read its memory/knowledge. ``tenant_admin`` reads the whole tenant; an
-    ordinary member reads only their own private content. Platform admin status
-    is deliberately NOT an exception at the tenant layer — a platform admin must
-    still be a member of the tenant to read its resources. Legacy mode is a
-    no-op.
+    set) only that owner may read its memory/knowledge/files. **An administrator
+    is not an exception**: ``tenant_admin`` reaches the *governance* surface
+    (ownership, usage, the stop action) but not the member's private content, and
+    platform-admin status is already no exception at the tenant layer. Anything
+    else would let "manage the tenant" double as "read every member's workspace".
+    Legacy mode is a no-op.
+
+    Pure predicate so both the raising gate (:func:`_require_private_owner`) and
+    the file-path authorization (:func:`_authorize_db_file_path`) share one rule.
     """
-    if ctx is None or not ctx.tenant_id:
-        return
+    if ctx is None or not getattr(ctx, "tenant_id", None) or not agent_id:
+        return False
     from auth.service import get_identity_service
     binding = get_identity_service().get_agent_binding(agent_id)
     if not binding:
-        return
+        return False
     owner = binding.get("private_owner_user_id")
     if not owner:
         # tenant-shared asset: any permission-holder of the tenant may read.
-        return
-    if ctx.is_tenant_admin:
-        return
-    if owner != ctx.user_id:
+        return False
+    return owner != getattr(ctx, "user_id", None)
+
+
+def _require_private_owner(ctx: "Optional[RequestContext]", agent_id: str) -> None:
+    """Enforce private-owner read scoping for an agent's assets (task 3.10)."""
+    if _db_path_owner_forbidden(ctx, agent_id):
         raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
                             json.dumps({"status": "error", "message": "forbidden"}))
 
@@ -1041,18 +1482,133 @@ def _serve_allowed_roots() -> list:
     return roots
 
 
+def _tenant_workspace_root_owners() -> list:
+    """``[(realpath, agent_id_or_None)]`` every workspace the server may serve.
+
+    Same static registration as :func:`_tenant_workspace_roots`, but keeping the
+    owning Agent so the private-owner rule can be applied to a path *without* a
+    request identity. ``None`` marks a tenant shared root (shared by definition).
+    """
+    owners = []
+    try:
+        from auth.service import get_identity_service
+        svc = get_identity_service()
+        for rec in svc.tenant_shared_roots():
+            root = (rec or {}).get("shared_root")
+            if root:
+                owners.append((os.path.realpath(root), None))
+        from agent.registry import get_agent_registry
+        registry = get_agent_registry()
+        for binding in svc.list_agent_bindings():
+            agent_id = (binding or {}).get("agent_id")
+            if not agent_id:
+                continue
+            try:
+                workspace = registry.get(agent_id).workspace
+            except (KeyError, ValueError, TypeError):
+                continue
+            if workspace:
+                owners.append((os.path.realpath(workspace), agent_id))
+    except Exception as e:
+        logger.debug(f"[WebChannel] tenant workspace roots unavailable: {e}")
+    return owners
+
+
+def _tenant_workspace_roots() -> list:
+    """Every tenant/Agent workspace the server may mint a capability for.
+
+    ``/preview`` is capability-authorized: the HMAC directory token, not a
+    request identity, authorizes the read (the sandboxed iframe cannot send the
+    session cookie). This list backs the defense-in-depth root check for that
+    path, so it has to cover every workspace ``_build_preview_url`` can be
+    called with — each tenant's shared root and each bound Agent's workspace —
+    independent of the request (a public preview request carries no identity).
+    """
+    return [root for root, _ in _tenant_workspace_root_owners()]
+
+
+class _PrivateOwnerLookupFailed(Exception):
+    """The identity store could not answer the private-owner lookup."""
+
+
+def _static_path_private_owner(real_path: str) -> Optional[str]:
+    """The owner of ``real_path`` when it sits in a *privately owned* workspace.
+
+    Resolution uses the static workspace registration, so it works for a
+    capability preview that carries no identity. ``None`` means "not privately
+    owned" — a shared root, a shared Agent, a platform path, an unknown path, or
+    an ambiguous one. Ambiguity is not resolved here; :func:`_is_path_allowed`
+    already refuses what cannot be attributed, and a privately owned workspace is
+    attributed the same way there.
+
+    A lookup that *fails* is not an answer, and must not be read as one: raising
+    :class:`_PrivateOwnerLookupFailed` keeps a store outage from converting a
+    private file into a public one (task 3.6 property 4). "Unknown" and
+    "unreachable" are opposite conclusions and are reported differently.
+
+    This is the consumption-side half of the private-owner rule: ownership is
+    re-derived from the path at read time, so a token minted while a member owned
+    the workspace cannot outlive the ownership.
+    """
+    kind, agent_id = _db_path_owner(real_path, _tenant_workspace_root_owners())
+    if kind != "agent" or not agent_id:
+        return None
+    from auth.service import get_identity_service
+    binding = get_identity_service().get_agent_binding(agent_id)
+    return (binding or {}).get("private_owner_user_id") or None
+
+
+def _preview_consumer_may_read(real_path: str) -> bool:
+    """Whether the *current* request may consume a capability preview of ``path``.
+
+    Public workspace files need no identity: the HMAC token is the whole
+    authorization, which is what lets an anonymous iframe render an Agent's
+    generated page. A **privately owned** file is different — the token only
+    proves the URL was once issued, so it must not survive as a bearer grant to
+    someone else's workspace. For those the current session is resolved and must
+    be the owner; no session, an expired session, or a different user all refuse.
+
+    Anything that prevents an answer — the store failing, the session lookup
+    failing — refuses too. Only a positive "this file is not private" allows the
+    token through.
+    """
+    try:
+        owner = _static_path_private_owner(real_path)
+    except Exception as e:
+        logger.warning(f"[WebChannel] preview ownership check failed closed: {e}")
+        return False
+    if owner is None:
+        return True
+    from channel.web.auth_handlers import _get_service, _session_token
+
+    token = _session_token()
+    if not token:
+        return False
+    try:
+        from auth.runtime import resolve_context
+        ctx = resolve_context(_get_service(), token, None)
+    except Exception:
+        return False
+    return getattr(ctx, "user_id", None) == owner
+
+
+
+
 def _is_path_allowed(real_path: str) -> bool:
     """True when ``real_path`` is under a database-safe browse root.
 
     Never trusts operator home / unrestricted serve roots: even if
     ``_serve_allowed_roots`` is widened (tests or misconfig), only the
-    platform file root, agent workspace, and opened project dirs qualify.
+    platform file root, tenant/Agent workspaces, and opened project dirs
+    qualify.
     """
     roots = [os.path.realpath(_platform_file_root())]
-    try:
-        roots.append(os.path.realpath(_get_workspace_root()))
-    except Exception:
-        pass
+    # Tenant/Agent roots come from the *static* workspace list rather than
+    # ``_get_workspace_root()``: the latter refuses (raises ``web.HTTPError``)
+    # when the request carries no tenant identity, and a public capability
+    # preview has none. Constructing that error mutates ``web.ctx.status`` and
+    # headers even when the exception is swallowed, corrupting the response.
+    roots.extend(_tenant_workspace_roots())
     try:
         from agent.workspace import project_store
         for rec in project_store.list_recents():
@@ -2119,6 +2675,13 @@ class WebChannel(ChatChannel):
 
             from urllib.parse import quote
             preview_url = f"/uploads/{quote(public_path, safe='/')}"
+            # Name the writing Agent explicitly. The read-back route derives its
+            # tenant from the addressed Agent's binding, and the browser loads
+            # this URL directly as an <img>/<audio> subresource (so the console's
+            # fetch wrapper never sees it). Without the id the read would fall
+            # back to the tenant's *default* Agent and 404 for any other one.
+            if agent_id:
+                preview_url += f"?agent_id={quote(str(agent_id), safe='')}"
 
             logger.info(f"[WebChannel] File uploaded: {original_name} -> {save_path} ({file_type})")
 
@@ -2955,10 +3518,11 @@ def _guard_not_database() -> None:
     """Keep consumers without a verified tenant boundary closed in database mode.
 
     Chat transport, file upload/serve/preview and voice have dedicated
-    identity/permission boundaries (task 2.4, open-database-runtime). The
-    consumers still using this gate — knowledge write (action/import) and the
-    host project browser — remain closed server-side until their own slices
-    land. Legacy mode is unaffected.
+    identity/permission boundaries (task 2.4, open-database-runtime), and
+    knowledge read/write now carries its own tenant scope + permission gate
+    (``open-tenant-knowledge-console``). The consumer still using this gate is
+    the host project browser, which remains closed server-side until its own
+    slice lands.
     """
     if _is_database_identity():
         raise web.HTTPError("503 Service Unavailable",
@@ -3146,11 +3710,11 @@ class VoiceTtsHandler:
 
 class UploadsHandler:
     def GET(self, file_name):
-        with _db_scope() as ctx:
+        # The tenant comes from the addressed Agent, not a header: the console
+        # loads this as an <img>/<audio> subresource, which cannot send one.
+        with _uploads_identity_scope() as (ctx, requested_agent_id):
             try:
-                params = web.input(agent_id='')
-                # Served upload must belong to a tenant-bound agent the caller may read.
-                agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
+                agent_id = _require_tenant_agent_binding(ctx, requested_agent_id)
                 _require_private_owner(ctx, agent_id)
                 _require_agent_action(ctx, agent_id, "read", "agent.read")
                 upload_dir = _get_upload_dir(agent_id)
@@ -3171,26 +3735,106 @@ class UploadsHandler:
                 raise web.notfound()
 
 
-def _db_file_serve_roots(ctx) -> list:
-    """Roots a database-mode caller may serve files from."""
+def _db_file_root_owners(ctx) -> list:
+    """``[(realpath, agent_id_or_None)]`` roots a caller may serve files from.
+
+    Platform and tenant-shared roots carry ``None``; a bound Agent's workspace
+    carries its ``agent_id`` so callers can apply the private/shared ownership
+    rule to the root a path actually resolves into.
+    """
     from auth.service import get_identity_service
     svc = get_identity_service()
     roots = []
     if getattr(ctx, "is_platform_admin", False):
-        roots.append(_platform_file_root())
+        roots.append((os.path.realpath(_platform_file_root()), None))
     shared = svc.tenant_shared_root(ctx.tenant_id) if getattr(ctx, "tenant_id", None) else None
     if shared:
-        roots.append(os.path.realpath(shared))
+        roots.append((os.path.realpath(shared), None))
     from agent.registry import get_agent_registry
     registry = get_agent_registry()
     if getattr(ctx, "tenant_id", None):
         for agent_id in svc.tenant_agent_ids(ctx.tenant_id):
             try:
                 profile = registry.get(agent_id)
-                roots.append(os.path.realpath(profile.workspace))
+                roots.append((os.path.realpath(profile.workspace), agent_id))
             except (KeyError, ValueError):
                 continue
     return roots
+
+
+def _db_file_serve_roots(ctx) -> list:
+    """Roots a database-mode caller may serve files from.
+
+    Flat projection of :func:`_db_file_root_owners`, kept as the seam existing
+    callers and tests patch.
+    """
+    return [root for root, _ in _db_file_root_owners(ctx)]
+
+
+def _db_path_owner(real_path: str, roots: list) -> tuple:
+    """Which of ``roots`` owns ``real_path``: ``(kind, agent_id)``.
+
+    ``kind`` is ``platform``, ``shared``, ``agent``, ``ambiguous`` or ``none``.
+    The **most specific** (longest) matching root wins, so an Agent workspace
+    nested inside the tenant shared root keeps its identity instead of being
+    swallowed by the shared root.
+
+    Two *distinct* Agent workspaces of equal specificity make the ownership
+    ambiguous and the caller must fail closed. An Agent workspace that literally
+    equals a shared root is not ambiguous: the directory is the tenant's shared
+    root, whose contents are shared by definition.
+    """
+    real_path = os.path.realpath(real_path)
+    platform_root = os.path.realpath(_platform_file_root())
+    try:
+        if os.path.commonpath([real_path, platform_root]) == platform_root:
+            return "platform", None
+    except ValueError:
+        pass
+
+    matches = []
+    for root, agent_id in roots:
+        root = os.path.realpath(root)
+        if root == platform_root:
+            continue
+        try:
+            if os.path.commonpath([real_path, root]) == root:
+                matches.append((len(root), agent_id))
+        except ValueError:
+            continue
+    if not matches:
+        return "none", None
+
+    longest = max(length for length, _ in matches)
+    top = {agent_id for length, agent_id in matches if length == longest}
+    agent_ids = {agent_id for agent_id in top if agent_id}
+    if len(agent_ids) > 1:
+        return "ambiguous", None
+    if agent_ids:
+        return "agent", next(iter(agent_ids))
+    return "shared", None
+
+
+def _owner_of_db_path(ctx, real_path: str) -> tuple:
+    """Single-resource :func:`_db_path_owner` against the caller's roots."""
+    return _db_path_owner(real_path, _db_file_root_owners(ctx))
+
+
+def _db_path_visible(ctx, real_path: str, roots: list = None) -> bool:
+    """False when ``real_path`` is ambiguous or another member's private Agent.
+
+    The single ownership rule for the file surface: apply it to the path that was
+    actually addressed, never to the Agent the request merely *declared*.
+    ``roots`` lets a caller listing many entries resolve the tenant's roots once.
+    """
+    if roots is None:
+        roots = _db_file_root_owners(ctx)
+    kind, agent_id = _db_path_owner(real_path, roots)
+    if kind == "ambiguous":
+        return False
+    if kind == "agent" and _db_path_owner_forbidden(ctx, agent_id):
+        return False
+    return True
 
 
 def _authorize_db_file_path(ctx, real_path: str) -> tuple:
@@ -3199,6 +3843,10 @@ def _authorize_db_file_path(ctx, real_path: str) -> tuple:
     Returns ``(allowed, via)`` where ``via`` is ``platform``, ``tenant``,
     ``forbidden``, or ``not_found``. Missing tenant context raises 403.
     Platform-root reads by a platform admin are audited as ``platform.file.read``.
+
+    Tenant containment alone is not authority: the path's *owning Agent* must
+    also pass the private-owner rule, so a member cannot name a shared Agent and
+    then address another member's private Agent workspace (absolute or nested).
     """
     if not getattr(ctx, "tenant_id", None):
         raise web.HTTPError("403 Forbidden")
@@ -3228,21 +3876,31 @@ def _authorize_db_file_path(ctx, real_path: str) -> tuple:
             logger.warning(f"[WebChannel] platform.file.read audit unavailable: {e}")
         return True, "platform"
 
+    contained = False
     for root in _db_file_serve_roots(ctx):
         root = os.path.realpath(root)
         if root == platform_root:
             continue
         try:
             if os.path.commonpath([real_path, root]) == root:
-                return True, "tenant"
+                contained = True
+                break
         except ValueError:
             continue
-    return False, "not_found"
+    if not contained:
+        return False, "not_found"
+
+    kind, agent_id = _owner_of_db_path(ctx, real_path)
+    if kind == "ambiguous":
+        return False, "not_found"
+    if kind == "agent" and _db_path_owner_forbidden(ctx, agent_id):
+        return False, "forbidden"
+    return True, "tenant"
 
 
 class FileServeHandler:
     def GET(self):
-        with _db_scope() as ctx:
+        with _file_identity_scope() as ctx:
             try:
                 params = web.input(path="", agent_id="")
                 file_path = params.path
@@ -3255,6 +3913,13 @@ class FileServeHandler:
                     agent_id = _require_tenant_agent_binding(ctx, params.agent_id)
                     _require_private_owner(ctx, agent_id)
                     _require_agent_action(ctx, agent_id, "read", "agent.read")
+                    # A declared Agent is a cross-check, never the authority:
+                    # the path's own owner is what authorizes the read, so a
+                    # mismatch (shared Agent claimed for a private Agent's file)
+                    # is refused rather than trusted.
+                    owner_kind, owner_agent = _owner_of_db_path(ctx, file_path)
+                    if owner_kind == "agent" and owner_agent != agent_id:
+                        raise web.notfound()
                 allowed, via = _authorize_db_file_path(ctx, file_path)
                 if not allowed:
                     if via == "forbidden":
@@ -3341,6 +4006,11 @@ class PreviewHandler:
             if os.path.commonpath([full_path, base_real]) != base_real:
                 raise web.notfound()
             if not _is_path_allowed(full_path) or not os.path.isfile(full_path):
+                raise web.notfound()
+            # Ownership is re-derived at consumption: a token minted for a
+            # private workspace is not a bearer grant to it. Public workspace
+            # files keep working without identity (the token is the authority).
+            if not _preview_consumer_may_read(full_path):
                 raise web.notfound()
 
             content_type = mimetypes.guess_type(full_path)[0] or "application/octet-stream"
@@ -6787,14 +7457,74 @@ class ChannelsHandler:
         return json.dumps({"status": "success", "instance_id": instance_id}, ensure_ascii=False)
 
 
-class WeixinQrHandler:
-    """Handle WeChat QR code login from the web console.
+#: HTTP reason phrases for the refusals this handler raises. Kept next to the
+#: handler so a refusal never has to guess a status line.
+_HTTP_STATUS_TEXT = {
+    400: "Bad Request",
+    401: "Unauthorized",
+    403: "Forbidden",
+    404: "Not Found",
+    409: "Conflict",
+    410: "Gone",
+    429: "Too Many Requests",
+    500: "Internal Server Error",
+    502: "Bad Gateway",
+    503: "Service Unavailable",
+}
 
-    GET  /api/weixin/qrlogin          → fetch a new QR code
-    POST /api/weixin/qrlogin          → poll QR status or start channel after login
+#: Refusal code -> HTTP status for the scan pipeline. `not_owner` is 404 for
+#: "unknown handle" and "somebody else's handle" alike on purpose: the status is
+#: part of the answer two initiators must not be able to tell apart.
+_SCAN_ERROR_STATUS = {
+    "not_owner": 404,
+    "expired": 410,
+    "invalid_transition": 409,
+    "binding_mismatch": 409,
+    "terminal": 409,
+    "no_provider_result": 409,
+    "not_confirmed": 409,
+    "no_active_scan": 409,
+    "authorization_refused": 403,
+    "readback_refused": 403,
+    "quota_refused": 403,
+    "quota_not_wired": 503,
+    "audit_failed": 503,
+    "provider_result_crypto": 503,
+    "state_not_shared": 503,
+    "bad_provider_result": 502,
+    "provider_unavailable": 502,
+    "secret_in_receipt": 500,
+}
+
+
+class WeixinQrHandler:
+    """微信扫码接入：按发起者绑定会话、一次性落库（任务 7.1-7.5）。
+
+    GET  /api/weixin/qrlogin  → 为当前已验证发起者开启一次扫码接入
+    POST /api/weixin/qrlogin  → ``poll`` / ``refresh`` / ``commit`` / ``cancel``
+
+    旧实现把二维码和"这个 token 是谁扫到的"放在进程级 ``_qr_state`` 里，并把扫到
+    的长期 token 写进 ``conf()`` 和共用凭据文件：两个人同时扫码会互相覆盖，任何
+    已登录身份都能轮询并接管别人的会话，实例凭据也不由实例自己持有。现在每次接入
+    都是 ``channel.web.scan_onboarding`` 的会话，绑定 (user, AuthSession, tenant,
+    scope, owner, provider, target, purpose)：别人的句柄与不存在的句柄得到同一个
+    拒绝，长期密钥由身份服务加密写入实例自己的凭据，响应只回句柄、二维码与非敏感
+    事实。进程级 ``_qr_state`` 已删除，并且没有任何回退槽位。
+
+    四个事实分开报告、互不冒充：扫码完成（``qr_status``）、创建已授权（``authorized``）、
+    实例已保存（``saved``）、外部连接（``connection`` / ``connected``）。个人渠道在
+    真实执行验收之前，保存成功仍然报告"已保存未连接"（任务 7.4）。
+
+    作用域由服务端按已验证上下文决定（``_scope_for``）：能管理本租户渠道的身份默认
+    接入租户公共实例，其他成员默认接入本人实例，两类身份都可显式选择个人实例。平台
+    作用域在本 change 不开放——没有服务路径会创建不属于租户的渠道实例——因此显式
+    拒绝，而不是给平台管理员伪造一个租户归属。owner/tenant/目标实例一律不接受客户端
+    指定。
     """
 
-    _qr_state = {}
+    PROVIDER = "weixin"
+    CHANNEL_TYPE = "weixin"
+    PURPOSE = "create"
 
     @staticmethod
     def _qr_to_data_uri(data: str) -> str:
@@ -6826,114 +7556,480 @@ class WeixinQrHandler:
             pass
         return None
 
-    def GET(self):
-        web.header('Content-Type', 'application/json; charset=utf-8')
-        try:
-            running_ch = self._get_running_channel()
-            if running_ch and hasattr(running_ch, '_current_qr_url') and running_ch._current_qr_url:
-                qr_image = self._qr_to_data_uri(running_ch._current_qr_url)
-                return json.dumps({
-                    "status": "success",
-                    "qrcode_url": running_ch._current_qr_url,
-                    "qr_image": qr_image,
-                    "source": "channel",
-                })
+    # ------------------------------------------------------------------
+    # HTTP
+    # ------------------------------------------------------------------
 
-            from channel.weixin.weixin_api import WeixinApi, DEFAULT_BASE_URL
-            base_url = conf().get("weixin_base_url", DEFAULT_BASE_URL)
-            api = WeixinApi(base_url=base_url)
-            qr_resp = api.fetch_qr_code()
-            qrcode = qr_resp.get("qrcode", "")
-            qrcode_url = qr_resp.get("qrcode_img_content", "")
-            if not qrcode:
-                return json.dumps({"status": "error", "message": "No QR code returned"})
-            qr_image = self._qr_to_data_uri(qrcode_url)
-            WeixinQrHandler._qr_state = {
-                "qrcode": qrcode,
-                "qrcode_url": qrcode_url,
-                "base_url": base_url,
-            }
-            return json.dumps({"status": "success", "qrcode_url": qrcode_url, "qr_image": qr_image})
-        except Exception as e:
-            logger.error(f"[WebChannel] WeixinQr GET error: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+    def GET(self):
+        web.header("Content-Type", "application/json; charset=utf-8")
+        web.header("Cache-Control", "no-store")
+        try:
+            if not _is_database_identity():
+                # 单用户 legacy 部署没有 AuthSession 可绑定。那里的受支持路径是渠道
+                # 自己的登录循环（启动渠道，它渲染自己的二维码），即下面的
+                # ``source: "channel"`` 分支；进程级二维码槽位正是本次删掉的东西，
+                # 所以这里刻意没有第二条路。
+                return self._channel_owned_qr()
+            from channel.web.auth_handlers import require_management_write
+            require_management_write()
+            params = web.input(scope="", base_url="")
+            return self._start(self._context(), {
+                "scope": getattr(params, "scope", ""),
+                "base_url": getattr(params, "base_url", ""),
+            })
+        except web.HTTPError:
+            raise
+        except Exception as error:
+            logger.error(f"[WebChannel] WeixinQr GET error: {error}", exc_info=True)
+            self._fail_from(error)
 
     def POST(self):
-        web.header('Content-Type', 'application/json; charset=utf-8')
+        web.header("Content-Type", "application/json; charset=utf-8")
+        web.header("Cache-Control", "no-store")
         try:
-            body = json.loads(web.data())
-            action = body.get("action", "poll")
-
+            if not _is_database_identity():
+                self._fail(
+                    "database identity is required to bind a scan to an initiator",
+                    status=409, code="identity_required")
+            try:
+                body = json.loads(web.data() or b"{}")
+            except (TypeError, ValueError):
+                self._fail("invalid JSON body", status=400, code="bad_request")
+            if not isinstance(body, dict):
+                self._fail("a JSON object is required", status=400,
+                           code="bad_request")
+            action = str(body.get("action") or "poll").strip().lower()
+            if action not in ("poll", "refresh", "commit", "cancel"):
+                self._fail(f"unknown action: {action}", status=400,
+                           code="unknown_action")
+            # 这里的每个动作都会推进会话或提交实例，全部是写操作，因此全部通过既有
+            # 的统一来源/CSRF 门（与其他管理面写入同一个 helper）。
+            from channel.web.auth_handlers import require_management_write
+            require_management_write()
+            ctx = self._context()
+            if action == "cancel":
+                return self._cancel(ctx, body)
             if action == "poll":
-                return self._poll_status()
-            elif action == "refresh":
-                return self.GET()
-            else:
-                return json.dumps({"status": "error", "message": f"unknown action: {action}"})
-        except Exception as e:
-            logger.error(f"[WebChannel] WeixinQr POST error: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+                return self._poll(ctx, body)
+            if action == "refresh":
+                # 一次刷新就是一次新的扫码：旧会话只能自行过期，永远不会被别人的
+                # 扫码结果填充，也不会被这个请求改成别的绑定。
+                return self._start(ctx, body)
+            return self._commit(ctx, body)
+        except web.HTTPError:
+            raise
+        except Exception as error:
+            logger.error(f"[WebChannel] WeixinQr POST error: {error}", exc_info=True)
+            self._fail_from(error)
 
-    def _poll_status(self):
-        state = WeixinQrHandler._qr_state
-        qrcode = state.get("qrcode", "")
-        base_url = state.get("base_url", "")
-        if not qrcode:
-            return json.dumps({"status": "error", "message": "No active QR session"})
+    # ------------------------------------------------------------------
+    # 请求上下文
+    # ------------------------------------------------------------------
 
-        from channel.weixin.weixin_api import WeixinApi, DEFAULT_BASE_URL
-        api = WeixinApi(base_url=base_url or DEFAULT_BASE_URL)
+    @staticmethod
+    def _context():
+        """本次请求的已验证上下文；租户必须显式选中。
+
+        渠道实例一律属于某个租户（公共或成员个人），所以会话绑定里的 tenant 就是
+        请求选中的租户。没有选中租户的身份拿不到任何会话——这正是"归属不由客户端
+        参数或全局配置推断"的落点。
+        """
+        from channel.web.auth_handlers import _require_context
+        return _require_context(require_tenant=True)
+
+    @staticmethod
+    def _auth_session_id() -> str:
+        """本次请求所属的 AuthSession **行 id**，而不是 bearer token。
+
+        绑定需要"这次扫码是在哪次登录里发起的"，这样同一用户的下一次登录不能回读上
+        一次的结果。token 是 bearer 凭据，绝不能进入会话记录、回执或日志；行 id 是
+        不透明且非秘密的，正好是绑定需要的那个标识。
+        """
+        from channel.web.auth_handlers import _get_service, _session_token
+        token = _session_token()
+        session = _get_service().verify_session(token) if token else None
+        # ``verify_session`` answers ``{"user": ..., "session": <store row>}``:
+        # the row is a mapping but not a dict, so it is indexed, not ``.get``-ed.
+        row = (session or {}).get("session") if isinstance(session, dict) else None
         try:
-            status_resp = api.poll_qr_status(qrcode, timeout=10)
-        except Exception as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            ident = str(row["id"] or "") if row is not None else ""
+        except Exception:  # noqa: BLE001 - an unreadable session is not a session
+            ident = ""
+        if not ident:
+            WeixinQrHandler._fail("authentication required", status=401,
+                                  code="unauthorized")
+        return ident
 
-        qr_status = status_resp.get("status", "wait")
+    @classmethod
+    def _actor(cls, ctx):
+        from channel.web import scan_onboarding as so
+        return so.Actor(user_id=ctx.user_id, tenant_id=ctx.tenant_id or "",
+                        auth_session_id=cls._auth_session_id())
 
-        if qr_status == "confirmed":
-            bot_token = status_resp.get("bot_token", "")
-            bot_id = status_resp.get("ilink_bot_id", "")
-            result_base_url = status_resp.get("baseurl", base_url)
-            user_id = status_resp.get("ilink_user_id", "")
+    # ------------------------------------------------------------------
+    # 作用域与目标
+    # ------------------------------------------------------------------
 
-            if not bot_token or not bot_id:
-                return json.dumps({"status": "error", "message": "Login confirmed but missing token"})
+    @staticmethod
+    def _manages_tenant_channels(ctx) -> bool:
+        """*ctx* 是否可以管理本租户的渠道实例。
 
-            cred_path = get_weixin_credentials_path()
-            from channel.weixin.weixin_channel import _save_credentials
-            _save_credentials(cred_path, {
-                "token": bot_token,
-                "base_url": result_base_url,
-                "bot_id": bot_id,
-                "user_id": user_id,
-            })
-            conf()["weixin_token"] = bot_token
-            conf()["weixin_base_url"] = result_base_url
+        问已交付的服务（列表接口要求的正是这个权限），而不是在扫码侧复制一份规则，
+        否则扫码可能给出一个随后必然被拒的作用域。
+        """
+        tenant = str(getattr(ctx, "tenant_id", "") or "")
+        if not tenant:
+            return False
+        try:
+            from auth.service import get_identity_service
+            get_identity_service().list_tenant_channel_instances(
+                actor_user_id=ctx.user_id, tenant_id=tenant)
+            return True
+        except Exception:  # noqa: BLE001 - 无权限就是 False，不是错误
+            return False
 
-            WeixinQrHandler._qr_state = {}
-            logger.info(f"[WebChannel] WeChat QR login confirmed: bot_id={bot_id}")
+    @classmethod
+    def _scope_for(cls, ctx, body) -> str:
+        """服务端决定本次接入的 scope（客户端只能在允许范围内选择）。
 
+        默认按能力推导：能管理本租户渠道的身份接入租户公共实例，其他成员接入本人
+        实例。显式选择只是收窄/切换到自己本来就有权的位置，不能指定 owner、tenant
+        或目标实例。
+        """
+        from channel.web import scan_onboarding as so
+        wanted = str((body or {}).get("scope") or "").strip().lower()
+        if wanted in ("", "auto"):
+            return (so.SCOPE_TENANT if cls._manages_tenant_channels(ctx)
+                    else so.SCOPE_PERSONAL)
+        if wanted in ("personal", "user"):
+            return so.SCOPE_PERSONAL
+        if wanted == "tenant":
+            if not cls._manages_tenant_channels(ctx):
+                cls._fail("managing this tenant's channels is required",
+                          status=403, code="forbidden")
+            return so.SCOPE_TENANT
+        if wanted == "platform":
+            # 平台管理员在租户内的公共实例就是"租户公共实例"，而一个不属于任何租户
+            # 的渠道实例没有任何服务路径可以创建。因此这里显式拒绝，而不是替平台身份
+            # 伪造一个租户归属。
+            cls._fail(
+                "a channel instance always belongs to a tenant; select the"
+                " tenant it should serve",
+                status=400, code="scope_not_supported")
+        cls._fail(f"unknown scan scope: {wanted}", status=400, code="bad_scope")
+
+    @classmethod
+    def _target(cls, scope: str) -> str:
+        return f"{cls.CHANNEL_TYPE}:{scope}"
+
+    # ------------------------------------------------------------------
+    # 会话读写
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _session(cls, actor, body):
+        """调用者**自己**的会话：优先按句柄，其次按发起者。
+
+        POST /api/weixin/qrlogin 的 ``{action: "poll"}`` 早于句柄存在（控制台与桌面
+        都这样发），这里不回退到任何全局槽位，而是把"最新的会话"限定在已验证发起者
+        自己的范围内——别人的会话与不存在完全一样。
+        """
+        from channel.web import scan_onboarding as so
+        handle = str((body or {}).get("handle") or "").strip()
+        if handle:
+            return so.require_session(
+                handle, actor=actor, provider=cls.PROVIDER, purpose=cls.PURPOSE)
+        latest = so.latest_session(
+            actor=actor, provider=cls.PROVIDER, purpose=cls.PURPOSE)
+        if latest is None:
+            # 与"句柄不存在"和"句柄是别人的"完全同一个拒绝：这一句是存在性不可观测
+            # 的关键，三条路径共用同一个 code 与同一段文本。
+            raise so.ScanSessionError(so.NOT_OWNED_MESSAGE, code="not_owner")
+        return latest
+
+    # ------------------------------------------------------------------
+    # 开启一次接入
+    # ------------------------------------------------------------------
+
+    def _start(self, ctx, body):
+        from channel.web import scan_onboarding as so
+        from channel import weixin_scan_adapter as adapter
+        from auth.service import get_identity_service
+
+        ready, reason = so.shared_state_ready()
+        if not ready:
+            # 会话登记、回执账本与一次性授权都是进程内状态：多 worker 部署会让每个
+            # worker 各自持有一份同一扫码的视图。这时必须拒绝开放，而不是让每个
+            # worker 各答一半。
+            self._fail(
+                "this deployment cannot serve a scan safely: " + reason,
+                status=503, code="state_not_shared")
+        scope = self._scope_for(ctx, body)
+        actor = self._actor(ctx)
+        # 端点只由本次请求指定（或厂商默认），绝不读 ``conf()`` 的全局微信配置：
+        # 扫码新建的实例不能因为部署里遗留的全局值被指到别处。
+        base_url = (str((body or {}).get("base_url") or "").strip()
+                    or adapter.default_base_url())
+        # 扫码没有名字表单：这里一次性解析出默认名（类型标签 + 首个空序号），随会话绑
+        # 定。同一次扫码的每次提交都提交同一份内容，幂等键与回执读回才对得上。
+        default_name = adapter.default_display_name(
+            get_identity_service(), scope=scope, tenant_id=ctx.tenant_id or "",
+            actor_user_id=ctx.user_id)
+        session = so.start_session(
+            provider=self.PROVIDER, scope=scope, purpose=self.PURPOSE,
+            target=self._target(scope), owner_user_id=ctx.user_id,
+            tenant_id=ctx.tenant_id or "", auth_session_id=actor.auth_session_id,
+            default_display_name=default_name)
+        try:
+            answer = adapter.fetch_qr(base_url=base_url)
+        except Exception as error:
+            so.mark_status(session.handle, so.STATUS_FAILED, actor=actor,
+                           error=type(error).__name__)
+            adapter.log_refusal("qr fetch", error)
+            self._fail("the provider did not hand out a QR code", status=502,
+                       code="provider_unavailable")
+        qrcode = str((answer or {}).get("qrcode") or "")
+        if not qrcode:
+            so.mark_status(session.handle, so.STATUS_FAILED, actor=actor,
+                           error="no_qrcode")
+            self._fail("the provider returned no QR code", status=502,
+                       code="provider_unavailable")
+        session = so.attach_qr(
+            session.handle, qrcode=qrcode,
+            qrcode_url=str((answer or {}).get("qrcode_img_content") or ""),
+            base_url=base_url, actor=actor)
+        return self._scan_answer(session, qr_status="waiting")
+
+    def _poll(self, ctx, body):
+        from channel.web import scan_onboarding as so
+        from channel import weixin_scan_adapter as adapter
+
+        actor = self._actor(ctx)
+        session = self._session(actor, body)
+        if session.status in (so.STATUS_CANCELLED, so.STATUS_EXPIRED,
+                              so.STATUS_FAILED):
+            return self._scan_answer(session, qr_status=session.status)
+        if session.status in (so.STATUS_CONFIRMED, so.STATUS_COMMITTING) or \
+                session.grant_opened:
+            # 厂商已经确认过这次扫码：之后每次轮询都是同一次提交，按回执幂等作答。
+            return self._commit(ctx, body)
+        if not session.qrcode:
+            self._fail("this scan has no QR to poll", status=409,
+                       code="no_active_scan")
+        base_url = adapter.resolve_base_url(
+            session_base_url=session.base_url,
+            requested=str((body or {}).get("base_url") or ""))
+        try:
+            answer = adapter.poll_qr(qrcode=session.qrcode, base_url=base_url)
+        except Exception as error:
+            adapter.log_refusal("qr poll", error)
+            self._fail("the provider could not be reached", status=502,
+                       code="provider_unavailable")
+        status = str((answer or {}).get("status")
+                     or adapter.VENDOR_WAIT).strip().lower()
+        if status == adapter.VENDOR_CONFIRMED:
+            return self._confirm_and_commit(ctx, body, session, actor, answer)
+        if status == adapter.VENDOR_EXPIRED:
+            return self._reissue_qr(session, actor, base_url)
+        if status == adapter.VENDOR_SCANED:
+            # 厂商的"已扫待确认"不是状态机的一个状态：会话仍是 pending，直到厂商
+            # 确认才进入 confirmed。控制台据此显示"已扫码"。
+            return self._scan_answer(session, qr_status="scaned")
+        return self._scan_answer(session, qr_status="waiting")
+
+    def _reissue_qr(self, session, actor, base_url):
+        """同一会话内重新签发一张二维码（厂商二维码过期，会话仍有效）。"""
+        from channel.web import scan_onboarding as so
+        from channel import weixin_scan_adapter as adapter
+
+        try:
+            answer = adapter.fetch_qr(base_url=base_url)
+        except Exception as error:
+            adapter.log_refusal("qr reissue", error)
+            self._fail("the provider could not be reached", status=502,
+                       code="provider_unavailable")
+        qrcode = str((answer or {}).get("qrcode") or "")
+        if not qrcode:
+            self._fail("the provider returned no QR code", status=502,
+                       code="provider_unavailable")
+        session = so.attach_qr(
+            session.handle, qrcode=qrcode,
+            qrcode_url=str((answer or {}).get("qrcode_img_content") or ""),
+            base_url=base_url, actor=actor)
+        return self._scan_answer(session, qr_status="expired")
+
+    def _confirm_and_commit(self, ctx, body, session, actor, answer):
+        """厂商确认：收窄并加密临时结果，然后走同一个提交通道。"""
+        from channel.web import scan_onboarding as so
+        from channel import weixin_scan_adapter as adapter
+
+        if not session.provider_result_present:
+            # 只保留渠道类型声明的凭据字段；厂商的 ilink_bot_id / ilink_user_id 与
+            # 其余应答字段既不落库也不回显。缺 token 是拒绝，不是空凭据包。
+            result = adapter.provider_result(answer)
+            session = so.mark_status(session.handle, so.STATUS_CONFIRMED,
+                                     actor=actor)
+            session = so.attach_provider_result(
+                session.handle, result=result,
+                sensitive_keys=adapter.provider_secret_keys(),
+                declared_keys=adapter.provider_result_keys(), actor=actor)
+        return self._commit(ctx, body)
+
+    def _commit(self, ctx, body):
+        from channel.web import scan_onboarding as so
+        from channel import weixin_scan_adapter as adapter
+        from auth.service import get_identity_service
+
+        actor = self._actor(ctx)
+        session = self._session(actor, body)
+        if session.status in (so.STATUS_CANCELLED, so.STATUS_EXPIRED,
+                              so.STATUS_FAILED):
+            # 终态会话直接按终态拒绝。让模块在下一步回答"还没被服务商确认"会把操作
+            # 者引向继续轮询一个已经结束的会话。已提交的会话不走这条路：那是回读回执
+            # 的入口。
+            self._fail("this scan has already finished; start a new scan",
+                       status=409, code="terminal")
+        if not session.provider_result_present:
+            self._fail("this scan has not been confirmed by the provider yet",
+                       status=409, code="not_confirmed")
+        credentials = so.provider_result(session.handle, actor=actor)
+        # 授权在提交前才"开启"，且同一会话只开启一次：重试与响应丢失回读用的因此
+        # 是同一个授权句柄、同一个幂等键，而不是第二次创建。
+        ticket = so.open_grant(session.handle, actor=actor,
+                               channel_type=self.CHANNEL_TYPE)
+        # 开户动作让会话多了"已授权"这个事实，重读一次视图，别拿开启前的旧快照回答。
+        session = so.get_session(session.handle, actor=actor)
+        service = get_identity_service()
+        result = so.commit_scan_binding(
+            handle=session.handle, actor=actor, scan_ticket=ticket,
+            channel_type=self.CHANNEL_TYPE,
+            create_instance=adapter.create_instance_callable(
+                service, scope=session.scope),
+            # 客户端可以改名；没改名就用扫码开始时绑定的默认名（类型标签 + 空序号）。
+            # 两者都随会话固定，重试提交的内容不会漂移。
+            display_name=(str((body or {}).get("display_name") or "").strip()
+                          or session.default_display_name),
+            agent_id=str((body or {}).get("agent_id") or ""),
+            credentials=credentials,
+            provider=self.PROVIDER, scope=session.scope, purpose=self.PURPOSE,
+            target=session.target,
+            # 配额由身份服务自己的 BEGIN IMMEDIATE 事务执行（那里才有实例名额），
+            # 这里不预留另一个指标；审计走已交付的审计 API。
+            reserve_quota=None, quota_required=False,
+            record_audit=adapter.audit_hook(service),
+            readback_guard=adapter.readback_guard(
+                service, resolve_context=self._context),
+        )
+        instance_id = str(result.get("instance_id") or "")
+        if (instance_id and session.scope == so.SCOPE_TENANT
+                and result.get("outcome") in ("committed", "resumed")):
+            # 提交后按实例去重、可恢复的连接工作项。成员个人实例由已交付的个人创建
+            # 路径负责 reconcile，所以这里不重复施加；回读（replayed）也不重启连接。
+            adapter.apply_connection(instance_id)
+        return self._committed_answer(session, result, service)
+
+    def _cancel(self, ctx, body):
+        from channel.web import scan_onboarding as so
+
+        actor = self._actor(ctx)
+        session = self._session(actor, body)
+        if session.terminal:
+            return self._scan_answer(session, qr_status=session.status)
+        session = so.mark_status(session.handle, so.STATUS_CANCELLED, actor=actor)
+        return self._scan_answer(session, qr_status=session.status)
+
+    # ------------------------------------------------------------------
+    # 应答
+    # ------------------------------------------------------------------
+
+    def _channel_owned_qr(self):
+        """legacy 单用户部署：观测渠道自己正在展示的二维码。"""
+        running_ch = self._get_running_channel()
+        qr_url = getattr(running_ch, "_current_qr_url", "") if running_ch else ""
+        if qr_url:
             return json.dumps({
                 "status": "success",
-                "qr_status": "confirmed",
-                "bot_id": bot_id,
-            })
+                "qrcode_url": qr_url,
+                "qr_image": self._qr_to_data_uri(qr_url),
+                "source": "channel",
+            }, ensure_ascii=False)
+        self._fail(
+            "database identity is required to start a scan session",
+            status=409, code="identity_required")
 
-        if qr_status == "expired":
-            new_resp = api.fetch_qr_code()
-            new_qrcode = new_resp.get("qrcode", "")
-            new_qrcode_url = new_resp.get("qrcode_img_content", "")
-            new_qr_image = self._qr_to_data_uri(new_qrcode_url)
-            WeixinQrHandler._qr_state["qrcode"] = new_qrcode
-            WeixinQrHandler._qr_state["qrcode_url"] = new_qrcode_url
-            return json.dumps({
-                "status": "success",
-                "qr_status": "expired",
-                "qrcode_url": new_qrcode_url,
-                "qr_image": new_qr_image,
-            })
+    def _scan_answer(self, session, *, qr_status: str, **extra):
+        payload = dict(session.payload())
+        payload.update({
+            "status": "success",
+            "source": "session",
+            "qr_status": qr_status,
+            "qr_image": (self._qr_to_data_uri(session.qrcode_url)
+                         if session.qrcode_url else ""),
+            "expires_in": max(0, int(session.expires_at - time.time())),
+            # 四个事实分开：扫码（qr_status）/ 已授权（authorized）/ 已保存
+            # （saved）/ 已连接（connection, connected）。
+            "authorized": bool(session.grant_opened),
+            "saved": False,
+            "connected": False,
+            "connection": "unsaved",
+        })
+        payload.update(extra)
+        return json.dumps(payload, ensure_ascii=False)
 
-        return json.dumps({"status": "success", "qr_status": qr_status})
+    def _committed_answer(self, session, result, service):
+        from channel import weixin_scan_adapter as adapter
+
+        instance_id = str(result.get("instance_id") or "")
+        state = (adapter.connection_state(service, instance_id=instance_id)
+                 if instance_id
+                 else {"state": "unsaved", "connected": False, "reason": ""})
+        payload = dict(session.payload())
+        payload.update({
+            "status": "success",
+            "source": "session",
+            "qr_status": "confirmed",
+            "qr_image": "",
+            "expires_in": max(0, int(session.expires_at - time.time())),
+            "authorized": bool(session.grant_opened),
+            "authorization_consumed": bool(result.get("authorization_consumed")),
+            "saved": bool(result.get("saved")),
+            "instance_id": instance_id,
+            "channel_type": self.CHANNEL_TYPE,
+            "display_name": str(result.get("display_name") or ""),
+            "agent_id": str(result.get("agent_id") or ""),
+            "secret_present": bool(result.get("secret_present")),
+            "outcome": str(result.get("outcome") or ""),
+            "receipt_state": str(result.get("receipt_state") or ""),
+            "connected": bool(state.get("connected")),
+            "connection": str(state.get("state") or "unknown"),
+            "connection_reason": str(state.get("reason") or ""),
+        })
+        return json.dumps(payload, ensure_ascii=False)
+
+    # ------------------------------------------------------------------
+    # 拒绝
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _fail(message: str, *, status: int, code: str):
+        raise web.HTTPError(
+            f"{status} {_HTTP_STATUS_TEXT.get(status, 'Error')}",
+            {"Content-Type": "application/json; charset=utf-8"},
+            json.dumps({"status": "error", "message": message, "code": code},
+                       ensure_ascii=False))
+
+    @classmethod
+    def _fail_from(cls, error):
+        """把一次拒绝映射为 HTTP 应答，绝不带出凭据原文。"""
+        code = str(getattr(error, "code", "") or "").strip()
+        status = getattr(error, "status", None)
+        if not isinstance(status, int):
+            status = _SCAN_ERROR_STATUS.get(code, 400)
+        if not code:
+            # 没有 code 的异常是内部错误：日志里有堆栈，应答里只给一句可读的话。
+            cls._fail("the scan request failed", status=status,
+                      code="scan_failed")
+        cls._fail(str(error), status=status, code=code)
 
 
 def _register_owner_scope() -> Tuple[str, str]:
@@ -7543,116 +8639,664 @@ class SkillContentHandler:
 
 
 class MemoryHandler:
+    """``GET /api/memory``: a scope-adapted compatibility read (task 5).
+
+    The target is resolved by ``channel/web/memory_console`` — the caller's own
+    personal domain, a privately owned Agent's memory, or the tenant's shared
+    Agent memory — and a request that names no single target is refused with a
+    stable code instead of being answered from the tenant shared root. The
+    legacy field names and pagination parameters are unchanged.
+    """
+
     def GET(self):
         web.header('Content-Type', 'application/json; charset=utf-8')
+        from channel.web import memory_console
         try:
-            from agent.memory.service import MemoryService
             with _db_scope() as ctx:
                 _require_read_permission(ctx, "memory.read")
                 params = web.input(
-                    page='1', page_size='20', category='memory', agent_id=''
+                    page='1', page_size='20', category='memory', agent_id='',
+                    scope='',
                 )
-                agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
-                _require_private_owner(ctx, agent_id)
-                workspace_root = _get_workspace_root(agent_id=agent_id)
-                service = MemoryService(workspace_root)
-                result = service.list_files(
-                    page=int(params.page), page_size=int(params.page_size),
-                    category=params.category,
-                )
-                return json.dumps({"status": "success", **result}, ensure_ascii=False)
+                return memory_console.list_response(ctx, params)
+        except web.HTTPError:
+            raise
+        except memory_console.MemoryScopeError as e:
+            raise memory_console.http_error(e)
         except Exception as e:
             logger.error(f"[WebChannel] Memory API error: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+            raise memory_console.http_error(memory_console.refusal_for(e))
 
 
 class MemoryContentHandler:
+    """``GET /api/memory/content``: the body of one entry of the same target."""
+
+    def GET(self):
+        web.header('Content-Type', 'application/json; charset=utf-8')
+        from channel.web import memory_console
+        try:
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "memory.read")
+                params = web.input(filename='', category='memory', agent_id='',
+                                   scope='')
+                return memory_console.content_response(ctx, params)
+        except web.HTTPError:
+            raise
+        except memory_console.MemoryScopeError as e:
+            raise memory_console.http_error(e)
+        except Exception as e:
+            logger.error(f"[WebChannel] Memory content API error: {e}")
+            raise memory_console.http_error(memory_console.refusal_for(e))
+
+
+class PersonalMemoryHandler:
+    """「我的记忆」：当前租户 + 当前用户的个人长期记忆（stage 5）.
+
+    Distinct from ``MemoryHandler`` above, which lists **该私有 Agent 记忆**
+    from an Agent workspace. The two share the owner check but not the storage
+    root: this handler never accepts an ``agent_id``, and its entries are
+    resolved inside the caller's own user domain.
+    """
+
     def GET(self):
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
-            from agent.memory.service import MemoryService
             with _db_scope() as ctx:
                 _require_read_permission(ctx, "memory.read")
-                params = web.input(filename='', category='memory', agent_id='')
-                if not params.filename:
-                    return json.dumps({"status": "error", "message": "filename required"})
-                agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
-                _require_private_owner(ctx, agent_id)
-                workspace_root = _get_workspace_root(agent_id=agent_id)
-                service = MemoryService(workspace_root)
-                result = service.get_content(params.filename, category=params.category)
-                return json.dumps({"status": "success", **result}, ensure_ascii=False)
-        except ValueError:
-            return json.dumps({"status": "error", "message": "invalid filename"})
-        except FileNotFoundError:
-            return json.dumps({"status": "error", "message": "file not found"})
+                service = _personal_memory_service(ctx)
+                return json.dumps(
+                    {"status": "success", "entries": service.list_entries(),
+                     "scope": "personal"},
+                    ensure_ascii=False)
+        except web.HTTPError:
+            raise
         except Exception as e:
-            logger.error(f"[WebChannel] Memory content API error: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+            logger.error(f"[WebChannel] Personal memory list error: {e}")
+            return _personal_memory_error(e)
+
+    def POST(self):
+        web.header('Content-Type', 'application/json; charset=utf-8')
+        try:
+            body = json.loads(web.data() or b'{}')
+            action = (body.get("action") or "").strip()
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "memory.read")
+                service = _personal_memory_service(ctx)
+                if action == "save":
+                    result = service.save(
+                        body.get("id"), body.get("content"),
+                        expected_revision=body.get("revision"))
+                elif action == "delete":
+                    result = service.delete(
+                        body.get("id"),
+                        expected_revision=body.get("revision"))
+                elif action == "clear":
+                    result = service.clear(expected_revision=body.get("revision"))
+                elif action == "retry_index":
+                    result = service.retry_pending_index()
+                else:
+                    return json.dumps(
+                        {"status": "error", "message": f"unknown action: {action}"},
+                        ensure_ascii=False)
+                # A pending index is a real, recoverable not-done state: the
+                # content operation succeeded but retrieval may still hold rows.
+                # Reporting "success" here would claim a consistency we do not
+                # have (task 5.3).
+                if result.get("index_state") == "pending":
+                    return json.dumps(
+                        {"status": "pending", "code": "index_pending",
+                         "message": "内容已更新，索引待重试",
+                         "result": result},
+                        ensure_ascii=False)
+                return json.dumps({"status": "success", **result},
+                                  ensure_ascii=False)
+        except web.HTTPError:
+            raise
+        except Exception as e:
+            logger.error(f"[WebChannel] Personal memory write error: {e}")
+            return _personal_memory_error(e)
+
+
+class PersonalMemoryContentHandler:
+    """Read one personal memory entry by its relative id."""
+
+    def GET(self):
+        web.header('Content-Type', 'application/json; charset=utf-8')
+        try:
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "memory.read")
+                params = web.input(id='')
+                entry_id = (getattr(params, 'id', '') or '').strip()
+                if not entry_id:
+                    return json.dumps(
+                        {"status": "error", "code": "invalid_entry",
+                         "message": "id is required"}, ensure_ascii=False)
+                service = _personal_memory_service(ctx)
+                return json.dumps({"status": "success", **service.read(entry_id)},
+                                  ensure_ascii=False)
+        except web.HTTPError:
+            raise
+        except Exception as e:
+            logger.error(f"[WebChannel] Personal memory content error: {e}")
+            return _personal_memory_error(e)
+
+
+def _personal_memory_service(ctx):
+    """A personal-memory service bound to the *verified request context*.
+
+    Ownership comes from ``ctx``, never from the request body: there is no
+    parameter a caller could set to name another user.
+    """
+    from agent.memory.personal import PersonalMemoryService
+    from auth.runtime import to_runtime_identity
+    if ctx is None or not ctx.user_id or not ctx.tenant_id:
+        raise web.HTTPError("403 Forbidden", {"Content-Type": "application/json"},
+                            json.dumps({"status": "error", "message": "forbidden",
+                                        "code": "forbidden"}))
+    return PersonalMemoryService(identity=to_runtime_identity(ctx))
+
+
+def _personal_memory_error(exc):
+    """Render a refusal with the status and code the console branches on."""
+    from agent.memory.personal import PersonalMemoryError
+    if isinstance(exc, PersonalMemoryError):
+        if exc.status in (401, 403):
+            raise web.HTTPError(
+                f"{exc.status} Forbidden" if exc.status == 403 else "401 Unauthorized",
+                {"Content-Type": "application/json"},
+                json.dumps({"status": "error", "code": exc.code,
+                            "message": str(exc)}, ensure_ascii=False))
+        if exc.status == 409:
+            web.ctx.status = "409 Conflict"
+        return json.dumps({"status": "error", "code": exc.code,
+                           "message": str(exc)}, ensure_ascii=False)
+    return json.dumps({"status": "error", "message": str(exc)}, ensure_ascii=False)
+
+
+class PersonalChannelHandler:
+    """「我的渠道」：当前租户 + 当前用户的个人消息渠道（任务 6.1-6.7）.
+
+    Every write reuses the tenant channel service with ``allow_owner``: the
+    scope/owner pair is forced from the verified request context, so the client
+    cannot name a tenant, an owner, or another member's instance. The public
+    ``/api/tenant/channels`` surface keeps its administrator gate untouched —
+    this is a *separate* registered surface, not a relaxation of that one.
+    """
+
+    def GET(self):
+        """List my personal instances, plus the types open for onboarding."""
+        web.header('Content-Type', 'application/json; charset=utf-8')
+        try:
+            with _db_scope() as ctx:
+                service = _personal_channel_service()
+                listing = service.list_personal_channel_instances(
+                    actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id)
+                return json.dumps(
+                    {"status": "success",
+                     "channel_types": service.personal_channel_types(),
+                     **listing},
+                    ensure_ascii=False)
+        except web.HTTPError:
+            raise
+        except Exception as e:
+            logger.error(f"[WebChannel] Personal channel list error: {e}")
+            return _personal_channel_error(e)
+
+    def POST(self):
+        """Create one personal instance (``channel_type`` + credentials)."""
+        web.header('Content-Type', 'application/json; charset=utf-8')
+        try:
+            body = json.loads(web.data() or b'{}')
+            with _db_scope() as ctx:
+                service = _personal_channel_service()
+                created = service.create_personal_channel_instance(
+                    actor_user_id=ctx.user_id,
+                    tenant_id=ctx.tenant_id,
+                    channel_type=str(body.get("channel_type") or ""),
+                    display_name=str(body.get("display_name") or ""),
+                    agent_id=str(body.get("agent_id") or ""),
+                    credentials=body.get("credentials"),
+                    recent_password=str(body.get("recent_password") or ""),
+                )
+                return json.dumps(
+                    {"status": "success", "instance": created,
+                     "runtime": _apply_personal_channel_runtime(created["id"])},
+                    ensure_ascii=False)
+        except web.HTTPError:
+            raise
+        except Exception as e:
+            logger.error(f"[WebChannel] Personal channel create error: {e}")
+            return _personal_channel_error(e)
+
+
+class PersonalChannelInstanceHandler:
+    """One personal instance: read, edit, enable/disable, revoke, binding.
+
+    The instance id is the only thing the client names; ownership, tenant and
+    scope come from the verified context, so a foreign id is refused without
+    disclosing whether it exists.
+    """
+
+    def GET(self, instance_id: str):
+        web.header('Content-Type', 'application/json; charset=utf-8')
+        try:
+            with _db_scope() as ctx:
+                service = _personal_channel_service()
+                instance = service.get_personal_channel_instance(
+                    actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id,
+                    instance_id=instance_id)
+                status = service.personal_channel_binding_status(
+                    actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id,
+                    instance_id=instance_id)
+                return json.dumps(
+                    {"status": "success", "instance": instance, **status},
+                    ensure_ascii=False)
+        except web.HTTPError:
+            raise
+        except Exception as e:
+            logger.error(f"[WebChannel] Personal channel read error: {e}")
+            return _personal_channel_error(e)
+
+    def POST(self, instance_id: str):
+        web.header('Content-Type', 'application/json; charset=utf-8')
+        try:
+            body = json.loads(web.data() or b'{}')
+            action = (body.get("action") or "").strip()
+            with _db_scope() as ctx:
+                service = _personal_channel_service()
+                if action == "update":
+                    result = service.update_personal_channel_instance(
+                        actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id,
+                        instance_id=instance_id,
+                        expected_version=_int_or_zero(body.get("expected_version")),
+                        display_name=body.get("display_name"),
+                        agent_id=body.get("agent_id"),
+                        credentials=body.get("credentials"),
+                        recent_password=str(body.get("recent_password") or ""),
+                    )
+                elif action in ("enable", "disable"):
+                    result = service.set_personal_channel_instance_active(
+                        actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id,
+                        instance_id=instance_id,
+                        active=(action == "enable"),
+                        expected_version=_int_or_zero(body.get("expected_version")),
+                        recent_password=str(body.get("recent_password") or ""),
+                    )
+                elif action == "revoke":
+                    result = service.revoke_personal_channel_credentials(
+                        actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id,
+                        instance_id=instance_id,
+                        expected_version=_int_or_zero(body.get("expected_version")),
+                        recent_password=str(body.get("recent_password") or ""),
+                    )
+                elif action == "start_binding":
+                    # The code is returned exactly once: only its hash is stored,
+                    # and the member has to be able to read it out of the browser
+                    # to send it from their IM account.
+                    challenge = service.start_personal_channel_binding(
+                        actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id,
+                        instance_id=instance_id)
+                    return json.dumps({"status": "success", "challenge": challenge},
+                                      ensure_ascii=False)
+                elif action == "unlink":
+                    result = service.unlink_personal_channel_instance(
+                        actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id,
+                        instance_id=instance_id)
+                else:
+                    return json.dumps(
+                        {"status": "error", "code": "bad_request",
+                         "message": f"unknown action: {action}"},
+                        ensure_ascii=False)
+                return json.dumps(
+                    {"status": "success", "instance": result,
+                     "runtime": _apply_personal_channel_runtime(instance_id)
+                     if action in ("update", "enable", "disable", "revoke")
+                     else None},
+                    ensure_ascii=False)
+        except web.HTTPError:
+            raise
+        except Exception as e:
+            logger.error(f"[WebChannel] Personal channel write error: {e}")
+            return _personal_channel_error(e)
+
+
+class PersonalResourceHandler:
+    """「我的工具 / 我的技能」：本人已获授权资源的个人参数（任务 2.4 / 8.3）.
+
+    A *personal configuration* surface, not a public maintenance one. The list is
+    the intersection of the caller's current per-resource grants and what they
+    saved; saving writes only the caller's own row (``actor_user_id`` is the
+    owner, there is no ``user_id`` parameter), and never touches a tool
+    definition, an MCP connection, a skill body, install/enable state, or the
+    tenant's grants. Those keep their own administrator gates.
+    """
+
+    def GET(self):
+        web.header('Content-Type', 'application/json; charset=utf-8')
+        try:
+            params = web.input(kind='')
+            with _db_scope() as ctx:
+                service = _personal_channel_service()
+                kind = str(params.kind or "").strip()
+                if kind and kind not in ("tool", "skill"):
+                    return json.dumps(
+                        {"status": "error", "code": "bad_request",
+                         "message": f"unsupported resource kind: {kind}"},
+                        ensure_ascii=False)
+                return json.dumps(
+                    {"status": "success", "scope": "personal",
+                     "resources": service.list_personal_resource_configs(
+                         actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id,
+                         resource_kind=kind)},
+                    ensure_ascii=False)
+        except web.HTTPError:
+            raise
+        except Exception as e:
+            logger.error(f"[WebChannel] Personal resource list error: {e}")
+            return _personal_channel_error(e)
+
+    def POST(self):
+        """Save or clear the caller's own parameters for one granted resource."""
+        web.header('Content-Type', 'application/json; charset=utf-8')
+        try:
+            body = json.loads(web.data() or b'{}')
+            action = str(body.get("action") or "save").strip()
+            with _db_scope() as ctx:
+                service = _personal_channel_service()
+                if action == "save":
+                    saved = service.save_personal_resource_config(
+                        actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id,
+                        resource_kind=str(body.get("resource_kind") or ""),
+                        resource_id=str(body.get("resource_id") or ""),
+                        params=body.get("params") or {},
+                        secret=body.get("secret"))
+                    return json.dumps({"status": "success", "config": saved},
+                                      ensure_ascii=False)
+                if action == "clear":
+                    service.clear_personal_resource_config(
+                        actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id,
+                        resource_kind=str(body.get("resource_kind") or ""),
+                        resource_id=str(body.get("resource_id") or ""))
+                    return json.dumps({"status": "success", "config": None},
+                                      ensure_ascii=False)
+                return json.dumps(
+                    {"status": "error", "code": "bad_request",
+                     "message": f"unknown action: {action}"},
+                    ensure_ascii=False)
+        except web.HTTPError:
+            raise
+        except Exception as e:
+            logger.error(f"[WebChannel] Personal resource write error: {e}")
+            return _personal_channel_error(e)
+
+
+def _personal_channel_service():
+    """The identity service, in whatever process serves the console."""
+    from auth.service import get_identity_service
+    return get_identity_service()
+
+
+def _apply_personal_channel_runtime(instance_id: str):
+    """Report the runtime consequence of a personal channel write (task 6.7).
+
+    "Saved" and "connected" are different facts, and the console has to be able
+    to tell them apart: the row is committed either way, so a failure to apply
+    it is reported as ``pending`` with a reason rather than raised — turning it
+    into a 5xx would invite a retry of a write that already succeeded.
+    """
+    from channel.channel_instances import apply_tenant_instance_runtime
+
+    try:
+        return apply_tenant_instance_runtime(instance_id)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.error(
+            f"[PersonalChannels] runtime apply failed for '{instance_id}': {e}")
+        return {"applied": False, "pending": True,
+                "error": f"runtime apply failed: {e}"}
+
+
+def _personal_channel_error(exc):
+    """Render a refusal with the status and code the console branches on."""
+    status = getattr(exc, "status", 500)
+    code = getattr(exc, "code", "") or "internal"
+    message = (exc.args[0] if exc.args else None) or "request failed"
+    if status in (401, 403):
+        raise web.HTTPError(
+            f"{status} Forbidden" if status == 403 else "401 Unauthorized",
+            {"Content-Type": "application/json"},
+            json.dumps({"status": "error", "code": code, "message": str(message)},
+                       ensure_ascii=False))
+    if status in (404, 409, 410, 429):
+        web.ctx.status = {404: "404 Not Found", 409: "409 Conflict",
+                          410: "410 Gone",
+                          429: "429 Too Many Requests"}.get(status, "400 Bad Request")
+    return json.dumps({"status": "error", "code": code, "message": str(message)},
+                      ensure_ascii=False)
+
+
+def _scheduler_task_store(agent_id: str):
+    """The ``TaskStore`` for one Agent, resolved through the per-Agent layout.
+
+    ``common/state_dir.scheduler_file`` is the one definition of "where an Agent's
+    schedule lives" (``<agent workspace>/scheduler/tasks.json``), and it is keyed
+    on ``agent_id`` rather than on the request's working root: in database mode
+    the working root is the *tenant's* shared root, so resolving the store from it
+    would make every Agent of a tenant share one file. The identity is derived
+    with the Agent under test pinned, which is also what the tool path does.
+    """
+    from agent.tools.scheduler.task_store import TaskStore
+    from common import state_dir
+    from common.runtime_identity import current_identity
+
+    identity = current_identity().derive(agent_id=agent_id)
+    return TaskStore(str(state_dir.scheduler_file(identity)))
+
+
+def _scheduler_agent_ids(actor) -> List[str]:
+    """Every Agent whose schedule the acting member may be shown.
+
+    Authoritative for the aggregate view: the caller's tenant decides the list
+    (``tenant_agent_ids``), and an Agent that the registry does not have enabled
+    is not opened at all - so an Agent of another tenant is never read and then
+    filtered.
+    """
+    from agent.registry import get_agent_registry
+    from auth.service import get_identity_service
+
+    enabled = {p.id for p in get_agent_registry().list(include_disabled=False)}
+    bound = get_identity_service().tenant_agent_ids(actor.tenant_id)
+    return [agent_id for agent_id in bound if agent_id in enabled]
+
+
+def _scheduler_scope_resolver(actor, agent_id: str) -> Dict:
+    """Binding + ``agent.use`` for one Agent, for the authorization service."""
+    from auth.service import get_identity_service
+
+    service = get_identity_service()
+    scope: Dict = {"agent_id": agent_id}
+    try:
+        binding = service.get_agent_binding(agent_id)
+        scope["bound_tenant"] = (binding or {}).get("tenant_id") or ""
+    except Exception as error:
+        logger.debug("[WebChannel] scheduler binding lookup %r: %s", agent_id, error)
+    if actor.is_admin:
+        scope["can_use"] = True
+    else:
+        try:
+            scope["can_use"] = bool(service.check_resource_action(
+                actor.user_id, actor.tenant_id, "agent", f"agent:{agent_id}",
+                "use", permission="agent.use"))
+        except Exception:
+            scope["can_use"] = False
+    return scope
+
+
+def _scheduler_service_for_web(agent_id: str):
+    """The scheduler runtime for one Agent, for the manual-run path."""
+    from agent.tools.scheduler.integration import get_scheduler_service
+    return get_scheduler_service(agent_id=agent_id)
+
+
+def _scheduler_access(ctx=None) -> "TaskAccessService":
+    """Build the shared task authorization service for this request.
+
+    One construction for all five handlers, so the HTTP path cannot diverge from
+    the tool and background paths (tasks 3.1/3.3).
+    """
+    from agent.tools.scheduler.authorization import (
+        TaskActor, TaskAccessService, actor_from_identity_context,
+    )
+
+    if ctx is not None:
+        actor = actor_from_identity_context(ctx, source="http")
+    else:
+        from channel.web.auth_handlers import _require_context
+        actor = actor_from_identity_context(_require_context(require_tenant=True),
+                                            source="http")
+    actor.session_id = _web_auth_session_id()
+
+    def quota_gate(actor_, agent_id, count):
+        from auth.service import get_identity_service
+        get_identity_service().check_scheduled_task_quota(
+            user_id=actor_.user_id, tenant_id=actor_.tenant_id,
+            would_be_count=count)
+
+    return TaskAccessService(
+        store_resolver=lambda actor_, agent_id: _scheduler_task_store(agent_id),
+        agent_ids=_scheduler_agent_ids,
+        scope_resolver=_scheduler_scope_resolver,
+        quota_check=quota_gate,
+        run_hook=lambda actor_, agent_id, task_id: _scheduler_run_hook(
+            actor_, agent_id, task_id),
+        coordinator="http",
+    )
+
+
+def _scheduler_run_hook(actor, agent_id: str, task_id: str) -> None:
+    """Fire one task now through the scheduler runtime.
+
+    The runtime is the same object the timer uses, so a manual run cannot take a
+    path a scheduled fire would refuse; the authorization service has already
+    re-checked the caller's own grants before calling this. A runtime that is not
+    up is reported as ``run_unavailable`` (503), not as a silent success: the
+    console must not tell a member their task ran when nothing was queued.
+    """
+    from agent.tools.scheduler.authorization import (
+        RUN_UNAVAILABLE, TaskAuthorizationError,
+    )
+
+    service = _scheduler_service_for_web(agent_id)
+    if service is None:
+        raise TaskAuthorizationError(
+            RUN_UNAVAILABLE, status=503, message="Scheduler service is not running")
+    service.run_task_now(task_id)
+
+
+def _web_auth_session_id() -> str:
+    """The caller's web auth session id, for the task owner snapshot."""
+    try:
+        from channel.web import auth_handlers
+        session = auth_handlers._current_session() if hasattr(
+            auth_handlers, "_current_session") else None
+        if isinstance(session, dict):
+            return session.get("id") or ""
+    except Exception:
+        pass
+    return ""
+
+
+_SCHEDULER_STATUS_LINES = {
+    400: "400 Bad Request",
+    401: "401 Unauthorized",
+    403: "403 Forbidden",
+    404: "404 Not Found",
+    409: "409 Conflict",
+    503: "503 Service Unavailable",
+}
+
+
+def _scheduler_error(error):
+    """The HTTP response for a refused management call.
+
+    Raised as a ``web.HTTPError`` rather than returned with ``web.status`` set:
+    the status has to survive the handler's own ``except`` clauses and the
+    request's context teardown, and raising is the only form that does. ``code``
+    is the stable machine value the console branches on; the status distinguishes
+    "not yours" (403) from "no such task" (404) and "someone else edited it
+    first" (409).
+    """
+    status = int(getattr(error, "status", 403) or 403)
+    raise web.HTTPError(
+        _SCHEDULER_STATUS_LINES.get(status, "%d Error" % status),
+        {"Content-Type": "application/json; charset=utf-8"},
+        json.dumps(error.payload(), ensure_ascii=False),
+    )
 
 
 class SchedulerHandler:
     def GET(self):
         web.header('Content-Type', 'application/json; charset=utf-8')
+        from agent.tools.scheduler.authorization import TaskAuthorizationError
         try:
-            from agent.tools.scheduler.task_store import TaskStore
-            params = web.input(agent_id='')
+            params = web.input(agent_id='', page='1', page_size='20')
             requested = _request_agent_id(params)
-
-            # An explicit agent_id scopes the list to that Agent (unchanged
-            # behaviour for callers that already target one). Without it the
-            # list aggregates every Agent's tasks so the console shows the whole
-            # team's schedule, each task tagged with the Agent that owns it —
-            # the owner is otherwise only implicit in which file it lives in.
-            if requested:
-                agents = [requested]
-            else:
-                from agent.registry import get_agent_registry
-                agents = [p.id for p in get_agent_registry().list(include_disabled=False)]
-
-            tasks = []
-            for agent_id in agents:
-                try:
-                    workspace_root = _get_workspace_root(agent_id=agent_id)
-                except Exception as e:
-                    logger.debug(f"[WebChannel] Scheduler skip agent {agent_id}: {e}")
-                    continue
-                store_path = os.path.join(workspace_root, "scheduler", "tasks.json")
-                for task in TaskStore(store_path).list_tasks():
-                    # Tag the owner so the frontend can show it and so write
-                    # operations (run/toggle/update/delete) route back to the
-                    # right Agent's store rather than defaulting to the default.
-                    task["agent_id"] = agent_id
-                    tasks.append(task)
-            return json.dumps({"status": "success", "tasks": tasks}, ensure_ascii=False)
+            with _db_scope() as ctx:
+                service = _scheduler_access(ctx)
+                page = service.list_tasks(
+                    _scheduler_actor(ctx), agent_id=requested,
+                    page=_int_param(params, "page", 1),
+                    page_size=_int_param(params, "page_size", 20),
+                )
+            return json.dumps({"status": "success", **page}, ensure_ascii=False)
+        except TaskAuthorizationError as error:
+            raise _scheduler_error(error)
         except Exception as e:
             logger.error(f"[WebChannel] Scheduler API error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
 
 
+def _int_param(params, name: str, default: int) -> int:
+    try:
+        return int(getattr(params, name, default) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _scheduler_actor(ctx):
+    from agent.tools.scheduler.authorization import actor_from_identity_context
+    actor = actor_from_identity_context(ctx, source="http")
+    actor.session_id = _web_auth_session_id()
+    return actor
+
+
 class SchedulerRunHandler:
     def POST(self):
         web.header('Content-Type', 'application/json; charset=utf-8')
+        from agent.tools.scheduler.authorization import TaskAuthorizationError
         try:
             body = json.loads(web.data())
             agent_id = _request_agent_id(body)
             task_id = body.get("task_id")
+            # The client's "same request" proof (task 3.4). A retry after a lost
+            # response resends the same key and is answered from the accepted
+            # outcome instead of queueing a second fire; a click without a key
+            # keeps the older behaviour (refused while the task is running).
+            run_key = str(body.get("run_key") or "").strip()
             if not task_id:
-                return json.dumps({"status": "error", "message": "task_id required"})
-
-            from agent.tools.scheduler.integration import get_scheduler_service
-            service = get_scheduler_service(agent_id=agent_id)
-            if service is None:
-                return json.dumps({
-                    "status": "error",
-                    "message": "Scheduler service is not running",
-                })
-
-            service.run_task_now(task_id)
+                raise web.HTTPError(
+                    "400 Bad Request",
+                    {"Content-Type": "application/json; charset=utf-8"},
+                    json.dumps({"status": "error", "message": "task_id required"}))
+            with _db_scope() as ctx:
+                service = _scheduler_access(ctx)
+                service.run_task(_scheduler_actor(ctx), agent_id, task_id,
+                                 run_key=run_key or None)
             return json.dumps({
                 "status": "success",
                 "message": f"Task '{task_id}' queued for immediate execution",
             }, ensure_ascii=False)
+        except TaskAuthorizationError as error:
+            raise _scheduler_error(error)
         except Exception as e:
             logger.error(f"[WebChannel] Scheduler manual run error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -7661,19 +9305,24 @@ class SchedulerRunHandler:
 class SchedulerToggleHandler:
     def POST(self):
         web.header('Content-Type', 'application/json; charset=utf-8')
+        from agent.tools.scheduler.authorization import TaskAuthorizationError
         try:
             body = json.loads(web.data())
             task_id = body.get("task_id")
             enabled = body.get("enabled", True)
             if not task_id:
-                return json.dumps({"status": "error", "message": "task_id required"})
-            from agent.tools.scheduler.task_store import TaskStore
-            workspace_root = _get_workspace_root(agent_id=_request_agent_id(body))
-            store_path = os.path.join(workspace_root, "scheduler", "tasks.json")
-            store = TaskStore(store_path)
-            store.enable_task(task_id, enabled)
-            task = store.get_task(task_id)
+                raise web.HTTPError(
+                    "400 Bad Request",
+                    {"Content-Type": "application/json; charset=utf-8"},
+                    json.dumps({"status": "error", "message": "task_id required"}))
+            with _db_scope() as ctx:
+                service = _scheduler_access(ctx)
+                task = service.set_enabled(_scheduler_actor(ctx),
+                                          _request_agent_id(body), task_id,
+                                          bool(enabled))
             return json.dumps({"status": "success", "task": task}, ensure_ascii=False)
+        except TaskAuthorizationError as error:
+            raise _scheduler_error(error)
         except Exception as e:
             logger.error(f"[WebChannel] Scheduler toggle error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -7682,111 +9331,71 @@ class SchedulerToggleHandler:
 class SchedulerUpdateHandler:
     def POST(self):
         web.header('Content-Type', 'application/json; charset=utf-8')
+        from agent.tools.scheduler.authorization import (
+            FORGED_FIELD, TaskAuthorizationError,
+        )
         try:
             body = json.loads(web.data())
             task_id = body.get("task_id")
             if not task_id:
-                return json.dumps({"status": "error", "message": "task_id required"})
-            
-            from agent.tools.scheduler.task_store import TaskStore
-            from agent.tools.scheduler.scheduler_service import SchedulerService
-            from datetime import datetime
-            workspace_root = _get_workspace_root(agent_id=_request_agent_id(body))
-            store_path = os.path.join(workspace_root, "scheduler", "tasks.json")
-            store = TaskStore(store_path)
-            
-            # Get original task (single query to avoid repeated I/O)
-            original_task = store.get_task(task_id)
-            if not original_task:
-                return json.dumps({"status": "error", "message": f"Task '{task_id}' not found"})
-            
-            # Build updates dict
-            updates = {}
-            if "name" in body:
-                updates["name"] = body["name"]
-            if "enabled" in body:
-                updates["enabled"] = body["enabled"]
-            
-            # Update schedule
-            if "schedule" in body:
-                updates["schedule"] = body["schedule"]
-                # If schedule config changed, recalculate next_run_at
-                # Build merged temp task data for calculation (without modifying the original object)
-                merged = dict(original_task)
-                merged.update(updates)
-                if "action" in body:
-                    merged["action"] = body["action"]
-                temp_service = SchedulerService(store, lambda t: None)
-                next_run = temp_service._calculate_next_run(merged, datetime.now())
-                if next_run:
-                    updates["next_run_at"] = next_run.isoformat()
-                else:
-                    # Cannot calculate next run time, schedule config may be invalid
-                    return json.dumps({
-                        "status": "error", 
-                        "message": "Cannot calculate next run time. Please check the schedule config (e.g., cron expression format, or whether the one-time task time has already passed)."
-                    }, ensure_ascii=False)
-            
-            # Update action
-            if "action" in body:
-                # Get the task's original channel_type
-                original_action = original_task.get("action", {})
-                if not isinstance(original_action, dict):
-                    original_action = {}
-                action_patch = body["action"]
-                if not isinstance(action_patch, dict):
-                    return json.dumps({
-                        "status": "error",
-                        "message": "Action must be an object."
-                    }, ensure_ascii=False)
+                raise web.HTTPError(
+                    "400 Bad Request",
+                    {"Content-Type": "application/json; charset=utf-8"},
+                    json.dumps({"status": "error", "message": "task_id required"}))
 
-                # The Web editor only exposes a subset of action fields. Merge
-                # that patch into the stored action so scheduler metadata such
-                # as notify_session_id, silent, and channel-specific delivery
-                # fields survive unrelated edits.
-                action = dict(original_action)
-                action.update(action_patch)
-                action_type = action.get("type")
-                if action_type == "send_message":
-                    action.pop("task_description", None)
-                    action.pop("silent", None)
-                elif action_type == "agent_task":
-                    action.pop("content", None)
-
-                old_channel = original_action.get("channel_type", "web")
-                channel_type = action.get("channel_type") or old_channel
-                action["channel_type"] = channel_type
-                
-                # If channel type changed or no receiver, reject the update.
-                # Note: the web UI disables the channel selector, so this branch
-                # is only reachable via direct API calls. Changing a task's channel
-                # after creation is not supported because the receiver identity is
-                # channel-bound and cannot be trivially re-populated (e.g. weixin
-                # requires a valid context_token tied to the original user-session).
-                if old_channel and old_channel != channel_type:
-                    return json.dumps({
-                        "status": "error",
-                        "message": f"Cannot change channel type from '{old_channel}' to '{channel_type}'. Please create a new task on the target channel instead."
-                    }, ensure_ascii=False)
-                if not action.get("receiver"):
-                    return json.dumps({
-                        "status": "error",
-                        "message": "Receiver is required. Please create a new task through the chat interface."
-                    }, ensure_ascii=False)
-                updates["action"] = action
-                
-                # If schedule was not updated but action was, ensure next_run_at exists
-                if "schedule" not in body and "next_run_at" not in original_task:
-                    merged = dict(original_task)
-                    merged.update(updates)
-                    temp_service = SchedulerService(store, lambda t: None)
-                    next_run = temp_service._calculate_next_run(merged, datetime.now())
+            with _db_scope() as ctx:
+                service = _scheduler_access(ctx)
+                actor = _scheduler_actor(ctx)
+                agent_id = _request_agent_id(body)
+                original = service.get_task(actor, agent_id, task_id)
+                # Every other body key is handed to the service as a patch, so a
+                # field the caller may not set (``owner``, ``scope``,
+                # ``agent_id``, ...) is refused by name (400) instead of being
+                # quietly dropped here — a silent drop would let a caller believe
+                # a rename happened when the field they really wanted was ignored.
+                patch = {k: v for k, v in body.items()
+                         if k not in ("task_id", "agent_id", "revision")}
+                if "schedule" in patch:
+                    # Recompute next_run_at for the merged task, and refuse a
+                    # schedule that cannot produce one (an unparseable cron, or a
+                    # one-off time already past) — the same check the editor has
+                    # always relied on, now before the write rather than after.
+                    from agent.tools.scheduler.scheduler_service import SchedulerService
+                    from agent.tools.scheduler.task_store import TaskStore
+                    merged = dict(original)
+                    merged.update(patch)
+                    if "action" in patch and isinstance(patch["action"], dict):
+                        action = dict(original.get("action") or {})
+                        action.update(patch["action"])
+                        merged["action"] = action
+                    dry = SchedulerService(TaskStore(os.devnull), lambda t: None)
+                    next_run = dry._calculate_next_run(merged, datetime.now())
+                    if not next_run:
+                        raise web.HTTPError(
+                            "400 Bad Request",
+                            {"Content-Type": "application/json; charset=utf-8"},
+                            json.dumps({
+                                "status": "error",
+                                "message": "Cannot calculate next run time. Please check the schedule config (e.g., cron expression format, or whether the one-time task time has already passed).",
+                            }, ensure_ascii=False))
+                    patch["next_run_at"] = next_run.isoformat()
+                elif "action" in patch and not original.get("next_run_at"):
+                    from agent.tools.scheduler.scheduler_service import SchedulerService
+                    from agent.tools.scheduler.task_store import TaskStore
+                    merged = dict(original)
+                    merged.update(patch)
+                    dry = SchedulerService(TaskStore(os.devnull), lambda t: None)
+                    next_run = dry._calculate_next_run(merged, datetime.now())
                     if next_run:
-                        updates["next_run_at"] = next_run.isoformat()
-            
-            store.update_task(task_id, updates)
-            task = store.get_task(task_id)
+                        patch["next_run_at"] = next_run.isoformat()
+
+                revision = body.get("revision")
+                task = service.update_task(
+                    actor, agent_id, task_id, patch,
+                    expected_revision=int(revision) if revision is not None else None)
             return json.dumps({"status": "success", "task": task}, ensure_ascii=False)
+        except TaskAuthorizationError as error:
+            raise _scheduler_error(error)
         except Exception as e:
             logger.error(f"[WebChannel] Scheduler update error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -7795,18 +9404,22 @@ class SchedulerUpdateHandler:
 class SchedulerDeleteHandler:
     def POST(self):
         web.header('Content-Type', 'application/json; charset=utf-8')
+        from agent.tools.scheduler.authorization import TaskAuthorizationError
         try:
             body = json.loads(web.data())
             task_id = body.get("task_id")
             if not task_id:
-                return json.dumps({"status": "error", "message": "task_id required"})
-            
-            from agent.tools.scheduler.task_store import TaskStore
-            workspace_root = _get_workspace_root(agent_id=_request_agent_id(body))
-            store_path = os.path.join(workspace_root, "scheduler", "tasks.json")
-            store = TaskStore(store_path)
-            store.delete_task(task_id)
+                raise web.HTTPError(
+                    "400 Bad Request",
+                    {"Content-Type": "application/json; charset=utf-8"},
+                    json.dumps({"status": "error", "message": "task_id required"}))
+            with _db_scope() as ctx:
+                service = _scheduler_access(ctx)
+                service.delete_task(_scheduler_actor(ctx),
+                                    _request_agent_id(body), task_id)
             return json.dumps({"status": "success"}, ensure_ascii=False)
+        except TaskAuthorizationError as error:
+            raise _scheduler_error(error)
         except Exception as e:
             logger.error(f"[WebChannel] Scheduler delete error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -7870,18 +9483,17 @@ def _workbench_agents_projection() -> Dict:
 def _tenant_ids_for_context(ctx: "Optional[RequestContext]") -> Optional[list]:
     """Return the list of agent_ids visible to ``ctx``, or None if unscoped.
 
-    In database mode, only agents bound to the caller's tenant are visible —
-    except a platform admin, who sees the entire enabled roster so they can
-    administer any tenant's agents. In legacy mode (``ctx is None``) every
-    agent is visible.
+    In database mode, only agents bound to the caller's **currently selected
+    tenant** are visible. Platform administrators are held to the same scope:
+    platform ``all`` skips functional and resource grants, not the data scope,
+    so the console's tenant selection decides which Agents are listed.
+    Cross-tenant administration is a platform-entry concern
+    (``/api/platform/tenants/<id>/agents``), never a wider business read. With no
+    tenant selected the scope is empty rather than the whole roster. In legacy
+    mode (``ctx is None``) every agent is visible.
     """
     if ctx is None:
         return None
-    if ctx.is_platform_admin:
-        # Platform admins span tenants: return the whole roster so no agent is
-        # filtered out, rather than None (which some callers coerce to []).
-        from agent.registry import get_agent_registry
-        return [p.id for p in get_agent_registry().list(include_disabled=False)]
     if not ctx.tenant_id:
         return []
     from auth.service import get_identity_service
@@ -7894,16 +9506,29 @@ def _resolve_tenant_default_agent(ctx: "Optional[RequestContext]") -> Optional[s
     A session must still belong to one Agent, but the user must not have to pick
     it. The rule itself lives on the identity service
     (:meth:`IdentityService.resolved_default_agent_id`) so every read path
-    agrees: configured default, then the tenant-shared Agents by smallest stable
-    id, then any. Read-only — it never writes a default, so a GET cannot mutate
-    and the answer never flips with binding insert order. The global
+    agrees: the member's own registered default (when reachable), then the
+    tenant's configured default, then the tenant-shared Agents by smallest
+    stable id, then any. Read-only — it never writes a default, so a GET cannot
+    mutate and the answer never flips with binding insert order. The global
     ``registry.default_agent_id`` is never borrowed — it may belong to another
     tenant. Returns None only when the tenant has no Agent at all.
+
+    An ordinary member also anchors on their *own* private assistant when they
+    have one, so the personal copy created with their membership is what "no
+    Agent selected" means for them. Tenant and platform administrators are
+    deliberately exempt: they are the ones who configure the tenant default and
+    must keep seeing and managing the tenant-wide answer, not their own copy of
+    it. Everything downstream (the workbench projection and the ``/api/agents``
+    response) reads this same function, so the badge, the ordering and the
+    anchoring can never disagree.
     """
     if ctx is None or not ctx.tenant_id:
         return None
     from auth.service import get_identity_service
-    return get_identity_service().resolved_default_agent_id(ctx.tenant_id)
+    is_admin = bool(getattr(ctx, "is_platform_admin", False)
+                    or getattr(ctx, "is_tenant_admin", False))
+    subject = None if is_admin else getattr(ctx, "user_id", None)
+    return get_identity_service().resolved_default_agent_id(ctx.tenant_id, subject)
 
 
 def _tenant_default_agent_id(ctx: "Optional[RequestContext]") -> Optional[str]:
@@ -7917,13 +9542,13 @@ def _tenant_default_agent_id(ctx: "Optional[RequestContext]") -> Optional[str]:
     return _resolve_tenant_default_agent(ctx)
 
 
-def _iter_tenant_agents(ctx: "RequestContext"):
-    """Yield the Agents a database-mode caller may read, default-first.
+def _tenant_agent_candidates(ctx: "RequestContext"):
+    """Yield ``(profile, tenant_default)`` for the tenant's bound, enabled Agents.
 
-    Each item is ``(profile, tenant_default, can_chat, unavailable_reason)``.
-    Visibility and chat readiness live here so the workbench projection (a
-    minimal whitelist) and the management projection (the editable fields) can
-    never drift apart: both read the same roster through the same gates.
+    Authorization is deliberately *not* applied here: this is the denominator the
+    empty-state diagnosis needs, so "this tenant has no Agent" and "this tenant
+    has nothing this caller may reach" stay distinguishable. Nothing about the
+    withheld Agents is exposed — only the count of candidates is observed.
 
     ``is_default`` is the caller's *tenant-bound* default agent (task 3.8) —
     never the global default — so the same global Agent bound to two tenants is
@@ -7933,6 +9558,22 @@ def _iter_tenant_agents(ctx: "RequestContext"):
     registry = get_agent_registry()
     visible = _tenant_ids_for_context(ctx)
     tenant_default = _tenant_default_agent_id(ctx)
+    for profile in sorted(registry.list(), key=lambda item: (item.id != tenant_default, item.id)):
+        if visible is not None and profile.id not in visible:
+            continue
+        if not profile.enabled:
+            continue
+        yield profile, tenant_default
+
+
+def _iter_tenant_agents(ctx: "RequestContext"):
+    """Yield the Agents a database-mode caller may read, default-first.
+
+    Each item is ``(profile, tenant_default, can_chat, unavailable_reason)``.
+    Visibility and chat readiness live here so the workbench projection (a
+    minimal whitelist) and the management projection (the editable fields) can
+    never drift apart: both read the same roster through the same gates.
+    """
     # Fine-grained resource grant: only show agents the caller may read. A tenant
     # admin administers its own tenant's Agents, and ``visible`` already holds it
     # to that tenant's bindings, so per-resource grants must not additionally
@@ -7941,11 +9582,7 @@ def _iter_tenant_agents(ctx: "RequestContext"):
         allowed_agent_ids = None
     else:
         allowed_agent_ids = _resource_ids(ctx, "agent", "read", permission="agent.read")
-    for profile in sorted(registry.list(), key=lambda item: (item.id != tenant_default, item.id)):
-        if visible is not None and profile.id not in visible:
-            continue
-        if not profile.enabled:
-            continue
+    for profile, tenant_default in _tenant_agent_candidates(ctx):
         if (allowed_agent_ids is not None
                 and f"agent:{profile.id}" not in allowed_agent_ids
                 and not _tenant_shared_default_agent(
@@ -7954,6 +9591,19 @@ def _iter_tenant_agents(ctx: "RequestContext"):
         can_chat, unavailable_reason = _workbench_chat_readiness(
             ctx, profile.id, tenant_default=tenant_default)
         yield profile, tenant_default, can_chat, unavailable_reason
+
+
+def _workbench_empty_reason(ctx: "RequestContext") -> str:
+    """Why the workbench came back with no card: ``no_agents`` or ``no_reachable_agents``.
+
+    An empty gallery used to read "暂无可用智能体" for both causes, which reports
+    an authorization gap as "the system has no Agents". The distinction is a
+    stable, localizable code and carries no identifiers, so the caller learns
+    nothing about Agents it cannot read.
+    """
+    for _ in _tenant_agent_candidates(ctx):
+        return "no_reachable_agents"
+    return "no_agents"
 
 
 def _tenant_agents_projection(ctx: "Optional[RequestContext]") -> Dict:
@@ -7965,6 +9615,10 @@ def _tenant_agents_projection(ctx: "Optional[RequestContext]") -> Dict:
     ``is_default`` reflects the caller's *tenant-bound* default agent (task 3.8)
     — never the global default — so the same global Agent bound to two tenants
     is only marked default for the tenant that actually selected it.
+
+    An empty result carries ``empty_reason`` so the console can tell "there is
+    no Agent" from "there is nothing *you* may reach". Empty is still a
+    *successful* read: the reason is orthogonal to the loading/failed states.
     """
     if ctx is None:
         return {"agents": []}
@@ -7979,7 +9633,67 @@ def _tenant_agents_projection(ctx: "Optional[RequestContext]") -> Dict:
             "can_chat": can_chat,
             "unavailable_reason": unavailable_reason,
         })
-    return {"agents": agents}
+    data: Dict = {"agents": agents}
+    if not agents:
+        reason = _workbench_empty_reason(ctx)
+        data["empty_reason"] = reason
+        if reason == "no_reachable_agents":
+            # The tenant admin exemption usually hides this from the only people
+            # who can fix it, so the report has to come from the affected read.
+            logger.warning(
+                "[Workbench] user %s in tenant %s sees no Agent although the"
+                " tenant has candidate Agents: every candidate is unreachable"
+                " with the caller's grants",
+                getattr(ctx, "user_id", None), getattr(ctx, "tenant_id", None),
+            )
+    return data
+
+
+def _personal_agents_projection(ctx: "RequestContext") -> Dict:
+    """The caller's **own** private Agents, with the verbs they may use on them.
+
+    The filter runs on the server: the payload contains only Agents this member
+    owns in the current tenant, so the console never receives another member's
+    Agent and has nothing to filter out on the client. Each row carries finite
+    action flags derived from the *same* ownership facts the write paths enforce
+    (task 8.1/8.3):
+
+    * ``edit``/``enable`` — ownership of the object (a private owner may always
+      maintain their own Agent);
+    * ``delete`` — only a ``user_created`` binding. The system-provisioned
+      assistant is not the member's to delete, and ``unknown`` (pre-column rows)
+      is treated as system-made rather than guessed at (task 4.5);
+    * ``configure_personal`` — the personal parameter surface for this Agent.
+
+    Never derived from a role name, a permission count or the caller's page
+    availability: a caller who can open the page still gets ``delete: false`` for
+    an object they do not own.
+    """
+    from auth.service import SUPPLIED_ASSISTANT_ORIGINS, get_identity_service
+
+    service = get_identity_service()
+    mine = service.private_agent_ids(ctx.tenant_id, ctx.user_id)
+    out = []
+    for data in _tenant_agents_admin_projection(ctx)["agents"]:
+        agent_id = str(data.get("id") or "")
+        if agent_id not in mine:
+            continue
+        binding = service.get_agent_binding(agent_id) or {}
+        origin = str(binding.get("origin") or "unknown")
+        row = dict(data)
+        row["scope"] = "private"
+        row["origin"] = origin
+        row["is_system_assistant"] = origin in SUPPLIED_ASSISTANT_ORIGINS
+        row["actions"] = {
+            "edit": True,
+            "enable": True,
+            "delete": bool(origin == "user_created"),
+            "configure_personal": True,
+        }
+        out.append(row)
+    return {"agents": out, "scope": "self",
+            "default_agent_id": service.member_default_agent_id(
+                ctx.tenant_id, ctx.user_id) or ""}
 
 
 def _tenant_agents_admin_projection(ctx: "Optional[RequestContext]") -> Dict:
@@ -7998,9 +9712,8 @@ def _tenant_agents_admin_projection(ctx: "Optional[RequestContext]") -> Dict:
     tenants' state and make one tenant's write invalidate another's revision.
     """
     from agent.admin import AgentAdminService
-    from agent.registry import get_agent_registry
 
-    global_default = get_agent_registry().default_agent_id
+    shared_base = AgentAdminService._shared_knowledge_base()
     agents = []
     for profile, tenant_default, can_chat, unavailable_reason in _iter_tenant_agents(ctx):
         data = profile.to_dict()
@@ -8008,11 +9721,32 @@ def _tenant_agents_admin_projection(ctx: "Optional[RequestContext]") -> Dict:
         data["is_default"] = bool(profile.id == tenant_default)
         data["can_chat"] = can_chat
         data["unavailable_reason"] = unavailable_reason
-        # The console renders the shared/own knowledge toggle from this.
-        data["knowledge_mode"] = AgentAdminService._knowledge_mode_of(
-            profile, global_default)
+        # The console renders the shared/own knowledge toggle from this. Derived
+        # from data-root ownership, so a default Agent moved into a workspace of
+        # its own reports "own" — the mode the knowledge page actually renders.
+        data["knowledge_mode"] = AgentAdminService._knowledge_mode_of(profile, shared_base)
+        # Whether *this caller* may write this Agent's knowledge base, from the
+        # same decision the write path enforces (data root + Agent ownership).
+        # The console renders its write affordances from this, so it never
+        # offers an action the request would 403.
+        data["can_write_knowledge"] = _knowledge_write_authorized(ctx, profile.id)
         agents.append(data)
     return {"agents": agents, "default_agent_id": _tenant_default_agent_id(ctx)}
+
+
+def _agent_bound_to_tenant(ctx: "Optional[RequestContext]", agent_id: str) -> bool:
+    """True when ``agent_id`` is bound to the tenant ``ctx`` has selected.
+
+    The tenant binding is the isolation boundary every business read and every
+    chat target is checked against (``_require_tenant_agent_binding`` on the send
+    path). A caller with no tenant selected owns no Agent here, so the answer is
+    False rather than "unscoped".
+    """
+    if ctx is None or not getattr(ctx, "tenant_id", None) or not agent_id:
+        return False
+    from auth.service import get_identity_service
+    binding = get_identity_service().get_agent_binding(agent_id)
+    return bool(binding and binding.get("tenant_id") == ctx.tenant_id)
 
 
 def _workbench_chat_readiness(ctx: "Optional[RequestContext]",
@@ -8025,19 +9759,27 @@ def _workbench_chat_readiness(ctx: "Optional[RequestContext]",
     stable, localizable code (never an internal config leak); it is set only
     when the caller is *read* but not *execution*-authorized for the target.
 
-    Legacy mode (``ctx is None``): the publishing/运行 consumer is open, so an
-    enabled Agent is runnable (``(True, None)``).
+    With no request context (``ctx is None``) readiness fails closed: the legacy
+    consumer that used to be open was retired together with legacy identity mode,
+    so no card is advertised as runnable.
 
-    Database mode: mirrors the send-path gates exactly — the caller must be
-    authorized for the functional ``chat.use`` (platform/tenant admin bypass,
-    matching ``_require_chat_use``) AND be authorized for ``agent.use`` on this
-    agent (platform admin and the tenant admin that owns it bypass, matching
+    Database mode: mirrors the send-path gates exactly — the target must be bound
+    to the caller's selected tenant, the caller must be authorized for the
+    functional ``chat.use`` (platform/tenant admin bypass, matching
+    ``_require_chat_use``) AND be authorized for ``agent.use`` on this agent
+    (platform admin and the tenant admin that owns it bypass, matching
     ``_require_agent_action(..., "use", "agent.use")``). A caller that only has
     ``agent.read`` sees the card with ``can_chat=False`` and a permission reason
     — never the historical ``runtime_not_enabled`` version-closure message.
     """
     if ctx is None:
         return False, "unauthorized"
+    # Binding first: the send path refuses an Agent another tenant owns
+    # (``_require_tenant_agent_binding`` 404), and a platform admin passes
+    # ``check_resource_action`` unconditionally, so this is the check that keeps
+    # the card's promise and the send path from disagreeing.
+    if not _agent_bound_to_tenant(ctx, agent_id):
+        return False, "permission_denied"
     # agent.use: platform admin passes via ``check_resource_action``, and a
     # tenant admin passes for an Agent its own tenant owns — the same rule the
     # send path enforces, so the card never promises a chat the send would deny.
@@ -8238,6 +9980,20 @@ class AgentsHandler:
                         {"status": "success", **_tenant_agents_projection(ctx)},
                         ensure_ascii=False,
                     )
+                if params.view == 'personal':
+                    # 「我的智能体」: the caller's own private Agents only, with
+                    # per-object verbs (task 8.1). A member with no tenant
+                    # selected owns nothing here, so this refuses rather than
+                    # falling back to a tenant-wide read.
+                    if ctx is None or not ctx.tenant_id:
+                        return json.dumps(
+                            {"status": "error", "code": "no_tenant",
+                             "message": "a tenant must be selected"},
+                            ensure_ascii=False)
+                    return json.dumps(
+                        {"status": "success", **_personal_agents_projection(ctx)},
+                        ensure_ascii=False,
+                    )
                 if ctx is not None:
                     # database mode: only the caller's tenant-bound agents, and
                     # never expose workspace paths. The management read keeps the
@@ -8310,6 +10066,10 @@ class AgentsHandler:
                             ctx, (result or {}).get("id") or agent_id)
                 elif action == "update":
                     _require_agent_action(ctx, agent_id, "edit", "agent.edit")
+                    # Owning an Agent does not authorise the dependencies the
+                    # save points it at; re-verify the ones this request names
+                    # (task 4.4) before the roster is touched.
+                    _require_configured_capabilities(ctx, agent_id, body)
                     updates = {
                         "name": body.get("name"),
                         "enabled": body.get("enabled"),
@@ -8335,7 +10095,43 @@ class AgentsHandler:
                     result = service.archive_agent(agent_id, revision=revision)
                 elif action == "delete":
                     _require_agent_action(ctx, agent_id, "edit", "agent.edit")
+                    _require_deletable_provenance(ctx, agent_id)
                     result = service.delete_agent(agent_id, revision=revision)
+                    # The roster entry is gone, but two identity-side records can
+                    # still point at it: the tenant's default pointer, and the
+                    # tenant binding. The binding must go too — ``_agent_is_usable``
+                    # deliberately treats an Agent the registry does not know as
+                    # *usable*, so a surviving binding would keep
+                    # ``resolved_default_agent_id`` returning a deleted Agent. The
+                    # release is not scoped to the caller's tenant: the binding may
+                    # belong to another one (a platform admin can delete a roster
+                    # entry bound elsewhere), and a tenant-scoped delete would then
+                    # match nothing.
+                    if ctx is not None:
+                        from auth.service import get_identity_service
+                        get_identity_service().release_deleted_agent(
+                            agent_id=agent_id, actor_user_id=ctx.user_id)
+                elif action == "set_default":
+                    # Choosing the tenant's default Agent is a tenant-level act:
+                    # that Agent is the entry every member shares, so it does not
+                    # belong to the per-Agent edit surface and must not follow an
+                    # ``agent.edit`` resource grant. The service still enforces
+                    # that the target belongs to the caller's tenant.
+                    if ctx is None or not ctx.tenant_id:
+                        _raise_forbidden()
+                    if not (ctx.is_platform_admin or ctx.is_tenant_admin):
+                        _raise_forbidden()
+                    from auth.service import get_identity_service
+                    identity = get_identity_service()
+                    if agent_id not in identity.tenant_agent_ids(ctx.tenant_id):
+                        raise web.HTTPError(
+                            "404 Not Found", {"Content-Type": "application/json"},
+                            json.dumps({"status": "error",
+                                        "message": "agent is not bound to this tenant",
+                                        "code": "not_found"}))
+                    result = identity.appoint_tenant_default_agent(
+                        tenant_id=ctx.tenant_id, agent_id=agent_id,
+                        actor_user_id=ctx.user_id)
                 elif action == "set_knowledge_mode":
                     # A filesystem toggle (symlink vs own dir), not a roster edit, so
                     # it doesn't participate in the roster revision guard.
@@ -8712,7 +10508,8 @@ def _as_epoch(value) -> int:
 
 def _list_sessions_across_agents(page: int, page_size: int,
                                  ctx: "Optional[RequestContext]" = None,
-                                 q: str = "") -> dict:
+                                 q: str = "",
+                                 archived: bool = False) -> dict:
     """One page of every Agent's conversations, merged.
 
     Sessions are stored one database per Agent, so "all conversations" is a
@@ -8763,7 +10560,7 @@ def _list_sessions_across_agents(page: int, page_size: int,
                 while True:
                     batch = store.list_sessions(
                         channel_type="web", page=search_page, page_size=500,
-                        user_id=user_id, q=q,
+                        user_id=user_id, q=q, archived=archived,
                     )
                     rows = batch.get("sessions") or []
                     matches.extend(rows)
@@ -8773,9 +10570,10 @@ def _list_sessions_across_agents(page: int, page_size: int,
                 chunk = {"sessions": matches, "total": len(matches)}
             else:
                 chunk = store.list_sessions(channel_type="web", page=1, page_size=take,
-                                            user_id=user_id)
+                                            user_id=user_id, archived=archived)
             project_map = project_store.get_project_map(profile.id)
-            session_ids = store.list_session_ids(channel_type="web", user_id=user_id)
+            session_ids = store.list_session_ids(channel_type="web", user_id=user_id,
+                                                 archived=archived)
         except Exception as e:
             # One unreadable workspace must not blank out the whole list; the
             # other Agents' conversations are still perfectly readable.
@@ -8857,7 +10655,8 @@ class SessionsHandler:
             with _db_scope() as ctx:
                 _require_read_permission(ctx, "history.read")
                 params = web.input(
-                    page='1', page_size='50', agent_id='', agent='', scope='', q=''
+                    page='1', page_size='50', agent_id='', agent='', scope='', q='',
+                    archived=''
                 )
                 from agent.memory.conversation_store import normalize_session_search_query
                 try:
@@ -8868,29 +10667,31 @@ class SessionsHandler:
                                        "message": str(e)}, ensure_ascii=False)
                 page = int(params.page)
                 page_size = int(params.page_size)
+                archived = str(params.archived or '').strip().lower() in ('1', 'true', 'yes')
                 if (params.scope or '').strip() == 'all':
                     if q:
-                        result = _list_sessions_across_agents(page, page_size, ctx, q=q)
+                        result = _list_sessions_across_agents(page, page_size, ctx, q=q,
+                                                              archived=archived)
                     elif ctx is not None:
-                        result = _list_sessions_across_agents(page, page_size, ctx)
+                        result = _list_sessions_across_agents(page, page_size, ctx,
+                                                              archived=archived)
                     else:
-                        result = _list_sessions_across_agents(page, page_size)
+                        result = _list_sessions_across_agents(page, page_size,
+                                                              archived=archived)
                     if q:
                         result["query"] = q
                     return json.dumps({"status": "success", **result}, ensure_ascii=False)
 
                 agent_id = _request_agent_id(params)
-                from agent.memory import get_conversation_store
                 from agent.registry import get_agent_registry
-                store = get_conversation_store(
-                    _get_workspace_root(agent_id=agent_id)
-                )
+                store = _conversation_store_for(agent_id)
                 search_args = {"q": q} if q else {}
                 result = store.list_sessions(
                     channel_type="web",
                     page=page,
                     page_size=page_size,
                     user_id=ctx.user_id if ctx else None,
+                    archived=archived,
                     **search_args,
                 )
                 _annotate_sessions_with_projects(
@@ -8938,7 +10739,7 @@ class SessionDetailHandler:
                     logger.warning(f"[WebChannel] Cancel on delete failed: {e}")
 
                 from agent.memory import get_conversation_store
-                store = get_conversation_store(_get_workspace_root(agent_id=agent_id))
+                store = _conversation_store_for(agent_id)
                 store.clear_session(session_id)
 
                 # Drop the session's side stores too. Left behind, a stale project
@@ -8979,7 +10780,7 @@ class SessionDetailHandler:
             return json.dumps({"status": "error", "message": str(e)})
 
     def PUT(self, session_id: str):
-        """Update a session's title and/or its pinned flag."""
+        """Update a session's title, pinned flag and/or archived flag."""
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             if not session_id:
@@ -8987,8 +10788,10 @@ class SessionDetailHandler:
             body = json.loads(web.data())
             title = (body.get("title") or "").strip()
             pinned = body.get("pinned")
-            if not title and pinned is None:
-                return json.dumps({"status": "error", "message": "title or pinned required"})
+            archived = body.get("archived")
+            if not title and pinned is None and archived is None:
+                return json.dumps({"status": "error",
+                                   "message": "title, pinned or archived required"})
 
             with _db_scope() as ctx:
                 _require_read_permission(ctx, "history.read")
@@ -8996,13 +10799,15 @@ class SessionDetailHandler:
                     ctx, session_id, _request_agent_id(body))
 
                 from agent.memory import get_conversation_store
-                store = get_conversation_store(_get_workspace_root(agent_id=agent_id))
+                store = _conversation_store_for(agent_id)
 
                 found = True
                 if title:
                     found = store.rename_session(session_id, title)
                 if pinned is not None:
                     found = store.set_pinned(session_id, bool(pinned)) and found
+                if archived is not None:
+                    found = store.set_archived(session_id, bool(archived)) and found
                 if not found:
                     # A session only gets a row once its first message is stored, so
                     # this is also what a pin on a brand-new empty chat looks like.
@@ -9257,6 +11062,48 @@ def _session_team_state(prefs: dict, agent_id: Optional[str]) -> dict:
     }
 
 
+def _drop_team_runtimes(
+    session_id: str, owner_agent_id: Optional[str], *rosters
+) -> None:
+    """Drop the runtimes a changed roster invalidates, so they rebuild.
+
+    An Agent's toolset is assembled once, when its runtime is built: the
+    ``agent_delegate`` gate in ``AgentInitializer._load_tools`` reads the team at
+    that moment. The roster itself is read per turn, so an Agent invited after
+    the first message would see the team in its prompt while holding no tool to
+    hand work to it. Evicting the participants makes the next turn rebuild
+    against the new roster; persisted history is restored on rebuild, so no
+    conversation content is lost.
+
+    Every participant goes, not just the owner: a teammate cached in this
+    session carries a roster in its own prompt too. Unknown or archived ids are
+    skipped — the roster may name an Agent that no longer resolves.
+    """
+    from bridge.bridge import Bridge
+
+    bridge = Bridge().get_agent_bridge()
+    # The owner may be unnamed: the console stores a session under the default
+    # Agent, so an empty id has to reach clear_session and be resolved there.
+    victims = [owner_agent_id]
+    for roster in rosters:
+        victims.extend(roster if isinstance(roster, (list, tuple)) else [roster])
+    seen = set()
+    for agent_id in victims:
+        if agent_id is not None:
+            agent_id = str(agent_id).strip()
+            if not agent_id:
+                continue
+        if agent_id in seen:
+            continue
+        seen.add(agent_id)
+        try:
+            bridge.clear_session(session_id, agent_id)
+        except Exception as e:  # a bad roster must not fail the settings write
+            logger.debug(
+                f"[WebChannel] Could not drop runtime for '{agent_id}': {e}"
+            )
+
+
 class SessionSettingsHandler:
     """Per-session model and permission overrides.
 
@@ -9326,7 +11173,12 @@ class SessionSettingsHandler:
                     # with no model would route the global model to the wrong vendor.
                     updates["model"] = model
                     updates["provider"] = provider if model else None
+                previous_members: list = []
+                roster_changed = False
                 if "members" in body:
+                    previous_members = list(
+                        session_prefs.get_prefs(session_id, agent_id).get("members") or []
+                    )
                     raw = body.get("members")
                     if raw is None:
                         updates["members"] = None
@@ -9339,6 +11191,12 @@ class SessionSettingsHandler:
                             "status": "error",
                             "message": "members must be a list of agent ids",
                         })
+                    # Compared as sets: the invite order is only the console's
+                    # business, and a reorder must not cost every participant a
+                    # rebuild.
+                    roster_changed = (
+                        set(updates["members"] or []) != set(previous_members)
+                    )
 
                 if not updates:
                     return json.dumps({
@@ -9347,6 +11205,18 @@ class SessionSettingsHandler:
                     })
 
                 session_prefs.set_prefs(session_id, agent_id, **updates)
+
+                if roster_changed:
+                    # The team is part of what a runtime is assembled against, so
+                    # a changed roster has to retire the old runtimes: otherwise
+                    # the next turn reads the team but has no `agent_delegate` to
+                    # hand work to it (see _drop_team_runtimes).
+                    _drop_team_runtimes(
+                        session_id,
+                        agent_id,
+                        previous_members,
+                        updates.get("members") or [],
+                    )
 
                 # Retarget the live agent so the change lands on the next message
                 # without waiting for a fresh get_agent.
@@ -9390,7 +11260,7 @@ class SessionTitleHandler:
                     ctx, session_id, _request_agent_id(body))
 
                 from agent.memory import get_conversation_store
-                store = get_conversation_store(_get_workspace_root(agent_id=agent_id))
+                store = _conversation_store_for(agent_id)
                 updated = store.rename_session(session_id, title)
                 logger.info(f"[WebChannel] Session title set: sid={session_id}, title='{title}', db_updated={updated}")
 
@@ -9443,7 +11313,7 @@ class SessionClearContextHandler:
                 agent_id = _require_session_scope(ctx, session_id, requested)
 
                 from agent.memory import get_conversation_store
-                store = get_conversation_store(_get_workspace_root(agent_id=agent_id))
+                store = _conversation_store_for(agent_id)
                 new_seq = store.clear_context(session_id)
 
                 # Delete the agent instance so a fresh one is created on the next message
@@ -9526,7 +11396,7 @@ class MessageDeleteHandler:
 
                 # 1. Delete from database
                 from agent.memory import get_conversation_store
-                store = get_conversation_store(_get_workspace_root(agent_id=agent_id))
+                store = _conversation_store_for(agent_id)
                 deleted = store.delete_message_pair(session_id, int(user_seq), delete_user=delete_user, cascade=cascade)
 
                 # 2. Sync agent's in-memory context so its next turn sees the
@@ -9734,6 +11604,69 @@ def _system_workspace_service():
     return WorkspaceService(state_root_str())
 
 
+def _workspace_system_service(ctx, svc):
+    """State-root workspace for system assets, confined to the caller's tenant.
+
+    ``_system_workspace_service()`` resolves ``state_root()``, which with no
+    ``agent_id`` in the ambient identity falls back to the *global default*
+    Agent. In database mode that would let a non-default tenant read another
+    tenant's ``MEMORY.md``/``knowledge/`` through the preview editor's
+    state-root fallback. Anchor to the caller's tenant-bound default Agent
+    instead; when the tenant has no Agent at all, reuse the session workspace
+    root (already tenant-scoped) rather than a global directory.
+    """
+    if ctx is None:
+        return _system_workspace_service()
+    from agent.workspace.service import WorkspaceService
+    resolved = _resolve_tenant_default_agent(ctx)
+    # The default must also pass the private-owner rule: when a tenant has no
+    # shared Agent the resolution order can land on a private one, which the
+    # caller is not allowed to read. Reuse the tenant-scoped session root then.
+    if resolved and not _db_path_owner_forbidden(ctx, resolved):
+        try:
+            from agent.registry import get_agent_registry
+            return WorkspaceService(get_agent_registry().get(resolved).workspace)
+        except (KeyError, ValueError, TypeError):
+            pass
+    return svc
+
+
+def _workspace_request_scope(ctx, session_id: str, agent_id: Optional[str]) -> str:
+    """Validate the file panel's ``agent``/``session`` selectors.
+
+    Returns the resolved (tenant-bound) agent id. An Agent bound to another
+    tenant or privately owned by someone else is refused (404/403), and a
+    session the caller does not own is refused too, mirroring the other
+    session-scoped console routes.
+    """
+    resolved = _require_tenant_agent_binding(ctx, agent_id)
+    _require_private_owner(ctx, resolved)
+    if session_id:
+        _require_owned_session(ctx, session_id, resolved)
+    return resolved
+
+
+def _visible_entries(ctx, svc, entries: list) -> list:
+    """Drop entries the caller may not read (private-Agent ownership).
+
+    Applied before decorating so a hidden entry never gets `raw_url` /
+    `preview_url` minted for it, and directory names do not leak either.
+    """
+    if ctx is None or not getattr(ctx, "tenant_id", None):
+        return entries
+    roots = _db_file_root_owners(ctx)
+    visible = []
+    for entry in entries:
+        abs_path = entry.get("abs_path") or os.path.join(svc.root, entry.get("path") or "")
+        try:
+            real = os.path.realpath(abs_path)
+        except (TypeError, ValueError):
+            continue
+        if _db_path_visible(ctx, real, roots):
+            visible.append(entry)
+    return visible
+
+
 def _decorate_entry(svc, entry: dict) -> dict:
     """Attach the URLs the frontend needs to preview or download an entry."""
     if entry.get("is_dir"):
@@ -9748,35 +11681,51 @@ def _decorate_entry(svc, entry: dict) -> dict:
 class WorkspaceTreeHandler:
     def GET(self):
         web.header('Content-Type', 'application/json; charset=utf-8')
-        try:
-            params = web.input(path='', show_hidden='', session='', agent='')
-            svc = _workspace_service(params.session or None, params.agent or None)
-            result = svc.list_dir(params.path, show_hidden=params.show_hidden == '1')
-            result["entries"] = [_decorate_entry(svc, e) for e in result["entries"]]
-            return json.dumps({"status": "success", **result}, ensure_ascii=False)
-        except (ValueError, FileNotFoundError) as e:
-            return json.dumps({"status": "error", "message": str(e)})
-        except Exception as e:
-            logger.error(f"[WebChannel] Workspace tree error: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+        with _db_scope() as ctx:
+            try:
+                params = web.input(path='', show_hidden='', session='', agent='')
+                agent_id = _workspace_request_scope(
+                    ctx, params.session or None, params.agent or None)
+                svc = _workspace_service(params.session or None, agent_id)
+                result = svc.list_dir(params.path, show_hidden=params.show_hidden == '1')
+                result["entries"] = [
+                    _decorate_entry(svc, e)
+                    for e in _visible_entries(ctx, svc, result["entries"])
+                ]
+                return json.dumps({"status": "success", **result}, ensure_ascii=False)
+            except web.HTTPError:
+                raise
+            except (ValueError, FileNotFoundError) as e:
+                return json.dumps({"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.error(f"[WebChannel] Workspace tree error: {e}")
+                return json.dumps({"status": "error", "message": str(e)})
 
 
 class WorkspaceSearchHandler:
     def GET(self):
         web.header('Content-Type', 'application/json; charset=utf-8')
-        try:
-            params = web.input(q='', limit='30', session='', agent='')
+        with _db_scope() as ctx:
             try:
-                limit = max(1, min(100, int(params.limit)))
-            except (TypeError, ValueError):
-                limit = 30
-            svc = _workspace_service(params.session or None, params.agent or None)
-            result = svc.search(params.q, limit=limit)
-            result["results"] = [_decorate_entry(svc, e) for e in result["results"]]
-            return json.dumps({"status": "success", **result}, ensure_ascii=False)
-        except Exception as e:
-            logger.error(f"[WebChannel] Workspace search error: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+                params = web.input(q='', limit='30', session='', agent='')
+                try:
+                    limit = max(1, min(100, int(params.limit)))
+                except (TypeError, ValueError):
+                    limit = 30
+                agent_id = _workspace_request_scope(
+                    ctx, params.session or None, params.agent or None)
+                svc = _workspace_service(params.session or None, agent_id)
+                result = svc.search(params.q, limit=limit)
+                result["results"] = [
+                    _decorate_entry(svc, e)
+                    for e in _visible_entries(ctx, svc, result["results"])
+                ]
+                return json.dumps({"status": "success", **result}, ensure_ascii=False)
+            except web.HTTPError:
+                raise
+            except Exception as e:
+                logger.error(f"[WebChannel] Workspace search error: {e}")
+                return json.dumps({"status": "error", "message": str(e)})
 
 
 class WorkspaceResolveHandler:
@@ -9789,89 +11738,141 @@ class WorkspaceResolveHandler:
 
     def GET(self):
         web.header('Content-Type', 'application/json; charset=utf-8')
-        try:
-            from agent.protocol.artifact import classify_kind, is_previewable
-            params = web.input(path='', session='', agent='')
-            raw_path = (params.path or '').strip()
-            if not raw_path:
-                return json.dumps({"status": "error", "message": "path is required"})
+        with _db_scope() as ctx:
+            try:
+                from agent.protocol.artifact import classify_kind, is_previewable
+                params = web.input(path='', session='', agent='')
+                raw_path = (params.path or '').strip()
+                if not raw_path:
+                    return json.dumps({"status": "error", "message": "path is required"})
 
-            svc = _workspace_service(params.session or None, params.agent or None)
-            if os.path.isabs(os.path.expanduser(raw_path)):
-                abs_path = os.path.realpath(os.path.expanduser(raw_path))
-                if not _is_path_allowed(abs_path):
-                    return json.dumps({"status": "error", "message": "Path not allowed"})
-                is_dir = os.path.isdir(abs_path)
-                if not is_dir and not os.path.isfile(abs_path):
-                    return json.dumps({"status": "error", "message": "File not found"})
-                kind = "directory" if is_dir else classify_kind(abs_path)
-                entry = {
-                    "name": os.path.basename(abs_path),
-                    "path": svc.to_rel(abs_path),
-                    "abs_path": abs_path,
-                    "is_dir": is_dir,
-                    "kind": kind,
-                    "previewable": (not is_dir) and is_previewable(kind),
-                    "size": 0 if is_dir else os.path.getsize(abs_path),
-                    "mtime": os.path.getmtime(abs_path),
-                }
-            else:
-                try:
-                    entry = svc.stat_file(raw_path)
-                except FileNotFoundError:
-                    # Memory/knowledge live in state_root, not the project. Retry
-                    # there so their cards still preview when a project is open.
-                    if _is_system_asset_rel(raw_path):
-                        entry = _system_workspace_service().stat_file(raw_path)
-                    else:
-                        raise
+                agent_id = _workspace_request_scope(
+                    ctx, params.session or None, params.agent or None)
+                svc = _workspace_service(params.session or None, agent_id)
+                if os.path.isabs(os.path.expanduser(raw_path)):
+                    abs_path = os.path.realpath(os.path.expanduser(raw_path))
+                    # Absolute paths are authorized against the *caller's*
+                    # tenant roots, never the static all-tenant list behind
+                    # /preview (which has no request identity to scope by).
+                    allowed, via = _authorize_db_file_path(ctx, abs_path)
+                    if not allowed:
+                        if via == "forbidden":
+                            raise web.forbidden()
+                        raise web.notfound()
+                    is_dir = os.path.isdir(abs_path)
+                    if not is_dir and not os.path.isfile(abs_path):
+                        return json.dumps({"status": "error", "message": "File not found"})
+                    kind = "directory" if is_dir else classify_kind(abs_path)
+                    entry = {
+                        "name": os.path.basename(abs_path),
+                        "path": svc.to_rel(abs_path),
+                        "abs_path": abs_path,
+                        "is_dir": is_dir,
+                        "kind": kind,
+                        "previewable": (not is_dir) and is_previewable(kind),
+                        "size": 0 if is_dir else os.path.getsize(abs_path),
+                        "mtime": os.path.getmtime(abs_path),
+                    }
+                else:
+                    try:
+                        entry = svc.stat_file(raw_path)
+                    except FileNotFoundError:
+                        # Memory/knowledge live in the Agent's workspace, not the
+                        # project. Retry there so their cards still preview when
+                        # a project is open — scoped to the caller's tenant.
+                        if _is_system_asset_rel(raw_path):
+                            entry = _workspace_system_service(ctx, svc).stat_file(raw_path)
+                        else:
+                            raise
+                    # Relative addressing is not an ownership bypass: the
+                    # resolved abs_path decides, so a private Agent workspace
+                    # nested under the shared root stays invisible.
+                    if not _db_path_visible(ctx, entry["abs_path"]):
+                        raise web.notfound()
 
-            # A directory has nothing to serve; the client browses into it.
-            if not entry["is_dir"]:
-                entry["raw_url"] = f"/api/file?path={quote(entry['abs_path'])}"
-                entry["preview_url"] = _build_preview_url(entry["abs_path"])
-            return json.dumps({"status": "success", "file": entry}, ensure_ascii=False)
-        except (ValueError, FileNotFoundError) as e:
-            return json.dumps({"status": "error", "message": str(e)})
-        except Exception as e:
-            logger.error(f"[WebChannel] Workspace resolve error: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+                # A directory has nothing to serve; the client browses into it.
+                if not entry["is_dir"]:
+                    entry["raw_url"] = f"/api/file?path={quote(entry['abs_path'])}"
+                    entry["preview_url"] = _build_preview_url(entry["abs_path"])
+                return json.dumps({"status": "success", "file": entry}, ensure_ascii=False)
+            except web.HTTPError:
+                raise
+            except (ValueError, FileNotFoundError) as e:
+                return json.dumps({"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.error(f"[WebChannel] Workspace resolve error: {e}")
+                return json.dumps({"status": "error", "message": str(e)})
 
 
 class WorkspaceMetaHandler:
     def GET(self):
         web.header('Content-Type', 'application/json; charset=utf-8')
-        try:
-            params = web.input(session='', agent='')
-            svc = _workspace_service(params.session or None, params.agent or None)
-            return json.dumps({"status": "success", **svc.meta()}, ensure_ascii=False)
-        except Exception as e:
-            logger.error(f"[WebChannel] Workspace meta error: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+        with _db_scope() as ctx:
+            try:
+                params = web.input(session='', agent='')
+                agent_id = _workspace_request_scope(
+                    ctx, params.session or None, params.agent or None)
+                svc = _workspace_service(params.session or None, agent_id)
+                return json.dumps({"status": "success", **svc.meta()}, ensure_ascii=False)
+            except web.HTTPError:
+                raise
+            except Exception as e:
+                logger.error(f"[WebChannel] Workspace meta error: {e}")
+                return json.dumps({"status": "error", "message": str(e)})
 
 
-def _editable_target(raw_path: str, session_id: str = None, agent_id: str = None):
+def _editable_target(raw_path: str, session_id: str = None, agent_id: str = None,
+                     ctx=None):
     """
     Locate a file for the preview panel's text editor: (service, rel_path).
 
     Narrower than `/api/workspace/resolve`, which only has to serve bytes and so
     accepts anything under the configured serve roots. Reading and writing text
-    stay inside the session's workspace (its project dir or the default state
-    root), with a fallback to the state root for the memory / knowledge / persona
-    assets that live there even while a project is open.
+    stay inside the session's workspace (its project dir or the tenant shared
+    root), with a tenant-scoped state-root fallback for the memory / knowledge /
+    persona assets that live in the Agent's workspace even while a project is
+    open.
+
+    An absolute path outside both roots is invisible (404): it must never fall
+    back to the global default Agent's workspace or an arbitrary host path.
     """
     svc = _workspace_service(session_id, agent_id)
-    system = _system_workspace_service()
-    try:
-        rel = svc.to_workspace_rel(raw_path)
-    except ValueError:
-        # Absolute path outside the session workspace: the state root is the
-        # only other place the console is allowed to edit.
-        return system, system.to_workspace_rel(raw_path)
+    system = _workspace_system_service(ctx, svc)
+    raw = (raw_path or "").strip()
+    expanded = os.path.expanduser(raw)
+    if os.path.isabs(expanded):
+        real = os.path.realpath(expanded)
+        # Second barrier: even if the fallback loop below ever widened, an
+        # absolute path must stay inside the caller's tenant roots (platform
+        # root only for a platform admin).
+        if ctx is not None and getattr(ctx, "tenant_id", None):
+            allowed, via = _authorize_db_file_path(ctx, real)
+            if not allowed:
+                if via == "forbidden":
+                    raise web.forbidden()
+                raise web.notfound()
+        for candidate in (svc, system):
+            try:
+                return candidate, candidate.to_workspace_rel(real)
+            except ValueError:
+                continue
+        raise web.notfound()
+    rel = svc.to_workspace_rel(raw)
+    target = svc
     if svc.root != system.root and _is_system_asset_rel(rel) \
             and not os.path.isfile(svc.resolve(rel)):
-        return system, rel
-    return svc, rel
+        target = system
+    # Ownership follows the resolved target, never the declared Agent: a private
+    # Agent's workspace nested under the tenant shared root must not become
+    # readable through a relative path (or via the state-root fallback).
+    if ctx is not None and getattr(ctx, "tenant_id", None):
+        try:
+            visible = _db_path_visible(ctx, target.resolve(rel))
+        except ValueError:
+            visible = False
+        if not visible:
+            raise web.notfound()
+    return target, rel
 
 
 def _is_memory_rel(rel_path: str) -> bool:
@@ -9909,18 +11910,24 @@ class WorkspaceReadHandler:
 
     def GET(self):
         web.header('Content-Type', 'application/json; charset=utf-8')
-        try:
-            params = web.input(path='', session='', agent='')
-            raw_path = (params.path or '').strip()
-            if not raw_path:
-                return json.dumps({"status": "error", "message": "path is required"})
-            svc, rel = _editable_target(raw_path, params.session or None, params.agent or None)
-            return json.dumps({"status": "success", **svc.read_text(rel)}, ensure_ascii=False)
-        except (ValueError, FileNotFoundError) as e:
-            return json.dumps({"status": "error", "message": str(e)})
-        except Exception as e:
-            logger.error(f"[WebChannel] Workspace read error: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+        with _db_scope() as ctx:
+            try:
+                params = web.input(path='', session='', agent='')
+                raw_path = (params.path or '').strip()
+                if not raw_path:
+                    return json.dumps({"status": "error", "message": "path is required"})
+                agent_id = _workspace_request_scope(
+                    ctx, params.session or None, params.agent or None)
+                svc, rel = _editable_target(
+                    raw_path, params.session or None, agent_id, ctx=ctx)
+                return json.dumps({"status": "success", **svc.read_text(rel)}, ensure_ascii=False)
+            except web.HTTPError:
+                raise
+            except (ValueError, FileNotFoundError) as e:
+                return json.dumps({"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.error(f"[WebChannel] Workspace read error: {e}")
+                return json.dumps({"status": "error", "message": str(e)})
 
 
 class WorkspaceWriteHandler:
@@ -9939,38 +11946,47 @@ class WorkspaceWriteHandler:
 
     def POST(self):
         web.header('Content-Type', 'application/json; charset=utf-8')
-        try:
-            from agent.workspace.service import WorkspaceConflictError
-
-            body = json.loads(web.data() or b'{}')
-            raw_path = (body.get("path") or "").strip()
-            if not raw_path:
-                return json.dumps({"status": "error", "message": "path is required"})
-            content = body.get("content")
-            if not isinstance(content, str):
-                return json.dumps({"status": "error", "message": "content must be a string"})
-
-            agent_id = body.get("agent") or None
-            svc, rel = _editable_target(raw_path, body.get("session") or None, agent_id)
+        with _db_scope() as ctx:
+            # A console write funnels through the unified origin/CSRF gate before
+            # any identity or filesystem work, like every other management write.
+            from channel.web.auth_handlers import require_management_write
+            require_management_write()
             try:
-                result = svc.write_text(rel, content, expected_mtime=body.get("expected_mtime"))
-            except WorkspaceConflictError as e:
-                return json.dumps({"status": "error", "code": "conflict", "message": str(e)})
+                from agent.workspace.service import WorkspaceConflictError
 
-            # A memory file feeds the vector index; re-embed it on edit so search
-            # doesn't keep returning the stale pre-edit text.
-            if _is_memory_rel(rel):
-                _mark_memory_dirty(agent_id)
+                body = json.loads(web.data() or b'{}')
+                raw_path = (body.get("path") or "").strip()
+                if not raw_path:
+                    return json.dumps({"status": "error", "message": "path is required"})
+                content = body.get("content")
+                if not isinstance(content, str):
+                    return json.dumps({"status": "error", "message": "content must be a string"})
 
-            logger.info(f"[WebChannel] Workspace file saved: {result['path']} ({result['size']} bytes)")
-            return json.dumps({"status": "success", **result}, ensure_ascii=False)
-        except (ValueError, FileNotFoundError) as e:
-            return json.dumps({"status": "error", "message": str(e)})
-        except PermissionError:
-            return json.dumps({"status": "error", "message": "permission denied"})
-        except Exception as e:
-            logger.error(f"[WebChannel] Workspace write error: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+                agent_id = _workspace_request_scope(
+                    ctx, body.get("session") or None, body.get("agent") or None)
+                svc, rel = _editable_target(
+                    raw_path, body.get("session") or None, agent_id, ctx=ctx)
+                try:
+                    result = svc.write_text(rel, content, expected_mtime=body.get("expected_mtime"))
+                except WorkspaceConflictError as e:
+                    return json.dumps({"status": "error", "code": "conflict", "message": str(e)})
+
+                # A memory file feeds the vector index; re-embed it on edit so search
+                # doesn't keep returning the stale pre-edit text.
+                if _is_memory_rel(rel):
+                    _mark_memory_dirty(agent_id)
+
+                logger.info(f"[WebChannel] Workspace file saved: {result['path']} ({result['size']} bytes)")
+                return json.dumps({"status": "success", **result}, ensure_ascii=False)
+            except web.HTTPError:
+                raise
+            except (ValueError, FileNotFoundError) as e:
+                return json.dumps({"status": "error", "message": str(e)})
+            except PermissionError:
+                return json.dumps({"status": "error", "message": "permission denied"})
+            except Exception as e:
+                logger.error(f"[WebChannel] Workspace write error: {e}")
+                return json.dumps({"status": "error", "message": str(e)})
 
 
 def _project_state(session_id: str, agent_id: str = None) -> dict:
@@ -10023,12 +12039,22 @@ class ProjectsHandler:
 
 
 class ProjectSelectHandler:
-    """Bind a session to a project directory, or clear it (project_dir=null)."""
+    """Bind a session to a project directory, or clear it (project_dir=null).
+
+    The value may be a relative identifier as returned by the scoped browser or an
+    absolute path recorded before this change. Either way it is re-resolved here,
+    at *selection* time (task 6.2): the session's durable owner is re-checked
+    through the module's own seam, and the path is re-validated through
+    ``common.safe_fs``, so a directory replaced by a symlink after the listing --
+    or a path that left the caller's root -- refuses instead of binding the
+    session to the new target.
+    """
 
     def POST(self):
         web.header('Content-Type', 'application/json; charset=utf-8')
         with _db_scope() as ctx:
             try:
+                from agent.workspace import project_browser
                 from agent.workspace import project_store
                 body = json.loads(web.data() or b"{}")
                 session_id = (body.get("session") or body.get("session_id") or "").strip()
@@ -10036,10 +12062,16 @@ class ProjectSelectHandler:
                 if not session_id:
                     return json.dumps({"status": "error", "message": "session is required"})
                 _require_owned_session(ctx, session_id, agent_id)
-                project_dir = body.get("project_dir")
-                applied = project_store.set_project_dir(
-                    session_id, project_dir or None, agent_id
-                )
+                raw = body.get("project_dir")
+                if raw in (None, ""):
+                    applied = project_store.set_project_dir(session_id, None, agent_id)
+                else:
+                    resolved = project_browser.resolve_selection(
+                        _project_identity(), raw, session_id=session_id,
+                        session_owner=_project_session_owner(ctx, agent_id))
+                    applied = project_store.set_project_dir(
+                        session_id, resolved, agent_id
+                    )
                 # Retarget an already-instantiated session agent immediately, so the
                 # change takes effect on the next message without a fresh get_agent.
                 try:
@@ -10058,7 +12090,7 @@ class ProjectSelectHandler:
                 raise
             except Exception as e:
                 logger.error(f"[WebChannel] Project select error: {e}")
-                return json.dumps({"status": "error", "message": str(e)})
+                return _render_project_refusal(e)
 
 
 class ProjectCreateHandler:
@@ -10164,87 +12196,426 @@ class ProjectManageHandler:
                 return json.dumps({"status": "error", "message": str(e)})
 
 
-# Virtual path (Windows only) that expands to the list of logical drives, so
-# the picker can navigate above a drive root and switch between drives.
+# Virtual path (Windows only) the legacy picker used to hop between drives. It is
+# refused rather than expanded here: a drive list has nothing to do with the
+# caller's own projects root, so honouring it could only widen what the picker
+# can see (task 6.1).
 _DRIVES_SENTINEL = "__DRIVES__"
 
 
-class ProjectBrowseHandler:
-    """List sub-directories of a path, for the "open project" folder picker.
+def _render_project_refusal(exc) -> str:
+    """Render a project-browser/import refusal with its status and stable code.
 
-    Directories only (files are irrelevant when choosing a project root). The
-    starting point defaults to the projects root; the parent is included so the
-    user can navigate upward.
+    The console branches on ``code``, so every refusal carries one, and the
+    message names the offending *identifier*, never a resolved host path.
+    Statuses web.py renders itself (401/403/404) are raised so the body is not
+    replaced with an error page; the rest are returned with ``web.ctx.status``
+    set.
+    """
+    from http import HTTPStatus
+
+    from agent.workspace.project_browser import ProjectBrowserError
+    from channel.web.project_import import ImportSeamError
+
+    if isinstance(exc, (ProjectBrowserError, ImportSeamError)):
+        status = int(getattr(exc, "status", 400) or 400)
+        code = str(getattr(exc, "code", "error") or "error")
+        message = str(exc)
+    else:
+        status, code, message = 500, "internal_error", "项目请求处理失败"
+    payload = json.dumps({"status": "error", "code": code, "message": message},
+                         ensure_ascii=False)
+    if status in (401, 403, 404):
+        raise web.HTTPError(f"{status} {HTTPStatus(status).phrase}",
+                            {"Content-Type": "application/json; charset=utf-8"},
+                            payload)
+    web.ctx.status = f"{status} {HTTPStatus(status).phrase}"
+    return payload
+
+
+def _project_identity():
+    """The verified ambient identity of this request.
+
+    Never a request value: ``_db_scope`` established it from the session and the
+    tenant selection, and every project-browser/import call is scoped by it.
+    """
+    from common.runtime_identity import current_identity
+    return current_identity()
+
+
+def _project_quota_reserve(identity):
+    """A quota-reservation callback for one import, bound to the caller's root."""
+    from agent.workspace import project_browser
+    from channel.web import project_import
+
+    def reserve(plan):
+        return project_import.reserve_project_slot(
+            identity, plan, project_browser.trusted_root(identity))
+
+    return reserve
+
+
+def _project_field(params, *names) -> str:
+    """The first non-empty field of ``params`` (a dict or a ``web.storage``)."""
+    for name in names:
+        value = params.get(name)
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""
+
+
+def _project_import_binding(source, name) -> Dict[str, Any]:
+    """What a local import handle is bound to.
+
+    ``source`` is the grant's identity: the resolved directory the user selected
+    and the preview read, compared again at redemption so a handle cannot be
+    replayed for a different directory (``_matches_payload`` compares that key).
+
+    ``_name`` is the target name the preview showed. It is recorded under a
+    private key because the import must publish *that* name, not whatever the
+    publishing request carries: retargeting a confirmed import is a change to
+    what the user agreed to, and the value is read back from the handle record
+    instead of being re-trusted from the body. The preview's own normalization
+    is applied here, so an honest request and its preview cannot disagree on
+    spelling.
+    """
+    return {"source": os.path.realpath(source), "_name": str(name or "").strip()}
+
+
+def _project_session_id(params) -> str:
+    return _project_field(params, "session", "session_id")
+
+
+def _project_require_session(ctx, params) -> str:
+    """Verify the optional session binding an import was requested for.
+
+    An import may name the chat session it is for; when it does, the session must
+    be the caller's own and a web session. The binding is checked *before* any
+    path is read, and it is re-checked at redemption, so a handle issued for one
+    session cannot be redeemed for another.
+    """
+    session_id = _project_session_id(params)
+    if session_id:
+        _require_owned_session(ctx, session_id,
+                               _project_field(params, "agent", "agent_id") or None)
+    return session_id
+
+
+def _project_session_owner(ctx, agent_id):
+    """A ``session_owner`` seam for ``project_browser.resolve_selection``.
+
+    Reports the durable owner of the addressed session the way the module needs
+    it, so the re-verification happens inside the selection path instead of being
+    assumed from an earlier check. ``_require_owned_session`` already refused
+    another member's session and a non-web one; this re-reads the same row. A
+    session with no row yet has no owner to conflict with -- the same rule the
+    select/create handlers already apply, because a brand-new chat may be bound --
+    while a row recorded for another channel type reports a value that can never
+    equal a user id, so the module refuses it.
+    """
+
+    def lookup(session_id: str):
+        resolved = _require_tenant_agent_binding(ctx, agent_id)
+        from agent.registry import get_agent_registry
+        from agent.memory import get_conversation_store
+        try:
+            profile = get_agent_registry().get(resolved)
+        except (KeyError, ValueError):
+            return ""
+        store = get_conversation_store(profile.workspace)
+        with store._lock:
+            con = store._connect()
+            try:
+                row = con.execute(
+                    "SELECT owner, channel_type FROM sessions WHERE session_id=?",
+                    (session_id,),
+                ).fetchone()
+            finally:
+                con.close()
+        if row is None:
+            return str(getattr(ctx, "user_id", "") or "")
+        owner, channel = row[0], row[1]
+        if channel != "web":
+            return "\x00not-a-web-session"
+        return str(owner or "")
+
+    return lookup
+
+
+class ProjectBrowseHandler:
+    """List the directories inside the caller's own project root (task 6.1).
+
+    Response compatibility is deliberate. ``status``, ``path``, ``parent`` and
+    ``dirs`` keep the names the console picker reads today and ``dirs`` entries
+    keep ``{name, path}``; what changed is what the values *are* -- relative
+    identifiers inside the caller's own root, where ``""`` is the root itself --
+    plus three deliberate additions:
+
+    * ``breadcrumbs`` -- the bounded path from the root to ``path`` in the same
+      identifiers, ready to be sent back as a ``path`` parameter, so the console
+      can render a trail without ever holding a host path;
+    * ``scope`` -- the tenant/user the listing was resolved for, taken from the
+      verified request context, not from a parameter;
+    * ``parent`` -- the parent *inside* the root and ``None`` at the root, so "go
+      up" can never climb above the member's private tree.
+
+    A ``path`` recorded before this change arrives as an absolute host path; it is
+    accepted only after the server proves it resolves inside the caller's own
+    root (the single place that translation happens), and anything else is
+    refused with a stable code. Every component is re-resolved per request through
+    ``common.safe_fs`` (``O_NOFOLLOW``), so a directory swapped for a symlink
+    refuses instead of enumerating whatever it now points at, and a member's
+    private tree nested under an outer root is never offered. There is no
+    ``agent.read`` or platform-``all`` bypass: ownership is the boundary.
     """
 
     def GET(self):
-        _guard_not_database()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
-            from common.utils import expand_path
-            params = web.input(path='')
-            raw = (params.path or '').strip()
+            with _db_scope() as ctx:
+                from agent.workspace import project_browser
 
-            # On Windows, "__DRIVES__" is a virtual path listing all logical
-            # drives, so the user can hop across drives from a drive root.
-            if sys.platform == 'win32' and raw == _DRIVES_SENTINEL:
-                import ctypes
-
-                drives = []
-                buf = ctypes.create_unicode_buffer(1024)
-                length = ctypes.windll.kernel32.GetLogicalDriveStringsW(1024, buf)
-                for drive in buf[:length].split('\x00'):
-                    if drive:
-                        drives.append({"name": drive.rstrip("\\"), "path": drive})
+                params = web.input(path='')
+                raw = (getattr(params, 'path', '') or '').strip()
+                if raw == _DRIVES_SENTINEL:
+                    raise project_browser.ProjectBrowserError(
+                        "驱动器列表不在本人项目根内，已拒绝",
+                        code=project_browser.CODE_UNSAFE_PATH, status=403)
+                identity = _project_identity()
+                entry = project_browser.normalize_selection(identity, raw)
+                result = project_browser.browse(identity, entry)
                 return json.dumps({
                     "status": "success",
-                    "path": _DRIVES_SENTINEL,
-                    "parent": None,
-                    "dirs": drives,
+                    "path": result["path"],
+                    "parent": result["parent"],
+                    "dirs": result["dirs"],
+                    "breadcrumbs": result["breadcrumbs"],
+                    "scope": {"kind": "personal",
+                              "tenant_id": ctx.tenant_id,
+                              "user_id": ctx.user_id},
                 }, ensure_ascii=False)
-
-            # Default entry point is the user's home (~), a familiar anchor for
-            # picking a project directory.
-            base = os.path.realpath(expand_path(raw)) if raw else os.path.realpath(os.path.expanduser("~"))
-            if not os.path.isdir(base):
-                base = os.path.realpath(os.path.expanduser("~"))
-
-            dirs = []
-            try:
-                with os.scandir(base) as it:
-                    for entry in it:
-                        if entry.name.startswith("."):
-                            continue
-                        try:
-                            if entry.is_dir(follow_symlinks=False):
-                                dirs.append({
-                                    "name": entry.name,
-                                    "path": os.path.join(base, entry.name),
-                                })
-                        except OSError:
-                            continue
-            except PermissionError:
-                return json.dumps({"status": "error", "message": "permission denied"})
-
-            dirs.sort(key=lambda d: d["name"].lower())
-            parent = os.path.dirname(base)
-
-            # On Windows, at a drive root (e.g. C:\) dirname returns the same
-            # path, so point parent at the drives list instead of dropping it.
-            if sys.platform == 'win32':
-                _, tail = os.path.splitdrive(base)
-                if tail in (os.sep, os.altsep, ''):
-                    parent = _DRIVES_SENTINEL
-
-            return json.dumps({
-                "status": "success",
-                "path": base,
-                "parent": parent if parent != base else None,
-                "dirs": dirs,
-            }, ensure_ascii=False)
+        except web.HTTPError:
+            raise
         except Exception as e:
             logger.error(f"[WebChannel] Project browse error: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+            return _render_project_refusal(e)
+
+
+class ProjectImportPreviewHandler:
+    """Preview what a controlled project import would create (tasks 6.3/6.4).
+
+    Two transports, and the transport is what decides the boundary:
+
+    * a **local** (desktop) selection posts ``source`` as an absolute host path
+      and must be a loopback request carrying the per-start token
+      (``channel.web.project_import``). The preview reports the target, the entry
+      and byte counts, what would be skipped and whether something already holds
+      the name, and issues the single-use handle the import must present;
+    * a **remote** browser cannot see a server path at all: it posts multipart
+      ``files`` + ``paths`` and the manifest is previewed from the bytes. The
+      session is the grant, and no path is resolved.
+    """
+
+    def POST(self):
+        web.header('Content-Type', 'application/json; charset=utf-8')
+        try:
+            with _db_scope() as ctx:
+                from agent.workspace import project_browser
+                from channel.web import project_import
+
+                if _project_request_is_upload():
+                    params = project_import.upload_params()
+                    _project_require_session(ctx, params)
+                    payload = project_import.preview_upload_request(None, params)
+                    return json.dumps({"status": "success",
+                                       "transport": "upload", **payload},
+                                      ensure_ascii=False)
+                body = _chat_body()
+                _project_require_session(ctx, body)
+                project_import.require_local_transport(body)
+                source = _project_field(body, "source", "path", "dir")
+                if not source:
+                    _chat_error("source is required", "400 Bad Request",
+                                "invalid_request")
+                identity = _project_identity()
+                payload = project_browser.preview_import(
+                    identity, source, name=body.get("name"),
+                    source_roots=project_import.source_roots())
+                handle = project_import.issue_handle(
+                    identity, purpose=project_import.PURPOSE_PROJECT_IMPORT,
+                    payload=_project_import_binding(source, body.get("name")),
+                    session_id=_project_session_id(body))
+                return json.dumps({
+                    "status": "success",
+                    "transport": "local",
+                    "handle": handle,
+                    "expires_in": project_import.HANDLE_TTL_SECONDS,
+                    **payload,
+                }, ensure_ascii=False)
+        except web.HTTPError:
+            raise
+        except Exception as e:
+            logger.error(f"[WebChannel] Project import preview error: {e}")
+            return _render_project_refusal(e)
+
+
+class ProjectImportHandler:
+    """Publish a previewed local directory, or an uploaded one (tasks 6.3/6.4).
+
+    The local transport is the dangerous one, because it asks the *server* to
+    read a path the *client* named. Four conditions are required before that path
+    is resolved at all: loopback, the per-start token, the verified database
+    identity, and the single-use handle the preview issued for that exact source.
+    A request that merely supplies a path has no handle and is refused with
+    ``handle_required``; a handle issued to another member, already consumed, or
+    for a different source is refused with ``handle_invalid``.
+
+    The upload transport names no server path, so the session is the grant: the
+    manifest is validated as plain downward relative paths, staged inside the
+    member's own root and published with one rename -- the same staging, publish,
+    rollback and quota code the local copy uses.
+
+    Either way the import never overwrites an existing project, never targets the
+    source directory, and leaves nothing behind on cancel or failure.
+    """
+
+    def POST(self):
+        web.header('Content-Type', 'application/json; charset=utf-8')
+        try:
+            with _db_scope() as ctx:
+                _require_chat_csrf()
+                from agent.workspace import project_browser
+                from channel.web import project_import
+
+                if _project_request_is_upload():
+                    params = project_import.upload_params()
+                    _project_require_session(ctx, params)
+                    identity = _project_identity()
+                    result = project_import.import_upload_request(
+                        identity, params,
+                        quota_reserve=_project_quota_reserve(identity))
+                    return json.dumps({"status": "success",
+                                       "transport": "upload", **result},
+                                      ensure_ascii=False)
+
+                body = _chat_body()
+                source = _project_field(body, "source", "path", "dir")
+                handle = _project_field(body, "handle")
+                if not source:
+                    _chat_error("source is required", "400 Bad Request",
+                                "invalid_request")
+                # Transport first: a request that is not allowed to name a server
+                # path must not consume the capability that would let it.
+                project_import.require_local_transport(body)
+                _project_require_session(ctx, body)
+                if not handle:
+                    raise project_import.refuse(
+                        "导入必须携带预览返回的一次性句柄",
+                        code=project_import.CODE_HANDLE_REQUIRED, status=403)
+                identity = _project_identity()
+                record = project_import.consume_handle(
+                    identity, handle,
+                    purpose=project_import.PURPOSE_PROJECT_IMPORT,
+                    session_id=_project_session_id(body) or None,
+                    payload=_project_import_binding(source, body.get("name")))
+                # Publish the target the preview showed, not whatever this
+                # request happens to say: the handle's binding has already
+                # refused a different source, so the recorded name is the same
+                # value the user confirmed and the preview stays the contract.
+                recorded = record.get("payload") or {}
+                result = project_browser.import_directory(
+                    identity, source, name=recorded.get("_name") or None,
+                    source_roots=project_import.source_roots(),
+                    quota_reserve=_project_quota_reserve(identity),
+                    stage_hook=project_import.stage_hook(identity, record))
+                project_import.purge_handles()
+                return json.dumps({"status": "success",
+                                   "transport": "local", **result},
+                                  ensure_ascii=False)
+        except web.HTTPError:
+            raise
+        except Exception as e:
+            logger.error(f"[WebChannel] Project import error: {e}")
+            return _render_project_refusal(e)
+
+
+class ProjectImportCancelHandler:
+    """Cancel an issued import handle (task 6.4).
+
+    Cancelling is the member's decision about their own handle: nothing is
+    published, a copy already in flight is abandoned at its publish step (the
+    stage hook removes the staging tree and releases the reservation), and the
+    handle is no longer redeemable. A handle that is not the caller's is reported
+    as invalid, so the endpoint cannot be used to probe or cancel someone else's
+    import.
+    """
+
+    def POST(self):
+        web.header('Content-Type', 'application/json; charset=utf-8')
+        try:
+            with _db_scope() as ctx:
+                _require_chat_csrf()
+                from channel.web import project_import
+
+                body = _chat_body()
+                handle = _project_field(body, "handle")
+                identity = _project_identity()
+                if not handle or not project_import.cancel_handle(
+                        identity, handle,
+                        purpose=project_import.PURPOSE_PROJECT_IMPORT):
+                    raise project_import.refuse(
+                        "导入句柄无效，已拒绝",
+                        code=project_import.CODE_HANDLE_INVALID, status=403)
+                return json.dumps({"status": "success", "cancelled": True},
+                                  ensure_ascii=False)
+        except web.HTTPError:
+            raise
+        except Exception as e:
+            logger.error(f"[WebChannel] Project import cancel error: {e}")
+            return _render_project_refusal(e)
+
+
+def _project_request_is_upload() -> bool:
+    """Whether this request is the multipart upload transport.
+
+    Decided by the request's content type, before any body is read, so the two
+    transports cannot be confused and a JSON body is never parsed as a manifest.
+    """
+    content_type = web.ctx.env.get("CONTENT_TYPE") or ""
+    return content_type.lower().startswith("multipart/form-data")
+
+
+def _knowledge_workspace_root(agent_id: Optional[str]) -> str:
+    """The workspace whose ``knowledge/`` the addressed Agent actually reads.
+
+    ``_get_workspace_root`` cannot serve here: in database mode it resolves the
+    caller's tenant shared root and returns early, so ``agent_id`` never reaches
+    the Agent fallback and every Agent rendered the same shared tree -- while
+    the Agent itself (``agent/prompt/builder.py``, ``KnowledgeService``) and the
+    CLI (``cli/utils.get_knowledge_dir``) resolve
+    ``state_dir.knowledge_dir(base=<agent workspace>)``: the Agent's own
+    ``knowledge/`` when it has one, the shared copy otherwise.
+
+    Returning the workspace rather than a directory keeps that decision in
+    ``state_dir``, the single place that owns the layout: ``KnowledgeService``
+    applies the same "own by presence" rule, which also treats a ``knowledge/``
+    symlink at the shared copy as shared. Callers MUST build the service inside
+    ``_db_scope()``, because the shared fallback resolves through
+    ``state_dir.shared_root()`` and must use the caller's tenant.
+
+    A bound Agent missing from the roster degrades to ``_get_workspace_root``
+    (the tenant shared root in database mode) instead of failing the request.
+    """
+    if agent_id:
+        try:
+            from agent.registry import get_agent_registry
+            workspace = get_agent_registry().get(
+                agent_id, require_enabled=False).workspace
+            if workspace:
+                return str(workspace)
+        except Exception as e:
+            logger.debug("[WebChannel] knowledge root for %r: %s", agent_id, e)
+    return _get_workspace_root(agent_id=agent_id)
 
 
 class KnowledgeListHandler:
@@ -10258,7 +12629,7 @@ class KnowledgeListHandler:
                 agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
                 _require_private_owner(ctx, agent_id)
                 svc = KnowledgeService(
-                    _get_workspace_root(agent_id=agent_id)
+                    _knowledge_workspace_root(agent_id)
                 )
                 result = svc.list_tree()
                 return json.dumps({"status": "success", **result}, ensure_ascii=False)
@@ -10279,7 +12650,7 @@ class KnowledgeReadHandler:
                 agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
                 _require_private_owner(ctx, agent_id)
                 svc = KnowledgeService(
-                    _get_workspace_root(agent_id=agent_id)
+                    _knowledge_workspace_root(agent_id)
                 )
             result = svc.read_file(params.path)
             # Absolute directory of the doc (posix separators), so clients can
@@ -10300,10 +12671,14 @@ class KnowledgeGraphHandler:
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from agent.knowledge.service import KnowledgeService
-            params = web.input(agent_id='')
-            svc = KnowledgeService(
-                _get_workspace_root(agent_id=_request_agent_id(params))
-            )
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "knowledge.read")
+                params = web.input(agent_id='')
+                agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
+                _require_private_owner(ctx, agent_id)
+                svc = KnowledgeService(
+                    _knowledge_workspace_root(agent_id)
+                )
             return json.dumps(svc.build_graph(), ensure_ascii=False)
         except Exception as e:
             logger.error(f"[WebChannel] Knowledge graph error: {e}")
@@ -10312,16 +12687,20 @@ class KnowledgeGraphHandler:
 
 class KnowledgeActionHandler:
     def POST(self):
-        _guard_not_database()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             body = json.loads(web.data() or b"{}")
             action = body.get("action", "")
             payload = body.get("payload") or {}
             from agent.knowledge.service import KnowledgeService
-            result = KnowledgeService(
-                _get_workspace_root(agent_id=_request_agent_id(body))
-            ).dispatch(action, payload)
+            with _db_scope() as ctx:
+                agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(body))
+                _require_private_owner(ctx, agent_id)
+                _require_knowledge_write(ctx, agent_id)
+                svc = KnowledgeService(
+                    _knowledge_workspace_root(agent_id)
+                )
+            result = svc.dispatch(action, payload)
             return json.dumps({
                 "status": "success" if result["code"] < 300 else "error",
                 **result,
@@ -10333,7 +12712,6 @@ class KnowledgeActionHandler:
 
 class KnowledgeImportHandler:
     def POST(self):
-        _guard_not_database()
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from agent.knowledge.service import KnowledgeService
@@ -10345,14 +12723,23 @@ class KnowledgeImportHandler:
                     "message": "import batch too large",
                     "payload": None,
                 })
-            params = _raw_web_input()
-            agent_id = _request_agent_id(params)
-            target_category = params.get("target_category", "")
-            conflict_strategy = params.get("conflict_strategy", "skip")
-            uploaded = _ensure_list(params.get("files"))
-            single = params.get("file")
-            if single is not None:
-                uploaded.append(single)
+            with _db_scope() as ctx:
+                params = _raw_web_input()
+                agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
+                _require_private_owner(ctx, agent_id)
+                _require_knowledge_write(ctx, agent_id)
+                root = _knowledge_workspace_root(agent_id)
+                target_category = params.get("target_category", "")
+                conflict_strategy = params.get("conflict_strategy", "skip")
+                uploaded = _ensure_list(params.get("files"))
+                single = params.get("file")
+                if single is not None:
+                    uploaded.append(single)
+                # Build the service inside the identity scope: an Agent with no
+                # ``knowledge/`` of its own falls back to ``state_dir.shared_root()``,
+                # which resolves through the current identity and must therefore
+                # see the caller's tenant, not the process default workspace.
+                svc = KnowledgeService(root)
             if not uploaded:
                 return json.dumps({"status": "error", "code": 400, "message": "No files uploaded", "payload": None})
             if len(uploaded) > KnowledgeService.MAX_IMPORT_FILES:
@@ -10383,9 +12770,7 @@ class KnowledgeImportHandler:
                     "content": content,
                 })
 
-            result = KnowledgeService(
-                _get_workspace_root(agent_id=agent_id)
-            ).dispatch("import_documents", {
+            result = svc.dispatch("import_documents", {
                 "target_category": target_category,
                 "conflict_strategy": conflict_strategy,
                 "files": files,

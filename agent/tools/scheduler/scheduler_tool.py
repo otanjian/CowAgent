@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 from croniter import croniter
 
 from agent.tools.base_tool import BaseTool, ToolResult
+from agent.tools.scheduler.authorization import TaskAuthorizationError
 from bridge.context import Context, ContextType
 from bridge.reply import Reply, ReplyType
 from common.log import logger
@@ -19,10 +20,11 @@ class SchedulerTool(BaseTool):
     """
     
     name: str = "scheduler"
-    # A scheduled task is created for the caller's own conversation (the
-    # receiver is taken from the current context, never from the model) and its
-    # owner is revalidated at fire time, so it does not also need a per-tool
-    # tool.execute grant.
+    # ``self_authorized`` only skips the generic ``tool.execute`` grant — the
+    # scheduler's own per-action authorization is NOT skippable and runs inside
+    # every method below (:mod:`agent.tools.scheduler.authorization`). The flag
+    # says "this tool does not need a blanket execute grant", not "this tool has
+    # no authorization" (task 3.1).
     self_authorized: bool = True
     description: str = (
         "创建、查询和管理定时任务（提醒、周期性任务等）。\n\n"
@@ -89,7 +91,73 @@ class SchedulerTool(BaseTool):
         # Will be set by agent bridge
         self.task_store = None
         self.current_context = None
-    
+        #: The shared authorization service. Left as an attribute so callers
+        #: (and tests) can inject one; otherwise it is built lazily around this
+        #: tool's own store, which is what keeps the tool unable to address
+        #: another Agent's task file.
+        self.access_service = None
+
+    # -- authorization -----------------------------------------------------
+
+    def _agent_id(self) -> str:
+        return (self.config or {}).get("agent_id") or ""
+
+    def _access(self):
+        """The task authorization service bound to this tool's own Agent."""
+        if self.access_service is not None:
+            return self.access_service
+        from agent.tools.scheduler.authorization import (
+            TaskAccessService, TaskAuthorizationError, UNKNOWN_AGENT,
+        )
+
+        agent_id = self._agent_id()
+
+        def resolve_store(actor, requested):
+            # A tool run is scoped to the Agent hosting the conversation: any
+            # other Agent id is a forged address, not a reachable store.
+            if not requested or requested != agent_id or self.task_store is None:
+                raise TaskAuthorizationError(UNKNOWN_AGENT, status=404)
+            return self.task_store
+
+        self.access_service = TaskAccessService(
+            store_resolver=resolve_store,
+            agent_ids=lambda actor: [agent_id] if agent_id else [],
+            quota_check=self._quota_gate,
+            coordinator="tool",
+        )
+        return self.access_service
+
+    def _actor(self):
+        from agent.tools.scheduler.authorization import actor_from_runtime
+        return actor_from_runtime(self.current_context, source="tool")
+
+    def _quota_gate(self, actor, agent_id: str, count: int) -> None:
+        """Apply the member's scheduled-task limit on the tool path too (3.3).
+
+        The same service method the HTTP path uses, so a model calling the tool
+        cannot create past a limit the console would have refused.
+        """
+        from agent.tools.scheduler.authorization import (
+            QUOTA_EXCEEDED, TaskAuthorizationError,
+        )
+        try:
+            from auth.service import get_identity_service, IdentityServiceError
+            service = get_identity_service()
+        except Exception as error:
+            logger.warning(f"[SchedulerTool] quota gate unavailable: {error}")
+            raise TaskAuthorizationError(QUOTA_EXCEEDED, status=409) from None
+        try:
+            service.check_scheduled_task_quota(
+                user_id=actor.user_id, tenant_id=actor.tenant_id,
+                would_be_count=count)
+        except IdentityServiceError as error:
+            if getattr(error, "code", "") == "quota_exceeded":
+                raise TaskAuthorizationError(QUOTA_EXCEEDED, status=409) from None
+            raise TaskAuthorizationError(QUOTA_EXCEEDED, status=409) from None
+        except Exception as error:
+            logger.warning(f"[SchedulerTool] quota gate failed: {error}")
+            raise TaskAuthorizationError(QUOTA_EXCEEDED, status=409) from None
+
     def execute(self, params: dict) -> ToolResult:
         """
         Execute scheduler operations
@@ -130,6 +198,11 @@ class SchedulerTool(BaseTool):
                 return ToolResult.success(result)
             else:
                 return ToolResult.fail(f"未知操作: {action}")
+        except TaskAuthorizationError as error:
+            # The refusal is the answer, not an internal fault: surface the
+            # stable code so the model can explain it instead of retrying.
+            logger.info(f"[SchedulerTool] denied action={action} code={error.code}")
+            return ToolResult.fail(f"错误 [{error.code}]: {error}")
         except Exception as e:
             logger.error(f"[SchedulerTool] Error: {e}")
             return ToolResult.fail(f"操作失败: {str(e)}")
@@ -216,24 +289,23 @@ class SchedulerTool(BaseTool):
             "action": action
         }
 
-        # Database identity mode: stamp the creating tenant member onto the task
-        # so a later fire revalidates membership + grants (open-database-runtime
-        # 5.x). Legacy runs (no user/tenant) store nothing and keep firing.
-        try:
-            from agent.tools.scheduler.identity import owner_snapshot
-            owner = owner_snapshot(context)
-            if owner:
-                task_data["owner"] = owner
-        except Exception as e:
-            logger.warning(f"[SchedulerTool] owner snapshot skipped: {e}")
-        
         # Calculate initial next_run_at
         next_run = self._calculate_next_run(task_data)
         if next_run:
             task_data["next_run_at"] = next_run.isoformat()
-        
-        # Save task
-        self.task_store.add_task(task_data)
+
+        # Persist through the shared authorization service: it stamps the owner
+        # from the *verified* actor (never from the model's parameters), sets the
+        # personal/public scope, bumps the revision and applies the member's
+        # task quota. A caller whose identity or owner cannot be resolved is
+        # refused here — a task without an owner has nothing to revalidate at
+        # fire time and would run as the Agent for ever (task 3.2).
+        agent_id = self._agent_id()
+        actor = self._actor()
+        stored = self._access().create_task(actor, agent_id, task_data)
+        task_data = stored
+        next_run = datetime.fromisoformat(task_data["next_run_at"]) \
+            if task_data.get("next_run_at") else None
         
         # Format response
         schedule_desc = self._format_schedule_description(schedule)
@@ -258,22 +330,31 @@ class SchedulerTool(BaseTool):
         )
     
     def _list_tasks(self, **kwargs) -> str:
-        """List all tasks"""
-        tasks = self.task_store.list_tasks()
-        
+        """List the tasks this caller is authorized to see.
+
+        The list is produced by the authorization service (authorize the Agent,
+        then filter, then paginate), so the tool never sees another member's
+        personal task even on a shared public Agent (task 3.2).
+        """
+        actor = self._actor()
+        page = self._access().list_tasks(actor, agent_id=self._agent_id(),
+                                        page_size=200)
+        tasks = page["tasks"]
         if not tasks:
             return "📋 暂无定时任务"
-        
-        lines = [f"📋 定时任务列表 (共 {len(tasks)} 个)\n"]
+
+        lines = [f"📋 定时任务列表 (共 {page['total']} 个)\n"]
         
         for task in tasks:
             status = "✅" if task.get("enabled", True) else "❌"
             schedule_desc = self._format_schedule_description(task.get("schedule", {}))
             next_run = task.get("next_run_at")
             next_run_str = datetime.fromisoformat(next_run).strftime('%m-%d %H:%M') if next_run else "未知"
+            scope = task.get("scope") or "public"
+            scope_desc = "本人" if scope == "personal" else "公共"
             
             lines.append(
-                f"{status} [{task['id']}] {task['name']}\n"
+                f"{status} [{task['id']}] {task['name']} ({scope_desc})\n"
                 f"   ⏰ {schedule_desc} | 下次: {next_run_str}"
             )
         
@@ -284,10 +365,9 @@ class SchedulerTool(BaseTool):
         task_id = kwargs.get("task_id")
         if not task_id:
             return "错误: 缺少任务ID (task_id)"
-        
-        task = self.task_store.get_task(task_id)
-        if not task:
-            return f"错误: 任务 '{task_id}' 不存在"
+
+        actor = self._actor()
+        task = self._access().get_task(actor, self._agent_id(), task_id)
         
         status = "启用" if task.get("enabled", True) else "禁用"
         schedule_desc = self._format_schedule_description(task.get("schedule", {}))
@@ -302,6 +382,7 @@ class SchedulerTool(BaseTool):
             f"ID: {task['id']}\n"
             f"名称: {task['name']}\n"
             f"状态: {status}\n"
+            f"归属: {'本人' if (task.get('scope') or 'public') == 'personal' else '公共'}\n"
             f"调度: {schedule_desc}\n"
             f"接收者: {action.get('receiver_name', action.get('receiver'))}\n"
             f"消息: {action.get('content')}\n"
@@ -315,12 +396,9 @@ class SchedulerTool(BaseTool):
         task_id = kwargs.get("task_id")
         if not task_id:
             return "错误: 缺少任务ID (task_id)"
-        
-        task = self.task_store.get_task(task_id)
-        if not task:
-            return f"错误: 任务 '{task_id}' 不存在"
-        
-        self.task_store.delete_task(task_id)
+
+        actor = self._actor()
+        task = self._access().delete_task(actor, self._agent_id(), task_id)
         return f"✅ 任务 '{task['name']}' ({task_id}) 已删除"
     
     def _enable_task(self, **kwargs) -> str:
@@ -328,12 +406,9 @@ class SchedulerTool(BaseTool):
         task_id = kwargs.get("task_id")
         if not task_id:
             return "错误: 缺少任务ID (task_id)"
-        
-        task = self.task_store.get_task(task_id)
-        if not task:
-            return f"错误: 任务 '{task_id}' 不存在"
-        
-        self.task_store.enable_task(task_id, True)
+
+        actor = self._actor()
+        task = self._access().set_enabled(actor, self._agent_id(), task_id, True)
         return f"✅ 任务 '{task['name']}' ({task_id}) 已启用"
     
     def _disable_task(self, **kwargs) -> str:
@@ -341,12 +416,9 @@ class SchedulerTool(BaseTool):
         task_id = kwargs.get("task_id")
         if not task_id:
             return "错误: 缺少任务ID (task_id)"
-        
-        task = self.task_store.get_task(task_id)
-        if not task:
-            return f"错误: 任务 '{task_id}' 不存在"
-        
-        self.task_store.enable_task(task_id, False)
+
+        actor = self._actor()
+        task = self._access().set_enabled(actor, self._agent_id(), task_id, False)
         return f"✅ 任务 '{task['name']}' ({task_id}) 已禁用"
     
     def _parse_schedule(self, schedule_type: str, schedule_value: str) -> Optional[dict]:

@@ -54,6 +54,74 @@ class RegistryTests(unittest.TestCase):
         self.assertTrue(is_registered(HOOK_TENANT_CONVERSATION_BACKFILL))
 
 
+class RequiredSeamManifestTests(unittest.TestCase):
+    """R5: the boot assembly checks its required authorization seams.
+
+    The manifest is what makes a *dropped registration* loud. Without it, a
+    merge that loses one ``register_startup_hook`` line turns the identity
+    guard, the first-run bootstrap, the tenant backfill or the scheduled-task
+    migration into a silent no-op while the console keeps serving.
+    """
+
+    def test_every_required_seam_is_declared_and_armed(self):
+        self.assertTrue(startup_hooks.REQUIRED_HOOKS)
+        self.assertEqual(startup_hooks.missing_required_hooks(), [])
+        startup_hooks.verify_required_seams()  # must not raise
+
+    def test_the_manifest_covers_the_authorization_seams_not_only_the_ui(self):
+        # Identity, first-run bootstrap, tenant attribution and task ownership
+        # are the seams a boot must not be able to skip. A future optional
+        # display seam must not be added here: a missing UI fragment falls back
+        # to rendering, which is exactly what the manifest must not do.
+        from common.startup_hooks import HOOK_SCHEDULER_TASK_MIGRATION
+
+        self.assertIn(HOOK_IDENTITY_MODE_CONSISTENCY,
+                      startup_hooks.REQUIRED_HOOKS)
+        self.assertIn(HOOK_TENANT_CONVERSATION_BACKFILL,
+                      startup_hooks.REQUIRED_HOOKS)
+        self.assertIn(HOOK_SCHEDULER_TASK_MIGRATION,
+                      startup_hooks.REQUIRED_HOOKS)
+
+    def test_a_dropped_registration_refuses_the_boot(self):
+        name = "test.required.seam"
+        register_startup_hook(name, lambda: None)
+        self.addCleanup(startup_hooks._HOOKS.pop, name, None)
+        self.assertEqual(
+            startup_hooks.missing_required_hooks((name,)), [])
+        startup_hooks._HOOKS.pop(name)
+        self.assertEqual(startup_hooks.missing_required_hooks((name,)), [name])
+        with self.assertRaises(RuntimeError) as caught:
+            startup_hooks.verify_required_seams((name,))
+        self.assertIn(name, str(caught.exception))
+
+    def test_the_boot_calls_the_check_before_any_guard_runs(self):
+        import app
+
+        with patch.object(startup_hooks, "verify_required_seams") as check:
+            app._verify_required_seams()
+        check.assert_called_once_with()
+
+    def test_the_check_is_not_itself_a_hook(self):
+        # A seam that failed to register must not be able to skip the check
+        # that exists to notice it: the app entry point calls the manifest
+        # directly, so ``run_startup_hook`` is never consulted.
+        import app
+
+        with patch("common.startup_hooks.run_startup_hook",
+                   side_effect=AssertionError("must not run a hook here")):
+            app._verify_required_seams()
+
+    def test_the_boot_sequence_verifies_seams_before_the_identity_guard(self):
+        with open(os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "app.py"), encoding="utf-8") as handle:
+            source = handle.read()
+        boot = source[source.index("def run():"):]
+        self.assertIn("_verify_required_seams()", boot)
+        self.assertLess(boot.index("_verify_required_seams()"),
+                        boot.index("_guard_identity_mode_consistency()"))
+
+
 class AppSeamTests(unittest.TestCase):
     def test_app_delegates_the_guard_to_the_registry(self):
         import app

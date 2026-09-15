@@ -172,6 +172,19 @@ class MemoryManager:
 
         # Filter by min score and limit
         filtered = [r for r in merged if r.score >= min_score]
+
+        # Content deleted through the member console must not come back from a
+        # stale index row. The purge is best-effort and retryable; until it
+        # succeeds the affected labels stay in the user's pending journal, and
+        # retrieval subtracts them here. This is the one place results become
+        # visible, so it is the one place that has to know.
+        try:
+            from agent.memory.personal import pending_index_labels
+            tombstoned = pending_index_labels()
+        except Exception:
+            tombstoned = set()
+        if tombstoned:
+            filtered = [r for r in filtered if getattr(r, "path", None) not in tombstoned]
         return filtered[:max_results]
     
     async def add_memory(
@@ -317,11 +330,19 @@ class MemoryManager:
                 files_to_scan.append((file_path, "memory", scope, user_id, None))
 
         # The current user's personal memory lives in the user domain, beside
+        # The current user's personal memory lives in the user domain, beside
         # the Agents. Each Agent's index covers it too, which is what makes a
         # user's personal memory visible from every Agent they may use, while
         # retrieval stays filtered to `scope='shared' OR user_id = ?`.
         from common.runtime_identity import current_identity
-        _uid = current_identity().user_id
+        from agent.memory.personal import read_scope_token
+        _sync_identity = current_identity()
+        _uid = _sync_identity.user_id
+        # The scope version this sync publishes against. Captured before the
+        # files are read so a clear (or any other commit) that lands while the
+        # embedding call is in flight makes the user-domain work stale, and it
+        # is dropped rather than written back.
+        _scope_token = read_scope_token(_sync_identity)
         # A user id becomes a path segment; refuse anything that could escape it.
         if _uid and re.fullmatch(r"[A-Za-z0-9._-]+", _uid):
             from common import state_dir
@@ -447,6 +468,19 @@ class MemoryManager:
             cursor += n
 
             rel_path = entry["rel_path"]
+            if entry["scope"] == "user":
+                # Pass 1 read the file; by pass 3 the user may have cleared
+                # their memory. Persisting here would restore exactly what the
+                # clear removed, so the scope version captured before pass 1 is
+                # re-checked for every user-domain file: a stale publisher
+                # drops its work instead of reviving it.
+                from agent.memory.personal import scope_publish_is_current
+                if not scope_publish_is_current(_sync_identity, _scope_token):
+                    from common.log import logger
+                    logger.info(
+                        "[MemoryManager] dropping stale index publish for %s "
+                        "(scope changed during sync)", rel_path)
+                    continue
             self.storage.delete_by_path(rel_path)
             memory_chunks = []
             for chunk, embedding in zip(entry["chunks"], entry_embeddings):

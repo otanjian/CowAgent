@@ -10,6 +10,13 @@ import { initUpdater, checkForUpdates, startDownload, quitAndInstall, setUpdateL
 import { setupThemeIPC, loadAppConfig } from './themes'
 import { setupHttpRelayIPC } from './http-relay'
 import {
+  isTrustedWindowFrame,
+  setBackendOrigin,
+  setTrustedSenderCheck,
+  setupAssetProxy,
+  setupAuthBrokerIPC,
+} from './auth-broker'
+import {
   setupAppIconIPC,
   applyCachedAppIcon,
   applyCachedAppName,
@@ -369,6 +376,10 @@ async function startBackend() {
 
   pythonBackend.on('ready', (port: number) => {
     console.log(`[backend] ready on port ${port}`)
+    // The broker learns the backend origin from here -- never from a renderer
+    // argument -- so an authenticated request can only ever go to the backend
+    // this process actually started.
+    setBackendOrigin(`http://127.0.0.1:${port}`)
     mainWindow?.webContents.send('backend-status', { status: 'ready', port })
   })
 
@@ -386,6 +397,9 @@ async function startBackend() {
   // "TypeError: Failed to fetch" in the chat.
   pythonBackend.on('lost', () => {
     console.warn('[backend] stopped responding')
+    // Drop the backend origin: the native context belonged to that process and
+    // must not be replayed against whatever binds the port next.
+    setBackendOrigin('')
     mainWindow?.webContents.send('backend-status', { status: 'lost' })
   })
 
@@ -406,6 +420,14 @@ async function startBackend() {
 }
 
 function setupIPC() {
+  // Every broker channel is checked against the trusted window, its main frame
+  // and the registered entry document before it runs (design D8): a sub frame,
+  // a popup, a dropped page or an injected document cannot ask for the session
+  // or drive a business request.
+  setTrustedSenderCheck((event) => isTrustedWindowFrame(event, mainWindow))
+  setupAssetProxy()
+  setupAuthBrokerIPC()
+
   // Await the port decision rather than reading the current guess: the renderer
   // usually asks before startBackend() has probed anything, and a wrong answer
   // here means it polls a port nothing will ever listen on.

@@ -594,6 +594,20 @@ def _migrate_team_roster():
         logger.warning(f"[App] Could not move the roster into its own file: {e}")
 
 
+def _verify_required_seams():
+    """Refuse the boot when a required fork authorization seam is absent (R5).
+
+    The manifest and the check live in ``common/startup_hooks.py``; this entry
+    point only calls it, so an upstream edit to the boot sequence never merges
+    against fork-specific seam logic. Unlike the guards below it is a *direct*
+    call, not ``run_startup_hook``: a seam that failed to register must not be
+    able to skip the check that exists to notice it.
+    """
+    from common.startup_hooks import verify_required_seams
+
+    return verify_required_seams()
+
+
 def _guard_identity_mode_consistency():
     """Run the registered identity-mode guards (seam, tasks 8.9 + 6.11).
 
@@ -629,6 +643,22 @@ def _migrate_conversation_tenancy():
     )
 
     return run_startup_hook(HOOK_TENANT_CONVERSATION_BACKFILL)
+
+
+def _migrate_scheduled_tasks():
+    """Run the registered scheduled-task ownership migration (task 4.1-4.3).
+
+    Same seam as the conversation backfill: the classification (stamp the
+    attributable tasks, quarantine the unattributable ones) lives in
+    ``common/startup_hooks.py`` and the scheduler's authorization service, so
+    this entry point only runs whatever is registered.
+    """
+    from common.startup_hooks import (
+        HOOK_SCHEDULER_TASK_MIGRATION,
+        run_startup_hook,
+    )
+
+    return run_startup_hook(HOOK_SCHEDULER_TASK_MIGRATION)
 
 
 def _warn_if_legacy_workspace_data_exists():
@@ -761,10 +791,12 @@ def run():
             logger.debug(f"[App] using certifi CA bundle: {bundle}")
         # load config
         load_config()
+        _verify_required_seams()
         _guard_identity_mode_consistency()
         _ensure_database_bootstrap()
         _migrate_team_roster()
         _migrate_conversation_tenancy()
+        _migrate_scheduled_tasks()
         _warn_if_legacy_workspace_data_exists()
         # ctrl + c
         sigterm_handler_wrap(signal.SIGINT)

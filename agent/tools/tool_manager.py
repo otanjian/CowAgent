@@ -1,5 +1,6 @@
 import importlib
 import importlib.util
+import inspect
 import threading
 from pathlib import Path
 from typing import Dict, Any, Type
@@ -26,6 +27,36 @@ def _normalize_mcp_configs(raw) -> list:
             result.append(entry)
         return result
     return []
+
+
+def _requires_injected_dependencies(cls) -> bool:
+    """Whether a tool class needs arguments that only an Agent boot can supply.
+
+    ``load_tools`` builds a throwaway ``cls()`` just to read each tool's name,
+    so a class declaring a required ``__init__`` parameter cannot be built
+    there. Today those are the memory tools (``MemoryAddTool``,
+    ``MemorySearchTool``, ``MemoryGetTool`` want a ``MemoryManager`` and a user
+    id) and ``McpTool``; the first three are injected per Agent by
+    ``bridge.agent_initializer`` and belong to no engine-level catalog.
+
+    Reading the signature instead of naming the classes keeps a newly added
+    dependency-injected tool from failing its constructor here, which logged an
+    error to *stdout* — the machine-readable channel of
+    ``scripts/auth_preflight.py --json`` — and left the tool out of the catalog
+    this same registry feeds.
+    """
+    try:
+        parameters = inspect.signature(cls.__init__).parameters.values()
+    except (TypeError, ValueError):
+        return False  # not introspectable: let the constructor decide
+    for parameter in parameters:
+        if parameter.name == "self":
+            continue
+        if parameter.kind in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD):
+            continue
+        if parameter.default is parameter.empty:
+            return True
+    return False
 
 
 class ToolManager:
@@ -164,9 +195,12 @@ class ToolManager:
                                     and cls != BaseTool
                             ):
                                 try:
-                                    # Skip tools that need special initialization
-                                    if class_name in ["MemorySearchTool", "MemoryGetTool"]:
-                                        logger.debug(f"Skipped tool {class_name} (requires memory_manager)")
+                                    # Skip dependency-injected tools (memory
+                                    # tools want a MemoryManager) and the rest
+                                    # of the classes this registry cannot build.
+                                    if _requires_injected_dependencies(cls):
+                                        logger.debug(
+                                            f"Skipped tool {class_name} (requires injected dependencies)")
                                         continue
                                     # McpTool instances are registered dynamically via _load_mcp_tools()
                                     if class_name == "McpTool":
@@ -232,9 +266,11 @@ class ToolManager:
                                 and cls != BaseTool
                         ):
                             try:
-                                # Skip memory tools (they need special initialization with memory_manager)
-                                if attr_name in ["MemorySearchTool", "MemoryGetTool"]:
-                                    logger.debug(f"Skipped tool {attr_name} (requires memory_manager)")
+                                # Dependency-injected tools (memory tools want a
+                                # MemoryManager) are not engine-loadable.
+                                if _requires_injected_dependencies(cls):
+                                    logger.debug(
+                                        f"Skipped tool {attr_name} (requires injected dependencies)")
                                     continue
                                 
                                 # Create a temporary instance to get the name
