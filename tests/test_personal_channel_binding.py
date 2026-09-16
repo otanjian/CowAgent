@@ -24,6 +24,7 @@ from unittest.mock import patch
 
 from auth.service import IdentityService, IdentityServiceError
 from auth.store import IdentityStore, migration_versions
+from tests._helpers import install_personal_target_roster, personal_channel_target
 
 CHALLENGES = "binding_challenges"
 LINKS = "personal_channel_links"
@@ -278,11 +279,16 @@ class _LinkFixture(unittest.TestCase):
         "feishu_app_secret": "s3cr3t-app-secret",
         "feishu_bot_name": "Alice Bot",
     }
+    #: The registry the personal-target predicate consults. ``agent-a``/``agent-b``
+    #: stay the two tenants' own Agents; the ``target-*`` ids are the members'
+    #: private ones, handed out one per (tenant, member) by :meth:`_target_for`.
+    ROSTER_AGENTS = ("agent-a", "agent-b", "target-0", "target-1", "target-2")
 
     def setUp(self):
         self._prev_key = os.environ.get("COW_CREDENTIAL_MASTER_KEY")
         os.environ["COW_CREDENTIAL_MASTER_KEY"] = self.MASTER_KEY
         self.addCleanup(self._restore_key)
+        install_personal_target_roster(self, *self.ROSTER_AGENTS)
 
         self.svc = IdentityService(_db_path())
         self.svc.bootstrap(
@@ -308,6 +314,7 @@ class _LinkFixture(unittest.TestCase):
                          if t["code"] == "globex"][0]["id"]
         self.svc.bind_agent(tenant_id=self.tenant_b, agent_id="agent-b")
         self.member_id = self._add_member("alice", "Alice")
+        self._targets = {}
         self.instance = self._personal_instance(self.member_id)
 
     def _restore_key(self):
@@ -327,11 +334,31 @@ class _LinkFixture(unittest.TestCase):
         return [m for m in self.svc.list_members(self.tenant)["items"]
                 if m["username"] == username][0]["user_id"]
 
+    def _target_for(self, tenant_id, user_id):
+        """The private Agent *user_id* owns in *tenant_id*, bound on first use.
+
+        A personal instance may only route to a target its own owner holds
+        privately, and the registry has to see it enabled too, so the fixture
+        cannot simply share one Agent: each (tenant, member) pair gets one of the
+        ``target-*`` ids the roster above declares.
+        """
+        key = (tenant_id, user_id)
+        if key not in self._targets:
+            agent_id = "target-%d" % len(self._targets)
+            personal_channel_target(self.svc, tenant_id=tenant_id,
+                                    user_id=user_id, agent_id=agent_id)
+            self._targets[key] = agent_id
+        return self._targets[key]
+
     def _personal_instance(self, owner_user_id, display_name="Alice Bot",
                            app_id="cli_alice", tenant_id=None,
-                           agent_id="agent-a"):
+                           agent_id=None):
+        tenant_id = tenant_id or self.tenant
+        # The default target is the owner's own private Agent in this tenant,
+        # which is what the personal create is required to verify.
+        agent_id = agent_id or self._target_for(tenant_id, owner_user_id)
         return self.svc.create_tenant_channel_instance(
-            actor_user_id=self.root["id"], tenant_id=tenant_id or self.tenant,
+            actor_user_id=self.root["id"], tenant_id=tenant_id,
             channel_type="feishu", display_name=display_name, agent_id=agent_id,
             credentials=dict(self.FEISHU_BUNDLE, feishu_app_id=app_id),
             recent_password="Str0ngRootFinal",
@@ -487,7 +514,7 @@ class PersonalChannelLinkTests(_LinkFixture):
             temporary_password="MemTempPass1", roles=["member"])
         foreign = self._personal_instance(
             self.member_id, "Globex Bot", app_id="cli_globex",
-            tenant_id=self.tenant_b, agent_id="agent-b")
+            tenant_id=self.tenant_b)
         self.svc.link_personal_channel(
             tenant_id=self.tenant_b, user_id=self.member_id,
             instance_id=foreign["id"], provider=self.PROVIDER,

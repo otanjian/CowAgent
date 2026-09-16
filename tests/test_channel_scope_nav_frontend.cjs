@@ -56,11 +56,10 @@ function boot({ mode = 'database', ctx = null, isPlatformAdmin = false, items = 
         '#sidebar-nav .sidebar-item[data-view]': items,
         '.sidebar-item[data-view="platform"]': [platformItem],
     };
-    // The five 「我的」 entries moved out of #sidebar-nav into the account panel,
-    // so the per-item gate asks the account-panel section to recompute them from
-    // the same projection. That section is exercised on its own in
-    // test_sidebar_account_frontend.cjs; here it is only observed.
-    const personalRecomputes = [];
+    // The five 「我的」 entries are retired (task 3.3), so the per-item gate owns
+    // the whole verdict: it must not hand anything to an account-panel projector
+    // that no longer exists. That section is exercised on its own in
+    // test_sidebar_account_frontend.cjs.
     const sandbox = {
         VIEW_META: { channels: { console: 'admin.channels' } },
         document: {
@@ -74,20 +73,20 @@ function boot({ mode = 'database', ctx = null, isPlatformAdmin = false, items = 
         _baseAuthContext: () => ctx,
         _baseAccountSelf: () => ({ user: { is_platform_admin: isPlatformAdmin } }),
         _navAreaFromPath: () => area,
-        _qualifyAdminConsoleEntry: ({ isPlatformAdmin: p, isTenantAdmin: t }) => !!(p || t),
         _openNavArea() {},
-        _renderAccountResources() { personalRecomputes.push('render'); },
-        _syncAccountPersonalCurrent() { personalRecomputes.push('marker'); },
     };
     vm.runInNewContext(
         [fnSource('_consolePageForView'), fnSource('_viewNavDenied'),
+         fnSource('_qualifyAdminConsoleEntry'), fnSource('channelPageScope'),
+         fnSource('channelScope'),
          fnSource('_applySidebarPermissions')].join('\n'),
         sandbox);
-    return { sandbox, channelItem: items[0], adminAreaEls, platformScopeEls, navOpenAdmin, personalRecomputes };
+    return { sandbox, channelItem: items[0], adminAreaEls, platformScopeEls, navOpenAdmin };
 }
 
 const TENANT_PAGE = { available: true, read_allowed: true, scope: 'tenant', reason: '', actions: { create: true, update: true } };
 const PLATFORM_PAGE = { available: true, read_allowed: true, scope: 'platform', reason: '', actions: { create: true, update: true } };
+const SELF_PAGE = { available: true, read_allowed: true, scope: 'self', reason: '', actions: { create: true, update: true } };
 
 test('the channels view maps to the single admin.channels page key', () => {
     const { sandbox } = boot();
@@ -149,14 +148,40 @@ test('legacy mode and platform "all" mode are never blocked by the projection', 
     assert.equal(all.sandbox._viewNavDenied('channels'), null);
 });
 
-test('the account panel recomputes the personal entries from the same projection', () => {
-    const { sandbox, personalRecomputes } = boot({
+test('a member sees the channels entry scoped to their own connections', () => {
+    // Task 6.1: the same page key answers with `scope: "self"` for a member, and
+    // the nav gate must admit it — the entry goes to the tenant business surface,
+    // where the interface answers with their own range.
+    const item = makeEl({ 'data-view': 'channels' });
+    const { sandbox, channelItem } = boot({
+        ctx: { console_pages: { 'admin.channels': SELF_PAGE }, is_tenant_admin: false, authorization_mode: 'role' },
+        items: [item],
+    });
+    sandbox._applySidebarPermissions();
+    assert.equal(channelItem.classList.contains('hidden'), false);
+    assert.equal(sandbox._viewNavDenied('channels'), null);
+});
+
+test('the member scope loads the business surface, not the instance page', () => {
+    // `self` is the *same* page as a tenant admin's: the platform instance list
+    // is a different surface and a member must never be handed it (task 6.1).
+    const { sandbox } = boot({
+        ctx: { console_pages: { 'admin.channels': SELF_PAGE }, is_tenant_admin: false, authorization_mode: 'role' },
+    });
+    assert.equal(sandbox.channelPageScope(), 'self');
+    assert.equal(sandbox.channelScope(), 'tenant');
+});
+
+test('the per-item gate does not hand the verdict to an account-panel projector', () => {
+    // Task 3.3 retired the account panel's personal entries. The sidebar gate must
+    // therefore be self-contained: one projector owns the projection, and it is
+    // this one. A re-introduced hand-off would mean a second verdict exists.
+    const { sandbox } = boot({
         ctx: { console_pages: {}, is_tenant_admin: true, authorization_mode: 'role' },
     });
     sandbox._applySidebarPermissions();
-    // One owner for the projection: the sidebar gate hands the verdict to the
-    // account panel instead of keeping a second copy of the personal entries.
-    assert.deepEqual(personalRecomputes, ['render', 'marker']);
+    assert.equal(typeof sandbox._renderAccountResources, 'undefined');
+    assert.equal(typeof sandbox._syncAccountPersonalCurrent, 'undefined');
 });
 
 test('the sidebar entry still exists in chat.html for both admin scopes', () => {

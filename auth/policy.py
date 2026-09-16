@@ -466,56 +466,85 @@ def resource_ids_for(grants: Iterable[Dict[str, str]], kind: str, action: str) -
     }
 
 
-#: The five personal console pages registered by
-#: ``enable-member-personal-console`` (design D1). Kept here, in the
-#: dependency-free policy module, because the default-grant table below is
-#: consumed by both the identity service and the storage migrations, and the
-#: latter must not import the former.
-PERSONAL_CONSOLE_PAGES: Tuple[str, ...] = (
-    "personal.agents",
-    "personal.channels",
-    "personal.memory",
-    "personal.tools",
-    "personal.skills",
-)
-
 #: Default ``menu`` grants for the built-in roles, as ``nav:<page>`` ids.
 #:
 #: Menu grants are *restrictive*: once a role carries any, the console is bound
 #: to that set (design D1). Built-in roles carried none, so they were governed by
-#: functional permissions alone. Adding only the five personal pages would have
+#: functional permissions alone. Adding only the personal pages would have
 #: flipped every member into restricted mode and silently hidden everything they
 #: could already open (会话历史 / 知识库 / 我的待办 / …). So each role's set is
-#: "the pages it could already reach, plus the five new personal pages": the
-#: gating turns on without removing a page anyone had, and without widening
-#: anything either — a page no role could reach is not listed.
+#: "the pages it could already reach, plus the business pages it now shares with
+#: its administrators": gating turns on without removing a page anyone had, and
+#: without widening anything either — a page no role could reach is not listed.
+#:
+#: Change ``unify-console-by-data-scope`` replaces the five personal pages with
+#: the formal console pages they became (see :data:`LEGACY_PERSONAL_MENU_MAP`):
+#: a role that could reach 我的智能体 / 我的记忆 / 我的渠道 / 我的工具与技能 now
+#: reaches 智能体管理 / 记忆管理 / 消息渠道 / 工具与技能, and what each of those
+#: lists is decided by the caller's data scope rather than by which page they
+#: opened. Both the tenant-creation path (``_seed_tenant_defaults``) and the
+#: migration path (``_migration_20`` / ``_migration_26``) write *this* set, so a
+#: new tenant and a migrated one end up identical.
 #:
 #: ``tenant_admin`` is a strict superset of ``member`` and needs its management
-#: pages listed for the same reason: it carries menu grants now, so its
-#: ``admin.*`` surface must be explicit or it would disappear. The three
+#: pages listed for the same reason: it carries menu grants, so its ``admin.*``
+#: surface must be explicit or it would disappear. The three
 #: ``_TENANT_ADMIN_CORE_PAGES`` remain hard-exempt in the projection.
+#: ``admin.models`` (模型与接入) is in *both* sets since task 5.4 of
+#: ``unify-console-by-data-scope``. The page is the member's model catalog —
+#: vendor address and key stay platform-only, and what the page *lists* for
+#: anyone else is the catalog they are authorized for — but it was declared
+#: ``platform``-scoped when this table was written (a ``platform`` page is not a
+#: business entry point at all), so it was never granted and the catalog was
+#: unreachable for a member no matter what they held. Listing it widens nothing:
+#: the projection reports the page unavailable, and the console hides it, for a
+#: caller with no model grant at all.
 BUILTIN_MENU_DEFAULTS: Dict[str, Tuple[str, ...]] = {
     "member": tuple("nav:%s" % pid for pid in (
-        "personal.agents", "personal.channels", "personal.memory",
-        "personal.tools", "personal.skills",
+        "admin.agents", "admin.channels", "admin.memory", "admin.skills",
+        "admin.models",
         "workbench.agents", "workbench.history", "workbench.knowledge",
         # Self-scoped and reachable before the defaults existed (the compat rule
         # left it open), so seeding the defaults must keep it open: the member
         # manages its own scheduled tasks in the current tenant.
         "workbench.schedules",
         "workbench.todos",
-        "admin.agents", "admin.memory",
     )),
     "tenant_admin": tuple("nav:%s" % pid for pid in (
-        "personal.agents", "personal.channels", "personal.memory",
-        "personal.tools", "personal.skills",
+        "admin.agents", "admin.channels", "admin.memory", "admin.skills",
+        "admin.models",
         "workbench.agents", "workbench.history", "workbench.knowledge",
         "workbench.schedules",
         "workbench.todos",
-        "admin.agents", "admin.memory",
-        "admin.channels", "admin.members", "admin.organization",
-        "admin.roles", "admin.skills",
+        "admin.members", "admin.organization",
+        "admin.roles",
     )),
+}
+
+
+#: The five retired personal console pages, and the formal console page each one
+#: became (change ``unify-console-by-data-scope``, task 2.4).
+#:
+#: The change removes the ``我的资源`` menu: a member reaches agents, channels,
+#: memory, tools and skills through the *same* console pages an administrator
+#: uses, with the data range deciding what is listed. A role that holds a legacy
+#: personal id must therefore end up holding the formal id, or the removal would
+#: read to that role as "the page was taken away".
+#:
+#: Note the deliberate **many-to-one**: the console has a single 工具与技能 page
+#: (``admin.skills``), so both ``personal.tools`` and ``personal.skills`` map
+#: onto it. Mapping them onto two pages would invent a page that does not exist.
+#:
+#: Task 8.8 stopped *issuing* the personal page ids. This table is therefore the
+#: only surviving vocabulary for them, and it must stay: it is what makes an
+#: already-written ``nav:personal.*`` grant keep resolving (through
+#: ``auth.service.canonical_menu_id``) and what ``_migration_26`` rewrites.
+LEGACY_PERSONAL_MENU_MAP: Dict[str, str] = {
+    "personal.agents": "admin.agents",
+    "personal.channels": "admin.channels",
+    "personal.memory": "admin.memory",
+    "personal.tools": "admin.skills",
+    "personal.skills": "admin.skills",
 }
 
 
@@ -545,10 +574,15 @@ PERSONAL_CAPABILITY_DEFAULTS: Dict[str, bool] = {
     "personal_channel_runtime": False,
 }
 
-#: The switches that must all be on for each personal console page. The first is
-#: the console-wide switch (withdrawing it withdraws every personal page at
-#: once); the second, where present, is the slice the page belongs to, so one
-#: capability can be withdrawn without touching the accepted catalogue.
+#: The switches behind the *member slice* of each surface, keyed by the retired
+#: personal page id the slice used to be projected on. Task 8.8 retired those
+#: pages, so nothing projects ``personal.*`` any more — this map survives because
+#: the *shared* pages read it: ``admin.channels`` reports the member's ``switches``
+#: /``states`` and withdraws ``create`` from it, and ``admin.agents`` withdraws a
+#: member's ``create`` from it. The first name is the console-wide switch
+#: (withdrawing it withdraws every member self-service slice at once); the
+#: second, where present, is the slice itself, so one capability can be withdrawn
+#: without touching the accepted catalogue.
 PERSONAL_PAGE_CAPABILITIES: Dict[str, Tuple[str, ...]] = {
     "personal.agents": ("member_personal_console",
                         "user_private_agent_management"),

@@ -13,7 +13,8 @@ memory truth has three different shapes, so the surface keeps the old field
 names but requires an explicit target: ``scope=personal`` (the caller's own
 ``/api/memory/personal`` domain), ``scope=private_agent`` (a privately owned
 Agent's workspace memory, owner-only) or ``scope=shared`` (the tenant's shared
-Agent memory, tenant-wide read). A missing/unknown target is refused with a
+Agent memory, which is a *tenant resource* and so needs the tenant
+administration qualification). A missing/unknown target is refused with a
 stable machine code — never silently answered from the tenant shared root, and
 never read-then-filtered.
 
@@ -147,6 +148,32 @@ class _World:
         headers = {"X-Tenant-ID": tenant} if tenant else None
         return self.h.get(path, token=token, headers=headers)
 
+    def set_agent_enabled(self, agent_id: str, enabled: bool) -> None:
+        """Stop/start an Agent in the roster the registry actually reads.
+
+        The registry is built from the pinned settings and cached process-wide,
+        so the flag is flipped in that same roster file and the cache dropped —
+        editing a file the registry does not read would assert against a stale
+        roster.
+        """
+        from agent import team
+        from agent.registry import set_agent_registry
+
+        path = team.team_file(self.h._settings)
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        for entry in data.get("agents", []):
+            if entry.get("id") == agent_id:
+                entry["enabled"] = bool(enabled)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+        set_agent_registry(None)
+
+    def targets(self, token: str):
+        body = self.get("/api/memory?scope=personal", token=token)
+        assert _status(body) == 200, body.data
+        return _body(body)["targets"]
+
 
 @pytest.fixture
 def world(web_app):
@@ -208,7 +235,7 @@ def test_a_missing_scope_with_an_agent_reads_that_agents_memory(world):
     world.seed_agent_memory("MEMORY.md", "SHARED-AGENT-MEMORY\n")
     world.save_personal(world.alice_token, "MEMORY.md", "ALICE-THESIS\n")
 
-    response = world.get("/api/memory?agent_id=shared-agent", token=world.alice_token)
+    response = world.get("/api/memory?agent_id=shared-agent", token=world.admin_token)
     assert _status(response) == 200, response.data
     body = _body(response)
     assert body["scope"] == "shared"
@@ -217,8 +244,33 @@ def test_a_missing_scope_with_an_agent_reads_that_agents_memory(world):
 
     content = world.get(
         "/api/memory/content?agent_id=shared-agent&filename=MEMORY.md",
-        token=world.alice_token)
+        token=world.admin_token)
     assert _body(content)["content"] == "SHARED-AGENT-MEMORY\n"
+
+
+def test_a_member_is_refused_a_shared_target_even_with_chat_use(world, monkeypatch):
+    """A shared Agent's memory is a tenant resource, not a member resource.
+
+    ``alice`` may chat with ``shared-agent`` (it is the tenant's shared Agent),
+    but chat use is not management access: the target set is filtered on the
+    server, so she gets no entries, no total and no body. The tripwire pins that
+    the refusal happens *before* the read rather than as an after-the-fact
+    filter.
+    """
+    from agent.memory.service import MemoryService
+
+    world.seed_agent_memory("MEMORY.md", "SHARED-AGENT-MEMORY\n")
+    monkeypatch.setattr(MemoryService, "list_files", _boom)
+    monkeypatch.setattr(MemoryService, "get_content", _boom)
+
+    for path in ("/api/memory?agent_id=shared-agent",
+                 "/api/memory?scope=shared&agent_id=shared-agent",
+                 "/api/memory/content?scope=shared&agent_id=shared-agent"
+                 "&filename=MEMORY.md"):
+        response = world.get(path, token=world.alice_token)
+        assert _status(response) == 403, (path, response.data)
+        assert _body(response)["code"] == "not_authorized"
+        assert "SHARED-AGENT-MEMORY" not in response.data.decode("utf-8")
 
 
 def test_pagination_is_honoured(world):
@@ -360,7 +412,7 @@ def test_a_known_category_is_still_served_for_an_agent(world):
     world.seed_agent_memory("memory/dreams/2026-01-02.md", "DREAM\n")
     response = world.get(
         "/api/memory?scope=shared&agent_id=shared-agent&category=dream",
-        token=world.alice_token)
+        token=world.admin_token)
     assert _status(response) == 200, response.data
     assert [row["filename"] for row in _body(response)["list"]] == ["2026-01-02.md"]
 
@@ -383,7 +435,7 @@ def test_an_unknown_entry_is_refused(world):
     world.seed_agent_memory("MEMORY.md", "SHARED\n")
     response = world.get(
         "/api/memory/content?scope=shared&agent_id=shared-agent&filename=absent.md",
-        token=world.alice_token)
+        token=world.admin_token)
     assert _status(response) == 404, response.data
     assert _body(response)["code"] == "unknown_entry"
 
@@ -505,7 +557,7 @@ def test_a_symlinked_agent_memory_directory_is_not_followed(world):
                os.path.join(world.shared_root, "memory"))
 
     listed = world.get("/api/memory?scope=shared&agent_id=shared-agent",
-                       token=world.alice_token)
+                       token=world.admin_token)
     payload = listed.data.decode("utf-8")
     assert "ALICE-PERSONAL" not in payload
     assert "notes.md" not in payload, payload
@@ -514,7 +566,7 @@ def test_a_symlinked_agent_memory_directory_is_not_followed(world):
 
     content = world.get(
         "/api/memory/content?scope=shared&agent_id=shared-agent&filename=notes.md",
-        token=world.alice_token)
+        token=world.admin_token)
     assert _status(content) == 403, content.data
     assert _body(content)["code"] == "unsafe_path"
     assert "ALICE-PERSONAL" not in content.data.decode("utf-8")
@@ -534,14 +586,14 @@ def test_a_symlinked_agent_entry_is_not_served(world):
                os.path.join(world.shared_root, "memory", "uploaded.md"))
 
     listed = world.get("/api/memory?scope=shared&agent_id=shared-agent",
-                       token=world.alice_token)
+                       token=world.admin_token)
     assert _status(listed) == 200, listed.data
     assert [row["filename"] for row in _body(listed)["list"]] == ["MEMORY.md"]
     assert "BOB-SECRET" not in listed.data.decode("utf-8")
 
     content = world.get(
         "/api/memory/content?scope=shared&agent_id=shared-agent"
-        "&filename=uploaded.md", token=world.alice_token)
+        "&filename=uploaded.md", token=world.admin_token)
     assert _status(content) == 403, content.data
     assert _body(content)["code"] == "unsafe_path"
     assert "BOB-SECRET" not in content.data.decode("utf-8")
@@ -579,14 +631,20 @@ def test_the_compat_personal_scope_does_not_expose_another_member(world):
     assert _body(bob)["content"] == "BOB-SECRET\n"
 
 
-# --- the registry really opens these two reads ------------------------------
+# --- the registry really opens these reads ----------------------------------
 
 def test_the_capability_registry_and_the_route_table_agree(world):
     from auth import capability_matrix
     from channel.web.route_registry import derive_route_policy
 
     spec = capability_matrix.slice_for("memory_browse")
-    assert spec.open == {"list": "read", "content": "read"}
+    # Two reads and the three writes of task 5.1's second half. The writes are
+    # ``config``, not ``execute``: they write stored data, while ``execute`` in
+    # this registry is for actions that run something (a tool import) — and the
+    # page must not be reported as having opened an execution surface.
+    assert spec.open == {"list": "read", "content": "read",
+                         "save": "config", "delete": "config",
+                         "clear": "config"}
     assert spec.implemented and spec.accepted
     assert capability_matrix.check_consistency() == []
 
@@ -595,3 +653,81 @@ def test_the_capability_registry_and_the_route_table_agree(world):
         entry = policy[path]["GET"]
         assert entry["policy"] == "tenant", path
         assert entry["permission"] == "memory.read", path
+    # Each write is its own route, so the gate can close one verb without
+    # closing the others; a verb the registry serves but the table does not (or
+    # the reverse) would be a route reachable without the policy it declares.
+    for path, action in (("/api/memory/save", "save"),
+                         ("/api/memory/delete", "delete"),
+                         ("/api/memory/clear", "clear")):
+        entry = policy[path]["POST"]
+        assert entry["policy"] == "tenant", path
+        assert entry["permission"] == "memory.read", path
+        assert capability_matrix.slice_for("memory_browse").route(
+            action, comment="")["permission"] == "memory.read", action
+
+
+# --- the legal target set the picker is built from (task 5.1) ---------------
+
+def test_the_target_set_names_only_domains_the_caller_may_address(world):
+    """The set is the *management* range, not the chat/use range.
+
+    ``alice`` may chat with the tenant's ``shared-agent``, so a picker built
+    from the console's Agent catalogue would offer it — and the read would then
+    refuse it. The set is derived from the same predicate the read runs, so it
+    offers her own private Agent and her personal domain, and neither the shared
+    Agent nor another member's private one.
+    """
+    by_kind = {(row["kind"], row.get("agent_id")): row
+               for row in world.targets(world.alice_token)}
+    assert ("personal", None) in by_kind
+    assert ("agent", "alice-agent") in by_kind
+    assert ("agent", "shared-agent") not in by_kind, "a member does not manage shared memory"
+    assert ("agent", "bob-agent") not in by_kind, "another member's private Agent is not a target"
+
+
+def test_an_administrator_target_set_holds_the_shared_agents_and_their_own(world):
+    by_kind = {(row["kind"], row.get("agent_id")): row
+               for row in world.targets(world.admin_token)}
+    assert ("personal", None) in by_kind
+    assert ("agent", "shared-agent") in by_kind
+    assert by_kind[("agent", "shared-agent")]["scope"] == "shared"
+    assert ("agent", "alice-agent") not in by_kind, "a non-owner admin is excluded"
+    assert ("agent", "bob-agent") not in by_kind
+
+
+def test_every_offered_target_is_one_this_caller_can_actually_read(world):
+    """The property that makes the set worth serving: offered ⇔ readable.
+
+    A set that offers a target the read refuses is the defect it exists to
+    remove, so the two are asserted together rather than separately — including
+    the converse, that a *not*-offered target really is refused.
+    """
+    world.seed_agent_memory("MEMORY.md", "SHARED-AGENT-MEMORY\n")
+
+    for row in world.targets(world.alice_token):
+        query = ("scope=personal" if row["kind"] == "personal"
+                 else f"agent_id={row['agent_id']}")
+        response = world.get(f"/api/memory?{query}", token=world.alice_token)
+        assert _status(response) == 200, (row, response.data)
+
+    refused = world.get("/api/memory?agent_id=shared-agent", token=world.alice_token)
+    assert _status(refused) != 200, "not offered must mean not readable"
+
+
+def test_a_stopped_agent_stays_a_memory_target_and_says_so(world):
+    """Stopping refuses new *traffic*, not access to what is already stored.
+
+    An Agent that has been stopped still holds memory its owner may want to read
+    or clean, so it stays a legal target — but the entry reports ``enabled:
+    false`` rather than disappearing, because "I cannot see it" and "it is
+    stopped" are different facts and the operator needs the second one.
+    """
+    world.seed_agent_memory("MEMORY.md", "ALICE-AGENT-MEMORY\n")
+    world.set_agent_enabled("alice-agent", False)
+
+    rows = {row.get("agent_id"): row for row in world.targets(world.alice_token)}
+    assert "alice-agent" in rows, "a stopped object is still manageable"
+    assert rows["alice-agent"]["enabled"] is False
+
+    read = world.get("/api/memory?agent_id=alice-agent", token=world.alice_token)
+    assert _status(read) == 200, "its stored memory is still readable"

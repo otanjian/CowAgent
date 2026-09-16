@@ -197,7 +197,17 @@ def test_delete_agent_removes_roster_entry_and_own_workspace(admin):
     assert not workspace.exists()
 
 
-def test_delete_agent_unbinds_channel_instances_pointing_at_it(admin):
+def test_delete_agent_refuses_while_a_channel_instance_routes_to_it(admin):
+    """Task 4.3 replaced the old silent unbind with a conflict.
+
+    The previous behaviour cleared the instance's ``agent_id`` so it would "fall
+    back to the default Agent" — which moved live IM traffic to an Agent nobody
+    chose. The spec forbids automatic rebinding (存在运行或有效渠道引用时 SHALL 返回
+    冲突，不自动终止、改绑或回落), so the delete is refused until the operator
+    unlinks the channel, and the refusal must leave *both* stores untouched.
+    """
+    from agent.admin import AgentInUseError
+
     service, root, config_path = admin
     service.create_agent("research", "Research")
 
@@ -211,13 +221,45 @@ def test_delete_agent_unbinds_channel_instances_pointing_at_it(admin):
     team.write(settings, roster)
     service._settings = None
 
-    service.delete_agent("research")
+    with pytest.raises(AgentInUseError) as excinfo:
+        service.delete_agent("research")
 
+    assert excinfo.value.code == "conflict"
+    assert "feishu-ops" in str(excinfo.value), (
+        "the refusal names the dependency, so the operator knows what to unlink")
+
+    # Nothing moved: the Agent is still there, the channel still points at it.
+    assert "research" in [item["id"] for item in service.snapshot()["agents"]]
     instances = _saved(root).get("channel_instances") or []
-    # The instance survives (the channel is still there) but no longer points at
-    # the deleted Agent, so it falls back to the default.
-    assert any(i.get("instance_id") == "feishu-ops" for i in instances)
-    assert all(i.get("agent_id") != "research" for i in instances)
+    assert [i.get("agent_id") for i in instances if i.get("instance_id") == "feishu-ops"] \
+        == ["research"]
+
+
+def test_delete_agent_proceeds_once_the_channel_is_unlinked(admin):
+    """The conflict is a "not yet", not a "never": unlink, then delete."""
+    from agent.deletion_guard import deletion_conflicts
+
+    service, root, config_path = admin
+    service.create_agent("research", "Research")
+    settings = {"agent_workspace": str(root)}
+    roster = team.read(settings)
+    roster["channel_instances"] = [
+        {"instance_id": "feishu-ops", "channel_type": "feishu", "agent_id": "research"}
+    ]
+    team.write(settings, roster)
+    service._settings = None
+
+    # The operator unlinks first — the same write the console does on disconnect.
+    roster = team.read(settings)
+    roster["channel_instances"][0]["agent_id"] = ""
+    team.write(settings, roster)
+    service._settings = None
+
+    assert deletion_conflicts("research") == []
+    result = service.delete_agent("research")
+
+    assert result["deleted"] is True
+    assert "research" not in [item["id"] for item in service.snapshot()["agents"]]
 
 
 def test_delete_agent_purges_session_prefs_orphans_and_team_members(admin):

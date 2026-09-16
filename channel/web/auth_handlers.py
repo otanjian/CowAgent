@@ -279,6 +279,33 @@ def _session_token() -> str:
     return sel.token
 
 
+def verified_auth_session_id() -> str:
+    """The **verified** login-session row id behind this request, or ``""``.
+
+    The one-time grant a completed scan mints is bound to the login session that
+    started the scan (``auth.scan_authorization``), so the write that redeems it
+    has to name the same session. The bearer token never is that name: it is a
+    credential, while the row id is an opaque, non-secret identifier — the same
+    value a chat-delegation snapshot already carries.
+
+    Non-raising by design, unlike ``WeixinQrHandler._auth_session_id``: the
+    presence of a session is enforced by ``_require_context`` on every caller,
+    and a handler that could not read one must fall back to "unbound" (which
+    fails closed for a session-bound grant) rather than turn an unrelated write
+    into a 401. The row is a ``sqlite3.Row``, so it is indexed — ``.get`` does
+    not exist on it.
+    """
+    try:
+        verified = _get_service().verify_session(_session_token())
+    except Exception:  # noqa: BLE001 - no session, or an unreadable store
+        return ""
+    row = (verified or {}).get("session") if isinstance(verified, dict) else None
+    try:
+        return str(row["id"] or "") if row is not None else ""
+    except Exception:  # noqa: BLE001 - an unreadable session is not a session
+        return ""
+
+
 def _tenant_header() -> str:
     return web.ctx.env.get("HTTP_X_TENANT_ID", "") or ""
 

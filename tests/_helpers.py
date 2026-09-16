@@ -9,6 +9,8 @@ send subsequent requests read it from the ``Set-Cookie`` response header.
 import json
 import os
 import re
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -122,6 +124,69 @@ class IdentityStack:
                                      self.MEMBER_PASSWORD)
         self.members[username] = user
         return {"tenant_id": other, "user_id": user, "agent_id": agent}
+
+
+@contextmanager
+def personal_target_roster(*agent_ids):
+    """A real Agent Registry over a private workspace, holding *agent_ids*.
+
+    A personal channel instance may only route to a private Agent of its own
+    owner, and that target is verified against the **Agent Registry** as well as
+    the identity binding. A fixture that creates one therefore has to provide a
+    roster; without it the create is refused for a reason unrelated to what the
+    test is about, and with a *shared* target it would exercise a shape the
+    product must reject.
+
+    Pinned to a fresh temp workspace on purpose: resolving the registry against
+    the developer's own workspace would make the outcome depend on their roster.
+    """
+    from unittest.mock import patch
+
+    from config import Config, conf as _conf
+
+    settings = Config(dict(_conf()))
+    settings["agent_workspace"] = tempfile.mkdtemp(prefix="cow-roster-")
+    settings["agents"] = [{"id": agent_id, "name": agent_id, "enabled": True}
+                          for agent_id in agent_ids]
+    settings["default_agent_id"] = agent_ids[0]
+    with patch("config.conf", lambda: settings):
+        # A registry may already be pinned from an earlier test; unpin it so the
+        # roster above is the one every lookup resolves.
+        from agent.registry import set_agent_registry
+
+        set_agent_registry(None)
+        yield settings
+
+
+def install_personal_target_roster(case, *agent_ids):
+    """``personal_target_roster`` for a ``unittest.TestCase``.
+
+    ``setUp`` cannot use a ``with`` block for something that has to outlive the
+    method, so the context is entered here and unwound by ``addCleanup``.
+
+    The pinned settings are left on ``case.roster_settings``: a test that needs
+    to *change* the roster (stop an Agent, say) has to edit the same object the
+    registry reads, and reading it back off the case is how it does so without
+    re-deriving the fixture.
+    """
+    context = personal_target_roster(*agent_ids)
+    case.roster_settings = context.__enter__()
+    case.addCleanup(lambda: context.__exit__(None, None, None))
+    return context
+
+
+def personal_channel_target(service, *, tenant_id, user_id, agent_id,
+                            origin="user_created"):
+    """Bind *agent_id* as *user_id*'s own private Agent and return it.
+
+    The order is the product's: the target has to exist and belong to the member
+    before a channel instance may name it. Pair it with
+    :func:`personal_target_roster`, which supplies the registry half of the same
+    predicate.
+    """
+    service.bind_agent(tenant_id=tenant_id, agent_id=agent_id,
+                       private_owner_user_id=user_id, origin=origin)
+    return agent_id
 
 
 def build_identity(path, *, agents=("agent-a",), tenant_code="acme"):
@@ -244,6 +309,16 @@ class WebAppHarness:
         for patcher in reversed(self._patchers):
             patcher.stop()
         self._patchers = []
+        # The Agent Registry is a process-global built lazily from ``conf()``, and
+        # this harness just replaced ``conf`` with its own root. Unpin it on the
+        # way out, or the *next* test's first lookup answers from this harness's
+        # roster (and its temp directory), which shows up as an unrelated test
+        # failing on "the Agent is not enabled" depending on file order.
+        try:
+            from agent.registry import set_agent_registry
+            set_agent_registry(None)
+        except Exception:  # noqa: BLE001 - best-effort teardown
+            pass
 
     # -- population --------------------------------------------------------
 
@@ -274,13 +349,20 @@ class WebAppHarness:
         self._roster = [p["id"] for p in profiles]
         return path
 
-    def add_agent(self, *agent_ids):
-        """Bind Agents to the tenant and put them in the roster."""
+    def add_agent(self, *agent_ids, tenant_id=None):
+        """Bind Agents to the tenant and put them in the roster.
+
+        ``tenant_id`` defaults to this harness's own tenant; a test that made a
+        member in a second tenant names that tenant explicitly, because an Agent
+        is bound to exactly one tenant and a first bind to the wrong one is not
+        repairable (``bind_agent`` refuses a cross-tenant re-point).
+        """
         existing = list(getattr(self, "_roster", []))
         for agent_id in agent_ids:
             if agent_id not in existing:
                 existing.append(agent_id)
-            self.service.bind_agent(tenant_id=self.tenant_id, agent_id=agent_id)
+            self.service.bind_agent(tenant_id=tenant_id or self.tenant_id,
+                                    agent_id=agent_id)
             if agent_id not in self._agents:
                 self._agents.append(agent_id)
         self.write_roster(existing)
@@ -288,6 +370,26 @@ class WebAppHarness:
 
     def bind_agent_to_tenant(self, agent_id, tenant_id):
         self.service.bind_agent(tenant_id=tenant_id, agent_id=agent_id)
+
+    def private_agent(self, user_id, agent_id, *, tenant_id=None):
+        """Give *user_id* their own private Agent, present in the roster.
+
+        A personal channel instance may only route to a target its own owner
+        holds **privately**, and the target is verified against the Agent
+        Registry as well as the identity binding — so a fixture that creates one
+        has to supply both halves, and this is the one call that supplies them
+        together: the Agent is added to the roster (enabled) and bound privately
+        to *user_id*. Passing a *shared* Agent here would exercise a shape the
+        product must refuse.
+
+        ``tenant_id`` defaults to this harness's own tenant; a test that made a
+        member in a second tenant names that tenant explicitly.
+        """
+        self.add_agent(agent_id, tenant_id=tenant_id)
+        self.service.bind_agent(
+            tenant_id=tenant_id or self.tenant_id, agent_id=agent_id,
+            private_owner_user_id=user_id, origin="user_created")
+        return agent_id
 
     @property
     def agents(self):

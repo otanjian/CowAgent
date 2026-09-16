@@ -78,7 +78,6 @@ function boot({ mode = 'database', ctx = null, isPlatformAdmin = false, items = 
         _baseAuthContext: () => ctx,
         _baseAccountSelf: () => ({ user: { is_platform_admin: isPlatformAdmin } }),
         _navAreaFromPath: () => area,
-        _qualifyAdminConsoleEntry: ({ isPlatformAdmin: p, isTenantAdmin: t }) => !!(p || t),
         _openNavArea() {},
         // Hosted by the account panel now; this slice only calls into it.
         _renderAccountResources() {},
@@ -86,7 +85,8 @@ function boot({ mode = 'database', ctx = null, isPlatformAdmin = false, items = 
     };
     vm.runInNewContext(
         [fnSource('_consolePageForView'), fnSource('_viewNavDenied'),
-         fnSource('_sidebarRecentDenied'), fnSource('_applySidebarPermissions')].join('\n'),
+         fnSource('_sidebarRecentDenied'), fnSource('_qualifyAdminConsoleEntry'),
+         fnSource('_applySidebarPermissions')].join('\n'),
         sandbox);
     return { sandbox, recentEl, items };
 }

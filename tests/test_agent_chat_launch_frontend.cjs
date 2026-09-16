@@ -30,12 +30,20 @@ function node() {
     };
 }
 
-/** The slice that decides chat-launch behaviour, with a recorded newChat(). */
-function launchHarness(agents, payload) {
+/** The slice that decides chat-launch behaviour, with a recorded newChat().
+ *
+ *  ``agents`` is the management catalogue (``/api/agents``); ``useAgents`` is
+ *  the use-range roster the pickers read (``/api/agents?view=workbench``),
+ *  which defaults to the catalogue for the many cases where the two agree. A
+ *  plain member's management catalogue holds only their own private Agents, so
+ *  the two lists only differ for the members whose picker must still show the
+ *  tenant-shared Agents they may chat with. */
+function launchHarness(agents, payload, useAgents) {
     const nodes = new Map();
     const calls = { newChat: 0, team: 0 };
     const ctx = {
-        agentCatalog: agents, activeAgentId: '', defaultAgentId: '',
+        agentCatalog: agents, chatAgentCatalog: useAgents || agents,
+        activeAgentId: '', defaultAgentId: '',
         _authEpoch: 1, tenant: 'tenant-a', selectedAdminAgentId: '',
         channelInstances: [], rosterRevision: '', currentView: 'chat',
         sessionStorage: { getItem: () => ctx.tenant },
@@ -67,6 +75,10 @@ function launchHarness(agents, payload) {
     // The shipped avatar helper pulls in branding lookups this harness has no
     // reason to model; the menu's *structure* is what these tests pin.
     ctx.agentAvatarHTML = a => `<avatar>${a.name}</avatar>`;
+    // Filling the use-range roster is a read of its own (the workbench
+    // projection), so the harness supplies the result and exercises the
+    // pickers against it instead of re-testing the fetch.
+    ctx.loadChatAgentCatalog = () => Promise.resolve();
     return { ctx, calls, get: id => ctx.document.getElementById(id) };
 }
 
@@ -172,4 +184,59 @@ test('a remembered Agent the catalogue still offers is kept', async () => {
     await ctx.loadAgentCatalog();
     assert.equal(ctx.activeAgentId, 'research',
         'an explicit choice was reset to the default while it was still available');
+});
+
+// The picker asks which Agents the caller may *chat with*. A plain member's
+// management catalogue holds only the Agents they own, so a picker drawn from
+// it hid every tenant-shared Agent from that member: the Agent was reachable
+// from the console's own chat surface (the use range), yet absent from the
+// list that offers it.
+
+test('the picker offers the shared Agents the caller may use', () => {
+    const mine = agent('mine', { is_default: true });
+    const shared = agent('team-bot', { description: 'tenant shared' });
+    const { ctx, get } = launchHarness([mine], null, [shared, mine]);
+    ctx.activeAgentId = 'mine';
+    ctx.onNewChatButton({
+        target: { closest: sel => (sel === '#new-chat-caret' ? {} : null) },
+        stopPropagation() {},
+    });
+    assert.match(get('new-chat-menu').innerHTML, /startSoloChat\('team-bot'\)/,
+        'a shared Agent the member may use was missing from the picker');
+    assert.match(get('new-chat-menu').innerHTML, /startSoloChat\('mine'\)/,
+        'the member\'s own Agent was missing from the picker');
+    assert.equal(ctx.multiAgentMode(), true,
+        'a member with two usable Agents was treated as having nothing to choose between');
+});
+
+test('a shared Agent resolves for the chat identity it names', () => {
+    const { ctx } = launchHarness(
+        [agent('mine', { is_default: true })], null,
+        [agent('team-bot', { name: 'Team Bot' }), agent('mine', { is_default: true })]);
+    // The conversation is owned by a shared Agent this member does not manage:
+    // without a use-range fallback the composer face and the message speakers
+    // would degrade to the raw id.
+    assert.equal(ctx.findAgent('team-bot')?.name, 'Team Bot',
+        'a shared conversation owner was unresolvable from the management catalogue alone');
+});
+
+test('the management grid is not widened by the use-range roster', () => {
+    const mine = agent('mine', { is_default: true });
+    const { ctx } = launchHarness([mine], null, [agent('team-bot'), mine]);
+    assert.deepEqual(ctx.enabledAgents().map(a => a.id), ['mine'],
+        'a shared Agent leaked into the management surfaces (grid, clone-from list)');
+});
+
+test('an unusable Agent in the use range is not offered for chat', () => {
+    const mine = agent('mine', { is_default: true });
+    const broken = agent('broken', { can_chat: false, unavailable_reason: 'runtime_not_enabled' });
+    const { ctx, get } = launchHarness([mine], null, [broken, mine]);
+    ctx.activeAgentId = 'mine';
+    ctx.onNewChatButton({
+        target: { closest: sel => (sel === '#new-chat-caret' ? {} : null) },
+        stopPropagation() {},
+    });
+    assert.doesNotMatch(get('new-chat-menu').innerHTML, /startSoloChat\('broken'\)/,
+        'an Agent that cannot chat was offered as a chat target');
+    assert.deepEqual(ctx.availableChatAgents().map(a => a.id), ['mine']);
 });

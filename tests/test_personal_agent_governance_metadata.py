@@ -18,6 +18,7 @@ import unittest
 from unittest.mock import patch
 
 from auth.service import IdentityService, IdentityServiceError
+from tests._helpers import install_personal_target_roster, personal_channel_target
 
 #: Fields a governance read must never carry: the member's own configuration.
 PRIVATE_FIELDS = (
@@ -43,10 +44,17 @@ class _Fixture(unittest.TestCase):
     MASTER_KEY = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
     ROOT_PASSWORD = "Str0ngRootFinal"
 
+    #: The Agents the fixtures may name. ``agent-a`` stays **shared**: it is the
+    #: tenant's own Agent and the target of the public instance this file keeps as
+    #: a control. The ``target-*`` ids are the members' private ones, and the
+    #: roster below is the registry half of the personal-target predicate.
+    ROSTER = ("agent-a", "target-alice", "target-bob")
+
     def setUp(self):
         self._previous_key = os.environ.get("COW_CREDENTIAL_MASTER_KEY")
         os.environ["COW_CREDENTIAL_MASTER_KEY"] = self.MASTER_KEY
         self.addCleanup(self._restore_master_key)
+        install_personal_target_roster(self, *self.ROSTER)
         self.svc = IdentityService(os.path.join(tempfile.mkdtemp(), "identity.db"))
         self.svc.bootstrap(
             tenant_code="acme", tenant_name="Acme", admin_username="root",
@@ -61,6 +69,15 @@ class _Fixture(unittest.TestCase):
         self.svc.bind_agent(tenant_id=self.ta, agent_id="agent-a")
         self.alice = self._member("alice")
         self.bob = self._member("bob")
+        # Each member owns the private Agent their personal instance routes to.
+        self.target = {
+            self.alice: personal_channel_target(
+                self.svc, tenant_id=self.ta, user_id=self.alice,
+                agent_id="target-alice"),
+            self.bob: personal_channel_target(
+                self.svc, tenant_id=self.ta, user_id=self.bob,
+                agent_id="target-bob"),
+        }
 
     def _restore_master_key(self):
         if self._previous_key is None:
@@ -79,7 +96,13 @@ class _Fixture(unittest.TestCase):
                 if m["username"] == username][0]["user_id"]
 
     def _personal_instance(self, user_id, name="我的飞书", channel_type="feishu",
-                           scope="user"):
+                           scope="user", agent_id=None):
+        # The default target follows the scope, like the console's: a personal
+        # instance names its own owner's private Agent, a public one names the
+        # tenant's shared Agent (and may name no target at all — that path is
+        # unchanged and is exercised below).
+        if agent_id is None:
+            agent_id = (self.target[user_id] if scope == "user" else "agent-a")
         # Each instance gets its own external application: two instances may not
         # share one (task 6.3), and this file is about governance metadata, not
         # about that rule.
@@ -89,7 +112,7 @@ class _Fixture(unittest.TestCase):
         return self.svc.create_tenant_channel_instance(
             actor_user_id=self.root["id"], tenant_id=self.ta,
             channel_type=channel_type, display_name=name,
-            recent_password=self.ROOT_PASSWORD, agent_id="agent-a",
+            recent_password=self.ROOT_PASSWORD, agent_id=agent_id,
             credentials=bundle, scope=scope,
             owner_user_id=user_id if scope == "user" else None)
 
@@ -135,7 +158,7 @@ class GovernanceListingTests(_Fixture):
             (instance["id"],))[0]
 
         self.assertEqual(raw["display_name"], "我的飞书")
-        self.assertEqual(raw["agent_id"], "agent-a")
+        self.assertEqual(raw["agent_id"], self.target[self.alice])
         self.assertNotIn("display_name", self._governance()[0])
 
     def test_the_listing_does_not_leak_the_credential_material(self):
@@ -204,18 +227,42 @@ class GovernanceMetadataIsNotAReadTests(_Fixture):
     """The metadata read must not become a content read through another door."""
 
     def test_stopping_does_not_grant_the_admin_the_configuration(self):
-        """A stop blocks what would restore service; it is not a config read."""
+        """A stop blocks what would restore service; it is not a config read.
+
+        The stop is applied by the administrator (the governance action), but the
+        two doors out of it belong to the *owner*: enabling the instance again and
+        rotating the credential it would run with. Both are asserted on the
+        owner's self-service path, because that is the only path that could still
+        reach the row — an administrator editing another member's personal
+        connection is refused for being out of range before any policy is
+        consulted (tenant-channel-configuration: 管理员改写其他成员的本人连接
+        → 请求拒绝，治理停机仍只经独立治理动作). Asserting the stop on the
+        administrator's door would only re-assert that refusal and would stop
+        covering what the stop is actually for.
+        """
         instance = self._personal_instance(self.alice, name="改名前的飞书")
         self.svc.set_personal_instance_governance(
             actor_user_id=self.root["id"], tenant_id=self.ta,
             instance_id=instance["id"], disabled=True,
             recent_password=self.ROOT_PASSWORD, reason="违规")
 
+        # The administrative door first: closed, and for the range reason, not by
+        # the governance stop — the edit list never was a governance entry.
         with self.assertRaises(IdentityServiceError) as exc:
             self.svc.update_tenant_channel_instance(
                 actor_user_id=self.root["id"], tenant_id=self.ta,
                 instance_id=instance["id"], expected_version=2,
                 recent_password=self.ROOT_PASSWORD,
+                credentials=dict(FEISHU_BUNDLE))
+        self.assertEqual(exc.exception.code, "forbidden")
+
+        # The owner's door: the stop is what answers, which is the fact this test
+        # exists for.
+        with self.assertRaises(IdentityServiceError) as exc:
+            self.svc.update_tenant_channel_instance(
+                actor_user_id=self.alice, tenant_id=self.ta,
+                instance_id=instance["id"], expected_version=2,
+                recent_password="MemTempPass1", allow_owner=True,
                 credentials=dict(FEISHU_BUNDLE))
 
         self.assertEqual(exc.exception.code, "governance_disabled")

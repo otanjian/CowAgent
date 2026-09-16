@@ -411,7 +411,8 @@ class PersonalAssistantProvisioner:
     def _record(self, *, status: str, tenant_id: str, user_id: str,
                 agent_id: Optional[str] = None, source_agent_id: Optional[str] = None,
                 reason: Optional[str] = None, message: Optional[str] = None,
-                actor_user_id: Optional[str] = None) -> Dict[str, Any]:
+                actor_user_id: Optional[str] = None,
+                extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         result = {"status": status}
         if agent_id:
             result["agent_id"] = agent_id
@@ -421,6 +422,13 @@ class PersonalAssistantProvisioner:
             result["reason"] = reason
         if message:
             result["message"] = message
+        if extra:
+            # Additive detail for the caller (task 4.6): the assistant was made,
+            # but *whether it became the member's default* is a separate outcome
+            # the caller is entitled to see. Deliberately not part of the audit
+            # payload below — that one stays a fixed vocabulary of ids and one
+            # reason code.
+            result.update(extra)
         try:
             self._svc.record_personal_agent_event(
                 action="member.personal_agent.%s" % _AUDIT_SUFFIX[status],
@@ -431,6 +439,32 @@ class PersonalAssistantProvisioner:
         except Exception as exc:  # pragma: no cover - audit must not break the flow
             logger.warning("[PersonalAssistant] audit for %s failed: %s", user_id, exc)
         return result
+
+    def initialize_member_default(self, *, tenant_id: str, user_id: str,
+                                  agent_id: str,
+                                  actor_user_id: Optional[str] = None) -> Dict[str, Any]:
+        """Register an Agent as a member's default **only if they have none**.
+
+        System provisioning's half of ``memberships.default_agent_id`` (task
+        4.6). It is deliberately not :meth:`IdentityService.set_member_default_agent`:
+        that writer is used by operations and by tests to *place* a registration,
+        while this one must never displace a choice a human already made. The old
+        provisioning path did displace it — the guard was "does this member
+        already own a personal assistant", which does not cover a member who owns
+        no assistant yet but has already chosen a default.
+
+        The competition is settled inside the service's transaction on
+        ``default_agent_origin IS NULL`` (see
+        :meth:`IdentityService.initialize_member_default_agent`), so "is anything
+        registered" and "write mine" cannot interleave with a user action.
+
+        Returns ``{"status": "created"|"skipped", "reason": ...}``; a skip is a
+        normal outcome, not an error, because the member's own preference is a
+        legitimate reason for provisioning to stand down.
+        """
+        return self._svc.initialize_member_default_agent(
+            tenant_id=tenant_id, user_id=user_id, agent_id=agent_id,
+            actor_user_id=actor_user_id)
 
     def provision(self, *, tenant_id: str, user_id: str, username: str,
                   display_name: str = "", position_text: str = "",
@@ -474,7 +508,11 @@ class PersonalAssistantProvisioner:
                 tenant_id=tenant_id, agent_id=agent_id,
                 private_owner_user_id=user_id, actor_user_id=actor_user_id,
                 origin="provisioned_assistant")
-            self._svc.set_member_default_agent(
+            # Initialise, never impose (task 4.6): a member who already chose a
+            # default keeps it, and this Agent simply is not registered for them.
+            # Overwriting here was the competition the origin column exists to
+            # settle, so the outcome is reported rather than assumed.
+            registration = self.initialize_member_default(
                 tenant_id=tenant_id, user_id=user_id, agent_id=agent_id,
                 actor_user_id=actor_user_id)
         except Exception as exc:
@@ -489,7 +527,9 @@ class PersonalAssistantProvisioner:
 
         return self._record(
             status=CREATED, tenant_id=tenant_id, user_id=user_id, agent_id=agent_id,
-            source_agent_id=source_agent_id, actor_user_id=actor_user_id)
+            source_agent_id=source_agent_id, actor_user_id=actor_user_id,
+            extra={"default_registration": registration["status"],
+                   "default_registration_reason": registration.get("reason")})
 
     # --- operational backfill --------------------------------------------
 

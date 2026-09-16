@@ -50,6 +50,15 @@ MASTER_KEY = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
 VENDOR_TOKEN = "wx-bot-token-3f9a1c7d"
 VENDOR_BASE = "https://vendor.example"
 VENDOR_QR = "/api/weixin/qrlogin"
+#: The Agent the personal path in this file routes to: ``member1``'s **own
+#: private** Agent, which is what a personal (``scope='user'``) channel instance
+#: must name — it has to be a target that member holds privately *and* that the
+#: Agent Registry lists. ``agent-a`` is the tenant's shared Agent and is the
+#: public path's target; naming it from a personal create is the shape the
+#: product refuses (``tests/test_personal_instance_policy.py``).
+PERSONAL_TARGET = "member1-private"
+#: The same, for the member of the second tenant in the cross-tenant test.
+FOREIGN_PERSONAL_TARGET = "foreign-private"
 
 
 class _FakeChannelManager:
@@ -210,18 +219,22 @@ class _Flow:
         """``GET`` and return the parsed 200 body."""
         return _ok(self.get(who, **kwargs))
 
-    def scan(self, who="root", *, confirm=None, **kwargs):
+    def scan(self, who="root", *, confirm=None, commit=None, **kwargs):
         """Start a scan and have the vendor confirm it: returns the commit body.
 
         ``confirm=False`` leaves the QR pending (the operator has not scanned
-        yet), which is what the refusal tests need.
+        yet), which is what the refusal tests need. ``commit`` adds fields to the
+        confirming poll: a personal create has to *name its target*, and the
+        target is a request field of the commit (not of the scan start), so the
+        member paths below pass ``commit={"agent_id": ...}``.
         """
         started = self.start(who, **kwargs)
         if confirm is False:
             return started
         _FakeVendor.confirm(**(confirm or {}))
-        return _ok(self.post(who, {"action": "poll",
-                                   "handle": started["handle"]}))
+        body = {"action": "poll", "handle": started["handle"]}
+        body.update(commit or {})
+        return _ok(self.post(who, body))
 
 
 @pytest.fixture
@@ -234,6 +247,11 @@ def make_flow(web_app, monkeypatch):
         web.member("member1", ["member"])
         web.member("member2", ["member"])
         web.member("admin2", ["tenant_admin"])
+        # The tenant's public path keeps the shared ``agent-a``; the member paths
+        # need a target of their own, so this fixture supplies one for member1
+        # (bound privately *and* listed in the registry — both halves of the
+        # delivered predicate for a personal instance's target).
+        web.private_agent(web.user_id("member1"), PERSONAL_TARGET)
         return _Flow(web)
 
     return _make
@@ -555,7 +573,7 @@ def test_a_write_refused_later_keeps_the_authorization_for_a_retry(flow):
     started = flow.start("member1")
     _FakeVendor.confirm()
     refused = flow.post("member1", {"action": "poll", "handle": started["handle"],
-                                    "agent_id": ""})
+                                    "agent_id": PERSONAL_TARGET})
     _refused(refused, 403, "quota_exceeded")
     assert _instances(flow, "personal") == []
 
@@ -566,7 +584,7 @@ def test_a_write_refused_later_keeps_the_authorization_for_a_retry(flow):
         recent_password=flow.web.ADMIN_PASSWORD, personal_instance_limit=-1)
     committed = _ok(flow.post("member1", {"action": "poll",
                                           "handle": started["handle"],
-                                          "agent_id": ""}))
+                                          "agent_id": PERSONAL_TARGET}))
 
     assert committed["outcome"] == "committed"
     assert committed["authorization_consumed"] is True
@@ -674,13 +692,11 @@ def test_the_same_bot_cannot_be_onboarded_twice_as_a_personal_instance(flow):
     refusal is the identity service's, inside the create's transaction.
     """
     shared = flow.scan("root")
-    flow.service.bind_agent(tenant_id=flow.tenant_id, agent_id="agent-a",
-                            private_owner_user_id=flow.user_id("member1"),
-                            origin="user_created")
 
     started = flow.start("member1")
     _FakeVendor.confirm()
-    refused = flow.post("member1", {"action": "poll", "handle": started["handle"]})
+    refused = flow.post("member1", {"action": "poll", "handle": started["handle"],
+                                    "agent_id": PERSONAL_TARGET})
     _refused(refused, 409, "app_conflict")
 
     assert [i["id"] for i in _instances(flow)] == [shared["instance_id"]]
@@ -688,7 +704,8 @@ def test_the_same_bot_cannot_be_onboarded_twice_as_a_personal_instance(flow):
     # with the operator's authorization intact, and the delivered occupancy rule
     # keeps refusing this bot for as long as the tenant runs it.
     _refused(flow.post("member1", {"action": "poll",
-                                   "handle": started["handle"]}),
+                                   "handle": started["handle"],
+                                   "agent_id": PERSONAL_TARGET}),
              409, "app_conflict")
     # A *different* bot is a different application, so the same member can still
     # onboard one: the refusal is about the app, not about personal scans.
@@ -698,7 +715,8 @@ def test_the_same_bot_cannot_be_onboarded_twice_as_a_personal_instance(flow):
     second = flow.start("member1")
     _FakeVendor.confirm(bot_token="wx-bot-token-fresh")
     claimed = _ok(flow.post("member1", {"action": "poll",
-                                        "handle": second["handle"]}))
+                                        "handle": second["handle"],
+                                        "agent_id": PERSONAL_TARGET}))
     assert claimed["outcome"] == "committed"
     row = flow.service.get_tenant_channel_instance_row(claimed["instance_id"])
     assert row["owner_user_id"] == flow.user_id("member1")
@@ -793,8 +811,8 @@ def test_connection_state_is_reported_apart_from_the_saved_row(flow, monkeypatch
 # ---------------------------------------------------------------------------
 
 def test_a_member_scan_creates_their_own_instance_and_not_the_tenants(flow):
-    """Scope, owner and Agent are the delivered personal create's, not ours."""
-    committed = flow.scan("member1")
+    """Scope, owner and target are the delivered personal create's, not ours."""
+    committed = flow.scan("member1", commit={"agent_id": PERSONAL_TARGET})
 
     assert committed["saved"] is True
     assert committed["instance_id"]
@@ -804,13 +822,15 @@ def test_a_member_scan_creates_their_own_instance_and_not_the_tenants(flow):
     assert row["scope"] == "user"
     assert row["owner_user_id"] == flow.user_id("member1")
     assert row["tenant_id"] == flow.tenant_id
+    # The route is the member's own private Agent, not the tenant's shared one.
+    assert row["agent_id"] == PERSONAL_TARGET
     # A member's instance is not the tenant's to administer.
     assert _instances(flow) == []
 
 
 def test_a_personal_scan_reports_saved_and_not_connected(flow):
     """Task 7.4's honest posture: configuration works, execution is not claimed."""
-    committed = flow.scan("member1")
+    committed = flow.scan("member1", commit={"agent_id": PERSONAL_TARGET})
 
     assert committed["saved"] is True
     assert committed["connected"] is False
@@ -820,7 +840,7 @@ def test_a_personal_scan_reports_saved_and_not_connected(flow):
 
 
 def test_another_member_cannot_read_a_personal_scan_back(flow):
-    committed = flow.scan("member1")
+    committed = flow.scan("member1", commit={"agent_id": PERSONAL_TARGET})
     response = flow.post("member2", {"action": "poll",
                                      "handle": committed["handle"]})
     missing = flow.post("member2", {"action": "poll", "handle": "no-such"})
@@ -829,7 +849,7 @@ def test_another_member_cannot_read_a_personal_scan_back(flow):
 
 
 def test_the_owner_can_read_their_own_personal_scan_back(flow):
-    committed = flow.scan("member1")
+    committed = flow.scan("member1", commit={"agent_id": PERSONAL_TARGET})
     replayed = _ok(flow.post("member1", {"action": "poll",
                                          "handle": committed["handle"]}))
     assert replayed["outcome"] == "replayed"
@@ -867,14 +887,13 @@ def test_only_the_bound_owner_reaches_a_private_agent_on_a_scanned_bot(
 
     # A private Agent of the owner's own: a personal route needs a target, and
     # the delivered rule is that the *instance* names it (the binding challenge
-    # deliberately refuses to introduce a second source of truth).
-    service.bind_agent(tenant_id=tenant, agent_id="agent-a",
-                       private_owner_user_id=owner, origin="user_created")
+    # deliberately refuses to introduce a second source of truth). The fixture
+    # bound ``PERSONAL_TARGET`` to member1 for exactly this.
     started = flow.start("member1")
     _FakeVendor.confirm()
     committed = _ok(flow.post("member1", {"action": "poll",
                                           "handle": started["handle"],
-                                          "agent_id": "agent-a"}))
+                                          "agent_id": PERSONAL_TARGET}))
     instance_id = committed["instance_id"]
     assert committed["saved"] is True
     assert channel_instances.personal_runtime_enabled("weixin") is True
@@ -905,7 +924,7 @@ def test_only_the_bound_owner_reaches_a_private_agent_on_a_scanned_bot(
     allowed = verdict(issuer="wx-app", subject="wx-user-1")
     assert allowed["allowed"] is True, allowed
     assert allowed["owner_user_id"] == owner
-    assert allowed["agent_id"] == "agent-a"
+    assert allowed["agent_id"] == PERSONAL_TARGET
     # Someone else on the owner's own bot, and another member of the same
     # tenant, are refusals — never served as the owner.
     assert verdict(issuer="wx-app", subject="wx-stranger")["reason"] == "sender_not_owner"
@@ -926,15 +945,20 @@ def test_a_cross_tenant_sender_cannot_reach_another_tenants_private_bot(
                      personal_channel_runtime_types=["weixin"])
     service = flow.service
 
-    own = flow.scan("member1")["instance_id"]
+    own = flow.scan("member1", commit={"agent_id": PERSONAL_TARGET})["instance_id"]
     other = flow.web.stack.other_tenant()
     foreign_token = service.login("foreign", IdentityStack.MEMBER_PASSWORD).token
     foreign_header = {"X-Tenant-ID": other["tenant_id"]}
+    # The second tenant's member needs a private target of their own: their
+    # personal create is the same predicate in a different tenant.
+    flow.web.private_agent(other["user_id"], FOREIGN_PERSONAL_TARGET,
+                           tenant_id=other["tenant_id"])
     started = _ok(flow.web.get(VENDOR_QR, token=foreign_token,
                                headers=foreign_header))
     _FakeVendor.confirm(bot_token="wx-bot-token-other")
     theirs = _ok(flow.web.post(VENDOR_QR,
-                               {"action": "poll", "handle": started["handle"]},
+                               {"action": "poll", "handle": started["handle"],
+                                "agent_id": FOREIGN_PERSONAL_TARGET},
                                token=foreign_token, headers=foreign_header))
     assert theirs["saved"] is True
     assert theirs["scope"] == "personal"
@@ -975,7 +999,7 @@ def test_the_shipped_deployment_keeps_personal_execution_closed(flow):
     assert "weixin" not in channel_instances.PERSONAL_RUNTIME_ACCEPTED_TYPES
     assert "weixin" not in channel_instances.PUBLIC_PERSONAL_INGRESS_TYPES
     # A scanned personal instance is still fully configured and owned.
-    committed = flow.scan("member1")
+    committed = flow.scan("member1", commit={"agent_id": PERSONAL_TARGET})
     assert committed["saved"] is True
     judgement = flow.service.resolve_personal_channel_inbound(
         instance_id=committed["instance_id"], provider="weixin",

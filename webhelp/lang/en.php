@@ -46,9 +46,7 @@ return [
     ],
 
     'demo' => [
-        'aria'     => 'RongAI product demo video',
-        'fallback' => 'Your browser does not support embedded video, ',
-        'link'     => 'click here to watch in a new tab',
+        'aria' => 'RongAI console chat interface',
     ],
 
     'quickstart' => [
@@ -571,21 +569,16 @@ return [
     'manual' => [
         'title'        => 'Product Manual',
         'title_accent' => 'Manual',
-        'lead'         => 'This manual is built around demonstrations: every topic lists the videos to be recorded and what each video covers. Video slots are already in place — drop in a file and it plays. Jump to the matching capability docs whenever you need principles or edge cases.',
-        'toc'            => 'Contents',
-        'covers_label'   => 'This video covers',
-        'docs_label'     => 'Related docs',
-        'pages_label'    => 'Related pages',
-        'cli_title'      => 'Terminal commands',
-        'slash_title'    => 'In-chat commands',
-        'video_pending'  => 'Video coming soon',
-        'video_fallback' => 'Your browser cannot play embedded video. Open the video file directly to watch it.',
+        'lead'         => 'This manual is built around real screenshots: every topic gives numbered steps that say which page to open, which control to use and what you should see. Screenshots come from the current member UI and open full size when clicked. Jump to the matching capability docs whenever you need principles or edge cases.',
+        'toc'          => 'Contents',
+        'shot_hint'    => 'Click a screenshot to open the full-size image',
+        'docs_label'   => 'Related docs',
+        'pages_label'  => 'Related pages',
 
         // 手册分组（顺序即页面与侧栏的分组顺序）
         'parts' => [
-            'workbench' => 'Workbench (daily use)',
-            'console'   => 'Admin Console (configuration and governance)',
-            'personal'  => 'Personal and reference',
+            'conversation' => 'Conversations and collaboration',
+            'resources'    => 'My resources',
         ],
 
         // 主题引用的站内页面标题
@@ -596,502 +589,127 @@ return [
             'architecture' => 'System architecture',
         ],
 
-        // 主题：nav / title / lead 为文字定位，videos.<视频 id> 为一个视频条目
+        // 主题：nav / title / lead 为文字定位，steps.<步骤 id>.{title,body} 为一个编号步骤；
+        // 步骤 id 与截图路径在 includes/content.php 声明，两处必须对齐。
         'topics' => [
-            // ===== 开始使用（工作台）=====
-            'start' => [
-                'nav'   => 'Getting started',
-                'title' => 'Getting started: sign in and find your way around',
-                'lead'  => 'Sign in with your account and learn what the workbench and the admin console each own.',
-                'videos' => [
-                    'login' => [
-                        'title'  => 'Signing in and the first password change',
-                        'covers' => [
-                            'Signing in with the account and password your admin assigned',
-                            'The temporary password on first sign-in and the forced password change',
-                            'What the restricted session can and cannot do before you change it',
-                            'How to get a new one-time temporary password when you forget yours',
-                        ],
-                    ],
-                    'navigate' => [
-                        'title'  => 'A tour of the two navigation areas',
-                        'covers' => [
-                            'The six workbench pages and what each one is for',
-                            'The four groups of the admin console and the pages in each',
-                            'How to switch between the two areas',
-                            'What the account menu at the bottom of the sidebar is for',
-                            'Menu visibility is decided by server-side authorization, not by hidden UI',
-                        ],
-                    ],
-                ],
-            ],
-
-            // ===== 如何对话（工作台）=====
+            // ===== 开始对话（对话与协作）=====
             'chat' => [
-                'nav'   => 'Chatting',
-                'title' => 'Chatting: pick an agent, send the task, attach files',
-                'lead'  => 'Start a conversation, choose the right agent, and hand over the task with attachments and commands.',
-                'videos' => [
-                    'new' => [
-                        'title'  => 'Starting a conversation and choosing an agent',
-                        'covers' => [
-                            'Starting a conversation from the sidebar or the history page',
-                            'Switching the agent used by this conversation above the input box',
-                            'Selecting several agents to run a multi-agent conversation',
-                            'Stating the task clearly: goal, scope and expected output',
-                        ],
+                'nav'   => 'Starting a conversation',
+                'title' => 'Starting a conversation: pick an agent, pick a model, send the task',
+                'lead'  => 'Sign in, open the workbench, start a conversation, choose the agent and the model, then send the task.',
+                'steps' => [
+                    'login' => [
+                        'title' => 'Sign in to the console',
+                        'body'  => 'Open the console and sign in with your account and password. If you were given a temporary password you must change it right away; until then the session can only change the password or sign out.',
                     ],
                     'compose' => [
-                        'title'  => 'The input area, control by control',
-                        'covers' => [
-                            'Sending a message and stopping a running task',
-                            'Switching the model used by this session',
-                            'Smart input refinement and voice input',
-                            'Clearing the context and steering the current task',
-                            'Typing / for the command menu and @ to reference an agent or file',
-                        ],
+                        'title' => 'Start a conversation and write the task',
+                        'body'  => 'Open Chat on the left, click New chat, and write the task in the input box: what to do, how far it should go, and what the output should look like. Attach files with the paperclip button, or drag them straight into the box.',
                     ],
-                    'attach' => [
-                        'title'  => 'Uploading files and folders',
-                        'covers' => [
-                            'Uploading a single file or an entire folder with the attach button',
-                            'Drag-and-drop and paste upload',
-                            'Confirming the attachment is submitted together with the message',
-                            'Finding the output under Preview and Files in the workspace',
-                        ],
+                    'agent' => [
+                        'title' => 'Choose the agent',
+                        'body'  => 'Switch the agent for this conversation with the agent button above the input box. It decides who does the work: skills and knowledge bases follow the agent, so the wrong pick means missing capabilities.',
                     ],
-                    'session' => [
-                        'title'  => 'Conversation history and everyday commands',
-                        'covers' => [
-                            'Searching the history page by title',
-                            'Pinning, renaming and archiving',
-                            'Restoring, continuing and deleting a conversation',
-                            'Common slash commands: /status, /context, /clear, /compact',
-                        ],
+                    'model' => [
+                        'title' => 'Choose the model',
+                        'body'  => 'The model button on the same toolbar switches the model used by this session. The same prompt reads differently on another model; for long tasks it pays to trial-run with a fast model first.',
+                    ],
+                    'run' => [
+                        'title' => 'Send it and read the result',
+                        'body'  => 'Press Enter and the assistant starts working; you can stop it mid-run or add requirements. Output lands in the workspace, and the conversation stays under Session History.',
                     ],
                 ],
+                'docs' => [], 'links' => [],
             ],
 
-            // ===== 选择智能体（工作台）=====
-            'agents' => [
-                'nav'   => 'Choosing an agent',
-                'title' => 'Choosing an agent: pick one that can do the job',
-                'lead'  => 'Browse the available agents on the workbench Agents page, check them, then start chatting.',
-                'videos' => [
-                    'browse' => [
-                        'title'  => 'Browsing agents and starting a conversation',
-                        'covers' => [
-                            'What each agent card shows',
-                            'How to tell whether an agent can be used for chat',
-                            'What each reason shown when an agent is unavailable actually means',
-                            'Refreshing the list and starting a conversation from a card',
-                        ],
+            // ===== 多智能体协同（对话与协作）=====
+            'team' => [
+                'nav'   => 'Multi-agent collaboration',
+                'title' => 'Multi-agent collaboration: several agents on one job',
+                'lead'  => 'Attach several agents to one conversation and let the lead agent split the work, delegate it and merge the results.',
+                'steps' => [
+                    'entry' => [
+                        'title' => 'Open the team collaboration entry',
+                        'body'  => 'On the Chat page, click the caret next to New chat and pick Group chat from the menu.',
+                    ],
+                    'pick' => [
+                        'title' => 'Pick the participating agents',
+                        'body'  => 'Tick the agents that take part in this conversation (at least two); the first one is the default agent for the session. Confirm and click Start chat.',
+                    ],
+                    'route' => [
+                        'title' => 'Send the task and watch it being routed',
+                        'body'  => 'Once the task is sent, each agent answers its own part in the group chat and the default agent coordinates; you can stop it or add requirements along the way.',
                     ],
                 ],
+                'docs' => ['multiagent'], 'links' => [],
             ],
 
-            // ===== 设置知识库（工作台）=====
+            // ===== 设置自己的知识库（我的资源）=====
             'knowledge' => [
-                'nav'   => 'Setting up knowledge',
-                'title' => 'Setting up knowledge: give the agent something to look up',
+                'nav'   => 'Setting up your knowledge base',
+                'title' => 'Setting up your knowledge base: give the agent something to look up',
                 'lead'  => 'Knowledge is organized per agent: create a category, add documents, then let the agent use it.',
-                'videos' => [
-                    'overview' => [
-                        'title'  => 'Knowledge structure and creating a category',
-                        'covers' => [
-                            'Knowledge is split per agent, and how shared differs from independent',
-                            'Switching agents at the top, and reading page and capacity counts',
-                            'Who maintains tenant-level knowledge versus private knowledge',
-                            'Creating a category and using nested category paths',
-                        ],
+                'steps' => [
+                    'open' => [
+                        'title' => 'Open the knowledge base',
+                        'body'  => 'Open Knowledge and check at the top left which agent you are editing: shared and independent knowledge do not see each other, so the wrong agent looks empty.',
+                    ],
+                    'category' => [
+                        'title' => 'Create a category',
+                        'body'  => 'Click New, then New category, and group material by topic with nested categories where it helps. A tidier structure pays off later when you search and maintain files.',
                     ],
                     'document' => [
-                        'title'  => 'Creating and importing documents',
-                        'covers' => [
-                            'New document: target category, file name and content',
-                            'Import document: md and txt are supported, TXT becomes Markdown',
-                            'The index syncs automatically after saving or importing',
-                            'Editing, moving and deleting documents',
-                        ],
+                        'title' => 'Create or import documents',
+                        'body'  => 'The same New menu holds New document for writing content directly and Import documents for md and txt (TXT is converted to Markdown). The index syncs automatically after saving or importing.',
                     ],
-                    'bind' => [
-                        'title'  => 'Letting an agent use the knowledge base',
-                        'covers' => [
-                            'When to use shared mode versus independent mode',
-                            'Switching the binding mode on the agent overview tab',
-                            'Using /knowledge in chat to inspect, toggle and search',
-                        ],
+                    'result' => [
+                        'title' => 'Put it to work in a conversation',
+                        'body'  => 'The binding is configured on the agent side (shared or independent). Ask a question in chat afterwards and the assistant searches these documents; you can check which document it cited.',
                     ],
                 ],
+                'docs' => ['knowledge'], 'links' => [],
             ],
 
-            // ===== 待办与定时任务（工作台）=====
-            'todo' => [
-                'nav'   => 'Todos and scheduled tasks',
-                'title' => 'Todos and scheduled tasks: let the assistant remember for you',
-                'lead'  => 'Record things to follow up as todos, and hand anything recurring to scheduled tasks.',
-                'videos' => [
-                    'todo' => [
-                        'title'  => 'My todos',
-                        'covers' => [
-                            'Creating a todo: title, description, category, priority and due time',
-                            'Filtering by category and priority, plus overdue only',
-                            'Editing, completing and deleting',
-                            'Todos the assistant creates in chat land in the same list',
-                        ],
+            // ===== 创建与配置自己的智能体（我的资源）=====
+            'agent' => [
+                'nav'   => 'Creating and configuring your agent',
+                'title' => 'Creating and configuring your agent: turn a skill into an agent',
+                'lead'  => 'Create an agent of your own, give it core files, a knowledge base and skills, then pick it directly in chat.',
+                'steps' => [
+                    'open' => [
+                        'title' => 'Open the agent list',
+                        'body'  => 'Open Agents on the left. Each card shows the identifier, availability and ownership; click a card to open its details.',
                     ],
-                    'task' => [
-                        'title'  => 'Scheduled tasks',
-                        'covers' => [
-                            'The task list and the next run time',
-                            'Running immediately and the enable toggle',
-                            'Editing the schedule and the action',
-                            'Why this page has no New button',
-                        ],
-                    ],
-                ],
-            ],
-
-            // ===== 创建与配置智能体（管理控制台）=====
-            'agents-admin' => [
-                'nav'   => 'Creating and configuring agents',
-                'title' => 'Creating and configuring agents: from a card to a working agent',
-                'lead'  => 'Under agent management in the admin console: create an agent, then configure it tab by tab.',
-                'videos' => [
                     'create' => [
-                        'title'  => 'Creating an agent',
-                        'covers' => [
-                            'Agent management, then Create agent',
-                            'How to fill in name, avatar, ID and responsibility',
-                            'Using copy from an existing agent to skip repeated configuration',
-                            'Choosing shared or independent knowledge',
-                        ],
+                        'title' => 'Create an agent',
+                        'body'  => 'Click New Agent and fill in name, avatar, ID and responsibility; use Copy from an existing agent to skip repeated configuration. Keep name and responsibility explicit: they are how you will pick the agent in chat later.',
                     ],
-                    'configure' => [
-                        'title'  => 'Configuring the overview tab',
-                        'covers' => [
-                            'Position, category and tags',
-                            'Greeting and persona summary',
-                            'Related scenarios and the default model',
-                            'Save, start a conversation and set as default',
-                        ],
-                    ],
-                    'capability' => [
-                        'title'  => 'Configuring capabilities and core files',
-                        'covers' => [
-                            'Skills: enable all, or only the checked ones',
-                            'Tools: the allow list and the deny list',
-                            'What SOP flows are for',
-                            'Core files (agent profile, user info, workspace rules, long-term memory) and the Tasks tab',
-                        ],
+                    'files' => [
+                        'title' => 'Configure core files and capabilities',
+                        'body'  => 'Under Core files maintain the role definition and working process, pick a shared or independent knowledge base on the Profile tab, and enable skills where you need them.',
                     ],
                 ],
+                'docs' => ['multiagent'], 'links' => [],
             ],
 
-            // ===== 记忆管理（管理控制台）=====
-            'memory' => [
-                'nav'   => 'Memory',
-                'title' => 'Memory: inspect and tidy what the agent remembers',
-                'lead'  => 'Memory is stored per agent: see what exists, open it, then tidy it or rebuild the index when needed.',
-                'videos' => [
-                    'view' => [
-                        'title'  => 'Inspecting memory and triggering a tidy-up',
-                        'covers' => [
-                            'Switching the agent with the agent selector',
-                            'The columns of the memory file list and what each memory type means',
-                            'Opening a memory file to read its content',
-                            'Two ways to trigger memory consolidation',
-                        ],
+            // ===== 消息渠道接入（我的资源）=====
+            'channel' => [
+                'nav'   => 'Message channel access',
+                'title' => 'Message channel access: bring the assistant into your daily tools',
+                'lead'  => 'Create a channel instance, fill in the credentials and enable it, then talk to the assistant from WeChat, Feishu and friends.',
+                'steps' => [
+                    'open' => [
+                        'title' => 'Open message channels',
+                        'body'  => 'Open Channels. The list shows the channels already connected, with their type and enabled state.',
                     ],
-                    'index' => [
-                        'title'  => 'Rebuilding the retrieval index',
-                        'covers' => [
-                            'When the index needs to be rebuilt',
-                            '/memory rebuild-index and /memory status',
-                            'How long it takes and what it affects',
-                        ],
+                    'add' => [
+                        'title' => 'Connect a channel and fill in the credentials',
+                        'body'  => 'Click Connect, choose the channel type, give it a display name, fill in the credentials that type requires (some channels support scan-to-connect), and bind the agent it should serve. The first agent you bind becomes the default.',
                     ],
                 ],
+                'docs' => ['channels'], 'links' => [],
             ],
 
-            // ===== 模型服务（管理控制台）=====
-            'models' => [
-                'nav'   => 'Model services',
-                'title' => 'Model services: connect models and assign them per capability',
-                'lead'  => 'Configure the basics and vendor credentials first, then pick a model for each capability.',
-                'videos' => [
-                    'basic' => [
-                        'title'  => 'Basic configuration',
-                        'covers' => [
-                            'Choosing a vendor and a model',
-                            'Agent settings: context length, dialogue turns, execution steps and deep thinking',
-                            'System language and task notifications',
-                        ],
-                    ],
-                    'vendor' => [
-                        'title'  => 'Vendor credentials',
-                        'covers' => [
-                            'The API Key and API Base to fill in when adding a vendor',
-                            'When to add a custom vendor',
-                            'Credentials are stored encrypted and never echoed back',
-                            'Confirmation when replacing or clearing credentials',
-                        ],
-                    ],
-                    'capability' => [
-                        'title'  => 'Picking a model for each capability',
-                        'covers' => [
-                            'How the primary and fallback models divide the work',
-                            'Image, speech, embedding and web search models',
-                            'Changing the embedding model requires rebuilding the index',
-                        ],
-                    ],
-                ],
-            ],
-
-            // ===== 消息渠道（管理控制台）=====
-            'channels' => [
-                'nav'   => 'Messaging channels',
-                'title' => 'Messaging channels: reach the assistant where you already work',
-                'lead'  => 'Create a channel instance at platform or tenant scope, fill in the credentials, then enable it.',
-                'videos' => [
-                    'scope' => [
-                        'title'  => 'The two configuration scopes and creating an instance',
-                        'covers' => [
-                            'How platform scope differs from tenant scope, and who maintains each',
-                            'Choosing the channel type and display name when adding a channel',
-                            'Binding agents, and what it means that the first binding is the default',
-                        ],
-                    ],
-                    'credentials' => [
-                        'title'  => 'Credential fields per channel',
-                        'covers' => [
-                            'What to fill in for Feishu, DingTalk and WeCom',
-                            'What to fill in for WeChat, QQ, Telegram, Slack and Discord',
-                            'An empty secret field means the value stays unchanged',
-                            'Credentials are stored encrypted and never echoed back',
-                        ],
-                    ],
-                    'scan' => [
-                        'title'  => 'Scan-to-connect, enabling and disconnecting',
-                        'covers' => [
-                            'WeChat sign-in by QR code and WeCom bot creation by QR code',
-                            'Creating a Feishu app by QR code',
-                            'QR code expiry and what to do when it times out',
-                            'Enable versus disconnect, and the extra password prompt for sensitive actions',
-                        ],
-                    ],
-                ],
-            ],
-
-            // ===== 权限与角色设置（管理控制台）=====
-            'roles' => [
-                'nav'   => 'Roles and permissions',
-                'title' => 'Roles and permissions: who gets which features and resources',
-                'lead'  => 'A role combines feature permissions and resource grants: configure it in the role editor, then assign it.',
-                'videos' => [
-                    'editor' => [
-                        'title'  => 'The role list and the role editor',
-                        'covers' => [
-                            'The columns of the role list and the built-in roles',
-                            'Creating a role and duplicating an existing one',
-                            'What each of the six editor tabs configures',
-                            'The code, name and permission points on the basics tab',
-                        ],
-                    ],
-                    'permissions' => [
-                        'title'  => 'Feature permissions and resource grants',
-                        'covers' => [
-                            'Feature permissions are grouped in a fixed catalogue you only check',
-                            'Select all on this page, and how paging affects it',
-                            'Checking the assignable models first, then setting defaults',
-                            'Resources and permissions are isolated per tenant',
-                        ],
-                    ],
-                    'assign' => [
-                        'title'  => 'Assigning roles to members',
-                        'covers' => [
-                            'Checking roles for a member under member management',
-                            'Where to see the effective roles of a member',
-                            'When a permission change takes effect',
-                            'How platform admins and tenant owners bypass checks',
-                        ],
-                    ],
-                ],
-            ],
-
-            // ===== 成员与组织（管理控制台）=====
-            'members' => [
-                'nav'   => 'Members and org',
-                'title' => 'Members and org: bring people in and place them',
-                'lead'  => 'Create members, assign roles, maintain the department hierarchy and handle password resets.',
-                'videos' => [
-                    'create' => [
-                        'title'  => 'Creating a member',
-                        'covers' => [
-                            'Selecting more than one target tenant',
-                            'Account, display name and temporary password',
-                            'Choosing department and position',
-                            'Assigning roles and handing the temporary password to the member',
-                        ],
-                    ],
-                    'password' => [
-                        'title'  => 'Editing, disabling and resetting passwords',
-                        'covers' => [
-                            'Changing display name, department and position',
-                            'Using the enable toggle to disable and restore an account',
-                            'Resetting a password to issue a one-time temporary password',
-                            'The member must change it right after signing in',
-                        ],
-                    ],
-                    'org' => [
-                        'title'  => 'Organization structure',
-                        'covers' => [
-                            'Creating a department: code, name, parent and order',
-                            'Adjusting the hierarchy by editing the parent',
-                            'Viewing the members of a department',
-                            'The rejection you get when parents form a cycle',
-                        ],
-                    ],
-                ],
-            ],
-
-            // ===== 租户与审计（管理控制台）=====
-            'tenant' => [
-                'nav'   => 'Tenants and audit',
-                'title' => 'Tenants and audit: mind the boundaries and keep the trail',
-                'lead'  => 'On the platform side, maintain tenants and use identity audit to see who did what and when.',
-                'videos' => [
-                    'tenant' => [
-                        'title'  => 'Tenant management',
-                        'covers' => [
-                            'Filtering by status and reading the list columns',
-                            'Why creating a tenant only asks for basic information',
-                            'The five tabs each submit their own changes',
-                            'The checks required before disabling, archiving and restoring',
-                        ],
-                    ],
-                    'audit' => [
-                        'title'  => 'Identity audit',
-                        'covers' => [
-                            'Searching by actor and action',
-                            'Filtering by result and time range',
-                            'The action, result and masked summary of one record',
-                            'What platform and tenant scopes each can see',
-                        ],
-                    ],
-                ],
-            ],
-
-            // ===== 个人账号设置（个人与参考）=====
-            'account' => [
-                'nav'   => 'Personal account',
-                'title' => 'Personal account: profile, password and preferences',
-                'lead'  => 'All in the account menu at the bottom of the sidebar: profile, password, preferences and tenant switching.',
-                'videos' => [
-                    'profile' => [
-                        'title'  => 'Personal profile',
-                        'covers' => [
-                            'The account menu, then Profile',
-                            'Changing the display name',
-                            'Changing the avatar',
-                            'Where to see your own effective roles',
-                        ],
-                    ],
-                    'password' => [
-                        'title'  => 'Changing the password and personal preferences',
-                        'covers' => [
-                            'Filling in the current and new password under account security',
-                            'Other signed-in sessions stop working after a password change',
-                            'Theme and interface language under personal preferences',
-                            'Preferences are stored in the current browser only',
-                        ],
-                    ],
-                    'tenant-switch' => [
-                        'title'  => 'Switching tenants',
-                        'covers' => [
-                            'Using the tenant selector in the top bar',
-                            'The page reloads for the newly selected tenant',
-                            'What you see when you belong to no tenant',
-                        ],
-                    ],
-                ],
-            ],
-
-            // ===== 命令速查（个人与参考）=====
-            'commands' => [
-                'nav'   => 'Command reference',
-                'title' => 'Command reference',
-                'lead'  => 'A quick look at terminal operations and in-chat commands; the two tables below are for lookup.',
-                'videos' => [
-                    'commands' => [
-                        'title'  => 'Terminal and in-chat commands in practice',
-                        'covers' => [
-                            'Terminal: start, stop, restart and check status',
-                            'In chat: /status, /context, /clear, /compact',
-                            'Skills and knowledge: /skill, /knowledge',
-                            'Memory and configuration: /memory, /config',
-                            'Run control: /cancel, /steer, /logs',
-                            'Slash command aliases can be customized',
-                        ],
-                    ],
-                ],
-            ],
-
-            // ===== 故障排查（个人与参考）=====
-            'troubleshoot' => [
-                'nav'   => 'Troubleshooting',
-                'title' => 'Troubleshooting: common symptoms and what to do',
-                'lead'  => 'Watch the walkthrough for the common symptoms, then match the exact cause against the reference below.',
-                'videos' => [
-                    'issues' => [
-                        'title'  => 'Troubleshooting walkthrough',
-                        'covers' => [
-                            'After signing in you only see the change password page',
-                            'Start conversation is unavailable or reports no permission',
-                            'You uploaded a file but the assistant cannot see it',
-                            'A document you just added is missing from the knowledge base',
-                            'A channel is configured but no messages arrive',
-                            'A forgotten password and sign-in rate limiting',
-                            'What a 401, 403 or 503 response actually means',
-                        ],
-                    ],
-                ],
-                'items' => [
-                    ['ask' => 'After signing in I only see the change password page', 'answer' => 'This is a restricted session that must change its password (a temporary password was used, or an admin just reset it). It can only view minimal self information, change the password and sign out. Finish the change and everything works normally; admin status is no exception.'],
-                    ['ask' => 'The Start conversation button on an agent card does nothing or reports no permission', 'answer' => 'That agent is currently not runnable, or your role cannot chat. The page states the concrete reason (for example, chatting is not available yet in this version, or you have no chat permission and should contact an admin).'],
-                    ['ask' => 'Creating a member is rejected because the temporary password is not acceptable', 'answer' => 'A temporary password needs at least 8 characters and must not be in the common password blocklist. The form returns structured validation errors naming the reason; change it and retry.'],
-                    ['ask' => 'I uploaded a file but the assistant cannot see it', 'answer' => 'Attachments only count when submitted with the message: after selecting the file, confirm it appears above the input box, then send that message. You can also drag the file straight into the conversation.'],
-                    ['ask' => 'A document I just added is missing from the knowledge base', 'answer' => 'First confirm the agent selected at the top left is the right one, since knowledge is split per agent and shared and independent stores are separate. Then check that the category you are looking at is not filtered out. Saving or importing syncs the index automatically.'],
-                    ['ask' => 'A channel is configured but no messages arrive', 'answer' => 'Configuring an instance and actually receiving messages are two different things: confirm the instance is enabled and that a usable agent is bound to it. Personal channels are off by default in enterprise deployments.'],
-                    ['ask' => 'I forgot my password', 'answer' => 'Ask an admin to reset it under member management. You receive a one-time temporary password and must set a new password immediately after signing in.'],
-                    ['ask' => 'Sign-in says to try again later (429)', 'answer' => 'Failed sign-in attempts passed the threshold and triggered rate limiting; retry later. The system returns the same message for an unknown account and a wrong password so that account existence is not disclosed.'],
-                    ['ask' => 'The API returns 401', 'answer' => 'The request has no valid session, or the credential expired. Sign in again and retry. If two credentials from different sources are sent together the server rejects the request with 400 mixed_credentials, so keep only one.'],
-                    ['ask' => 'The API returns 403', 'answer' => 'The current identity lacks the required eligibility or permission. When a resource is not visible to you the server returns 404 rather than 403, so that a status code cannot reveal whether the resource exists.'],
-                    ['ask' => 'The API returns 503', 'answer' => 'The identity store is unavailable. The system does not fall back to a default identity or a shared password; restore the identity store first. Consumers that are explicitly not enabled are also rejected with 503 without triggering downstream side effects.'],
-                    ['ask' => 'A skill or command execution is rejected', 'answer' => 'Under multi-tenancy, code execution is confined to an isolation boundary: path traversal, symlink escapes and cross-tenant directory references are all rejected. Until execution isolation is accepted, arbitrary code execution is denied by default, and enabling a higher privilege mode never breaks tenant isolation.'],
-                    ['ask' => 'Usage is rejected as over the limit', 'answer' => 'A quota hard limit was reached. Quotas are metered per tenant and identity; after a quota is lowered, already queued tasks are re-checked before they trigger and are rejected. Adjust the quota or reduce usage.'],
-                    ['ask' => 'Backup or restore fails', 'answer' => 'The service must be stopped before restoring (cow stop) or the restore is rejected. Backup archives contain API keys and personal data, so store them as sensitive files.'],
-                    ['ask' => 'Port 9899 is in use and the service will not start', 'answer' => 'Find the process holding it first: lsof -nP -i :9899 | grep LISTEN. Stop that process, or use another port (web_port in config.json, or the COW_WEB_PORT environment variable).'],
-                    ['ask' => 'The process refuses to start and the log mentions the identity mode', 'answer' => 'Check identity_mode in config.json. Only database is supported; explicitly configuring the old shared password mode makes startup fail and the system will not fall back to a default identity.'],
-                ],
-            ],
-
-            // ===== 深入阅读（个人与参考）=====
-            'further' => [
-                'nav'   => 'Further reading',
-                'title' => 'Further reading: the complete docs by topic',
-                'lead'  => 'When you need principles, parameters or edge cases, enter the matching capability docs from the groups below.',
-                'videos' => [
-                    'docs' => [
-                        'title'  => 'How to read the full capability docs',
-                        'covers' => [
-                            'Entering the matching capability doc by topic',
-                            'What the docs hold: principles, parameters and boundaries',
-                            'Every doc is a localized offline copy, so you never leave the site',
-                        ],
-                    ],
-                ],
-            ],
         ],
     ],
 

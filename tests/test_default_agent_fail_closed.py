@@ -82,6 +82,14 @@ class DefaultAgentResolutionTests(unittest.TestCase):
         self.svc.bind_agent(tenant_id=tenant or self.tid, agent_id=agent_id,
                             private_owner_user_id=owner)
 
+    def _member(self, username):
+        """A real member: ``private_owner_user_id`` is a foreign key to users."""
+        return self.svc.create_member(
+            actor_user_id=self.root["id"], tenant_id=self.tid,
+            operation="create-new", username=username,
+            display_name=username.title(), temporary_password="TempPass123!",
+            roles=[])["user_id"]
+
     # --- 7.1: a stale configured default falls back inside the tenant ---
 
     def test_a_configured_default_that_is_no_longer_bound_falls_back(self):
@@ -165,6 +173,70 @@ class DefaultAgentResolutionTests(unittest.TestCase):
 
         with patch("auth.service.get_identity_service", return_value=self.svc):
             _require_session_owner(self._ctx(), "sess-1", None)  # must not raise
+
+    # --- 4.8: a private Agent is never a resolution target ---------------
+
+    def test_a_tenant_default_that_points_at_a_private_agent_is_refused(self):
+        """Task 4.8 (绝不回落他人私有对象): the *tenant* entry is no exception.
+
+        ``appoint_tenant_default_agent`` refuses a private target, but "the write
+        path refuses" is a weaker claim than "the read path cannot serve one":
+        ``bind_agent`` still repairs a **missing** owner, so appointing a shared
+        Agent and then stamping an owner onto it (the re-authoring backfill does
+        exactly this) leaves a tenant default pointing at somebody's private
+        workspace — and so would a build older than the appointment guard.
+
+        Whenever that row exists, resolution must skip it: bob may not be
+        anchored into alice's persona, memory and files, and a *subject-less*
+        caller (a public consumer) must never be handed one either. The legal
+        shared candidate is what remains.
+        """
+        alice = self._member("alice")
+        bob = self._member("bob")
+        self._pin_roster([_profile("shared"), _profile("alice-private")])
+        self._bind("shared")
+        # The illegal state through product calls only: appoint while it is
+        # shared, then record the owner that was missing at bind time.
+        self._bind("alice-private")
+        self.svc.appoint_tenant_default_agent(
+            tenant_id=self.tid, agent_id="alice-private",
+            actor_user_id=self.root["id"])
+        self.svc.bind_agent(tenant_id=self.tid, agent_id="alice-private",
+                            private_owner_user_id=alice)
+        self.assertEqual(self.svc.tenant_default_agent_id(self.tid),
+                         "alice-private", "the illegal pointer is the premise")
+
+        member = self.svc.resolved_default_agent_id(self.tid, bob)
+        owner = self.svc.resolved_default_agent_id(self.tid, alice)
+        subject_less = self.svc.resolved_default_agent_id(self.tid)
+
+        self.assertNotEqual(member, "alice-private", (
+            "a tenant default pointing at a private Agent must not anchor a"
+            " member in the owner's workspace"))
+        self.assertNotEqual(owner, "alice-private", (
+            "even the owner must not be answered through the tenant entry: a"
+            " tenant default may only ever name a shared Agent"))
+        self.assertNotEqual(subject_less, "alice-private", (
+            "a subject-less caller has no private pool to be granted, so the"
+            " tenant entry must not hand it somebody's private Agent"))
+        self.assertEqual(member, "shared")
+        self.assertEqual(owner, "shared")
+        self.assertEqual(subject_less, "shared")
+
+    def test_a_subject_less_caller_is_never_handed_a_private_fallback(self):
+        """Task 4.8 (无合法候选拒绝): no user subject means no private pool.
+
+        The last-resort pool is the caller's **own** private Agents; a caller
+        with no ``user_id`` has none, so a tenant holding only private Agents
+        must be refused rather than answered with the smallest private id.
+        """
+        alice = self._member("alice")
+        self._pin_roster([_profile("alice-private")])
+        self._bind("alice-private", owner=alice)
+
+        resolved = self.svc.resolve_default_agent(self.tid)
+
+        self.assertEqual(resolved, {"agent_id": None, "source": None})
 
 
 if __name__ == "__main__":

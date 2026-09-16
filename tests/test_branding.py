@@ -319,12 +319,59 @@ class BrandingRouteTests(unittest.TestCase):
         data = self._json(response)
         self.assertEqual(set(data.keys()), {
             "enabled", "revision", "brand_name", "logo_description",
-            "logo_url", "favicon_url",
+            "logo_url", "favicon_url", "help_url",
         })
         # No management fields leak to the public endpoint.
         self.assertNotIn("can_manage", data)
         self.assertNotIn("limits", data)
         self.assertNotIn("defaults", data)
+
+    def test_public_endpoint_carries_the_help_site_target(self):
+        # The 「帮助与关于」 target rides the public projection. The repo ships the
+        # scaffold site config, so an unconfigured address must answer the local
+        # default rather than a placeholder or an empty target.
+        from channel.web.help_site import DEFAULT_HELP_SITE_URL
+
+        svc = self._service()
+        data = self._json(self._request(svc, "/api/branding/public", method="GET",
+                                        authenticated=False))
+        self.assertEqual(data["help_url"], DEFAULT_HELP_SITE_URL)
+
+        with patch.object(web_channel, "_resolve_help_site_url",
+                          lambda: "https://help.example.com/"):
+            declared = self._json(self._request(
+                svc, "/api/branding/public", method="GET", authenticated=False))
+        self.assertEqual(declared["help_url"], "https://help.example.com/")
+
+    def test_public_endpoint_survives_a_failing_help_site_read(self):
+        # A broken site config must degrade to the default target, never turn
+        # the public read into an error: login/nav/label all depend on it.
+        from channel.web.help_site import DEFAULT_HELP_SITE_URL
+
+        def _boom():
+            raise RuntimeError("site config unreadable")
+
+        svc = self._service()
+        with patch.object(web_channel, "_resolve_help_site_url", _boom):
+            response = self._request(svc, "/api/branding/public", method="GET",
+                                     authenticated=False)
+        self.assertEqual(response.status, "200 OK", response.data)
+        self.assertEqual(self._json(response)["help_url"], DEFAULT_HELP_SITE_URL)
+
+    def test_failing_brand_read_still_carries_the_help_site_target(self):
+        # The fallback payload keeps the same shape, so a consumer never has to
+        # branch on which branch of the handler answered.
+        from channel.web.help_site import DEFAULT_HELP_SITE_URL
+
+        svc = self._service()
+        with patch.object(BrandingService, "public_payload",
+                          side_effect=RuntimeError("storage corrupt")):
+            response = self._request(svc, "/api/branding/public", method="GET",
+                                     authenticated=False)
+        self.assertEqual(response.status, "200 OK", response.data)
+        data = self._json(response)
+        self.assertEqual(data["help_url"], DEFAULT_HELP_SITE_URL)
+        self.assertEqual(data["brand_name"], DEFAULT_BRAND_NAME)
 
     def test_management_read_requires_platform_admin_session(self):
         svc = self._service()

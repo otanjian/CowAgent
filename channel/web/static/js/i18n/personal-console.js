@@ -1,9 +1,21 @@
 // Per-domain i18n namespace: personal-console
-// The five member personal console pages (change enable-member-personal-console,
-// task 8.5). Kept in its own namespace so personal copy never collides with the
-// administrator pages that share a console shell: a member's "my Agents" is not
-// "Agent management", and none of this copy should read like a system
-// privilege. Every key exists in zh / zh-Hant / en per the parity contract.
+//
+// What survives here after change ``unify-console-by-data-scope`` (task 8.8)
+// retired the independent member personal console (``personal-console.js``):
+//
+//   * ``nav_group_personal`` / ``menu_personal_*`` — the labels the *retired*
+//     view ids keep in ``console.js``'s ``VIEW_META``. The ids are no longer
+//     hosted, registered or signed; they stay resolvable as **addresses** so a
+//     ``#view-personal-*`` bookmark forwards to the shared page that carries the
+//     same objects (task 8.1). An unresolvable hash would fall through to the
+//     area default instead of redirecting.
+//   * ``personal_action_clear`` — used by the shared resource-detail component
+//     (``console.js``) for "clear my saved parameters", which is a *formal*
+//     console verb, not a personal page.
+//
+// Every other personal key was deleted together with the module it belonged to
+// (109 keys x 3 languages, mirrored in ``tests/fixtures/console_i18n_snapshot.json``).
+// Every key here exists in zh / zh-Hant / en per the parity contract.
 (function () {
     'use strict';
     var registry = window.__cowI18N__ = window.__cowI18N__ || {};
@@ -15,87 +27,7 @@
             "menu_personal_memory": "我的记忆",
             "menu_personal_tools": "我的工具",
             "menu_personal_skills": "我的技能",
-
-            "personal_scope_self": "当前租户 · 本人",
-            "personal_scope_hint": "这些页面只显示你自己的资源，不需要系统管理权限。",
-            "personal_state_read": "可查看",
-            "personal_state_config": "可配置",
-            "personal_state_execution": "可执行",
-            "personal_state_execution_closed": "执行未开放",
-            "personal_execution_closed_hint": "该渠道类型尚未完成真实端到端验收，因此只允许保存配置，暂不建立连接。",
-            "personal_read_only_hint": "你可以查看该页面，但当前没有配置权限。",
-
-            "personal_agents_title": "我的智能体",
-            "personal_agents_desc": "本人创建或系统预置给本人的私有智能体。",
-            "personal_channels_title": "我的渠道",
-            "personal_channels_desc": "接入到本人的消息渠道实例。",
-            "personal_memory_title": "我的记忆",
-            "personal_memory_desc": "本人的长期记忆内容。",
-            "personal_tools_title": "我的工具",
-            "personal_tools_desc": "已授权给本人的工具参数与凭据引用。",
-            "personal_skills_title": "我的技能",
-            "personal_skills_desc": "已授权给本人的技能参数与凭据引用。",
-
-            "personal_loading": "加载中...",
-            "personal_load_failed": "加载失败，请稍后重试。",
-            "personal_denied_title": "无权访问",
-            "personal_denied_hint": "当前身份没有该页面的权限，或该能力未启用。",
-            "personal_denied_capability": "该能力在当前部署中未启用，请联系管理员了解开放计划。",
-            "personal_switch_member_personal_console": "「我的」个人控制台整体未启用",
-            "personal_switch_user_private_agent_management": "自建私有智能体未启用",
-            "personal_switch_personal_memory_write": "个人记忆写入未启用",
-            "personal_switch_personal_channel_onboarding": "个人渠道接入未启用",
-            "personal_switch_personal_channel_runtime": "个人渠道连接未启用",
-            "personal_empty": "暂无数据",
-            "personal_total": "共 {n} 项",
-            "personal_search_placeholder": "搜索",
-            "personal_page_prev": "上一页",
-            "personal_page_next": "下一页",
-            "personal_refresh": "刷新",
-            "personal_saved": "已保存",
-            "personal_save_failed": "保存失败，请稍后重试。",
-            "personal_unsaved_warning": "有未保存的更改，确定离开？",
-            "personal_badge_private": "私有",
-            "personal_badge_system": "系统预置",
-
-            "personal_action_create": "新建",
-            "personal_action_edit": "编辑",
-            "personal_action_enable": "启用",
-            "personal_action_disable": "停用",
-            "personal_action_delete": "删除",
-            "personal_action_configure": "配置",
-            "personal_action_clear": "清除配置",
-            "personal_action_revoke": "撤销凭据",
-            "personal_action_bind": "绑定账号",
-            "personal_action_unbind": "解除绑定",
-
-            "personal_agents_empty": "你还没有自建智能体。",
-            "personal_agents_create": "新建智能体",
-            "personal_agents_system_hint": "系统预置的助手不可删除。",
-            "personal_agents_name": "名称",
-
-            "personal_channels_empty": "你还没有个人渠道。",
-            "personal_channels_create": "接入个人渠道",
-            "personal_channels_type": "渠道类型",
-            "personal_channels_display_name": "名称",
-            "personal_channels_binding_pending": "待绑定",
-            "personal_channels_binding_linked": "已绑定",
-            "personal_channels_binding_unlinked": "未绑定",
-            "personal_channels_governance_disabled": "已被管理员停用",
-            "personal_channels_active": "已连接",
-            "personal_channels_inactive": "未启用",
-            "personal_channels_bind_hint": "在外部 IM 中向机器人发送下面的验证码完成绑定。",
-            "personal_channels_not_ready": "该渠道类型当前未开放个人接入。",
-            "personal_channels_credentials": "填写渠道凭据",
-            "personal_channels_password": "当前账号密码",
-
-            "personal_memory_empty": "你还没有个人记忆。",
-            "personal_memory_revision_conflict": "内容已被其他操作更新，请重新加载。",
-
-            "personal_resources_empty": "暂无可配置的已授权资源。",
-            "personal_resources_configured": "已配置",
-            "personal_resources_unconfigured": "未配置",
-            "personal_resources_public_hint": "这里只保存你本人的参数，不会修改公共安装、正文或凭据。"
+            "personal_action_clear": "清除配置"
         },
         "zh-Hant": {
             "nav_group_personal": "我的",
@@ -104,87 +36,7 @@
             "menu_personal_memory": "我的記憶",
             "menu_personal_tools": "我的工具",
             "menu_personal_skills": "我的技能",
-
-            "personal_scope_self": "目前租戶 · 本人",
-            "personal_scope_hint": "這些頁面只顯示你自己的資源，不需要系統管理權限。",
-            "personal_state_read": "可檢視",
-            "personal_state_config": "可設定",
-            "personal_state_execution": "可執行",
-            "personal_state_execution_closed": "執行未開放",
-            "personal_execution_closed_hint": "該渠道類型尚未完成真實端到端驗收，因此只允許儲存設定，暫不建立連線。",
-            "personal_read_only_hint": "你可以檢視該頁面，但目前沒有設定權限。",
-
-            "personal_agents_title": "我的智慧體",
-            "personal_agents_desc": "本人建立或系統預置給本人的私有智慧體。",
-            "personal_channels_title": "我的渠道",
-            "personal_channels_desc": "接入到本人的訊息渠道執行個體。",
-            "personal_memory_title": "我的記憶",
-            "personal_memory_desc": "本人的長期記憶內容。",
-            "personal_tools_title": "我的工具",
-            "personal_tools_desc": "已授權給本人的工具參數與憑證引用。",
-            "personal_skills_title": "我的技能",
-            "personal_skills_desc": "已授權給本人的技能參數與憑證引用。",
-
-            "personal_loading": "載入中...",
-            "personal_load_failed": "載入失敗，請稍後重試。",
-            "personal_denied_title": "無權存取",
-            "personal_denied_hint": "目前身分沒有該頁面的權限，或該能力未啟用。",
-            "personal_denied_capability": "該能力在目前部署中未啟用，請聯絡管理員了解開放計畫。",
-            "personal_switch_member_personal_console": "「我的」個人主控台整體未啟用",
-            "personal_switch_user_private_agent_management": "自建私有智慧體未啟用",
-            "personal_switch_personal_memory_write": "個人記憶寫入未啟用",
-            "personal_switch_personal_channel_onboarding": "個人渠道接入未啟用",
-            "personal_switch_personal_channel_runtime": "個人渠道連線未啟用",
-            "personal_empty": "暫無資料",
-            "personal_total": "共 {n} 項",
-            "personal_search_placeholder": "搜尋",
-            "personal_page_prev": "上一頁",
-            "personal_page_next": "下一頁",
-            "personal_refresh": "重新整理",
-            "personal_saved": "已儲存",
-            "personal_save_failed": "儲存失敗，請稍後重試。",
-            "personal_unsaved_warning": "有未儲存的變更，確定離開？",
-            "personal_badge_private": "私有",
-            "personal_badge_system": "系統預置",
-
-            "personal_action_create": "新增",
-            "personal_action_edit": "編輯",
-            "personal_action_enable": "啟用",
-            "personal_action_disable": "停用",
-            "personal_action_delete": "刪除",
-            "personal_action_configure": "設定",
-            "personal_action_clear": "清除設定",
-            "personal_action_revoke": "撤銷憑證",
-            "personal_action_bind": "綁定帳號",
-            "personal_action_unbind": "解除綁定",
-
-            "personal_agents_empty": "你還沒有自建智慧體。",
-            "personal_agents_create": "新增智慧體",
-            "personal_agents_system_hint": "系統預置的助手不可刪除。",
-            "personal_agents_name": "名稱",
-
-            "personal_channels_empty": "你還沒有個人渠道。",
-            "personal_channels_create": "接入個人渠道",
-            "personal_channels_type": "渠道類型",
-            "personal_channels_display_name": "名稱",
-            "personal_channels_binding_pending": "待綁定",
-            "personal_channels_binding_linked": "已綁定",
-            "personal_channels_binding_unlinked": "未綁定",
-            "personal_channels_governance_disabled": "已被管理員停用",
-            "personal_channels_active": "已連線",
-            "personal_channels_inactive": "未啟用",
-            "personal_channels_bind_hint": "在外部 IM 中向機器人發送下面的驗證碼完成綁定。",
-            "personal_channels_not_ready": "該渠道類型目前未開放個人接入。",
-            "personal_channels_credentials": "填寫渠道憑據",
-            "personal_channels_password": "目前帳號密碼",
-
-            "personal_memory_empty": "你還沒有個人記憶。",
-            "personal_memory_revision_conflict": "內容已被其他操作更新，請重新載入。",
-
-            "personal_resources_empty": "暫無可設定的已授權資源。",
-            "personal_resources_configured": "已設定",
-            "personal_resources_unconfigured": "未設定",
-            "personal_resources_public_hint": "這裡只儲存你本人的參數，不會修改公共安裝、正文或憑證。"
+            "personal_action_clear": "清除設定"
         },
         "en": {
             "nav_group_personal": "Mine",
@@ -193,87 +45,7 @@
             "menu_personal_memory": "My Memory",
             "menu_personal_tools": "My Tools",
             "menu_personal_skills": "My Skills",
-
-            "personal_scope_self": "Current tenant · you",
-            "personal_scope_hint": "These pages only show your own resources and need no system-administration rights.",
-            "personal_state_read": "Readable",
-            "personal_state_config": "Configurable",
-            "personal_state_execution": "Executable",
-            "personal_state_execution_closed": "Execution closed",
-            "personal_execution_closed_hint": "This channel type has not completed real end-to-end acceptance, so configuration may be saved but no connection is made yet.",
-            "personal_read_only_hint": "You may view this page, but you cannot configure it right now.",
-
-            "personal_agents_title": "My Agents",
-            "personal_agents_desc": "Private Agents you created, or that were provisioned to you.",
-            "personal_channels_title": "My Channels",
-            "personal_channels_desc": "Channel instances attached to you.",
-            "personal_memory_title": "My Memory",
-            "personal_memory_desc": "Your own long-term memory.",
-            "personal_tools_title": "My Tools",
-            "personal_tools_desc": "Tool parameters and credential references granted to you.",
-            "personal_skills_title": "My Skills",
-            "personal_skills_desc": "Skill parameters and credential references granted to you.",
-
-            "personal_loading": "Loading...",
-            "personal_load_failed": "Failed to load. Please try again later.",
-            "personal_denied_title": "Access denied",
-            "personal_denied_hint": "Your identity does not have this page, or the capability behind it is not enabled.",
-            "personal_denied_capability": "This capability is not enabled in this deployment. Ask an administrator about the rollout plan.",
-            "personal_switch_member_personal_console": "The \"Mine\" personal console is not enabled",
-            "personal_switch_user_private_agent_management": "Creating your own private Agents is not enabled",
-            "personal_switch_personal_memory_write": "Writing personal memory is not enabled",
-            "personal_switch_personal_channel_onboarding": "Personal channel onboarding is not enabled",
-            "personal_switch_personal_channel_runtime": "Personal channel connections are not enabled",
-            "personal_empty": "Nothing here yet",
-            "personal_total": "{n} item(s)",
-            "personal_search_placeholder": "Search",
-            "personal_page_prev": "Previous",
-            "personal_page_next": "Next",
-            "personal_refresh": "Refresh",
-            "personal_saved": "Saved",
-            "personal_save_failed": "Save failed. Please try again later.",
-            "personal_unsaved_warning": "You have unsaved changes. Leave anyway?",
-            "personal_badge_private": "Private",
-            "personal_badge_system": "Provisioned",
-
-            "personal_action_create": "Create",
-            "personal_action_edit": "Edit",
-            "personal_action_enable": "Enable",
-            "personal_action_disable": "Disable",
-            "personal_action_delete": "Delete",
-            "personal_action_configure": "Configure",
-            "personal_action_clear": "Clear configuration",
-            "personal_action_revoke": "Revoke credential",
-            "personal_action_bind": "Link account",
-            "personal_action_unbind": "Unlink",
-
-            "personal_agents_empty": "You have not created an Agent yet.",
-            "personal_agents_create": "New Agent",
-            "personal_agents_system_hint": "A provisioned assistant cannot be deleted.",
-            "personal_agents_name": "Name",
-
-            "personal_channels_empty": "You have no personal channel yet.",
-            "personal_channels_create": "Add a personal channel",
-            "personal_channels_type": "Channel type",
-            "personal_channels_display_name": "Name",
-            "personal_channels_binding_pending": "Pending link",
-            "personal_channels_binding_linked": "Linked",
-            "personal_channels_binding_unlinked": "Not linked",
-            "personal_channels_governance_disabled": "Disabled by an administrator",
-            "personal_channels_active": "Connected",
-            "personal_channels_inactive": "Not enabled",
-            "personal_channels_bind_hint": "Send the code below to the bot in the external IM to finish linking.",
-            "personal_channels_not_ready": "This channel type is not open for personal onboarding yet.",
-            "personal_channels_credentials": "Channel credentials",
-            "personal_channels_password": "Your account password",
-
-            "personal_memory_empty": "You have no personal memory yet.",
-            "personal_memory_revision_conflict": "The content was updated elsewhere. Please reload.",
-
-            "personal_resources_empty": "No granted resource is configurable right now.",
-            "personal_resources_configured": "Configured",
-            "personal_resources_unconfigured": "Not configured",
-            "personal_resources_public_hint": "Only your own parameters are stored here; the shared install, body and credentials are untouched."
+            "personal_action_clear": "Clear configuration"
         }
     };
 })();

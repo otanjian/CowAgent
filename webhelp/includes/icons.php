@@ -78,6 +78,7 @@ function render_icon(string $name, string $class = ''): string
             'key' => '<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8.3-8.3"/><path d="m15.5 4.5 4 4"/>',
             'server' => '<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
             'building' => '<path d="M3 21h18"/><path d="M5 21V6a2 2 0 012-2h6a2 2 0 012 2v15"/><path d="M15 21V10h2a2 2 0 012 2v9"/><path d="M9 8h2M9 12h2M9 16h2"/>',
+            'zoom' => '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 15.5 8.5 10l4 4"/><path d="M13.5 13.5 16 11l5 5"/><circle cx="8.5" cy="8.5" r="1.5"/>',
         ];
     }
 

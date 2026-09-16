@@ -21,6 +21,11 @@ function node() {
 function setup(payload) {
     const nodes = new Map();
     const ctx = { agentCatalog: [], activeAgentId: 'owner', defaultAgentId: 'old-default',
+        // None of these cases exercise the separate use-range read, so the
+        // pickers run on the management catalogue — the documented fallback for
+        // a backend that cannot serve that read. ``chat_picker_use_range``
+        // covers the split itself.
+        chatAgentCatalog: null,
         sessionId: 'existing-session', currentView: 'chat', _authEpoch: 1, tenant: 'tenant-a',
         selectedAdminAgentId: '', _sessCfg: null, channelInstances: [], rosterRevision: '',
         sessionStorage: { getItem: () => ctx.tenant },
@@ -41,6 +46,9 @@ function setup(payload) {
         ['function renderComposerAgentMenu()', '/** Jump from the composer'],
         ['function currentTeamIds()', 'function setTeamMembers('],
     ]) vm.runInContext(section(start, end), ctx);
+    // The roster the pickers read is a read of its own (the workbench
+    // projection); these cases supply it through ``chatAgentCatalog`` instead.
+    ctx.loadChatAgentCatalog = () => Promise.resolve();
     return { ctx, get: id => ctx.document.getElementById(id) };
 }
 const projected = (id, extra = {}) => ({ id, name: id, can_chat: true, is_default: false, ...extra });

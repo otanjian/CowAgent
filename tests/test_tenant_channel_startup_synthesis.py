@@ -26,6 +26,7 @@ from channel.channel_instances import (
     load_tenant_channel_instances,
     resolve_channel_instances,
 )
+from tests._helpers import install_personal_target_roster, personal_channel_target
 
 MASTER_KEY = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
 
@@ -286,12 +287,27 @@ class PersonalInstanceStartupTests(_StartupFixture):
     """
 
     MEMBER_PW = "Str0ngMemberFinal"
+    #: ``agent-a`` stays the tenant's shared Agent — the *public* instance's own
+    #: target — while ``target-alice`` is the private Agent the member-owned row
+    #: routes to. Both have to be in the roster, which is the registry half of
+    #: the personal target predicate the startup path applies (task 2.6).
+    ROSTER = ("agent-a", "target-alice")
+    TARGET = "target-alice"
+
+    def setUp(self):
+        install_personal_target_roster(self, *self.ROSTER)
+        super().setUp()
 
     def _patch_runtime(self, enabled):
         from unittest.mock import patch
         import config
-        patcher = patch.object(config, "conf",
-                               return_value={"personal_channel_runtime": enabled})
+        # Only the one switch is narrowed, on top of the configuration in force.
+        # A one-key stub conf would erase the installed roster with it, and the
+        # row would then be skipped as "target unusable" instead of for the
+        # reason under test.
+        settings = dict(config.conf())
+        settings["personal_channel_runtime"] = enabled
+        patcher = patch.object(config, "conf", return_value=settings)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -312,9 +328,14 @@ class PersonalInstanceStartupTests(_StartupFixture):
         # (task 6.3), so sharing the tenant's App ID would refuse the create
         # before any startup question is asked.
         bundle["feishu_app_id"] = "cli_personal_startup"
+        # The member's own private Agent: a personal row may not name the tenant's
+        # shared one, and the target has to be present and enabled in the roster
+        # for the startup gate to consider the row connectable at all.
+        personal_channel_target(self.svc, tenant_id=self.ta, user_id=owner,
+                                agent_id=self.TARGET)
         return self.svc.create_personal_channel_instance(
             actor_user_id=owner, tenant_id=self.ta, channel_type="feishu",
-            display_name="Alice Bot", agent_id="agent-a",
+            display_name="Alice Bot", agent_id=self.TARGET,
             credentials=bundle, recent_password=self.MEMBER_PW)
 
     def _load(self):

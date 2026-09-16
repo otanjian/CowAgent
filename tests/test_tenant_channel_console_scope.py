@@ -3,10 +3,11 @@
 
 Change ``tenant-owned-message-channels`` keeps ONE console page key
 (``admin.channels``) and reports the *relative* scope per operator: a platform
-admin sees the instance-level page, a tenant admin sees its own tenant's. The
-projection is display-only, so each scope must ALSO be enforced at the
-interface — a page that reports ``available`` must not be a hole, and a scope
-that the projection withholds must be refused by the handler.
+admin sees the instance-level page, a tenant admin sees its own tenant's, and —
+since task 6.1 — a plain member sees their own connections on the same business
+surface (``scope: "self"``). The projection is display-only, so each scope must
+ALSO be enforced at the interface — a page that reports ``available`` must not be
+a hole, and a scope that the projection withholds must be refused by the handler.
 
 The interface check matters more than usual here: the HTTP-method policy
 processor classifies a route but deliberately does not duplicate handler
@@ -93,11 +94,21 @@ class ProjectionTests(_ScopeFixture):
         self.assertTrue(page["available"], page)
         self.assertEqual(page["scope"], "tenant")
 
-    def test_a_plain_member_gets_no_channel_administration(self):
+    def test_a_plain_member_gets_the_same_page_as_their_own_surface(self):
+        """One page, two relative scopes (task 6.1).
+
+        The member is no longer told the channel page is closed for them: the
+        tenant business interface answers them with their own connections, so the
+        projection reports ``self`` and the object range — proven per request by
+        ``auth.object_scope`` — is what limits them. A closed page in front of a
+        working surface is the defect this change removes.
+        """
         page = self._page(self.token_member)
-        self.assertFalse(page["read_allowed"], page)
-        self.assertFalse(page["actions"].get("create"), page)
-        self.assertFalse(page["actions"].get("update"), page)
+        self.assertTrue(page["available"], page)
+        self.assertTrue(page["read_allowed"], page)
+        self.assertEqual(page["scope"], "self")
+        self.assertTrue(page["actions"].get("create"), page)
+        self.assertTrue(page["actions"].get("update"), page)
 
     def test_the_channel_page_is_no_longer_reported_as_closed(self):
         for token in (self.token_root, self.token_admin):

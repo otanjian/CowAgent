@@ -16,8 +16,12 @@ fork the same question has three different answers, and only one of them is
                    enough: the owner check (``_require_private_owner``) runs
                    *before* anything is read, and an administrator is not an
                    exception.
-``shared``         the tenant's shared Agent memory, which any member of that
-                   tenant with ``memory.read`` may read.
+``shared``         the tenant's shared Agent memory. This is a *tenant resource*,
+                   so it takes the tenant-administration qualification: an
+                   ordinary member holding ``chat.use`` on that Agent is refused
+                   (``not_authorized``) rather than shown a filtered page — the
+                   same management range ``auth.object_scope`` gives the roster
+                   read (change ``unify-console-by-data-scope``, task 2.1).
 
 The handler keeps its upstream shape (one ``try``, one ``except``), and this
 module owns the two things that must not be spread across handlers: resolving a
@@ -39,6 +43,9 @@ Deliberately refused, never guessed
 * an address that does not resolve (``unknown_agent`` / ``unknown_entry``);
 * a target owned by someone else (``not_owner``) — checked before the read, so
   a refusal cannot be a filtered read;
+* a **shared** target asked for without the management qualification
+  (``not_authorized``) — again before the read, so no shared entry, total or body
+  is produced for a caller outside its range;
 * a path that is not a plain file inside the root (``unsafe_path``).
 
 Codes are stable strings in the JSON body (``{"status": "error", "code": ...,
@@ -56,20 +63,26 @@ another tenant" from "does not exist" is exactly the existence leak the change
 forbids. The 403 a foreign tenant's *member* receives comes from the HTTP gate,
 which refuses the tenant selection itself (no membership), not from here.
 
-Read-only stage
----------------
-Both methods are reads. The personal scope's payload carries
-``"read_only": true`` because this surface serves no write verb for it: writes
-go to ``POST /api/memory/personal`` (which the response's ``id``/``revision``
-address). The Agent scopes' edit path is the workspace file API, and their
-payloads make no claim about it.
+Reading and writing
+-------------------
+The personal scope's payload carries ``"read_only": true`` because this surface
+serves no write verb for it: writes go to ``POST /api/memory/personal`` (which
+the response's ``id``/``revision`` address). The Agent scopes' payloads derive
+``read_only`` from their category and ``actions`` from the caller's range, and
+their write verbs are ``/api/memory/save|delete|clear``.
+
+An Agent memory root is, in database mode, the **tenant shared root**: the same
+bytes carry a private Agent's memory and the tenant's shared Agent memory.
+Reads tolerate that; writes cannot, so :func:`_require_root_writable` demands
+qualification for *every* scope reaching the root. See that function for the
+measurement that forced it.
 
 Client contract (for the console page, task 9.1)
 ------------------------------------------------
 ``personal`` rows are addressed by ``id`` (= ``filename`` = the entry id
 relative to the *personal root*, which is ``<tenant>/users/<user_id>``, **not**
 the workspace root). A page that edits must route those rows to
-``/api/memory/personal``; this surface is a read and reports ``read_only``.
+``/api/memory/personal``.
 """
 
 from __future__ import annotations
@@ -79,6 +92,8 @@ from typing import Any, Dict, List, Optional
 
 import web
 
+from auth.object_scope import MANAGE
+
 from common.log import logger
 from common import safe_fs
 
@@ -87,6 +102,11 @@ from common import safe_fs
 SCOPE_PERSONAL = "personal"
 SCOPE_PRIVATE_AGENT = "private_agent"
 SCOPE_SHARED = "shared"
+
+#: The picker value that means "my own user memory". A distinct non-empty token,
+#: not ``""``: an empty value is how the console spells "nothing chosen yet", and
+#: the two must not collapse or the personal domain becomes unreachable.
+MEMORY_PERSONAL_VALUE = "personal"
 
 #: The scope names a caller may pass. Anything else is ``unknown_scope``: a
 #: typo must not silently read the caller's own memory, and an omitted scope is
@@ -122,8 +142,17 @@ CODE_ENTRY_REQUIRED = "entry_required"
 CODE_INVALID_ENTRY = "invalid_entry"
 CODE_INVALID_PAGING = "invalid_paging"
 CODE_NOT_OWNER = "not_owner"
+CODE_NOT_AUTHORIZED = "not_authorized"
 CODE_UNSAFE_PATH = "unsafe_path"
 CODE_MEMORY_UNAVAILABLE = "memory_unavailable"
+#: The write verbs here serve the *Agent* domain only. The member's own memory
+#: already has a versioned write surface (``POST /api/memory/personal``); a
+#: second path to the same files would be the "second memory CRUD" this seam's
+#: docstring forbids, and the two would drift on revision semantics.
+CODE_PERSONAL_WRITE_ENDPOINT = "personal_write_endpoint"
+CODE_READ_ONLY_CATEGORY = "read_only_category"
+CODE_UNKNOWN_ACTION = "unknown_action"
+CODE_INDEX_PENDING = "index_pending"
 
 _STATUS_LINES = {
     400: "400 Bad Request",
@@ -326,6 +355,21 @@ def _resolve_agent_target(ctx, agent_id: str, requested: Optional[str]):
         # scope decision can never depend on a check someone reorders later.
         raise MemoryScopeError(CODE_NOT_OWNER, "该记忆属于其他成员", status=403)
 
+    # The target set is filtered on the server, by the same authority the roster
+    # read uses (task 2.1/2.2): an ordinary member has their own personal memory
+    # and their own private Agents' memory; a shared Agent's memory is a tenant
+    # resource, so reading *it* — and not merely writing it — needs the
+    # tenant-administration qualification. Holding ``chat.use`` on that Agent is
+    # not management access, so a member asking for it is refused outright rather
+    # than served a filtered page (spec ``database-memory-console``: no shared
+    # entries, statistics or body).
+    from auth.object_scope import ObjectScope
+
+    if kind == SCOPE_SHARED and not ObjectScope.from_context(ctx).allows_agent_memory(binding):
+        raise MemoryScopeError(
+            CODE_NOT_AUTHORIZED,
+            "共享智能体记忆需要管理资格", status=403)
+
     if requested and requested != kind:
         declared = "私有智能体" if requested == SCOPE_PRIVATE_AGENT else "共享智能体"
         raise MemoryScopeError(CODE_AMBIGUOUS_TARGET,
@@ -371,7 +415,53 @@ def list_response(ctx, params) -> str:
         payload["read_only"] = True
     else:
         payload = _agent_list(ctx, target)
+    # Sent with every list so the page can build its target picker from the same
+    # answer the read is authorised by (task 5.1, mirroring the channel
+    # candidates of task 6.2). Built from the resolved target's own caller, so a
+    # picker can never offer a target this very request would be refused.
+    payload["targets"] = target_list(ctx)
     return _envelope(target, payload)
+
+
+def target_list(ctx) -> List[Dict[str, Any]]:
+    """The memory targets this caller may address, ownership included.
+
+    The page's choose-a-target component must not offer a domain the read/edit
+    would refuse, and only the server knows which those are — so the set is
+    derived from the *same* predicate the request path runs
+    (:meth:`auth.object_scope.ObjectScope.allows_agent_memory`), never from the
+    caller's role name nor from the console's own Agent catalogue. The console's
+    catalogue is a **use** range: for a member it contains the tenant's shared
+    Agents, whose memory is a tenant resource a member may not manage. Offering
+    those is exactly the defect this list removes (spec
+    ``database-memory-console``: 共享智能体记忆需要管理资格).
+
+    The member's own user memory is always present and is listed first: it is the
+    one domain that needs no Agent and no grant, and it is what a member who owns
+    no private Agent has to reach.
+    """
+    wc = _web_channel()
+    targets: List[Dict[str, Any]] = [{
+        "kind": "personal",
+        "value": MEMORY_PERSONAL_VALUE,
+        "scope": SCOPE_PERSONAL,
+    }]
+    for profile, _tenant_default, _can_chat, unavailable_reason in (
+            wc._iter_tenant_agents(ctx, action=MANAGE, include_disabled=True)):
+        binding = wc._agent_binding_for(ctx, profile.id) or {}
+        owns = binding.get("private_owner_user_id") == getattr(ctx, "user_id", None)
+        targets.append({
+            "kind": "agent",
+            "value": profile.id,
+            "agent_id": profile.id,
+            "name": profile.name,
+            "scope": SCOPE_PRIVATE_AGENT if owns else SCOPE_SHARED,
+            # A stopped Agent still holds memory worth reading or clearing —
+            # stopping refuses new *traffic*, not access to what is stored — so
+            # it stays offered and says what it is rather than disappearing.
+            "enabled": unavailable_reason != "agent_disabled",
+        })
+    return targets
 
 
 def _personal_list(service, page: int, page_size: int) -> Dict[str, Any]:
@@ -426,7 +516,84 @@ def _agent_list(ctx, target: MemoryTarget) -> Dict[str, Any]:
         # A symlinked entry is invisible everywhere it is observable, so it is
         # removed from the page *and* from the total it was counted in.
         result["total"] = max(0, int(result.get("total", 0)) - dropped)
+    # The revision and the offered verbs are what make an edit possible at all:
+    # the write path is version-conditioned, so a page that was never handed a
+    # revision could only ever be refused ("revision_required"), and a verb
+    # offered for a read-only category would be clickable-but-refused. Both are
+    # derived here, once, from the same rules the write enforces.
+    for row in result["list"]:
+        row["revision"] = _entry_revision(root, _row_relative(row))
+        row["actions"] = _entry_actions(ctx, target)
     return result
+
+
+def _root_is_writable(ctx, target: MemoryTarget) -> bool:
+    """Whether a *write* to this target's memory root is allowed at all.
+
+    In database mode an Agent's memory root is the **tenant shared root**
+    (``_get_workspace_root`` → ``resolve_tenant_workspace_root``), so a private
+    Agent's memory and the tenant's shared Agent memory are literally the same
+    bytes. Reads can afford that: being served those bytes through your own
+    private Agent grants nothing you could not already see. A write cannot.
+
+    Measured before this guard existed, with the per-target range rule alone:
+    a member's ``save`` through their private Agent's scope was visible on the
+    shared scope, and a member's ``delete`` removed the very file the shared
+    Agent reads — i.e. a member could rewrite the tenant's shared memory and
+    inject text the shared Agent retrieves. So a write here requires
+    qualification for *every* scope that reaches this root, which today is the
+    tenant-administration qualification the shared scope already demands.
+
+    This is deliberately the *stronger* rule than the read's. A per-Agent memory
+    root would make the narrower owner rule correct; until then the narrower
+    rule is an escalation, and the member-facing half of task 5.1 waits on it.
+    """
+    from auth.object_scope import ObjectScope
+
+    scope = ObjectScope.from_context(ctx)
+    return bool(scope.has_tenant and scope.is_admin)
+
+
+def _require_root_writable(ctx, target: MemoryTarget) -> None:
+    if not _root_is_writable(ctx, target):
+        raise MemoryScopeError(
+            CODE_NOT_AUTHORIZED,
+            "该记忆根目录同时是租户共享记忆，写入需要管理资格", status=403)
+
+
+def _entry_actions(ctx, target: MemoryTarget) -> Dict[str, bool]:
+    """The verbs the page may offer for an entry of this category and target.
+
+    Two independent reasons refuse an edit, and both are reported here so the
+    page never offers a control the write would refuse: the category (the Agent
+    writes its own dream and evolution diaries) and the caller's range on the
+    *root* (:func:`_root_is_writable` — an Agent memory root is the tenant's
+    shared root today).
+    """
+    writable = (target.category == CATEGORY_MEMORY
+                and _root_is_writable(ctx, target))
+    return {"edit": writable, "delete": writable}
+
+
+def _entry_revision(root: str, relative: str):
+    """The content revision of one entry, or ``None`` when it is absent.
+
+    Deliberately the *same* hash the write path compares against
+    (``_revision_of``): a locally invented revision format would make every edit
+    conflict, which reads as "someone else changed it" and is indistinguishable
+    from a real lost update.
+    """
+    if not relative:
+        return None
+    from agent.memory.personal import _revision_of
+    try:
+        text = safe_fs.read_text(root, relative)
+    except (safe_fs.UnsafePathError, FileNotFoundError, NotADirectoryError,
+            OSError):
+        return None
+    if text is None:
+        return None
+    return _revision_of(text)
 
 
 def _agent_root(ctx, agent_id: str) -> str:
@@ -481,6 +648,93 @@ def content_response(ctx, params) -> str:
     return _envelope(target, payload)
 
 
+# --- delegation: write (task 5.1 second half) -------------------------------
+
+def write_response(ctx, params, action: str) -> str:
+    """The JSON body of one write verb on the Agent-domain memory surface.
+
+    Authorization happens *before* any mutation: :func:`resolve_target` applies
+    the same target-range rule the reads use (owner for a private Agent,
+    tenant-administration qualification for a shared one), so a caller who may
+    not read a target cannot write it either. The mutation itself is the
+    delivered ``PersonalMemoryService`` flow — version condition, atomic write,
+    publish intent, tombstone masking, retry — inherited by ``MemoryService``
+    for the Agent root; nothing here re-implements it.
+    """
+    target = resolve_target(ctx, params, entry=(action != "clear"))
+    if target.scope == SCOPE_PERSONAL:
+        raise MemoryScopeError(
+            CODE_PERSONAL_WRITE_ENDPOINT,
+            "本人记忆的写入请使用 /api/memory/personal", status=400)
+    if target.category != CATEGORY_MEMORY:
+        # Dream diaries and evolution logs are written by the Agent itself; a
+        # manual edit is overwritten by the next consolidation run. Both roles
+        # are refused, so the read-only state does not depend on who asks.
+        raise MemoryScopeError(
+            CODE_READ_ONLY_CATEGORY,
+            "该分类由智能体自己写入，不支持手工修改", status=403)
+    _require_root_writable(ctx, target)
+
+    # The read surface's own convention is a bare ``filename`` plus
+    # ``category``; ``_entry_relative`` is the one place that converts the two
+    # into the workspace-relative path the write flow addresses, so a row the
+    # page has just listed can be edited without re-deriving its layout.
+    entry = _entry_relative(target.category, target.entry) if action != "clear" else ""
+    revision = _raw_param(params, "revision")
+    service = _agent_service(ctx, target)
+    try:
+        if action == "save":
+            result = service.save(entry, _raw_param(params, "content"),
+                                  expected_revision=revision)
+        elif action == "delete":
+            result = service.delete(entry, expected_revision=revision)
+        elif action == "clear":
+            result = service.clear(expected_revision=revision)
+        else:
+            raise MemoryScopeError(CODE_UNKNOWN_ACTION,
+                                   "未知的记忆操作: %s" % action, status=400)
+    except MemoryScopeError:
+        raise
+    except Exception as error:  # noqa: BLE001 - delegate refusals are typed
+        raise refusal_for(error) from error
+
+    index_state = str(result.get("index_state") or "")
+    payload: Dict[str, Any] = {"action": action, "result": result}
+    if index_state and index_state != "ok":
+        # The content operation succeeded but the index is behind (or the
+        # operation was overtaken). Reporting "success" would claim a
+        # consistency the store does not have — the same rule the personal
+        # endpoint applies (task 5.3).
+        payload.update({"status": "pending", "code": CODE_INDEX_PENDING,
+                        "message": "内容已更新，索引待重试",
+                        "index_state": index_state})
+        body: Dict[str, Any] = {"scope": target.scope}
+        if target.agent_id:
+            body["agent_id"] = target.agent_id
+        body.update(payload)
+        return json.dumps(body, ensure_ascii=False)
+
+    payload.update({"status": "success", "index_state": index_state or "ok"})
+    return _envelope(target, payload)
+
+
+def _raw_param(params, name: str):
+    """A parameter *without* the whitespace-trimming the text getter applies.
+
+    Memory content is text: a body of only newlines is a legitimate value the
+    caller may want to store, and ``_text_param`` would report it as absent.
+    """
+    value = _first(getattr(params, name, None))
+    return value
+
+
+def _agent_service(ctx, target: MemoryTarget):
+    """The Agent-domain memory service bound to this target's workspace."""
+    from agent.memory.service import MemoryService
+
+    return MemoryService(_agent_root(ctx, target.agent_id))
+
+
 def _envelope(target: MemoryTarget, payload: Dict[str, Any]) -> str:
     """The response envelope: ``status`` first, then the legacy fields.
 
@@ -504,13 +758,21 @@ def _agent_content(ctx, target: MemoryTarget) -> Dict[str, Any]:
         raise MemoryScopeError(CODE_UNKNOWN_ENTRY, "记忆条目不存在", status=404)
 
     service = MemoryService(root)
+    from agent.memory.personal import _revision_of
     try:
-        return service.get_content(target.entry, category=target.category)
+        payload = service.get_content(target.entry, category=target.category)
     except FileNotFoundError as error:
         raise MemoryScopeError(CODE_UNKNOWN_ENTRY, "记忆条目不存在",
                                status=404) from error
     except ValueError as error:
         raise MemoryScopeError(CODE_INVALID_ENTRY, str(error), status=400) from error
+    # The same two facts the list rows carry, for the same reasons: a client that
+    # opened the entry directly (deep link, refresh) still needs the revision to
+    # save it and must not be offered an edit the write would refuse.
+    payload["revision"] = _revision_of(payload.get("content") or "")
+    payload["actions"] = _entry_actions(ctx, target)
+    payload["read_only"] = target.category != CATEGORY_MEMORY
+    return payload
 
 
 def _entry_relative(category: str, filename: str) -> str:

@@ -15,6 +15,7 @@ import unittest
 
 from auth.crypto import decrypt_secret
 from auth.service import IdentityService, IdentityServiceError
+from tests._helpers import install_personal_target_roster, personal_channel_target
 
 FEISHU_BUNDLE = {
     "feishu_app_id": "cli_tenant_a",
@@ -205,6 +206,16 @@ class InstanceScopeTests(_ChannelServiceFixture):
     name a real owner, and it must never surface in the public list.
     """
 
+    #: Private Agents this class gives its members, so a personal instance has a
+    #: target it is actually allowed to name. A *shared* Agent is what these
+    #: tests used to pass, and the write path now refuses exactly that.
+    PERSONAL_TARGETS = ("member-target-a", "member-target-b")
+
+    def setUp(self):
+        super().setUp()
+        install_personal_target_roster(
+            self, "agent-a", "agent-b", *self.PERSONAL_TARGETS)
+
     def _add_member(self, username="acmemember"):
         self.svc.create_member(
             actor_user_id=self.root["id"], tenant_id=self.ta,
@@ -213,6 +224,11 @@ class InstanceScopeTests(_ChannelServiceFixture):
             roles=["member"])
         return [m for m in self.svc.list_members(self.ta)["items"]
                 if m["username"] == username][0]["user_id"]
+
+    def _member_target(self, user_id, agent_id="member-target-a"):
+        """The private Agent this member's personal instance routes to."""
+        return personal_channel_target(
+            self.svc, tenant_id=self.ta, user_id=user_id, agent_id=agent_id)
 
     def test_defaults_to_tenant_scope_without_an_owner(self):
         created = self._as_root()
@@ -224,7 +240,9 @@ class InstanceScopeTests(_ChannelServiceFixture):
 
     def test_a_personal_instance_records_its_owner(self):
         member = self._add_member()
-        created = self._as_root(scope="user", owner_user_id=member)
+        created = self._as_root(
+            scope="user", owner_user_id=member,
+            agent_id=self._member_target(member))
         self.assertEqual(created["scope"], "user")
         self.assertEqual(created["owner_user_id"], member)
         row = self._instance_row(created["id"])
@@ -267,6 +285,7 @@ class InstanceScopeTests(_ChannelServiceFixture):
         # at the tenant's app (task 6.3), and this test is about the *listing*.
         self._as_root(display_name="Private Bot", scope="user",
                       owner_user_id=member,
+                      agent_id=self._member_target(member),
                       credentials=dict(FEISHU_BUNDLE,
                                        feishu_app_id="cli_private"))
         listing = self.svc.list_tenant_channel_instances(
@@ -282,6 +301,7 @@ class InstanceScopeTests(_ChannelServiceFixture):
         tenant = self._as_root(display_name="Tenant Bot")
         self._as_root(display_name="Private Bot", scope="user",
                       owner_user_id=member,
+                      agent_id=self._member_target(member),
                       credentials=dict(FEISHU_BUNDLE,
                                        feishu_app_id="cli_private"))
         updated = self.svc.update_tenant_channel_instance(
@@ -295,7 +315,9 @@ class InstanceScopeTests(_ChannelServiceFixture):
         """Inbound routing has to know whether an instance is personal and
         whose it is before it can resolve a sender."""
         member = self._add_member()
-        created = self._as_root(scope="user", owner_user_id=member)
+        created = self._as_root(
+            scope="user", owner_user_id=member,
+            agent_id=self._member_target(member))
         row = self.svc.get_tenant_channel_instance_row(created["id"])
         self.assertEqual(row["scope"], "user")
         self.assertEqual(row["owner_user_id"], member)

@@ -386,6 +386,13 @@ class Session:
     #: it once, at scan start, so a retried submit presents the same content (and
     #: therefore the same idempotency key) as the attempt it is retrying.
     default_display_name: str = ""
+    #: The target Agent the one-time authorization was minted for. A private
+    #: create names its Assistant on the commit request, and the grant is bound
+    #: to that choice (task 4.1), so the choice becomes part of the session: a
+    #: later poll that carries only the handle presents the *same* target and is
+    #: answered as the read-back it is, instead of looking like a second create
+    #: for different content. Empty for a shared create (no target is bound).
+    grant_agent_id: str = ""
 
     @property
     def terminal(self) -> bool:
@@ -487,6 +494,7 @@ def _view(record: Mapping[str, Any]) -> Session:
         provider_result_present=bool(record.get("provider_result_ct")),
         grant_opened=bool(record.get("grant_ticket")),
         default_display_name=record.get("default_display_name", ""),
+        grant_agent_id=record.get("grant_agent_id", ""),
     )
 
 
@@ -917,6 +925,7 @@ def open_grant(
     *,
     actor: Any,
     channel_type: str,
+    agent_id: str = "",
     now: Optional[float] = None,
 ) -> str:
     """This session's one-time create authorization, minted on first use.
@@ -966,40 +975,55 @@ def open_grant(
                 code="invalid_transition", context={"status": record["status"]})
         owner = record["owner_user_id"]
         tenant = record["tenant_id"]
+        session_scope = _clean(record.get("scope"))
     from auth import scan_authorization
 
+    # The grant says which console it belongs to *and*, for a private create,
+    # which Agent the write is buying (task 4.1): the identity service verifies,
+    # claims and redeems against this exact tuple, so a grant minted here for one
+    # surface can never be spent on the other, and one scan cannot provision two
+    # different Assistants.
+    binding = _grant_binding(session_scope, agent_id)
     ticket = scan_authorization.mint(actor_user_id=owner, tenant_id=tenant,
-                                    channel_type=ctype)
+                                     channel_type=ctype, **binding)
     with _lock:
         record = _sessions.get(cleaned)
         if record is None or not _record_owned_by(record, actor):
             # Swept or replaced while the grant was being minted. Drop the grant
             # rather than let an authorization outlive the scan that earns it.
-            _discard_grant(ticket, owner=owner, tenant=tenant, channel_type=ctype)
+            _discard_grant(ticket, owner=owner, tenant=tenant, channel_type=ctype,
+                           **binding)
             raise ScanSessionError(_NOT_OWNED_MESSAGE, code="not_owner")
         existing = _clean(record.get("grant_ticket"))
         if existing:
             # Two polls of one confirmed session raced. The loser's ticket is
             # dropped: one session authorizes one create, and the winner's is
             # already the one the receipt key will name.
-            _discard_grant(ticket, owner=owner, tenant=tenant, channel_type=ctype)
+            _discard_grant(ticket, owner=owner, tenant=tenant, channel_type=ctype,
+                           **binding)
             return existing
         record["grant_ticket"] = ticket
         record["grant_channel_type"] = ctype
+        # The binding travels with the session: the sweep that burns an unused
+        # authorization writes to the same ``auth.scan_authorization`` store as
+        # the create, so it has to present the same surface and target.
+        record["grant_scope"] = binding["scope"]
+        record["grant_agent_id"] = binding["agent_id"]
         record["updated_at"] = now_ts
         record["version"] += 1
     logger.info("[ScanOnboarding] opened a create authorization for a scan session")
     return ticket
 
 
-def _discard_grant(ticket: str, *, owner: str, tenant: str,
-                   channel_type: str) -> None:
+def _discard_grant(ticket: str, *, owner: str, tenant: str, channel_type: str,
+                   scope: str = "", agent_id: str = "") -> None:
     """Burn an authorization this module minted and cannot attach to a session."""
     if not _clean(ticket):
         return
     try:
         _consume_authorization(ticket, owner=owner, tenant=tenant,
-                               channel_type=channel_type)
+                               channel_type=channel_type, scope=scope,
+                               agent_id=agent_id)
     except Exception as error:  # noqa: BLE001 - best effort, never fatal
         logger.warning(
             "[ScanOnboarding] could not discard an unattached authorization"
@@ -1153,13 +1177,18 @@ def _mark_status(
                 owner = record["owner_user_id"]
                 tenant = record["tenant_id"]
                 ctype = _clean(record.get("grant_channel_type"))
+                burn_scope = _clean(record.get("grant_scope"))
+                burn_agent = _clean(record.get("grant_agent_id"))
                 record["grant_ticket"] = ""
                 record["grant_channel_type"] = ""
+                record["grant_scope"] = ""
+                record["grant_agent_id"] = ""
         elif error:
             record["error"] = str(error)[:500]
         view = _view(record)
     if burn:
-        _discard_grant(burn, owner=owner, tenant=tenant, channel_type=ctype)
+        _discard_grant(burn, owner=owner, tenant=tenant, channel_type=ctype,
+                       scope=burn_scope, agent_id=burn_agent)
     return view
 
 
@@ -1594,12 +1623,32 @@ def _key_for_binding(
     )
 
 
+def _grant_binding(scope: str, agent_id: str) -> Dict[str, str]:
+    """The scan-authorization surface a write of *scope* presents.
+
+    ``auth.scan_authorization`` mints, verifies, claims and redeems against one
+    tuple, and every one of those steps is only as narrow as its weakest field
+    (task 4.1). One helper keeps the four from drifting apart: a private create
+    names the surface *and* the Agent it buys, so a public grant cannot provision
+    a private instance and a scan bound to one Assistant cannot provision
+    another. A shared create names no target — its Agent choice belongs to the
+    public console — and the authorize module drops one if it is passed.
+    """
+    personal = _clean(scope) == SCOPE_PERSONAL
+    return {
+        "scope": "personal" if personal else "tenant",
+        "agent_id": _clean(agent_id) if personal else "",
+    }
+
+
 def _verify_authorization(ticket: str, *, owner: str, tenant: str,
-                          channel_type: str) -> None:
+                          channel_type: str, scope: str = "",
+                          agent_id: str = "") -> None:
     from auth import scan_authorization
 
     if scan_authorization.verify(ticket, actor_user_id=owner, tenant_id=tenant,
-                                 channel_type=channel_type):
+                                 channel_type=channel_type,
+                                 **_grant_binding(scope, agent_id)):
         return
     raise ScanCommitError(
         "the scan authorization is not valid for this create",
@@ -1622,17 +1671,19 @@ def _ticket_is_the_staged_one(record: Mapping[str, Any], ticket: str) -> bool:
 
 
 def _consume_authorization(ticket: str, *, owner: str, tenant: str,
-                           channel_type: str) -> bool:
+                           channel_type: str, scope: str = "",
+                           agent_id: str = "") -> bool:
     """Redeem the grant once. Called only after the row has committed."""
     from auth import scan_authorization
 
     return bool(scan_authorization.consume(
         ticket, actor_user_id=owner, tenant_id=tenant,
-        channel_type=channel_type))
+        channel_type=channel_type, **_grant_binding(scope, agent_id)))
 
 
 def _redeem_authorization(ticket: str, *, owner: str, tenant: str,
-                          channel_type: str) -> bool:
+                          channel_type: str, scope: str = "",
+                          agent_id: str = "") -> bool:
     """Whether this operation's authorization is now *unusable*, not "did I win".
 
     ``IdentityService.create_*_channel_instance`` redeems the grant itself as its
@@ -1647,12 +1698,14 @@ def _redeem_authorization(ticket: str, *, owner: str, tenant: str,
     that must not be reported as consumed.
     """
     if _consume_authorization(ticket, owner=owner, tenant=tenant,
-                              channel_type=channel_type):
+                              channel_type=channel_type, scope=scope,
+                              agent_id=agent_id):
         return True
     from auth import scan_authorization
 
     return not scan_authorization.verify(
-        ticket, actor_user_id=owner, tenant_id=tenant, channel_type=channel_type)
+        ticket, actor_user_id=owner, tenant_id=tenant, channel_type=channel_type,
+        **_grant_binding(scope, agent_id))
 
 
 def _secret_values(values: Mapping[str, Any]) -> List[str]:
@@ -1841,7 +1894,8 @@ def _commit_locked(
                           code="secret_in_request", error_type=ScanCommitError)
 
     _verify_authorization(ticket, owner=session.owner_user_id,
-                          tenant=session.tenant_id, channel_type=ctype)
+                          tenant=session.tenant_id, channel_type=ctype,
+                          scope=session.scope, agent_id=agent_id)
     _advance_status(handle, actor=actor, status=STATUS_COMMITTING, now=now_ts)
 
     service_scope = (SERVICE_SCOPE_USER if session.scope == SCOPE_PERSONAL
@@ -1997,7 +2051,8 @@ def _resolve_existing(
         # receipt with an outstanding redemption. Redeeming it here is not
         # "consuming again": it is finishing the same redemption, and the binding
         # just checked is the same binding the grant was minted for.
-        _complete_outstanding_redemption(record, ticket=ticket, ctype=ctype)
+        _complete_outstanding_redemption(record, ticket=ticket, ctype=ctype,
+                                         agent_id=agent_id)
         logger.info(
             f"[ScanOnboarding] replayed {ctype} receipt for {binding.get('scope')}"
             " scope"
@@ -2018,7 +2073,8 @@ def _resolve_existing(
     if not _ticket_is_the_staged_one(record, ticket):
         _verify_authorization(ticket, owner=_clean(binding.get("owner_user_id")),
                               tenant=_clean(binding.get("tenant_id")),
-                              channel_type=ctype)
+                              channel_type=ctype, scope=binding.get("scope"),
+                              agent_id=agent_id)
     session = None
     if handle:
         try:
@@ -2087,7 +2143,7 @@ def _authorize_readback(
 
 
 def _complete_outstanding_redemption(record: Mapping[str, Any], *, ticket: str,
-                                     ctype: str) -> None:
+                                     ctype: str, agent_id: str = "") -> None:
     if record.get("authorization_consumed"):
         return
     binding = dict(record["binding"] or {})
@@ -2096,10 +2152,14 @@ def _complete_outstanding_redemption(record: Mapping[str, Any], *, ticket: str,
     from auth import scan_authorization
 
     if not scan_authorization.verify(ticket, actor_user_id=owner,
-                                     tenant_id=tenant, channel_type=ctype):
+                                     tenant_id=tenant, channel_type=ctype,
+                                     **_grant_binding(binding.get("scope"),
+                                                      agent_id)):
         return
     consumed = _redeem_authorization(ticket, owner=owner, tenant=tenant,
-                                     channel_type=ctype)
+                                     channel_type=ctype,
+                                     scope=binding.get("scope"),
+                                     agent_id=agent_id)
     with _lock:
         live = _receipts.get(record["key"])
         if live is not None:
@@ -2310,7 +2370,8 @@ def _finish_commit(
             pass
     consumed = _redeem_authorization(
         ticket, owner=_clean(binding.get("owner_user_id")),
-        tenant=_clean(binding.get("tenant_id")), channel_type=ctype)
+        tenant=_clean(binding.get("tenant_id")), channel_type=ctype,
+        scope=binding.get("scope"), agent_id=agent_id)
     with _lock:
         record = _receipts.get(key)
         if record is not None:

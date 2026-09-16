@@ -229,7 +229,10 @@ class SkillLoader:
         1. builtin  — project root ``skills/``, shipped with the codebase
         2. custom   — workspace ``skills/``, installed via cloud console or skill creator
 
-        Same-name custom skills override builtin ones.
+        Same-name custom skills override builtin ones. The replaced entry is
+        kept on ``SkillEntry.shadowed`` so a caller that only has a bare name
+        can be told the name has two candidate definitions, rather than the
+        override order deciding whose grant is spent.
 
         :param builtin_dir: Built-in skills directory
         :param custom_dir: Custom skills directory
@@ -252,6 +255,13 @@ class SkillLoader:
             all_diagnostics.extend(result.diagnostics)
             for skill in result.skills:
                 entry = self._create_skill_entry(skill)
+                # Remember what this definition replaced. Precedence alone is
+                # enough to *pick* one, but not enough to know that a bare name
+                # now has two candidate files: the console addresses a skill as
+                # ``{source}:{name}``, so a name that silently means "custom,
+                # because custom wins" can spend a builtin's grant on the
+                # workspace definition (or the reverse).
+                entry.shadowed = skill_map.get(skill.name)
                 skill_map[skill.name] = entry
 
         # Log diagnostics

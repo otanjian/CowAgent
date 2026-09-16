@@ -27,7 +27,7 @@ import web
 from agent import team
 from agent.registry import AgentRegistry, set_agent_registry
 from auth.runtime import RequestContext
-from auth.service import IdentityService
+from auth.service import IdentityService, IdentityServiceError
 from channel.web import web_channel, auth_handlers, admin_handlers
 from channel.web.web_channel import _require_session_owner
 
@@ -188,11 +188,13 @@ def test_deleting_the_only_binding_leaves_nothing_to_resolve(env):
 
 
 def test_an_appointed_agent_is_reachable_by_a_plain_member(env):
-    """Appointing makes the Agent shared, so a member can actually open it.
+    """Appointing shares nothing by itself; the explicit share is what opens it.
 
     ``private_owner_user_id`` is an exclusive read gate on the chat authorize
-    path, so appointing without clearing it would leave every other member
-    locked out of the very entry the console promises them.
+    path, so appointing a private Agent would lock every other member out of the
+    very entry the console promises them — the reason appointment used to clear
+    the owner. Sharing is now the explicit, audited act that opens the Agent,
+    and appointment only accepts a target that is already shared.
     """
     member_id = env.svc.create_member(
         actor_user_id=env.root_user["id"], tenant_id=env.tid,
@@ -215,6 +217,19 @@ def test_an_appointed_agent_is_reachable_by_a_plain_member(env):
             web_channel._require_private_owner(member_ctx, "agent-p")
         assert "403" in str(refused.value)
 
+        # Appointment alone neither shares nor unlocks it (spec: 租户默认任命不
+        # 改变私有归属), so the lockout is unchanged.
+        with pytest.raises(IdentityServiceError):
+            env.svc.appoint_tenant_default_agent(
+                tenant_id=env.tid, agent_id="agent-p",
+                actor_user_id=env.root_user["id"])
+        with pytest.raises(web.HTTPError):
+            web_channel._require_private_owner(member_ctx, "agent-p")
+
+        # The explicit share is the act that admits members, and only then does
+        # the appointment succeed.
+        env.svc.make_agent_tenant_shared(
+            agent_id="agent-p", actor_user_id=env.root_user["id"])
         env.svc.appoint_tenant_default_agent(
             tenant_id=env.tid, agent_id="agent-p",
             actor_user_id=env.root_user["id"])
@@ -335,6 +350,16 @@ class TenantDefaultAgentHttpTests(unittest.TestCase):
             {"action": "set_default", "id": agent_id},
             token=token or self.admin_token)
 
+    def _membership_defaults(self):
+        """Every member's stored preference, as one comparable snapshot."""
+        rows = self.svc._store.execute(
+            "SELECT user_id, default_agent_id, default_agent_revision,"
+            " default_agent_origin FROM memberships WHERE tenant_id=?",
+            (self.tenant_id,))
+        return {row["user_id"]: (row["default_agent_id"],
+                                 row["default_agent_revision"],
+                                 row["default_agent_origin"]) for row in rows}
+
     # --- choosing a default ----------------------------------------------
 
     def test_set_default_changes_the_tenant_default_and_the_resolution(self):
@@ -370,6 +395,88 @@ class TenantDefaultAgentHttpTests(unittest.TestCase):
         self.assertEqual(self._status(second), "200", second.data)
         self.assertEqual(self.svc.tenant_default_agent_id(self.tenant_id), "alpha")
 
+    def test_set_default_writes_the_tenant_entry_and_no_user_preference(self):
+        """Task 4.7 I: the legacy action keeps its meaning for old clients.
+
+        A client that only knows ``set_default`` must keep working, and its
+        request must not be silently reinterpreted as a per-user preference
+        (design D4: 不能把旧请求静默解释成用户偏好). The tenant pointer moves; every
+        membership row — including the ones with no preference at all — stays
+        exactly as it was, so a member's own registration is never overwritten by
+        an administrative act.
+        """
+        before = self._membership_defaults()
+
+        response = self._set_default("alpha")
+
+        self.assertEqual(self._status(response), "200", response.data)
+        self.assertEqual(self.svc.tenant_default_agent_id(self.tenant_id), "alpha")
+        self.assertEqual(self._membership_defaults(), before, (
+            "a legacy tenant action must not write any member's preference"))
+
+    def test_overlapping_tenant_appointments_leave_one_legal_audited_value(self):
+        """Task 4.7 G, the **tenant** half — recorded as the code actually behaves.
+
+        The *user* pointer has its own optimistic lock
+        (``memberships.default_agent_revision``) and a lost race is a 409; that
+        is pinned in ``test_user_default_agent_selection.py``. The tenant pointer
+        deliberately has none, and this test does not pretend otherwise:
+        ``appoint_tenant_default_agent`` takes no version argument and
+        ``tenants.version`` belongs to the tenant editor's draft chain (see
+        ``_appoint_tenant_default_agent``), while spec
+        ``tenant-default-agent-administration`` asks only for an idempotent,
+        admin-gated, bound target — no 并发 scenario. Two overlapping
+        appointments therefore serialise and the later one wins.
+
+        What the baseline *does* require, and what this pins, are the invariants
+        that survive either behaviour: at least one appointment commits (the
+        caller is qualified and the target is bound, so a lock is the only thing
+        that could refuse it, and only after one has won), every outcome is
+        either a commit or a 409, the pointer ends on exactly one legal bound
+        target — never torn, never a foreign value — and every committed
+        appointment left an audit event, so a lost update is reconstructible
+        instead of invisible. The 4.7 evidence file records the asymmetry with
+        the task text explicitly.
+        """
+        import threading
+
+        before = len(_audit(self.svc, "tenant.set_default_agent"))
+        outcomes = {}
+        barrier = threading.Barrier(2)
+
+        def appoint(agent_id):
+            barrier.wait()
+            try:
+                self.svc.appoint_tenant_default_agent(
+                    tenant_id=self.tenant_id, agent_id=agent_id,
+                    actor_user_id=self.admin_id)
+                outcomes[agent_id] = "ok"
+            except Exception as exc:  # noqa: BLE001 - the recorded outcome
+                outcomes[agent_id] = exc
+
+        threads = [threading.Thread(target=appoint, args=(agent_id,))
+                   for agent_id in ("alpha", "beta")]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(len(outcomes), 2, outcomes)
+        for outcome in outcomes.values():
+            self.assertTrue(
+                outcome == "ok" or getattr(outcome, "status", None) == 409,
+                "an appointment may commit or lose a race, never fail otherwise:"
+                " %r" % (outcome,))
+        succeeded = sum(1 for outcome in outcomes.values() if outcome == "ok")
+        self.assertGreaterEqual(succeeded, 1, outcomes)
+        self.assertIn(self.svc.tenant_default_agent_id(self.tenant_id),
+                      ("alpha", "beta"), "the pointer must hold one legal target")
+        self.assertEqual(
+            len(_audit(self.svc, "tenant.set_default_agent")) - before,
+            succeeded,
+            "every committed appointment must be audited, so a lost update is"
+            " reconstructible")
+
     def test_set_default_is_audited(self):
         before = len(_audit(self.svc, "tenant.set_default_agent"))
 
@@ -381,18 +488,29 @@ class TenantDefaultAgentHttpTests(unittest.TestCase):
         assert events, "no audit event was written"
         assert events[0]["result"] == "success"
 
-    def test_set_default_makes_a_private_agent_shared_and_spares_others(self):
+    def test_set_default_refuses_a_private_agent_and_spares_others(self):
+        """The console action cannot publish somebody's private Agent.
+
+        Appointment used to clear ``private_owner_user_id``, which turned a
+        member's private Agent into a tenant-level one that survived the
+        appointment being reverted — and then showed up in every member's chat
+        picker. The refusal is what keeps the picker's range honest.
+        """
         self.svc.bind_agent(tenant_id=self.tenant_id, agent_id="agent-mine",
                             private_owner_user_id=self.admin_id)
         self.svc.bind_agent(tenant_id=self.tenant_id, agent_id="agent-other",
                             private_owner_user_id=self.admin_id)
 
-        self._set_default("agent-mine")
+        response = self._set_default("agent-mine")
 
-        self.assertIsNone(
-            self.svc.get_agent_binding("agent-mine")["private_owner_user_id"])
-        # Only the appointed Agent is shared; an unrelated private Agent keeps
-        # its owner.
+        self.assertNotEqual(self._status(response), "200", response.data)
+        body = self._body(response)
+        self.assertEqual(body["code"], "private_agent_not_shareable")
+        self.assertEqual(
+            self.svc.get_agent_binding("agent-mine")["private_owner_user_id"],
+            self.admin_id, "a refused appointment must not clear an owner")
+        self.assertEqual(
+            self.svc.tenant_default_agent_id(self.tenant_id), "beta")
         self.assertEqual(
             self.svc.get_agent_binding("agent-other")["private_owner_user_id"],
             self.admin_id)

@@ -171,13 +171,24 @@ class GetTenantChannelTypesTests(_ChannelHttpFixture):
         """A type the form offers but the server rejects would be a dead end."""
         body = self._list()
         self.assertTrue(body["channel_types"])
+        attempted = []
         for entry in body["channel_types"]:
+            # Every entry must carry its field contract, including the ones that
+            # are not *candidates* any more: the same list is what the console
+            # looks up to edit an instance that already exists (task 7.7), so a
+            # missing contract would render an existing row's form empty.
             self.assertTrue(entry["credential_fields"], entry)
             credentials = {}
             for field in entry["credential_fields"]:
                 self.assertTrue(field["key"])
                 self.assertIn("label", field)
                 credentials[field["key"]] = "value"
+            if entry["inbound_admissible"] is False:
+                # Not a candidate: its adapter cannot prove the sender, so the
+                # inbound gate would refuse every message. Offered as a
+                # candidate it would be a dead end of a different kind.
+                continue
+            attempted.append(entry["channel_type"])
             resp = self._create({
                 "channel_type": entry["channel_type"],
                 "display_name": f"Bot {entry['channel_type']}",
@@ -187,6 +198,10 @@ class GetTenantChannelTypesTests(_ChannelHttpFixture):
             }, token=self.token_a, tenant=self.ta)
             self.assertEqual(resp.status, "200 OK",
                              f"{entry['channel_type']}: {resp.data}")
+        # The narrowing must not be silent: the control keeps this test from
+        # passing by attempting nothing at all.
+        self.assertTrue(attempted, "no admissible type was exercised")
+        self.assertIn("feishu", attempted)
 
     def test_secret_looking_fields_are_marked_secret(self):
         body = self._list()
@@ -231,10 +246,40 @@ class ListTests(_ChannelHttpFixture):
             for forbidden in ("credentials", "ciphertext", "secret", "token"):
                 self.assertNotIn(forbidden, item)
 
-    def test_a_plain_member_is_denied(self):
+    def test_a_plain_member_lists_only_their_own_range(self):
+        """One interface, two ranges (task 6.1).
+
+        The member is no longer refused the surface — that was the old contract,
+        where the personal workbench was a second page. They now read the *same*
+        endpoint and are answered with their own connections; the tenant's public
+        instance created above is not in their list.
+        """
+        self._create_ok()
         resp = self._request("/api/tenant/channels", token=self.token_member,
                              tenant=self.ta)
-        self._assert_status(resp, 403)
+        self._assert_status(resp, 200)
+        listing = self._json(resp)
+        self.assertEqual(listing["items"], [])
+        self.assertEqual(listing["scope"], "self")
+
+    def test_a_member_cannot_create_a_public_connection(self):
+        """The scope is derived, so naming the tenant's is not an option."""
+        resp = self._create({"channel_type": "feishu",
+                             "display_name": "Sneaky Bot",
+                             "agent_id": "agent-a",
+                             "credentials": dict(FEISHU),
+                             "recent_password": "Str0ngMemberFinal",
+                             "scope": "tenant"},
+                            token=self.token_member, tenant=self.ta)
+        if str(resp.status).startswith("200"):
+            row = self.svc._store.execute(
+                "SELECT scope, owner_user_id FROM tenant_channel_instances"
+                " WHERE id=?",
+                (self._json(resp)["instance"]["id"],))[0]
+            self.assertEqual(row["scope"], "user")
+            self.assertIsNotNone(row["owner_user_id"])
+        else:
+            self._assert_status(resp, 403)
 
     def test_anonymous_is_denied(self):
         resp = self._request("/api/tenant/channels", tenant=self.ta)
@@ -514,10 +559,18 @@ class ScanGrantCreateTests(_ChannelHttpFixture):
         self.addCleanup(scan_authorization._reset)
         self._grant = scan_authorization
 
-    def _grant_for(self, tenant, channel_type="feishu", actor=None):
+    def _grant_for(self, tenant, channel_type="feishu", actor=None,
+                   auth_session_id=None):
+        actor = actor or self.root["id"]
+        # A grant carries the login session that minted it (task 4.1): the real
+        # scan mints it for the verified session, and a write can only redeem a
+        # ticket whose session is the one it presents. A ticket minted without
+        # one is not a scan's ticket — the delivered create refuses it.
+        if auth_session_id is None:
+            auth_session_id = self._session_id(self.token_a)
         return self._grant.mint(
-            actor_user_id=actor or self.root["id"], tenant_id=tenant,
-            channel_type=channel_type)
+            actor_user_id=actor, tenant_id=tenant,
+            channel_type=channel_type, auth_session_id=auth_session_id)
 
     def _create_with_grant(self, ticket, **over):
         payload = {
@@ -578,10 +631,158 @@ class ScanGrantCreateTests(_ChannelHttpFixture):
             "display_name": "Member Bot",
             "agent_id": "agent-a",
             "credentials": dict(FEISHU),
-            "scan_ticket": self._grant_for(self.ta, actor=member["user_id"]),
+            "scan_ticket": self._grant_for(
+                self.ta, actor=member["user_id"],
+                auth_session_id=self._session_id(self.token_member)),
         }
         resp = self._create(payload, token=self.token_member, tenant=self.ta)
         self._assert_status(resp, 403)
+
+    # --- the login session is part of the binding (task 4.1) -------------
+
+    def _session_id(self, token):
+        """The verified login-session row id behind ``token``.
+
+        This is what ``FeishuRegisterHandler`` reads off the request when it
+        mints a grant, so a test that wants to look like the real scan has to
+        bind to the same value the create will present.
+        """
+        return self.svc.verify_session(token)["session"]["id"]
+
+    def test_a_grant_minted_in_a_login_session_is_redeemable_there(self):
+        """The shape the public Feishu scan actually mints: session-bound.
+
+        ``FeishuRegisterHandler._poll_payload`` mints the grant for
+        ``(owner, tenant, login session, type, scope, purpose, target)``, so the
+        create that redeems it must present the same login session. A create that
+        forwards no session at all can never redeem a real scan's grant, and the
+        operator would be asked for a password after every successful scan.
+        """
+        ticket = self._grant.mint(
+            actor_user_id=self.root["id"], tenant_id=self.ta,
+            channel_type="feishu", scope="tenant",
+            auth_session_id=self._session_id(self.token_a))
+        resp = self._create_with_grant(ticket)
+        self.assertEqual(resp.status, "200 OK", resp.data)
+
+    def test_a_grant_bound_to_another_login_session_is_refused(self):
+        # Same user, same tenant, same type — a different login. The grant is not
+        # transferable across logins, and the refusal must not burn it.
+        ticket = self._grant.mint(
+            actor_user_id=self.root["id"], tenant_id=self.ta,
+            channel_type="feishu", auth_session_id="ses_somebody_else")
+        self._assert_status(self._create_with_grant(ticket), 401)
+
+    def test_a_personal_grant_cannot_create_a_tenant_instance(self):
+        # The reverse of "a historical public grant must not create a personal
+        # instance": a grant the member's workbench minted for their own private
+        # target must not create a shared, tenant-owned instance either — the
+        # public surface runs the write with scope='tenant'.
+        ticket = self._grant.mint(
+            actor_user_id=self.root["id"], tenant_id=self.ta,
+            channel_type="feishu", scope="personal",
+            agent_id="agent-a", auth_session_id=self._session_id(self.token_a))
+        resp = self._create_with_grant(ticket)
+        self._assert_status(resp, 401)
+        self.assertTrue(
+            self._grant.verify(
+                ticket, actor_user_id=self.root["id"], tenant_id=self.ta,
+                channel_type="feishu", scope="personal", agent_id="agent-a",
+                auth_session_id=self._session_id(self.token_a)),
+            "the refused cross-scope probe consumed the grant")
+
+
+class PublicFeishuScanFlowTests(_ChannelHttpFixture):
+    """The delivered public Feishu auto-persist path, end to end (task 4.1).
+
+    The scan and the create are two separate HTTP requests, and the grant only
+    exists between them. These drive both through the real handlers — the SDK
+    thread is the only thing stubbed out — because that is the only way to prove
+    the session the scan bound its grant to is the session the create presents.
+    """
+
+    def setUp(self):
+        super().setUp()
+        from channel.web.web_channel import FeishuRegisterHandler
+
+        self.handler = FeishuRegisterHandler
+        self.handler._reset_sessions()
+        self.addCleanup(self.handler._reset_sessions)
+
+    def _app(self):
+        return web.application(
+            (
+                "/api/feishu/register", "FeishuRegisterHandler",
+                "/api/tenant/channels", "TenantChannelsHandler",
+            ),
+            vars(web_channel),
+            autoreload=False,
+        )
+
+    def _start_scan(self, *, tenant=None):
+        """GET the register handler, with the SDK's QR work stubbed in-process."""
+        handler = self.handler
+
+        def _fake_thread(_self, handle):
+            # Stands in for the SDK reporting a QR code; the worker itself needs
+            # the network and is deliberately not part of this test. ``_self`` is
+            # the handler instance ``patch.object`` no longer binds away.
+            handler._set_status(handle, "pending", url="https://vendor/qr.png",
+                                qr_image="data:image/png;base64,x")
+
+        with patch.object(handler, "_start_register_thread", _fake_thread):
+            resp = self._request("/api/feishu/register", method="GET",
+                                 token=self.token_a, tenant=tenant or self.ta)
+        self.assertEqual(resp.status, "200 OK", resp.data)
+        body = self._json(resp)
+        self.assertEqual(body["status"], "success", body)
+        return body["handle"]
+
+    def _poll_scan(self, handle, *, tenant=None):
+        resp = self._request("/api/feishu/register", method="POST",
+                             payload={"handle": handle},
+                             token=self.token_a, tenant=tenant or self.ta)
+        self.assertEqual(resp.status, "200 OK", resp.data)
+        return self._json(resp)
+
+    def test_a_completed_scan_creates_the_instance_without_a_password(self):
+        handle = self._start_scan()
+        self.handler._set_status(handle, "done", app_id="cli_scanned",
+                                 app_secret="scanned-secret")
+        scanned = self._poll_scan(handle)
+
+        ticket = scanned.get("scan_ticket", "")
+        self.assertTrue(ticket, "a completed scan must hand back a grant")
+
+        resp = self._create(
+            {
+                "channel_type": "feishu",
+                "display_name": "Feishu · nned",
+                "agent_id": "agent-a",
+                "credentials": {"feishu_app_id": scanned["app_id"],
+                                "feishu_app_secret": scanned["app_secret"],
+                                "feishu_bot_name": "Scanned Bot"},
+                "scan_ticket": ticket,
+            },
+            token=self.token_a, tenant=self.ta)
+        self.assertEqual(resp.status, "200 OK", resp.data)
+        self.assertEqual(self._json(resp)["instance"]["display_name"],
+                         "Feishu · nned")
+
+    def test_a_scan_started_in_another_login_cannot_be_polled_after_relogin(self):
+        handle = self._start_scan()
+        self.handler._set_status(handle, "done", app_id="cli_scanned",
+                                 app_secret="scanned-secret")
+        # A second login of the same account: a different AuthSession, so the
+        # handle it never started reads as expired and hands out nothing.
+        relogin = self.svc.login("root", "Str0ngRootFinal")
+        resp = self._request("/api/feishu/register", method="POST",
+                             payload={"handle": handle},
+                             token=relogin.token, tenant=self.ta)
+        body = self._json(resp)
+        self.assertEqual(body["register_status"], "expired")
+        self.assertNotIn("scan_ticket", body)
+        self.assertNotIn("app_secret", json.dumps(body))
 
 
 if __name__ == "__main__":

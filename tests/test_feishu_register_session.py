@@ -185,6 +185,126 @@ class FeishuRegisterSessionTests(unittest.TestCase):
                 channel_type="feishu"),
             "a grant outlived the session that justified it")
 
+    # --- 4.1 the public and personal consoles scan independently ---------
+
+    def test_starting_a_public_scan_does_not_cancel_a_personal_one(self):
+        """One member, two consoles, two live registrations.
+
+        The personal workbench and the public page are different writes against
+        the same provider, so starting one must not tear down the other's QR —
+        otherwise opening the other console silently kills the scan in flight.
+        """
+        public = H._create_session("user-a", "tenant-1", scope="tenant")
+        personal = H._create_session(
+            "user-a", "tenant-1", scope="personal", agent_id="alice-own")
+        self.assertNotEqual(public, personal)
+
+        public_session = H._session_for(public, "user-a", "tenant-1")
+        self.assertIsNotNone(public_session)
+        self.assertFalse(public_session["cancel_event"].is_set(),
+                         "the personal scan cancelled the public one")
+        self.assertIsNotNone(
+            H._session_for(personal, "user-a", "tenant-1"))
+        # ...and the reverse: starting the public one again leaves the personal
+        # one alone.
+        H._create_session("user-a", "tenant-1", scope="tenant")
+        personal_session = H._session_for(personal, "user-a", "tenant-1")
+        self.assertIsNotNone(personal_session)
+        self.assertFalse(personal_session["cancel_event"].is_set())
+
+    def test_the_same_surface_and_target_still_replaces_its_own_scan(self):
+        first = H._create_session("user-a", "tenant-1", scope="personal",
+                                  agent_id="alice-own")
+        H._create_session("user-a", "tenant-1", scope="personal",
+                          agent_id="alice-other")
+        # A different target is a different scan (changing the target restarts
+        # the flow), while the same target is a restart of the same one.
+        self.assertIsNotNone(
+            H._session_for(first, "user-a", "tenant-1"))
+        again = H._create_session("user-a", "tenant-1", scope="personal",
+                                  agent_id="alice-own")
+        self.assertIsNotNone(H._session_for(again, "user-a", "tenant-1"))
+        self.assertIsNone(H._session_for(first, "user-a", "tenant-1"))
+
+    def test_a_handle_from_another_login_session_is_not_readable(self):
+        handle = H._create_session("user-a", "tenant-1", scope="personal",
+                                   agent_id="alice-own",
+                                   auth_session_id="ses_1")
+        self.assertIsNotNone(
+            H._session_for(handle, "user-a", "tenant-1", "ses_1"))
+        # Same account, same tenant, same target — a *different* login. The
+        # handle was started by one session and is not that other session's to
+        # read, and the refusal is indistinguishable from an unknown handle.
+        self.assertIsNone(
+            H._session_for(handle, "user-a", "tenant-1", "ses_2"))
+        H._set_status(handle, "done", app_id="cli_abc", app_secret="s3cr3t")
+        self.assertEqual(
+            H._poll_payload(handle, "user-a", "tenant-1", "ses_2"),
+            H._poll_payload("no-such-handle", "user-a", "tenant-1", "ses_2"))
+
+    def test_a_personal_scan_binds_its_grant_to_scope_target_and_session(self):
+        from auth import scan_authorization
+
+        handle = H._create_session("user-a", "tenant-1", scope="personal",
+                                   agent_id="alice-own",
+                                   auth_session_id="ses_1")
+        H._set_status(handle, "done", app_id="cli_abc", app_secret="s3cr3t")
+        payload = H._poll_payload(handle, "user-a", "tenant-1", "ses_1")
+
+        # The surface and the target travel back with the credentials: the
+        # console has to send them with the create, and the create cannot be
+        # assembled without knowing which Agent the operator picked.
+        self.assertEqual(payload["scope"], "personal")
+        self.assertEqual(payload["agent_id"], "alice-own")
+
+        ticket = payload["scan_ticket"]
+        binding = {"actor_user_id": "user-a", "tenant_id": "tenant-1",
+                   "channel_type": "feishu", "scope": "personal",
+                   "agent_id": "alice-own", "auth_session_id": "ses_1"}
+        self.assertTrue(scan_authorization.verify(ticket, **binding))
+        # Neither the public console nor another target nor another login can
+        # spend it.
+        for changed in (
+            {"scope": "tenant", "agent_id": ""},
+            {"agent_id": "alice-other"},
+            {"auth_session_id": "ses_2"},
+            {"actor_user_id": "user-b"},
+            {"tenant_id": "tenant-2"},
+        ):
+            probe = dict(binding)
+            probe.update(changed)
+            self.assertFalse(scan_authorization.verify(ticket, **probe),
+                             f"grant accepted for {sorted(changed)}")
+
+    def test_a_public_scan_binds_its_grant_to_the_tenant_surface(self):
+        from auth import scan_authorization
+
+        handle = H._create_session("user-a", "tenant-1", scope="tenant",
+                                   auth_session_id="ses_1")
+        H._set_status(handle, "done", app_id="cli_abc", app_secret="s3cr3t")
+        payload = H._poll_payload(handle, "user-a", "tenant-1", "ses_1")
+
+        self.assertEqual(payload["scope"], "tenant")
+        self.assertEqual(payload["agent_id"], "")
+        ticket = payload["scan_ticket"]
+        self.assertTrue(scan_authorization.verify(
+            ticket, actor_user_id="user-a", tenant_id="tenant-1",
+            channel_type="feishu", scope="tenant", auth_session_id="ses_1"))
+        # A historical public authorization must not create a personal
+        # instance: the scope the write declares is not the one it was minted
+        # for, so it is refused before anything is consumed.
+        self.assertFalse(scan_authorization.verify(
+            ticket, actor_user_id="user-a", tenant_id="tenant-1",
+            channel_type="feishu", scope="personal", agent_id="alice-own",
+            auth_session_id="ses_1"))
+        self.assertFalse(scan_authorization.consume(
+            ticket, actor_user_id="user-a", tenant_id="tenant-1",
+            channel_type="feishu", scope="personal", agent_id="alice-own",
+            auth_session_id="ses_1"))
+        self.assertTrue(scan_authorization.consume(
+            ticket, actor_user_id="user-a", tenant_id="tenant-1",
+            channel_type="feishu", scope="tenant", auth_session_id="ses_1"))
+
 
 if __name__ == "__main__":
     unittest.main()

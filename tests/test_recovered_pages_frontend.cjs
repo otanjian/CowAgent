@@ -31,7 +31,6 @@ const vm = require('node:vm');
 
 const read = p => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const consoleJs = read('channel/web/static/js/console.js');
-const personalConsole = read('channel/web/static/js/personal-console.js');
 const chatHtml = read('channel/web/chat.html');
 
 // The view ids the recovered pages are reached through, and the page key the
@@ -438,20 +437,18 @@ test('a started wechat qr still renders the qr and starts polling', async () => 
 // 5. One availability source for the recovered pages
 // =====================================================================
 
-test('no fork module carries its own capability list for the recovered pages', () => {
-    // personal-console.js is the other console module that renders server
-    // projections; the recovered pages are the core console's, and a second
-    // client-side opinion about them is exactly what this change removes.
-    for (const pageKey of Object.values(RECOVERED_VIEWS)) {
-        assert.ok(!personalConsole.includes(pageKey),
-            `personal-console.js must not re-decide ${pageKey}`);
-    }
-    for (const endpoint of ['/api/scheduler', '/api/memory', '/api/projects/browse',
-        '/api/weixin/qrlogin']) {
-        const quoted = new RegExp("['\"]" + endpoint.replace(/[/.]/g, '\\$&') + "['\"]");
-        assert.doesNotMatch(personalConsole, quoted,
-            `personal-console.js must not call ${endpoint}`);
-    }
+test('no module carries its own capability list for the recovered pages', () => {
+    // The member personal console was the other console module that rendered its
+    // own server projection. It is retired (task 8.8) — the module file, its
+    // loader and its i18n namespace are gone — and the recovered pages are the
+    // core console's, so a second client-side opinion about them is exactly what
+    // this change removes. Asserted on the *shell* now: a re-added loader would
+    // be the way a second opinion came back.
+    assert.ok(!chatHtml.includes('assets/js/personal-console.js'),
+        'the retired personal console must not be loaded again');
+    assert.ok(!fs.existsSync(path.join(__dirname, '..',
+        'channel/web/static/js/personal-console.js')),
+        'the retired personal console module must not come back');
     // The fork fragments the shell mounts carry no availability markup for them.
     const fragments = [...chatHtml.matchAll(/data-fork-fragment="([^"]+)"/g)].map(m => m[1]);
     assert.deepStrictEqual(fragments, ['assets/fragments/appearance-dialog.html']);

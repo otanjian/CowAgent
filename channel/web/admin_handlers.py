@@ -32,6 +32,7 @@ from channel.web.auth_handlers import (
     _error,
     _require_context,
     _service_error,
+    verified_auth_session_id,
     require_management_write as _require_management_write,
 )
 
@@ -708,6 +709,12 @@ class TenantMembersHandler:
     def GET(self):
         ctx = _require_context(require_tenant=True)
         _require_permission(ctx, "tenant.members.read")
+        # 组织与权限 is a qualification surface: a member holding the read
+        # permission is still refused (rbac-authorization: 组织读取权限不能打开
+        # 组织与权限管理 — 控制台页面与对应管理接口一并拒绝). The permission
+        # check stays first so a refusal keeps its shape; management
+        # qualification is the additional necessary condition.
+        _require_tenant_admin(ctx)
         svc = _get_service()
         inp = web.input(q="", department_id="", status="", role="", page="1", page_size="100")
         try:
@@ -788,6 +795,12 @@ class TenantRolesHandler:
     def GET(self):
         ctx = _require_context(require_tenant=True)
         _require_permission(ctx, "tenant.members.read")
+        # 组织与权限 is a qualification surface: a member holding the read
+        # permission is still refused (rbac-authorization: 组织读取权限不能打开
+        # 组织与权限管理 — 控制台页面与对应管理接口一并拒绝). The permission
+        # check stays first so a refusal keeps its shape; management
+        # qualification is the additional necessary condition.
+        _require_tenant_admin(ctx)
         svc = _get_service()
         return _json({"status": "success", "items": svc.list_roles(ctx.tenant_id)})
 
@@ -870,6 +883,12 @@ class TenantDepartmentsHandler:
     def GET(self):
         ctx = _require_context(require_tenant=True)
         _require_permission(ctx, "tenant.org.read")
+        # 组织与权限 is a qualification surface: a member holding the read
+        # permission is still refused (rbac-authorization: 组织读取权限不能打开
+        # 组织与权限管理 — 控制台页面与对应管理接口一并拒绝). The permission
+        # check stays first so a refusal keeps its shape; management
+        # qualification is the additional necessary condition.
+        _require_tenant_admin(ctx)
         svc = _get_service()
         return _json({"status": "success", "items": svc.list_departments(ctx.tenant_id)})
 
@@ -955,6 +974,48 @@ def _apply_channel_runtime(instance_id: str) -> Dict[str, Any]:
                 "error": f"runtime apply failed: {e}"}
 
 
+def _is_channel_owner_only(ctx) -> bool:
+    """Whether this caller reaches the tenant channel surface as an owner only.
+
+    One page serves both roles (task 6.1), so the handler cannot branch on "is
+    this an administrator": it branches on **which objects** the caller may
+    touch. An administrator (tenant or platform) qualifies for the tenant's
+    public connections as well; everyone else is limited to their own, and the
+    service proves that from storage rather than from this flag.
+    """
+    return not (bool(getattr(ctx, "is_tenant_admin", False))
+                or bool(getattr(ctx, "is_platform_admin", False)))
+
+
+def _requested_channel_scope(ctx, svc, data: dict) -> tuple:
+    """``(scope, owner_user_id)`` for a create, derived from the verified identity.
+
+    The client names a **target**, not a scope. Two rules produce the pair, and
+    neither reads a field the request could set:
+
+    * a caller with only the owner range is pinned to ``scope='user'`` with
+      itself as the owner, whatever the body says;
+    * anyone else is asked of the service: a target that is *their own* private
+      Agent produces their own connection, anything else produces the tenant's.
+
+    The owner is always the acting user, for both roles. Ownership is the
+    server's to generate (``user-private-agent-management``: owner SHALL 由服务端
+    当前身份生成，不能代填另一用户), so a body naming a colleague is not a field
+    this surface reads — otherwise an administrator could create a "personal"
+    connection in someone else's name and the member would own a channel they
+    never configured.
+    """
+    owner = getattr(ctx, "user_id", "")
+    if _is_channel_owner_only(ctx):
+        return "user", owner
+    scope = svc.channel_target_scope(
+        tenant_id=getattr(ctx, "tenant_id", ""), actor_user_id=owner,
+        agent_id=str(data.get("agent_id", "") or ""))
+    # A tenant-wide instance belongs to the tenant and names no owner; only the
+    # caller's *own* connection carries one, and it is the caller.
+    return scope, (owner if scope == "user" else "")
+
+
 def _reject_channel_write(action: str, ctx, e: Exception) -> str:
     """Log and answer a refused tenant-channel write.
 
@@ -973,12 +1034,20 @@ def _reject_channel_write(action: str, ctx, e: Exception) -> str:
 
 
 class TenantChannelsHandler:
-    """Current tenant's own message channels (``/api/tenant/channels``).
+    """This tenant's message channels (``/api/tenant/channels``).
 
-    A tenant administrator configures *its* channel applications here; the
-    instance/global page stays platform-domain (``/api/channels``). Both the
-    instance and its credential are owned by ``ctx.tenant_id`` — the client
-    never names a tenant, so it cannot address another one.
+    One interface, two ranges (task 6.1). An administrator configures *the
+    tenant's* channel applications here and their own; any other member reaches
+    the same paths and is answered with **their own** connections only. Which
+    objects a request may touch is decided by ``auth.object_scope`` from the
+    verified identity — never by the route, the page, or a request field — so the
+    two roles share this handler instead of each having a surface of their own.
+    The instance/global page stays platform-domain (``/api/channels``).
+
+    Both the instance and its credential are owned by ``ctx.tenant_id``; the
+    client never names a tenant, so it cannot address another one. Nor does it
+    name a scope or an owner: the target it chooses is what decides whether the
+    connection is the tenant's public one or the caller's own.
 
     Credentials are write-only and never echoed: the create/edit responses are
     the masked projection. Sensitive writes carry ``recent_password`` and every
@@ -987,8 +1056,8 @@ class TenantChannelsHandler:
 
     def GET(self):
         ctx = _require_context(require_tenant=True)
-        _require_tenant_admin(ctx)
         svc = _get_service()
+        owner_only = _is_channel_owner_only(ctx)
         try:
             listing = svc.list_tenant_channel_instances(
                 actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id)
@@ -996,21 +1065,32 @@ class TenantChannelsHandler:
             return _service_error(e)
         # The form's type/field contract comes from the same declaration the
         # server validates against, so the console cannot offer a type or a
-        # field that creating would reject.
-        from channel.channel_instances import tenant_channel_types
+        # field that creating would reject. A member is offered the personal
+        # contract — the same declaration, plus the readiness verdict for the
+        # types they may actually configure (task 6.1).
+        from channel.channel_instances import (personal_channel_types,
+                                               tenant_channel_types)
+        from channel.web.web_channel import _channel_target_candidates
+        types = personal_channel_types() if owner_only else tenant_channel_types()
         return _json({"status": "success",
-                      "channel_types": tenant_channel_types(),
+                      "channel_types": types,
+                      "scope": "self" if owner_only else "tenant",
+                      # The choose-a-target candidates come from the server for
+                      # the same reason the type list does: only it knows which
+                      # targets this caller may actually name, and which
+                      # ownership each of them produces (task 6.2).
+                      "targets": _channel_target_candidates(ctx),
                       **listing})
 
     def POST(self):
         _require_management_write()
         ctx = _require_context(require_tenant=True)
-        _require_tenant_admin(ctx)
         try:
             data = json.loads(web.data())
         except Exception:
             return _error("Invalid request", 400, "invalid_request")
         svc = _get_service()
+        scope, owner_user_id = _requested_channel_scope(ctx, svc, data)
         try:
             created = svc.create_tenant_channel_instance(
                 actor_user_id=ctx.user_id,
@@ -1021,6 +1101,17 @@ class TenantChannelsHandler:
                 credentials=data.get("credentials"),
                 recent_password=str(data.get("recent_password", "") or ""),
                 scan_ticket=str(data.get("scan_ticket", "") or ""),
+                # The scan bound its grant to the login session that started it,
+                # so the create has to name the same session to redeem it
+                # (``auth.scan_authorization``). Taken from the verified store,
+                # never from a request field.
+                auth_session_id=verified_auth_session_id(),
+                scope=scope,
+                owner_user_id=owner_user_id or None,
+                # A caller with only the owner range takes the self-service
+                # branch: it re-checks the active membership and the personal
+                # policy, and forces the scope pair to itself.
+                allow_owner=_is_channel_owner_only(ctx),
             )
         except IdentityServiceError as e:
             return _reject_channel_write("create", ctx, e)
@@ -1034,7 +1125,6 @@ class TenantChannelHandler:
     def POST(self, instance_id: str):
         _require_management_write()
         ctx = _require_context(require_tenant=True)
-        _require_tenant_admin(ctx)
         try:
             data = json.loads(web.data())
         except Exception:
@@ -1052,6 +1142,11 @@ class TenantChannelHandler:
                 agent_id=_opt_str(data, "agent_id"),
                 credentials=data.get("credentials"),
                 recent_password=str(data.get("recent_password", "") or ""),
+                # Owner-scoped callers take the self-service branch: the row's
+                # scope/owner are re-proved from storage under the write lock,
+                # so an administrator's object is not editable through it and a
+                # foreign id cannot be reached at all (task 6.1).
+                allow_owner=_is_channel_owner_only(ctx),
             )
         except IdentityServiceError as e:
             return _reject_channel_write("update", ctx, e)
@@ -1069,7 +1164,6 @@ class TenantChannelActiveHandler:
     def POST(self, instance_id: str):
         _require_management_write()
         ctx = _require_context(require_tenant=True)
-        _require_tenant_admin(ctx)
         try:
             data = json.loads(web.data())
         except Exception:
@@ -1085,6 +1179,9 @@ class TenantChannelActiveHandler:
                 active=bool(data.get("active")),
                 expected_version=_int_or_zero(data.get("expected_version")),
                 recent_password=str(data.get("recent_password", "") or ""),
+                # Same owner-scoped branch as the edit path: the switch is the
+                # member's to flip on their own connection, and only on theirs.
+                allow_owner=_is_channel_owner_only(ctx),
             )
         except IdentityServiceError as e:
             return _reject_channel_write("toggle", ctx, e)

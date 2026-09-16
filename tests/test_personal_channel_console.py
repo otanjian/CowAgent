@@ -36,6 +36,17 @@ from auth.crypto import decrypt_secret
 from auth.service import IdentityService, IdentityServiceError
 
 
+def _settings_snapshot():
+    """A mutable copy of the ambient settings, same type ``conf()`` returns.
+
+    ``Config`` rather than a plain ``dict``: one test patches ``.get`` on the
+    object to narrow the ready-type set, and that only works on the real type.
+    """
+    from config import Config, conf as _conf
+
+    return Config(dict(_conf()))
+
+
 @contextmanager
 def _personal_runtime_on(*channel_types):
     """Raise the staged personal-execution switch for one test.
@@ -43,14 +54,55 @@ def _personal_runtime_on(*channel_types):
     Production ships ``PERSONAL_RUNTIME_ACCEPTED_TYPES`` empty (task 7.5: no
     real vendor acceptance has been recorded yet), which keeps every personal
     connection closed. Tests raise it per type so the code paths behind the gate
-    are exercised *against the same gate* the deployment keeps shut — never by
+    are exercised *against* the same gate the deployment keeps shut — never by
     removing the check.
+
+    The switch is *merged* into the ambient settings rather than replacing them:
+    ``agent_workspace`` has to survive, because the Agent Registry is resolved
+    from it and the personal write paths now verify their target against that
+    roster. Replacing ``conf()`` wholesale would resolve the registry against the
+    developer's real workspace and let the outcome depend on their roster.
     """
+    settings = _settings_snapshot()
+    settings["personal_channel_runtime"] = True
     with patch("channel.channel_instances.PERSONAL_RUNTIME_ACCEPTED_TYPES",
                frozenset(channel_types)), \
             patch("channel.channel_instances.PUBLIC_PERSONAL_INGRESS_TYPES",
                   frozenset(channel_types)), \
-            patch("config.conf", lambda: {"personal_channel_runtime": True}):
+            patch("config.conf", lambda: settings):
+        yield
+
+
+#: The Agents every test in this module needs in the roster. The two shared ones
+#: keep the public path's own semantics covered (a shared instance may route to
+#: any Agent of the tenant, bound or not); the private ones are the personal
+#: targets, and the disabled one exists so "the target was switched off" is
+#: provable rather than assumed.
+_ROSTER = (
+    "agent-a", "agent-b",
+    "alice-assistant", "alice-own", "bob-own", "globex-own",
+    "alice-globex", "alice-off",
+)
+
+
+@contextmanager
+def _roster_in_place():
+    """Run with a real Agent Registry over a private workspace.
+
+    A personal channel write verifies its target against the Agent Registry —
+    the same roster the runtime starts a connection from — so a test that
+    exercises the write path has to provide one. Pinned to a fresh temp
+    workspace so the developer's own roster cannot turn a refusal into a pass.
+    """
+    settings = _settings_snapshot()
+    settings["agent_workspace"] = tempfile.mkdtemp(prefix="channel-console-")
+    settings["agents"] = [
+        {"id": agent_id, "name": agent_id,
+         "enabled": agent_id != "alice-off"}
+        for agent_id in _ROSTER
+    ]
+    settings["default_agent_id"] = "agent-a"
+    with patch("config.conf", lambda: settings):
         yield
 
 FEISHU_BUNDLE = {
@@ -90,6 +142,13 @@ class _Fixture(unittest.TestCase):
         os.environ["COW_CREDENTIAL_MASTER_KEY"] = self.MASTER_KEY
         self.addCleanup(self._restore_master_key)
 
+        rosters = _roster_in_place()
+        rosters.__enter__()
+        self.addCleanup(lambda: rosters.__exit__(None, None, None))
+        from agent.registry import set_agent_registry
+
+        set_agent_registry(None)
+
         self.svc = IdentityService(_db_path())
         self.svc.bootstrap(
             tenant_code="acme", tenant_name="Acme", admin_username="root",
@@ -115,6 +174,9 @@ class _Fixture(unittest.TestCase):
         self.admin_b = [m for m in self.svc.list_members(self.tb)["items"]
                         if m["username"] == "globexadmin"][0]["user_id"]
 
+        # The two *shared* Agents keep every public-path test honest: a shared
+        # instance may be unbound, but when it does name a target that target is
+        # any Agent of the tenant (``private_owner_user_id IS NULL``).
         self.svc.bind_agent(tenant_id=self.ta, agent_id="agent-a",
                             private_owner_user_id=None)
         self.svc.bind_agent(tenant_id=self.tb, agent_id="agent-b",
@@ -122,6 +184,44 @@ class _Fixture(unittest.TestCase):
 
         self.alice = self._add_member("alice")
         self.bob = self._add_member("bob")
+
+        # A personal instance's target has to be a *private* Agent of its own
+        # owner (task 2.1), so the fixture gives each member the two shapes the
+        # spec enumerates: the system-supplied assistant and a self-built one.
+        self.alice_assistant = self._private_agent(
+            self.alice, "alice-assistant", origin="provisioned_assistant")
+        self.alice_own = self._private_agent(
+            self.alice, "alice-own", origin="user_created")
+        # Bound but switched off in the roster: the ownership half of the target
+        # predicate holds, the enablement half does not, which is the case that
+        # has its own refusal ("switch your assistant back on") rather than
+        # collapsing into "not selectable".
+        self.alice_off = self._private_agent(self.alice, "alice-off")
+        self.bob_own = self._private_agent(self.bob, "bob-own")
+        self.admin_b_own = self._private_agent(
+            self.admin_b, "globex-own", tenant_id=self.tb)
+        # Alice also holds a personal Agent of her own in Globex: one member can
+        # own resources in two tenants, and each tenant's target is its own.
+        self.alice_globex = self._private_agent(
+            self.alice, "alice-globex", tenant_id=self.tb)
+
+    def _private_agent(self, owner_user_id, agent_id, *, tenant_id=None,
+                       origin="user_created"):
+        """Bind ``agent_id`` as ``owner_user_id``'s own private Agent.
+
+        Written through the same ``bind_agent`` call the product uses, so the
+        ownership fact the channel write paths read is the real one — the
+        fixture never pokes ``agent_bindings`` directly.
+        """
+        self.svc.bind_agent(tenant_id=tenant_id or self.ta, agent_id=agent_id,
+                            private_owner_user_id=owner_user_id, origin=origin)
+        return agent_id
+
+    def _owned_agent(self, owner_user_id):
+        """The private Agent that ``owner_user_id`` should target by default."""
+        return {self.alice: self.alice_own,
+                self.bob: self.bob_own,
+                self.admin_b: self.admin_b_own}[owner_user_id]
 
     def _restore_master_key(self):
         if self._previous_key is None:
@@ -158,12 +258,15 @@ class _Fixture(unittest.TestCase):
         return dict(rows[0]) if rows else None
 
     def _create(self, owner, *, display_name="My Bot",
-                credentials=None, channel_type="feishu", agent_id="agent-a",
+                credentials=None, channel_type="feishu", agent_id=None,
                 tenant_id=None, password=None):
         return self.svc.create_personal_channel_instance(
             actor_user_id=owner, tenant_id=tenant_id or self.ta,
             channel_type=channel_type, display_name=display_name,
-            agent_id=agent_id,
+            # ``None`` means "the fixture picks the member's own Agent"; ``""``
+            # is the *empty target* case a test has to be able to submit, so it
+            # must not be quietly replaced by the convenience default.
+            agent_id=(self._owned_agent(owner) if agent_id is None else agent_id),
             credentials=dict(credentials or FEISHU_BUNDLE),
             recent_password=password or self.MEMBER_PW)
 
@@ -216,7 +319,7 @@ class PersonalSurfaceTests(_Fixture):
         elsewhere = self.svc.create_tenant_channel_instance(
             actor_user_id=self.admin_b, tenant_id=self.tb,
             channel_type="feishu", display_name="Globex Bot",
-            agent_id="agent-b", credentials=dict(FEISHU_BUNDLE),
+            agent_id=self.admin_b_own, credentials=dict(FEISHU_BUNDLE),
             recent_password="Str0ngGlobexFinal",
             scope="user", owner_user_id=self.admin_b)
         # The id exists; the (tenant, id) pair does not.
@@ -226,6 +329,13 @@ class PersonalSurfaceTests(_Fixture):
             instance_id=elsewhere["id"])
 
     def test_the_public_surface_keeps_its_administrator_gate(self):
+        """The administrative branch is still refused to a member (task 6.1).
+
+        The console now *routes* a member to the owner branch, but the decision
+        did not move into the browser: reaching the tenant branch directly — as a
+        stale client, a script or a future caller would — is still a 403, and the
+        test exists to keep it that way.
+        """
         _expect_error(
             self, "forbidden", 403, self.svc.create_tenant_channel_instance,
             actor_user_id=self.alice, tenant_id=self.ta, channel_type="feishu",
@@ -233,12 +343,17 @@ class PersonalSurfaceTests(_Fixture):
             credentials=dict(FEISHU_BUNDLE), recent_password=self.MEMBER_PW)
         _expect_error(
             self, "forbidden", 403,
-            self.svc.list_tenant_channel_instances,
-            actor_user_id=self.alice, tenant_id=self.ta)
-        _expect_error(
-            self, "forbidden", 403, self.svc.set_tenant_channel_instance_active,
+            self.svc.set_tenant_channel_instance_active,
             actor_user_id=self.alice, tenant_id=self.ta, instance_id="ci_x",
             active=False, expected_version=1, recent_password=self.MEMBER_PW)
+        # The *list* is the one verb a member does reach, and it answers with
+        # their own range rather than the tenant's — an empty list here, because
+        # Alice owns nothing yet. Refusing it would hide the surface that
+        # replaced the personal workbench.
+        listing = self.svc.list_tenant_channel_instances(
+            actor_user_id=self.alice, tenant_id=self.ta)
+        self.assertEqual(listing["items"], [])
+        self.assertEqual(listing["total"], 0)
 
     def test_a_non_member_cannot_register_anything(self):
         _expect_error(
@@ -386,11 +501,11 @@ class ReadinessTests(_Fixture):
 
         with patch.object(conf(), "get",
                           side_effect=lambda key, default=None: (
-                              ["telegram"] if key == "personal_channel_ready_types"
+                              ["dingtalk"] if key == "personal_channel_ready_types"
                               else default)):
             from channel.channel_instances import personal_channel_ready
 
-            self.assertEqual(personal_channel_ready("telegram"), (True, ""))
+            self.assertEqual(personal_channel_ready("dingtalk"), (True, ""))
             self.assertEqual(personal_channel_ready("feishu"),
                              (False, "not_allowed"))
             # A type outside the base set cannot be opened by configuration.
@@ -716,7 +831,7 @@ class IdentityLinkTests(_Fixture):
             temporary_password="MemTempPass1", roles=["member"])
         foreign = self.svc.create_personal_channel_instance(
             actor_user_id=self.alice, tenant_id=self.tb, channel_type="feishu",
-            display_name="Globex Bot", agent_id="agent-b",
+            display_name="Globex Bot", agent_id=self.alice_globex,
             credentials=dict(FEISHU_BUNDLE), recent_password=self.MEMBER_PW)
         challenge = self.svc.start_personal_channel_binding(
             actor_user_id=self.alice, tenant_id=self.tb,
@@ -900,7 +1015,7 @@ class RuntimeStateTests(_Fixture):
         ctx = _FakeCtx(self.alice, self.ta)
         payload = json.dumps({
             "channel_type": "feishu", "display_name": "My Bot",
-            "agent_id": "agent-a", "credentials": dict(FEISHU_BUNDLE),
+            "agent_id": self.alice_own, "credentials": dict(FEISHU_BUNDLE),
             "recent_password": self.MEMBER_PW,
         }).encode()
         with _handler_scope(web_channel, ctx, self.svc), \
@@ -1084,6 +1199,453 @@ class IntegrationTests(_Fixture):
         for path in ("/api/personal/channels", "/api/personal/channels/([^/]+)"):
             self.assertEqual(ROUTE_POLICY[path]["GET"]["policy"], "personal")
             self.assertEqual(ROUTE_POLICY[path]["POST"]["policy"], "personal")
+
+
+class WorkbenchProjectionTests(_Fixture):
+    """2.3 — one list response is enough to decide what the page may offer.
+
+    Every input to that decision is server state, so the test asks the service
+    the same question the console does and asserts on a *projection*, never on a
+    role: a member who bypasses the page must still meet the write rules.
+    """
+
+    def test_both_shapes_of_a_private_target_are_offered_and_nothing_else(self):
+        options = self.svc.personal_channel_workspace(
+            actor_user_id=self.alice, tenant_id=self.ta)["agent_options"]
+        self.assertEqual([o["id"] for o in options],
+                         [self.alice_assistant, self.alice_off, self.alice_own])
+        # The system-supplied assistant is labelled as such so the picker can
+        # group it, but it is a candidate on exactly the same ownership terms as
+        # a self-built one.
+        by_id = {o["id"]: o for o in options}
+        self.assertTrue(by_id[self.alice_assistant]["is_system_assistant"])
+        self.assertFalse(by_id[self.alice_own]["is_system_assistant"])
+        self.assertEqual(set(options[0]),
+                         {"id", "name", "is_system_assistant", "enabled"})
+
+    def test_a_shared_or_foreign_agent_is_never_a_candidate(self):
+        ids = [o["id"] for o in self.svc.personal_channel_workspace(
+            actor_user_id=self.alice, tenant_id=self.ta)["agent_options"]]
+        self.assertNotIn("agent-a", ids, "a tenant-shared Agent is not personal")
+        self.assertNotIn(self.bob_own, ids, "another member's private Agent")
+        self.assertNotIn(self.admin_b_own, ids, "another tenant's Agent")
+
+    def test_an_administrator_gets_only_their_own_candidates(self):
+        """Being a control user must not widen the *personal* candidate list."""
+        options = self.svc.personal_channel_workspace(
+            actor_user_id=self.admin_b, tenant_id=self.tb)["agent_options"]
+        self.assertEqual([o["id"] for o in options], [self.admin_b_own])
+
+    def test_a_disabled_target_is_offered_as_disabled_not_hidden(self):
+        """It is still *theirs*, so the picker can say which one to switch back on."""
+        options = {o["id"]: o for o in self.svc.personal_channel_workspace(
+            actor_user_id=self.alice, tenant_id=self.ta)["agent_options"]}
+        self.assertIn("alice-off", options)
+        self.assertFalse(options["alice-off"]["enabled"])
+        self.assertTrue(options[self.alice_own]["enabled"])
+        self.assertTrue(options[self.alice_assistant]["enabled"])
+
+    def test_the_create_verdict_is_closed_with_a_reason_when_targets_are_unusable(self):
+        """``bob`` owns a target, so narrowing his roster is what closes create."""
+        workspace = self.svc.personal_channel_workspace(
+            actor_user_id=self.bob, tenant_id=self.ta)
+        self.assertTrue(workspace["actions"]["create"])
+        self.assertEqual(workspace["create_unavailable_reason"], "")
+        # Disabling every target the member owns closes the entry point with
+        # "you have no usable assistant", not with an empty candidate list that
+        # reads like a loading failure.
+        with patch.object(self.svc, "_agent_enabled", lambda agent_id: False):
+            workspace = self.svc.personal_channel_workspace(
+                actor_user_id=self.bob, tenant_id=self.ta)
+        self.assertFalse(workspace["actions"]["create"])
+        self.assertEqual(workspace["create_unavailable_reason"], "no_agent")
+        self.assertTrue(workspace["agent_options"],
+                        "the candidates are still listed, so the member can be told"
+                        " *which* of their assistants to switch back on")
+        self.assertFalse(any(o["enabled"] for o in workspace["agent_options"]))
+
+    def test_a_withdrawn_tenant_policy_closes_create_with_its_own_reason(self):
+        self.svc.set_tenant_channel_policy(
+            actor_user_id=self.root["id"], tenant_id=self.ta,
+            recent_password=self.ROOT_PW, personal_enabled=False)
+        workspace = self.svc.personal_channel_workspace(
+            actor_user_id=self.alice, tenant_id=self.ta)
+        self.assertFalse(workspace["actions"]["create"])
+        self.assertEqual(workspace["create_unavailable_reason"],
+                         "personal_access_disabled")
+
+    def test_the_type_list_is_the_declarations_narrowed_by_the_tenant(self):
+        from common import const
+
+        everything = self.svc.personal_channel_workspace(
+            actor_user_id=self.alice, tenant_id=self.ta)["channel_types"]
+        self.assertIn(const.FEISHU,
+                      [t["channel_type"] for t in everything if t["ready"]])
+        self.svc.set_tenant_channel_policy(
+            actor_user_id=self.root["id"], tenant_id=self.ta,
+            recent_password=self.ROOT_PW, allowed_types=[const.DINGTALK])
+        narrowed = self.svc.personal_channel_workspace(
+            actor_user_id=self.alice, tenant_id=self.ta)["channel_types"]
+        ready = {t["channel_type"]: t for t in narrowed if t["ready"]}
+        self.assertEqual(set(ready), {const.DINGTALK})
+        feishu = [t for t in narrowed if t["channel_type"] == const.FEISHU][0]
+        self.assertFalse(feishu["ready"])
+        self.assertEqual(feishu["reason"], "channel_type_not_allowed")
+        # The *deployment* verdict is still the first word: a type the process
+        # has not declared ready stays unready however the tenant list reads.
+        self.assertEqual([t["channel_type"] for t in narrowed
+                          if t["ready"] and t["reason"]], [])
+
+    def test_the_quota_projection_counts_what_the_write_will_count(self):
+        self.svc.set_tenant_channel_policy(
+            actor_user_id=self.root["id"], tenant_id=self.ta,
+            recent_password=self.ROOT_PW, personal_instance_limit=1)
+        before = self.svc.personal_channel_workspace(
+            actor_user_id=self.alice, tenant_id=self.ta)
+        self.assertEqual(before["quota"]["owner_remaining"], 1)
+        self.assertTrue(before["actions"]["create"])
+        self._create(self.alice)
+        after = self.svc.personal_channel_workspace(
+            actor_user_id=self.alice, tenant_id=self.ta)
+        self.assertEqual(after["quota"]["owner_used"], 1)
+        self.assertEqual(after["quota"]["owner_remaining"], 0)
+        self.assertFalse(after["actions"]["create"])
+        self.assertEqual(after["create_unavailable_reason"], "quota_exceeded")
+        # The member's own count is not another member's: the projection is
+        # scoped by owner, and bob is unaffected by alice's exhausted allowance.
+        self.assertTrue(self.svc.personal_channel_workspace(
+            actor_user_id=self.bob, tenant_id=self.ta)["actions"]["create"])
+
+    def test_the_projection_needs_no_management_page_permission(self):
+        """A plain member reaches it; nothing here is gated on ``admin.*``."""
+        workspace = self.svc.personal_channel_workspace(
+            actor_user_id=self.alice, tenant_id=self.ta)
+        self.assertEqual(set(workspace),
+                         {"agent_options", "channel_types", "quota", "actions",
+                          "create_unavailable_reason"})
+        self.assertFalse(self.svc._is_control(self.alice, self.ta))
+
+    def test_a_non_member_gets_no_workspace_at_all(self):
+        _expect_error(
+            self, "forbidden", 403, self.svc.personal_channel_workspace,
+            actor_user_id="stranger", tenant_id=self.ta)
+
+
+class WriteBoundaryTargetTests(_Fixture):
+    """2.1/2.2 — one target predicate, enforced on every path that opens service."""
+
+    def test_an_empty_target_is_a_malformed_write_not_a_default(self):
+        _expect_error(self, "personal_agent_required", 400,
+                      self._create, self.alice, agent_id="")
+        # The same verdict on the shared write path, which a scan submit reaches
+        # directly — the wrapper is not where the rule lives.
+        _expect_error(
+            self, "personal_agent_required", 400,
+            self.svc.create_tenant_channel_instance,
+            actor_user_id=self.root["id"], tenant_id=self.ta,
+            channel_type="feishu", display_name="No Target", agent_id="",
+            credentials=dict(FEISHU_BUNDLE), recent_password=self.ROOT_PW,
+            scope="user", owner_user_id=self.alice)
+
+    def test_a_shared_agent_is_refused_as_a_personal_target(self):
+        _expect_error(self, "personal_agent_forbidden", 403,
+                      self._create, self.alice, agent_id="agent-a")
+
+    def test_another_members_private_agent_is_refused(self):
+        _expect_error(self, "personal_agent_forbidden", 403,
+                      self._create, self.alice, agent_id=self.bob_own)
+
+    def test_a_cross_tenant_target_is_refused(self):
+        """Alice owns an Agent in Globex; that is not a target in Acme."""
+        caught = _expect_error(
+            self, "forbidden", 403, self._create, self.alice,
+            agent_id=self.alice_globex)
+        self.assertNotIn(self.alice_globex, str(caught))
+
+    def test_no_target_shape_is_probeable_through_the_refusal(self):
+        """Whatever the shape, the refusal discloses nothing about the object.
+
+        The *codes* differ — a foreign tenant is caught by the tenant check the
+        public path shares, a foreign member by the personal predicate — but
+        neither message names the Agent, its owner, or whether it exists.
+        """
+        for agent_id in ("agent-does-not-exist", self.bob_own, self.admin_b_own):
+            with self.subTest(target=agent_id):
+                with self.assertRaises(IdentityServiceError) as caught:
+                    self._create(self.alice, agent_id=agent_id)
+                self.assertEqual(caught.exception.status, 403)
+                message = str(caught.exception)
+                self.assertNotIn(agent_id, message)
+                self.assertNotIn(self.bob, message)
+
+    def test_a_disabled_target_is_its_own_reason(self):
+        """The member owns it, so "switch it back on" is sayable."""
+        _expect_error(self, "personal_agent_disabled", 403,
+                      self._create, self.alice, agent_id="alice-off")
+
+    def test_the_shared_write_path_enforces_it_too(self):
+        """The wrapper is not the boundary: ``scope='user'`` creation is direct."""
+        _expect_error(
+            self, "personal_agent_forbidden", 403,
+            self.svc.create_tenant_channel_instance,
+            actor_user_id=self.root["id"], tenant_id=self.ta,
+            channel_type="feishu", display_name="Sneaky Personal",
+            agent_id="agent-a", credentials=dict(FEISHU_BUNDLE),
+            recent_password=self.ROOT_PW, scope="user", owner_user_id=self.alice)
+
+    def test_a_repair_cannot_move_ownership_to_the_operator(self):
+        created = self._create(self.alice)
+        _expect_error(
+            self, "forbidden", 403, self.svc.update_personal_channel_instance,
+            actor_user_id=self.root["id"], tenant_id=self.ta,
+            instance_id=created["id"], expected_version=created["version"],
+            agent_id=self.bob_own, recent_password=self.ROOT_PW)
+
+    def test_a_target_still_may_not_be_kept_once_it_stops_being_yours(self):
+        """A pure rename keeps the target — but a write that *reselects* may not.
+
+        The failure refuses only the verbs that put the instance back into
+        service. What must never happen is the stale "it was selectable when the
+        page loaded" fact being treated as the authorization.
+        """
+        created = self._create(self.alice)
+        disabled = self.svc.set_personal_channel_instance_active(
+            actor_user_id=self.alice, tenant_id=self.ta, instance_id=created["id"],
+            active=False, expected_version=created["version"],
+            recent_password=self.MEMBER_PW)
+        version = disabled["version"]
+        # The Agent the member selected is turned tenant-shared afterwards, by
+        # the same operator action production uses.
+        self.svc.make_agent_tenant_shared(
+            agent_id=self.alice_own, actor_user_id=self.root["id"])
+        for label, call in (
+            ("rotate", {"credentials": dict(FEISHU_BUNDLE,
+                                            feishu_app_secret="rotated")}),
+            ("retarget-to-shared", {"agent_id": "agent-a"}),
+        ):
+            with self.subTest(action=label):
+                _expect_error(
+                    self, "personal_agent_forbidden", 403,
+                    self.svc.update_personal_channel_instance,
+                    actor_user_id=self.alice, tenant_id=self.ta,
+                    instance_id=created["id"], expected_version=version,
+                    recent_password=self.MEMBER_PW, **call)
+        _expect_error(
+            self, "personal_agent_forbidden", 403,
+            self.svc.set_personal_channel_instance_active,
+            actor_user_id=self.alice, tenant_id=self.ta, instance_id=created["id"],
+            active=True, expected_version=version, recent_password=self.MEMBER_PW)
+        row = self._instance_row(created["id"])
+        self.assertEqual(row["agent_id"], self.alice_own)
+        self.assertEqual(row["version"], version,
+                         "no refusal may have moved the version")
+        self.assertEqual(row["active"], 0)
+        # A plain rename still works, so the row is not frozen by its bad target.
+        renamed = self.svc.update_personal_channel_instance(
+            actor_user_id=self.alice, tenant_id=self.ta, instance_id=created["id"],
+            expected_version=version, display_name="Renamed",
+            recent_password=self.MEMBER_PW)
+        self.assertEqual(renamed["display_name"], "Renamed")
+
+    def test_a_refused_target_write_leaves_no_trace(self):
+        self.assertEqual(self._credential_rows(self.ta), [])
+        _expect_error(self, "personal_agent_forbidden", 403,
+                      self._create, self.alice, agent_id=self.bob_own)
+        self.assertEqual(self._credential_rows(self.ta), [])
+        self.assertEqual(self.svc.list_personal_channel_instances(
+            actor_user_id=self.alice, tenant_id=self.ta)["total"], 0)
+
+
+class TargetStatusAndRepairTests(_Fixture):
+    """2.5/5.1 — an unusable target is *shown and fixable*, never silently swapped."""
+
+    def _legacy_instance(self, owner, agent_id="", *, tenant_id=None,
+                         display_name="Legacy Bot", active=1):
+        """Seed a row the way an *older* client could have left it.
+
+        Written straight to storage on purpose: every current write path refuses
+        an empty target, so a fixture that went through the service could not
+        produce the very rows this class is about.
+        """
+        tenant_id = tenant_id or self.ta
+        instance_id = "ci_legacy_%s_%s" % (owner[-6:], display_name.replace(" ", "_"))
+        self.svc._store.execute(
+            "INSERT INTO tenant_channel_instances(id, tenant_id, channel_type,"
+            " display_name, agent_id, active, scope, owner_user_id, created_by)"
+            " VALUES(?,?,?,?,?,?,'user',?,?)",
+            (instance_id, tenant_id, "feishu", display_name, agent_id, active,
+             owner, owner))
+        return instance_id
+
+    def test_a_healthy_target_reads_as_ok(self):
+        created = self._create(self.alice)
+        target = created["target"]
+        self.assertEqual(target["state"], "ok")
+        self.assertEqual(target["agent_id"], self.alice_own)
+        self.assertTrue(target["enabled"])
+        self.assertFalse(created["actions"]["repair_target"])
+
+    def test_a_legacy_empty_target_is_reported_as_missing_and_repairable(self):
+        instance_id = self._legacy_instance(self.alice, "")
+        view = self.svc.get_personal_channel_instance(
+            actor_user_id=self.alice, tenant_id=self.ta, instance_id=instance_id)
+        self.assertEqual(view["target"]["state"], "missing")
+        self.assertEqual(view["target"]["reason"], "personal_agent_required")
+        self.assertTrue(view["actions"]["repair_target"])
+        # Repairing is the *only* opening verb offered; the row is still closable.
+        self.assertFalse(view["actions"]["enable"])
+        self.assertFalse(view["actions"]["bind"])
+        self.assertTrue(view["actions"]["edit"])
+
+    def test_a_legacy_shared_target_is_flagged_without_disclosing_it(self):
+        """The old row keeps its id; the projection names nothing it may not."""
+        instance_id = self._legacy_instance(self.alice, self.bob_own)
+        view = self.svc.get_personal_channel_instance(
+            actor_user_id=self.alice, tenant_id=self.ta, instance_id=instance_id)
+        self.assertEqual(view["target"]["state"], "invalid")
+        self.assertEqual(view["target"]["agent_id"], self.bob_own)
+        self.assertEqual(view["target"]["name"], "",
+                         "an unusable target's name is never projected")
+        self.assertEqual(self._instance_row(instance_id)["agent_id"], self.bob_own,
+                         "the row is left exactly as stored: never auto-reassigned")
+
+    def test_a_legacy_row_can_be_repaired_but_only_by_its_owner(self):
+        instance_id = self._legacy_instance(self.alice, "")
+        repaired = self.svc.update_personal_channel_instance(
+            actor_user_id=self.alice, tenant_id=self.ta, instance_id=instance_id,
+            expected_version=1, agent_id=self.alice_own,
+            recent_password=self.MEMBER_PW)
+        self.assertEqual(repaired["target"]["state"], "ok")
+        self.assertEqual(self._instance_row(instance_id)["agent_id"], self.alice_own)
+        self.assertEqual(self._instance_row(instance_id)["id"], instance_id,
+                         "repairing is an update: the instance id is preserved")
+
+    def test_an_invalid_target_withholds_enable_and_binding_but_not_closing(self):
+        instance_id = self._legacy_instance(self.alice, "", active=0)
+        _expect_error(
+            self, "personal_agent_required", 400,
+            self.svc.set_personal_channel_instance_active,
+            actor_user_id=self.alice, tenant_id=self.ta,
+            instance_id=instance_id, active=True, expected_version=1,
+            recent_password=self.MEMBER_PW)
+        _expect_error(
+            self, "personal_agent_required", 400,
+            self.svc.start_personal_channel_binding,
+            actor_user_id=self.alice, tenant_id=self.ta,
+            instance_id=instance_id, expected_version=1)
+        # Disabling and unlinking stay reachable, so a member is never trapped.
+        disabled = self.svc.set_personal_channel_instance_active(
+            actor_user_id=self.alice, tenant_id=self.ta, instance_id=instance_id,
+            active=False, expected_version=1, recent_password=self.MEMBER_PW)
+        self.assertFalse(disabled["active"])
+
+    def test_a_disabled_target_withholds_rotation_and_reports_why(self):
+        created = self._create(self.alice)
+        with patch.object(self.svc, "_agent_enabled", lambda agent_id: False):
+            view = self.svc.get_personal_channel_instance(
+                actor_user_id=self.alice, tenant_id=self.ta,
+                instance_id=created["id"])
+        self.assertEqual(view["target"]["state"], "disabled")
+        self.assertEqual(view["target"]["reason"], "personal_agent_disabled")
+        self.assertFalse(view["actions"]["enable"])
+        self.assertTrue(view["actions"]["repair_target"])
+        # Rotation would put the instance back into service with a target that
+        # cannot run, so it is refused; the closing verbs are not.
+        with patch.object(self.svc, "_agent_enabled", lambda agent_id: False):
+            _expect_error(
+                self, "personal_agent_disabled", 403,
+                self.svc.update_personal_channel_instance,
+                actor_user_id=self.alice, tenant_id=self.ta,
+                instance_id=created["id"], expected_version=created["version"],
+                credentials=dict(FEISHU_BUNDLE,
+                                 feishu_app_secret="rotated-secret"),
+                recent_password=self.MEMBER_PW)
+
+    def test_the_runtime_refuses_to_start_an_instance_with_an_unusable_target(self):
+        """Startup and the hot path share the gate, so a restart cannot re-open it."""
+        from channel import channel_instances
+
+        connected = []
+
+        class _Manager:
+            def restart(self, inst):
+                connected.append(inst.instance_id)
+
+            def remove_channel(self, instance_id):
+                pass
+
+        instance_id = self._legacy_instance(self.alice, "")
+        with _personal_runtime_on("feishu"), \
+                patch("auth.service.get_identity_service", return_value=self.svc), \
+                patch.object(channel_instances, "_runtime_manager",
+                             staticmethod(lambda: _Manager())):
+            state = channel_instances.apply_tenant_instance_runtime(instance_id)
+        self.assertFalse(state["applied"])
+        self.assertIn("personal_agent_required", state["error"])
+        self.assertEqual(connected, [],
+                         "an unusable target must not be connected at all")
+
+    def test_the_startup_synthesis_applies_the_same_target_gate(self):
+        """A restart must not re-open what the console reports as needing repair."""
+        from channel import channel_instances
+
+        with patch("auth.service.get_identity_service",
+                   return_value=self.svc), _personal_runtime_on("feishu"):
+            healthy = self._create(self.alice)
+            broken = self._legacy_instance(self.alice, "")
+            loaded = channel_instances.load_tenant_channel_instances()
+        loaded_ids = [inst.instance_id for inst in loaded]
+        self.assertIn(healthy["id"], loaded_ids)
+        self.assertNotIn(broken, loaded_ids)
+
+    def test_the_runtime_projection_separates_saved_from_connected(self):
+        created = self._create(self.alice)
+        # Runtime is closed for every personal type in production, so the honest
+        # reading is "saved, not connected" — never "connected" from active=true.
+        self.assertEqual(created["runtime"]["state"], "saved")
+        self.assertEqual(created["runtime"]["reason"], "runtime_not_open")
+        self.assertFalse(created["runtime"]["connected"])
+        self.assertFalse(created["runtime"]["talkable"])
+        view = self._runtime_view(
+            created["id"], {"applied": False, "pending": True, "error": ""})
+        self.assertEqual(view["runtime"]["state"], "connecting")
+        self.assertFalse(view["runtime"]["connected"])
+        self.assertFalse(view["runtime"]["talkable"])
+
+    def test_a_connected_but_unlinked_instance_is_not_talkable(self):
+        """连接成功但本人未关联：可用性不能用 active 或扫码结果合成."""
+        created = self._create(self.alice)
+        view = self._runtime_view(
+            created["id"], {"applied": True, "pending": False, "error": ""})
+        self.assertEqual(view["runtime"]["state"], "connected")
+        self.assertTrue(view["runtime"]["connected"])
+        self.assertFalse(view["runtime"]["linked"])
+        self.assertFalse(view["runtime"]["talkable"],
+                         "a connection without the member's own link cannot talk")
+
+    def test_a_connection_error_is_reported_rather_than_flattened(self):
+        created = self._create(self.alice)
+        view = self._runtime_view(
+            created["id"], {"applied": False, "pending": False,
+                            "error": "vendor refused the bot token"})
+        self.assertEqual(view["runtime"]["state"], "failed")
+        self.assertEqual(view["runtime"]["reason"], "connect_failed")
+        self.assertIn("refused", view["runtime"]["error"])
+
+    def _runtime_view(self, instance_id, observed):
+        """The instance projection over a *given* runtime observation.
+
+        ``instance_runtime_state`` is the runtime's own report, so pinning it is
+        how these tests isolate the projection: the mapping from "what the
+        runtime last saw" to "what the member is told" is the contract under
+        test, not the manager's behaviour.
+        """
+        with _personal_runtime_on("feishu"), patch(
+                "channel.channel_instances.instance_runtime_state",
+                return_value=dict(observed)):
+            return self.svc.get_personal_channel_instance(
+                actor_user_id=self.alice, tenant_id=self.ta,
+                instance_id=instance_id)
 
 
 class _FakeCtx:

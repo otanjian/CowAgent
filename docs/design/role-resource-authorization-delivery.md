@@ -1,5 +1,20 @@
 # 角色资源授权——交付、迁移与回退说明
 
+## 2026-09-15 方案变更（已复核，2026-09-16）
+
+本文是原角色资源授权的交付记录。新方案映射旧个人菜单到正式页面，开放普通用户控制台并按所有权收窄对象范围；公共维护仍要求管理资格。原迁移和测试结论不证明新菜单映射、用户默认或统一功能已通过，新旧授权兼容按新 change 执行。
+
+最新方案：[统一控制台与数据范围方案](unified-console-access-plan.md)；实施契约：[unify-console-by-data-scope](../../openspec/changes/unify-console-by-data-scope/proposal.md)。
+
+**实际状态**：本文 §6.1 的组件集成结论仍然成立（两张 grant 表、平台 all、实际调用点守卫、迁移/回退守卫）；
+§6.2 的三项延期项在本次复核中**仍为未交付**（未发现 `resource_catalog`、`model_policies`、`authorization_revision` 或
+`AuthorizationService` 的实现）。本 change 在其上新增的不是新授权模型，而是：菜单 grant 的幂等迁移（`_migration_26`）、
+用户默认与租户默认的分权（4.4/4.5）以及**按 owner/scope 的对象范围**（`auth/object_scope.py`）。
+逐项判定见 [`evidence/8-5-doc-closure.md`](../../openspec/changes/unify-console-by-data-scope/evidence/8-5-doc-closure.md) §2。
+
+---
+
+
 日期：2026-09-09。对应 OpenSpec change：`add-role-resource-authorization`（任务 6.1/6.2/6.4）。
 本文是**交付/运维层面**的说明，回答「如何启用、如何迁移存量授权、如何回退、哪些是组件集成、哪些尚未开放线上运行」。实现代码与规范化约定以 `openspec/changes/add-role-resource-authorization/` 与主规范 `openspec/specs/` 为准，本文只作操作与证据索引，不重复规范条款。
 
@@ -145,3 +160,18 @@
 ## 7. 结尾
 
 本文只读地记录了「已集成什么、如何迁移/回退、证据在哪、哪些未开放」。任何「线上 Web 运行可用」的结论都需要额外端到端验收，不能由组件集成测试代替。归档 change 时同步上述 10 份规范到主规范目录（`openspec/specs/`），不改其他 change 的任务状态。
+
+## 8. 本 change 之上的增量与复核（2026-09-16）
+
+| 项 | 状态 | 依据 |
+| --- | --- | --- |
+| 菜单 grant 的幂等映射（旧 `nav:personal.*` → 正式页，多对一） | ✅ 已验收 | `_migration_26`（`auth/store.py:1348-1428`）+ `evidence/2-4-menu-mapping-migration.md`；演练与变异见 `tests/test_console_migration_drill.py` |
+| 用户默认与租户默认分权（用户默认不再要求管理资格，租户默认仍要求且拒绝私有目标） | ✅ 已验收 | `auth/service.py:861`（`set_user_default_agent`）、`:1603`（`set_tenant_default_agent`）；`evidence/4-4-*`、`4-6-*` |
+| 按 owner/scope 的对象范围判定（owner 检查先于管理员例外；公共配置需管理资格本身） | ✅ 已验收 | `auth/object_scope.py`（`allows_agent` `:117`、`allows_public_configuration` `:183`）+ `tests/test_object_scope.py` 20 项 |
+| 旧个人入口的兼容转接与调用观测 | ✅ 已验收 | `evidence/8-1-legacy-personal-address-forward.md`、`8-2-compat-cycle.md` |
+| §6.2 的三项延期项 | ⬜ 仍为未交付 | 复核未发现 `resource_catalog`、`model_policies`、`authorization_revision`、`AuthorizationService` 的实现 |
+| 线上运行开放（本文最强调的边界） | ⬜ 未覆盖 | 真实渠道运行阻塞于真实凭据与真实运行进程（`evidence/7-1-runtime-preflight.md`）；本人连接的运行开关与验收集为空 |
+
+**取代关系**：本文的「组件集成 vs 线上开放」二分法保留且继续有效；被本 change 取代的只是
+「控制台仅管理员可用」与「个人入口独立成消费者」两条前提。逐行矩阵见
+[`evidence/8-5-doc-closure.md`](../../openspec/changes/unify-console-by-data-scope/evidence/8-5-doc-closure.md) §3。

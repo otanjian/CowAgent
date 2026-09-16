@@ -1,11 +1,20 @@
 // Personal console in a real browser (change enable-member-personal-console,
 // task 8.6: "桌面/窄屏交互测试").
 //
-// The frontend contract (tests/test_personal_console_frontend.cjs) pins the pure
-// helpers; this file drives the *production page* at two widths, because layout
-// behaviour (the off-canvas sidebar, the collapsible group, a deep link, and the
-// "a denied page never starts its consumer" rule) only exists once the shell,
-// the CSS and the modules run together. Only backend responses are fixtures.
+// Task 8.8 retired the independent member personal console: the module, its
+// loader and the issuance of the five `personal.*` page ids are gone, and each
+// retired `#view-personal-*` address now forwards to the shared page that
+// carries the same objects (task 8.1). This file still drives the *production
+// page* at two widths, because what is left to prove only exists once the shell,
+// the CSS and the modules run together:
+//
+//   * a retired address resolves as an address — the shell lands on the shared
+//     view and `personal-console.js` is never fetched;
+//   * no retired page is ever mounted, even though this fixture's projection
+//     still carries the five `personal.*` ids (a stale or hostile payload must
+//     not resurrect a page the server no longer signs);
+//   * no retired consumer is started by any navigation, denial or withdrawal;
+//   * the account panel keeps no host for them at either width.
 //
 // Requires Playwright with an installed Chromium; no request reaches a live
 // service:
@@ -45,6 +54,23 @@ function personalPages(overrides = {}) {
         'workbench.chat': { available: true, read_allowed: true, scope: 'self' },
         'workbench.agents': { available: true, read_allowed: true, scope: 'self' },
         'workbench.history': { available: true, read_allowed: true, scope: 'self' },
+        // The shared pages that carry the retired member surfaces now (task 8.1):
+        // a member reaches agents / channels / memory / skills through these ids,
+        // with the range decided by the server's object scope.
+        'admin.agents': { available: true, read_allowed: true, menu_denied: false,
+            scope: 'agent', actions: { create: true, update: true } },
+        'admin.channels': { available: true, read_allowed: true, menu_denied: false,
+            scope: 'self', actions: { create: true, update: true },
+            switches: { member_personal_console: true, personal_channel_onboarding: true },
+            states: { read: true, config: true, execution: false } },
+        'admin.memory': { available: true, read_allowed: true, menu_denied: false,
+            scope: 'agent', actions: {} },
+        'admin.skills': { available: true, read_allowed: true, menu_denied: false,
+            scope: 'agent', actions: {} },
+        // The five retired ids are served **on purpose** (task 8.8). The server
+        // does not sign them any more, so this fixture is the hostile case: a
+        // payload that still carries them must not give the shell a host, a
+        // mount point or a consumer to start.
         'personal.agents': { available: true, read_allowed: true, menu_denied: false,
             scope: 'self', actions: { create: true, update: true, enable: true },
             states: { read: true, config: true, execution: true } },
@@ -63,6 +89,22 @@ function personalPages(overrides = {}) {
     };
     return Object.assign(base, overrides);
 }
+
+//: The five retired view ids and the shared view each one forwards to
+//: (`console.js` ``LEGACY_PERSONAL_FORWARD`` / ``VIEW_META``, task 8.1).
+const RETIRED_ADDRESSES = {
+    'personal-agents': 'agents',
+    'personal-channels': 'channels',
+    'personal-memory': 'memory',
+    'personal-tools': 'skills',
+    'personal-skills': 'skills',
+};
+
+//: Every endpoint the retired module used to call. Not one of them may be
+//: requested any more: the pages they served do not exist, and the thin
+//: adapters are kept for external callers only (task 8.8).
+const RETIRED_ENDPOINTS = ['/api/memory/personal', '/api/memory/personal/content',
+    '/api/personal/channels', '/api/personal/resources'];
 
 const memoryRows = [
     { id: 'MEMORY.md', title: 'MEMORY.md', revision: 'rev-1',
@@ -150,9 +192,6 @@ const server = http.createServer((req, res) => {
                   { key: 'feishu_app_secret', label: { zh: '应用密钥' }, secret: true, required: true },
               ] },
         ] });
-    } else if (pathname === '/api/personal/resources') {
-        json({ status: 'success', scope: 'personal',
-            resources: url.searchParams.get('kind') === 'skill' ? [] : resourceRows });
     } else if (['/api/sessions', '/api/history', '/api/projects', '/api/knowledge/list',
                 '/api/models', '/api/tools', '/api/skills'].includes(pathname)) {
         json({ status: 'success', sessions: [], has_more: false, total: 0, messages: [],
@@ -187,7 +226,14 @@ async function open(options = {}) {
     page.setDefaultTimeout(15000);
     await page.goto(origin + (options.path || '/chat') + (options.hash || ''), { waitUntil: 'networkidle' });
     await page.locator('#app').waitFor({ state: 'visible' });
-    await page.waitForFunction(() => typeof window.PersonalConsole === 'object');
+    // The shell is ready once it has mounted a view and rendered its navigation.
+    // This used to wait for the personal module to publish itself; the module is
+    // retired (task 8.8), so the signal is the shell's own — and asserting the
+    // module's *absence* here keeps every scenario honest about it.
+    await page.waitForFunction(() => !!document.querySelector('.view.active')
+        && !!document.querySelector('#sidebar .sidebar-item'));
+    assert.equal(await page.evaluate(() => typeof window.PersonalConsole),
+        'undefined', 'the retired personal module must not be published');
     return page;
 }
 
@@ -218,9 +264,42 @@ async function scenario(name, run, options) {
     }
 }
 
-// The five personal entries live in the account panel now (change
-// move-personal-menu-to-account), so reaching a personal page means opening the
-// account surface: at narrow widths the drawer first, then the panel itself.
+// The account panel no longer hosts the five 「我的」 entries, and the five page
+// ids are retired (tasks 3.3 / 8.8): a retired address is reached by its own
+// deep link, which the shell forwards to the shared view carrying the same
+// objects. Both shapes are opened through one helper so a scenario can assert
+// the address still resolves while the retired page never mounts.
+async function openRetiredAddress(page, viewId, expectedView) {
+    await page.goto(origin + '/admin#view-' + viewId);
+    await page.waitForFunction(
+        expected => location.hash === '#view-' + expected, expectedView, { timeout: 10000 });
+    await page.locator('#view-' + expectedView).waitFor({ state: 'visible' });
+}
+
+async function openSharedView(page, viewId) {
+    await page.goto(origin + '/admin#view-' + viewId);
+    await page.locator('#view-' + viewId).waitFor({ state: 'visible' });
+}
+
+async function assertNoRetiredSurface(page, viewId) {
+    // The address is gone from the shell as a *page*: no container is mounted,
+    // no host exists for it, and the retired module is not even fetched.
+    assert.equal(await page.locator('#view-' + viewId).count(), 0,
+        viewId + ' must not be mounted');
+    assert.equal(await page.locator('[data-view="' + viewId + '"]').count(), 0,
+        viewId + ' must have no host in the shell');
+    assert.equal(await page.evaluate(() => typeof window.PersonalConsole),
+        'undefined', 'the retired module must not be published');
+    for (const endpoint of RETIRED_ENDPOINTS) {
+        assert.equal(requestsTo(endpoint).length, 0,
+            endpoint + ' must not be called by ' + viewId);
+    }
+    const assets = report.requests.slice(report.scenarioBase || 0)
+        .filter(entry => entry.pathname.indexOf('personal-console') >= 0);
+    assert.equal(assets.length, 0, 'the retired module must not be fetched');
+}
+
+// Opening the account surface: at narrow widths the drawer first, then the panel.
 async function openAccountPanel(page) {
     const narrow = await page.evaluate(() => window.innerWidth < 1024);
     if (narrow) {
@@ -233,12 +312,6 @@ async function openAccountPanel(page) {
     return narrow;
 }
 
-async function openPersonalView(page, viewId) {
-    await openAccountPanel(page);
-    await page.locator(`#sidebar-account-menu .account-menu-personal[data-view="${viewId}"]`).click();
-    await page.locator('#view-' + viewId).waitFor({ state: 'visible' });
-}
-
 function requestsTo(pathname) {
     return report.requests.slice(report.scenarioBase || 0)
         .filter(entry => entry.pathname === pathname);
@@ -249,23 +322,28 @@ async function main() {
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     origin = 'http://127.0.0.1:' + server.address().port;
 
-    await scenario('desktop: the account panel hosts all five personal pages in order', async page => {
+    await scenario('desktop: the account panel hosts no personal entry at all', async page => {
+        // change unify-console-by-data-scope, task 3.3: the five entries were
+        // removed from the panel and no other host took them. The panel is an
+        // account surface, so opening it must not resurrect a second product
+        // surface — and the retained account actions must survive.
         await openAccountPanel(page);
-        const group = page.locator('#account-menu-resources');
-        await group.waitFor({ state: 'visible' });
-        const entries = group.locator('.account-menu-personal');
-        assert.equal(await entries.count(), 5);
-        assert.deepEqual(
-            await entries.evaluateAll(nodes => nodes.map(node => node.dataset.view)),
-            ['personal-agents', 'personal-channels', 'personal-memory', 'personal-tools', 'personal-skills']);
-        const labels = await group.locator('.account-menu-personal [data-i18n]').allTextContents();
-        assert.deepEqual(labels, ['我的智能体', '我的渠道', '我的记忆', '我的工具', '我的技能']);
-        // One host per entry: the old sidebar group must be gone entirely.
+        await page.locator('#sidebar-account-menu').waitFor({ state: 'visible' });
+        assert.equal(await page.locator('#account-menu-resources').count(), 0, 'no 「我的资源」 group');
+        assert.equal(await page.locator('.account-menu-personal').count(), 0, 'no personal entry');
+        for (const viewId of ['personal-agents', 'personal-channels', 'personal-memory',
+                              'personal-tools', 'personal-skills']) {
+            assert.equal(await page.locator(`[data-view="${viewId}"]`).count(), 0,
+                `${viewId} has no host in the shell`);
+        }
+        // The old sidebar group stays gone as well.
         assert.equal(await page.locator('#sidebar [data-group="personal"]').count(), 0,
             'the main navigation keeps no personal group');
         assert.equal(await page.locator('#sidebar .sidebar-item[data-view^="personal-"]').count(), 0);
-        assert.equal(await page.locator('.account-menu-personal').count(), 5,
-            'exactly one DOM copy of the five entries');
+        for (const id of ['account-menu-profile', 'account-menu-password', 'account-menu-prefs',
+                          'account-menu-about', 'account-menu-logout']) {
+            assert.equal(await page.locator('#' + id).count(), 1, id + ' stays');
+        }
     });
 
     await scenario('desktop: opening the panel preloads no personal page', async page => {
@@ -287,56 +365,50 @@ async function main() {
         assert.equal(personalAgents(), agentsBefore, 'the personal agent catalog must not start either');
     });
 
-    await scenario('desktop: every personal entry renders its own page', async page => {
-        for (const viewId of ['personal-agents', 'personal-channels', 'personal-memory',
-                              'personal-tools', 'personal-skills']) {
-            await openPersonalView(page, viewId);
-            const node = page.locator('#view-' + viewId);
-            await node.waitFor({ state: 'visible' });
-            assert.ok(await node.locator('[data-i18n]').first().isVisible(), viewId);
+    await scenario('desktop: every retired address forwards and paints no retired page', async page => {
+        // Task 8.8. The five ids are addresses only: the shell forwards each one
+        // to the shared page that carries the same objects (task 8.1), and the
+        // retired page is never mounted, never hosted and never loaded — even
+        // though this fixture's projection still carries all five `personal.*`
+        // entries.
+        for (const [viewId, target] of Object.entries(RETIRED_ADDRESSES)) {
+            await openRetiredAddress(page, viewId, target);
+            assert.equal(new URL(page.url()).hash, '#view-' + target,
+                viewId + ' must forward to ' + target);
+            await assertNoRetiredSurface(page, viewId);
         }
-        // The personal pages must not have touched a public maintenance surface.
+        // The shared pages are the ones a member's objects are managed on, and a
+        // forward must not have touched a public maintenance surface on the way.
         for (const forbidden of ['/api/channels', '/api/tenant/channels']) {
             assert.equal(requestsTo(forbidden).length, 0, forbidden + ' was requested');
         }
+        const assets = report.requests.slice(report.scenarioBase || 0)
+            .filter(entry => entry.pathname.indexOf('personal-console') >= 0);
+        assert.equal(assets.length, 0, 'the retired module must not be fetched');
     });
 
-    await scenario('desktop: a page reports read / config / execute separately', async page => {
-        await openPersonalView(page, 'personal-channels');
-        const keys = await page.locator('#view-personal-channels [data-personal-states]')
-            .getAttribute('data-personal-state-keys');
-        // The channel consumer is closed in this fixture: the page says so
-        // instead of promising a live connection.
-        assert.equal(keys, 'personal_state_read,personal_state_config,personal_state_execution_closed');
+    await scenario('desktop: a kept thin adapter is not what an address resolves to', async page => {
+        // The four legacy endpoints stay registered as forwarding adapters
+        // (task 8.8: spec-mandated), but the console must not reach a page
+        // through them: the shared view reads the shared endpoint. This is the
+        // browser-level half of the "no live consumer" measurement.
+        await openRetiredAddress(page, 'personal-memory', 'memory');
+        await page.waitForTimeout(300);
+        assert.equal(requestsTo('/api/memory/personal').length, 0,
+            'the retired adapter must not be what renders the page');
+        assert.equal(requestsTo('/api/memory/personal/content').length, 0);
     });
 
-    await scenario('desktop: rows carry only the verbs the server signed', async page => {
-        await openPersonalView(page, 'personal-memory');
-        const verbs = await page.locator('#view-personal-memory [data-personal-verb]')
-            .evaluateAll(nodes => nodes.map(node => node.dataset.personalVerb));
-        assert.deepEqual([...new Set(verbs)].sort(), ['delete', 'edit']);
-        const total = await page.locator('#view-personal-memory [data-personal-footer]').textContent();
-        assert.ok(total.includes('2'), 'the footer counts the two entries: ' + total);
+    await scenario('desktop: a deep link from the workbench area still lands on the shared page', async page => {
+        // The address is not area-bound: `/chat#view-personal-memory` forwards to
+        // a page that lives in the console area, so the shell switches area and
+        // mounts the shared view. The retired page must not be mounted on the way
+        // (task 8.1's cross-area case).
+        await page.goto(origin + '/chat#view-personal-memory');
+        await page.waitForFunction(() => location.pathname === '/admin', null, { timeout: 10000 });
+        await page.locator('#view-memory').waitFor({ state: 'visible' });
+        await assertNoRetiredSurface(page, 'personal-memory');
     });
-
-    await scenario('desktop: search filters what is on screen', async page => {
-        await openPersonalView(page, 'personal-memory');
-        await page.locator('#view-personal-memory [data-personal-search]').fill('preferences');
-        await page.waitForFunction(() => document.querySelectorAll(
-            '#view-personal-memory [data-personal-verb]').length === 2);
-        const titles = await page.locator('#view-personal-memory [data-personal-body] .truncate')
-            .allTextContents();
-        assert.deepEqual(titles, ['preferences.md']);
-        const total = await page.locator('#view-personal-memory [data-personal-footer]').textContent();
-        assert.ok(total.includes('1'), 'the total follows the filter: ' + total);
-    });
-
-    await scenario('desktop: a deep link opens the personal page directly', async page => {
-        const node = page.locator('#view-personal-memory');
-        await node.waitFor({ state: 'visible' });
-        assert.ok(await node.locator('[data-personal-body]').isVisible());
-        assert.equal(requestsTo('/api/memory/personal').length, 1);
-    }, { hash: '#view-personal-memory' });
 
     await scenario('narrow: the account panel is a modal sheet outside the drawer', async page => {
         const sidebar = page.locator('#sidebar');
@@ -354,99 +426,101 @@ async function main() {
             'the sheet has a backdrop');
         assert.ok(await page.evaluate(() => document.body.classList.contains('account-menu-sheet-open')),
             'the page behind the sheet does not scroll');
-        await page.locator('#account-menu-resources').waitFor({ state: 'visible' });
-        // Inside the sheet the five entries are reachable exactly as on desktop.
-        assert.equal(await page.locator('#sidebar-account-menu .account-menu-personal').count(), 5);
+        // Task 3.3: the sheet carries account operations only — no resource entry
+        // is reachable inside it, on a narrow viewport either.
+        assert.equal(await page.locator('#sidebar-account-menu .account-menu-personal').count(), 0);
+        assert.ok(await page.locator('#account-menu-logout').isVisible(),
+            'the retained account actions stay reachable in the sheet');
     }, { viewport: { width: 390, height: 844 } });
 
-    await scenario('narrow: choosing a personal page leaves no sheet or drawer residue', async page => {
-        await openPersonalView(page, 'personal-agents');
+    await scenario('narrow: a deep-linked retired address leaves no sheet or drawer residue', async page => {
+        await openRetiredAddress(page, 'personal-agents', 'agents');
         await page.waitForFunction(() => document.getElementById('sidebar')
             .classList.contains('-translate-x-full'));
         assert.ok(await page.locator('#sidebar-overlay').evaluate(el => el.classList.contains('hidden')));
-        assert.ok(await page.locator('#view-personal-agents').isVisible());
-        // The sheet is torn down: no visible panel, no backdrop, no scroll lock.
+        assert.ok(await page.locator('#view-agents').isVisible());
+        assert.equal(await page.locator('#view-personal-agents').count(), 0,
+            'the retired page must not be mounted on a narrow viewport either');
+        // No panel, no backdrop, no scroll lock: the account surface was never
+        // involved in reaching the page.
         assert.ok(!await page.locator('#sidebar-account-menu').isVisible());
         assert.ok(await page.locator('#account-menu-backdrop').evaluate(el => el.classList.contains('hidden')));
         assert.ok(!await page.evaluate(() => document.body.classList.contains('account-menu-sheet-open')));
     }, { viewport: { width: 390, height: 844 } });
 
-    await scenario('narrow: the page itself stays usable at 390px', async page => {
+    await scenario('narrow: the forwarded shared page stays usable at 390px', async page => {
         await page.locator('#menu-toggle').click();
-        await openPersonalView(page, 'personal-memory');
-        const box = await page.locator('#view-personal-memory [data-personal-body]').boundingBox();
-        assert.ok(box && box.width <= 390, 'the body must fit the viewport');
-        await page.locator('#view-personal-memory [data-personal-search]').fill('MEMORY');
-        await page.waitForFunction(() => document.querySelectorAll(
-            '#view-personal-memory [data-personal-verb]').length === 2);
+        await openRetiredAddress(page, 'personal-memory', 'memory');
+        const box = await page.locator('#view-memory').boundingBox();
+        assert.ok(box && box.width <= 390, 'the shared page must fit the viewport');
+        await assertNoRetiredSurface(page, 'personal-memory');
     }, { viewport: { width: 390, height: 844 } });
 
-    await scenario('a denied page is refused by the shell and starts nothing', async page => {
-        // The entry is withheld by the menu, so even a direct link must land on
-        // the shell's denial view — and the consumer behind the page must never
-        // be called, which is the point of refusing at navigation time.
+    await scenario('a denied shared page is refused by the shell and starts nothing', async page => {
+        // The carrier page is denied (menu withheld). The retired address still
+        // resolves — it forwards to the shared view — and the shell's gate then
+        // refuses *that* view, which is the only page the address ever names now.
+        // Nothing behind the retired id may be started on the way.
         await page.waitForFunction(() => !!document.getElementById('view-unavailable'));
         assert.ok(await page.locator('#view-unavailable').evaluate(
             el => el.classList.contains('active')));
         assert.equal(await page.locator('#view-personal-memory').count(), 0,
-            'the denied page must not be mounted at all');
+            'the retired page must not be mounted at all');
+        assert.equal(await page.locator('#view-memory').evaluate(
+            el => el.classList.contains('active')), false,
+            'the denied shared page must not be the active view');
         assert.equal(requestsTo('/api/memory/personal').length, 0,
             'a denied page must not start the consumer behind it');
     }, { hash: '#view-personal-memory',
-         pages: { 'personal.memory': { available: false, read_allowed: false,
-             menu_denied: true, scope: 'self', actions: {},
+         pages: { 'admin.memory': { available: false, read_allowed: false,
+             menu_denied: true, scope: 'agent', actions: {},
              states: { read: false, config: false, execution: false } } } });
 
-    await scenario('a withdrawn capability hides its entry and names itself', async page => {
-        // The deployment turned the memory-write capability off (task 9.1): the
-        // entry is not offered, the other personal entries still are, and a
-        // direct link lands on a body that names the capability — neither a
-        // menu-denial wording nor a started consumer.
+    await scenario('a withdrawn capability no longer closes a page, and opens none', async page => {
+        // The deployment turned the memory-write capability off (task 9.1). The
+        // switch never decided *availability*, and now that the personal pages are
+        // retired (task 8.8) there is no page for it to close: the retired address
+        // forwards to the shared page, which stays readable because the switch
+        // gates the write path (asserted in the Python switch tests), and nothing
+        // behind the retired id is started.
         await openAccountPanel(page);
-        await page.waitForFunction(() => {
-            const entry = document.querySelector('#sidebar-account-menu [data-view="personal-memory"]');
-            return !!entry && entry.classList.contains('hidden');
-        });
-        const group = page.locator('#account-menu-resources');
-        assert.ok(await group.isVisible(), 'the 「我的资源」 group stays while other capabilities are on');
-        assert.equal(await group.locator('.account-menu-personal:not(.hidden)').count(), 4);
-
-        const body = page.locator('#view-personal-memory [data-personal-body]');
-        await body.waitFor({ state: 'visible' });
-        assert.equal(await body.getAttribute('data-personal-denied-reason'),
-            'capability_disabled');
-        const text = await body.textContent();
-        assert.ok(text.includes('个人记忆写入未启用'),
-            'the denial names the switch that is off: ' + text);
-        assert.equal(requestsTo('/api/memory/personal').length, 0,
-            'a withdrawn capability must not start the consumer behind it');
-    }, { hash: '#view-personal-memory',
-         pages: { 'personal.memory': { available: false, read_allowed: false,
-             reason: 'capability_disabled', scope: 'self', actions: {},
+        assert.equal(await page.locator('#account-menu-resources').count(), 0);
+        assert.equal(await page.locator('[data-view="personal-memory"]').count(), 0,
+            'a withdrawn capability has no entry to hide');
+        await page.keyboard.press('Escape');
+        await openRetiredAddress(page, 'personal-memory', 'memory');
+        assert.ok(await page.locator('#view-memory').isVisible(),
+            'the shared page stays readable when the write slice is off');
+        assert.equal(await page.locator('#view-unavailable').count() > 0
+            && await page.locator('#view-unavailable').evaluate(el => el.classList.contains('active')),
+            false, 'a slice switch must not read as a denial');
+        await assertNoRetiredSurface(page, 'personal-memory');
+    }, { pages: { 'admin.memory': { available: true, read_allowed: true, menu_denied: false,
+             scope: 'agent', actions: {},
              switches: { member_personal_console: true, personal_memory_write: false },
-             states: { read: false, config: false, execution: false } } } });
+             states: { read: true, config: false, execution: false } } } });
 
-    await scenario('desktop: the panel marks the current personal page exactly once', async page => {
-        await openPersonalView(page, 'personal-memory');
+    await scenario('desktop: the account panel claims no current page', async page => {
+        // Task 3.3 removed the panel's current-page marker with the entries it
+        // belonged to: the marker lives on the main navigation alone, and the
+        // trigger no longer describes a personal area.
+        await openSharedView(page, 'memory');
         const marks = await page.locator('[aria-current="page"]').evaluateAll(nodes => nodes.map(node => ({
             host: node.closest('#sidebar-account-menu') ? 'panel' : 'other',
             view: node.dataset.view || node.id || '',
         })));
-        assert.deepEqual(marks, [{ host: 'panel', view: 'personal-memory' }],
-            'one current marker, on the account entry');
-        assert.ok(await page.locator('#sidebar-account-footer')
-            .evaluate(el => el.classList.contains('is-personal')), 'the trigger names the personal area');
-        const region = page.locator('#sidebar-account-region');
-        assert.ok(await region.evaluate(el => !el.classList.contains('hidden')));
-        assert.equal(await region.textContent(), '当前位于个人区域');
-        // Re-opening the panel shows where the member is, without re-navigating.
+        assert.deepEqual(marks.filter(mark => mark.host === 'panel'), [],
+            'the panel carries no current marker');
+        assert.ok(!await page.locator('#sidebar-account-footer')
+            .evaluate(el => el.classList.contains('is-personal')), 'no personal-area state on the trigger');
+        assert.equal(await page.locator('#sidebar-account-region').count(), 0,
+            'the personal-area description is gone');
+        // Re-opening the panel changes nothing about the current page.
         await openAccountPanel(page);
-        assert.ok(!await page.locator('#account-menu-resources-status').isVisible(),
-            'a confirmed projection shows no checking/failed state');
-        const entry = page.locator('#sidebar-account-menu .account-menu-personal[data-view="personal-memory"]');
-        assert.equal(await entry.getAttribute('aria-current'), 'page');
-        assert.ok(await entry.isVisible(), 'the current entry is reachable when the panel reopens');
-        assert.equal(requestsTo('/api/memory/personal').length, 1, 'reopening does not re-run the consumer');
+        assert.equal(await page.locator('#account-menu-resources-status').count(), 0);
+        assert.equal(await page.locator('#sidebar-account-menu [aria-current="page"]').count(), 0);
+        assert.equal(requestsTo('/api/memory/personal').length, 0,
+            'the shared page reads the shared endpoint, and reopening it re-runs nothing retired');
     });
 
     await scenario('desktop: Escape and an outside click close the panel and return focus', async page => {
@@ -472,49 +546,56 @@ async function main() {
             'the desktop popover closes on an outside click without leaving a backdrop');
     });
 
-    await scenario('desktop: a short viewport caps the panel and keeps the last entry reachable', async page => {
+    await scenario('desktop: a short viewport caps the panel and keeps the last action reachable', async page => {
         await openAccountPanel(page);
         const menu = page.locator('#sidebar-account-menu');
         const cap = await menu.evaluate(el => parseFloat(el.style.maxHeight));
         const room = await page.evaluate(() => document.getElementById('sidebar-account-footer')
             .getBoundingClientRect().top - 12);
         assert.ok(Math.abs(cap - room) < 1.5, `the cap follows the room above the card (${cap} vs ${room})`);
-        const scrolls = await menu.evaluate(el => el.scrollHeight > el.clientHeight + 1);
-        assert.ok(scrolls, 'the panel scrolls internally instead of overflowing the window');
-        const last = page.locator('#account-menu-resources .account-menu-personal[data-view="personal-skills"]');
+        // The panel is capped by the room above the card, and it never grows past
+        // that cap: on a 420px-tall window the account actions stay inside the
+        // window instead of being pushed off it. Whether the content is tall
+        // enough to need its internal scrollbar depends on how many actions the
+        // panel owns — task 3.3 shrank that list, so what is asserted here is the
+        // cap and the window bound, not the scrollbar.
+        const metrics = await menu.evaluate(el => ({
+            scrollHeight: el.scrollHeight, clientHeight: el.clientHeight,
+            maxHeight: parseFloat(el.style.maxHeight), offsetHeight: el.offsetHeight,
+            bottom: el.getBoundingClientRect().bottom, windowHeight: window.innerHeight }));
+        assert.ok(metrics.scrollHeight <= metrics.maxHeight + 1,
+            'the panel never grows past the cap: ' + JSON.stringify(metrics));
+        assert.ok(metrics.bottom <= metrics.windowHeight + 1,
+            'the panel stays inside the window: ' + JSON.stringify(metrics));
+        // The last action the panel still owns: logout, at the end of the list.
+        const last = page.locator('#account-menu-logout');
         await last.scrollIntoViewIfNeeded();
         const box = await last.boundingBox();
-        assert.ok(box && box.y >= 0 && box.y + box.height <= 420, 'the last entry stays operable: ' + JSON.stringify(box));
+        assert.ok(box && box.y >= 0 && box.y + box.height <= 420, 'the last action stays operable: ' + JSON.stringify(box));
     }, { viewport: { width: 1440, height: 420 } });
 
-    await scenario('the new account texts follow the selected language', async page => {
+    await scenario('the account texts follow the selected language', async page => {
         await openAccountPanel(page);
-        assert.equal(await page.locator('#account-menu-resources .account-menu-group-title').textContent(),
-            '我的资源');
         assert.equal(await page.locator('#account-menu-settings .account-menu-group-title').textContent(),
             '账号设置');
         assert.ok((await page.locator('#sidebar-account-toggle').getAttribute('aria-label'))
-            .includes('个人资源与设置'), 'the accessible name carries the hint');
+            .includes('账号设置'), 'the accessible name carries the account-settings hint');
     });
 
-    await scenario('zh-Hant: the resources group and the trigger hint are traditional', async page => {
+    await scenario('zh-Hant: the account texts are traditional', async page => {
         await openAccountPanel(page);
-        assert.equal(await page.locator('#account-menu-resources .account-menu-group-title').textContent(),
-            '我的資源');
         assert.equal(await page.locator('#account-menu-settings .account-menu-group-title').textContent(),
             '帳號設定');
         assert.ok((await page.locator('#sidebar-account-toggle').getAttribute('aria-label'))
-            .includes('個人資源與設定'), 'the accessible name carries the hint');
+            .includes('帳號設定'), 'the accessible name carries the hint');
     }, { lang: 'zh-Hant' });
 
-    await scenario('en: the resources group and the trigger hint are English', async page => {
+    await scenario('en: the account texts are English', async page => {
         await openAccountPanel(page);
-        assert.equal(await page.locator('#account-menu-resources .account-menu-group-title').textContent(),
-            'My resources');
         assert.equal(await page.locator('#account-menu-settings .account-menu-group-title').textContent(),
             'Account settings');
         assert.ok((await page.locator('#sidebar-account-toggle').getAttribute('aria-label'))
-            .includes('Personal resources and settings'));
+            .includes('Account settings'));
     }, { lang: 'en' });
 
     await scenario('dark theme and reduced motion: the sheet still opens and leaves no residue', async page => {
@@ -536,29 +617,27 @@ async function main() {
     }, { viewport: { width: 390, height: 844 }, colorScheme: 'dark', reducedMotion: 'reduce',
          storage: { cow_theme: 'dark', cow_web_palette: 'classic' } });
 
-    await scenario('a failed projection offers a retry, never an unconfirmed entry', async page => {
-        // The projection could not be read. Opening the panel must not guess: no
-        // entry is activatable, the group explains itself, and the retry re-asks
-        // the projection — without starting any personal page consumer.
+    await scenario('a failed projection leaves the panel usable and offers no resource retry', async page => {
+        // The projection could not be read. The panel no longer owns a resource
+        // verdict (task 3.3), so it shows no checking/failed state for resources
+        // and never offers an unconfirmed entry — while the account actions it
+        // does own stay usable, and no personal page consumer is started.
         await openAccountPanel(page);
-        const group = page.locator('#account-menu-resources');
-        await group.waitFor({ state: 'visible' });
-        assert.equal(await group.locator('.account-menu-personal:not(.hidden)').count(), 0,
-            'an unconfirmed entry is not offered');
-        const status = page.locator('#account-menu-resources-status');
-        assert.ok(await status.isVisible(), 'the panel explains the failed check');
-        assert.equal(await status.textContent(), '个人资源暂不可用');
-        const retry = page.locator('#account-menu-resources-retry');
-        assert.ok(await retry.isVisible());
+        assert.equal(await page.locator('#account-menu-resources').count(), 0);
+        assert.equal(await page.locator('#account-menu-resources-status').count(), 0);
+        assert.equal(await page.locator('#account-menu-resources-retry').count(), 0);
+        assert.ok(await page.locator('#account-menu-logout').isVisible(),
+            'the account actions do not depend on the capability projection');
         for (const path of ['/api/memory/personal', '/api/personal/channels', '/api/personal/resources']) {
             assert.equal(requestsTo(path).length, 0, path + ' must not be requested by the failed check');
         }
+        // The panel's own retry re-asks the tenant-scoped capability summary and
+        // still opens no personal page.
         contextFailure = null;
-        await retry.click();
-        await page.waitForFunction(() => document.querySelectorAll(
-            '#account-menu-resources .account-menu-personal:not(.hidden)').length === 5);
-        assert.ok(!await status.isVisible(), 'the confirmed projection clears the failed state');
-        assert.equal(requestsTo('/api/memory/personal').length, 0, 'the retry still opens no personal page');
+        await page.locator('#account-menu-retry').click();
+        await page.waitForFunction(() => document.getElementById('account-menu-retry')
+            .classList.contains('hidden'));
+        assert.equal(requestsTo('/api/memory/personal').length, 0, 'the retry opens no personal page');
     }, { prepare: () => { contextFailure = 503; } });
 
     await scenario('a breakpoint change closes the sheet and leaves no residue', async page => {
@@ -577,29 +656,31 @@ async function main() {
     }, { viewport: { width: 390, height: 844 } });
 
     await scenario('split navigation duplicates no personal entry', async page => {
-        // The presentation switch is layout-only: it must not add a second host
-        // for the five entries (task 5.4).
+        // The presentation switch is layout-only: it must not introduce a host for
+        // the five entries, which task 3.3 retired entirely.
         assert.equal(await page.evaluate(() => document.getElementById('app').dataset.navMode), 'split');
         await openAccountPanel(page);
-        assert.equal(await page.locator('.account-menu-personal').count(), 5,
-            'exactly one DOM copy per entry, whatever the navigation presentation');
+        assert.equal(await page.locator('.account-menu-personal').count(), 0,
+            'no personal entry, whatever the navigation presentation');
         assert.equal(await page.locator('#sidebar .sidebar-item[data-view^="personal-"]').count(), 0);
         assert.equal(await page.locator('#sidebar [data-group="personal"]').count(), 0);
     }, { navMode: 'split' });
 
-    await scenario('with the personal console off the empty group is removed, actions stay', async page => {
-        // Every personal page is withdrawn by a capability switch: the group
-        // disappears instead of leaving a blank separator, and the account
-        // actions remain usable (task 3.1 / 5.4).
+    await scenario('with every personal capability off the panel is unchanged', async page => {
+        // Every retired page id is reported withdrawn by a capability switch — a
+        // payload the server no longer sends, kept here as the hostile case. There
+        // is no group left to empty (task 3.3) and no page left to close
+        // (task 8.8), so the panel renders the same account surface, with no blank
+        // separator and no dangling entry.
         await openAccountPanel(page);
-        await page.waitForFunction(() => document.getElementById('account-menu-resources')
-            .classList.contains('hidden'));
-        assert.ok(!await page.locator('#account-menu-resources').isVisible(),
-            'an all-withdrawn group is removed');
+        assert.equal(await page.locator('#account-menu-resources').count(), 0);
         assert.ok(await page.locator('#account-menu-settings').isVisible(),
             'the account settings group stays');
         assert.ok(await page.locator('#account-menu-logout').isVisible());
         assert.equal(await page.locator('#sidebar [data-group="personal"]').count(), 0);
+        for (const viewId of Object.keys(RETIRED_ADDRESSES)) {
+            assert.equal(await page.locator('[data-view="' + viewId + '"]').count(), 0, viewId);
+        }
     }, { pages: { 'personal.agents': { available: false, read_allowed: false,
             reason: 'capability_disabled', scope: 'self', actions: {}, states: {} },
         'personal.channels': { available: false, read_allowed: false,
@@ -611,26 +692,21 @@ async function main() {
         'personal.skills': { available: false, read_allowed: false,
             reason: 'capability_disabled', scope: 'self', actions: {}, states: {} } } });
 
-    await scenario('console: an account entry enters the personal page in the workbench host', async page => {
-        // A tenant admin opens the account panel inside /admin and picks a
-        // personal page: the entry must reuse the shared protected navigation and
-        // land on the existing workbench host, still scoped to the current
-        // tenant and to the member themselves (no admin qualification, no
-        // duplicate consumer).
+    await scenario('console: the account panel inside /admin hosts no personal entry', async page => {
+        // A tenant admin opens the account panel inside /admin. Since task 3.3 the
+        // panel is an account surface there too: no personal entry, no panel-owned
+        // resource verdict, and no personal page consumer started by opening it.
+        // Business resources are reached through the console pages themselves.
         assert.equal(new URL(page.url()).pathname, '/admin', 'the console area is kept for a qualified admin');
         await openAccountPanel(page);
-        await page.locator('#sidebar-account-menu .account-menu-personal[data-view="personal-memory"]').click();
-        await page.waitForFunction(() => document.getElementById('view-personal-memory')
-            .classList.contains('active'));
-        assert.equal(new URL(page.url()).pathname, '/chat', 'personal pages live in the workbench host');
-        assert.ok(await page.locator('#view-personal-memory').isVisible());
-        assert.equal(await page.locator('#sidebar-account-menu .account-menu-personal[data-view="personal-memory"]')
-            .getAttribute('aria-current'), 'page', 'the account entry reflects the current page');
-        assert.equal(requestsTo('/api/memory/personal').length, 1,
-            'the consumer starts exactly once for the entry');
-        assert.equal(requestsTo('/api/personal/resources').length, 0,
-            'no other personal consumer is started by the switch');
-        assert.ok(await page.locator('#view-personal-memory [data-personal-body]').isVisible());
+        assert.equal(await page.locator('.account-menu-personal').count(), 0,
+            'the console host exposes no personal entry either');
+        assert.equal(await page.locator('#account-menu-resources').count(), 0);
+        assert.ok(await page.locator('#account-menu-logout').isVisible());
+        assert.equal(new URL(page.url()).pathname, '/admin', 'opening the panel never leaves the console area');
+        for (const path of ['/api/memory/personal', '/api/personal/channels', '/api/personal/resources']) {
+            assert.equal(requestsTo(path).length, 0, path + ' must not be requested by opening the panel');
+        }
     }, { path: '/admin', admin: true });
 
     const failed = report.scenarios.filter(item => !item.passed);

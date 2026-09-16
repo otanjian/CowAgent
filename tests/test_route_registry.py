@@ -306,6 +306,14 @@ class PersonalConsoleRouteTests(unittest.TestCase):
         ("/api/personal/channels", "POST"),
         ("/api/personal/channels/([^/]+)", "GET"),
         ("/api/personal/channels/([^/]+)", "POST"),
+    )
+
+    #: The retired resource surface. `/api/personal/resources` used to be the
+    #: member's personal-parameter path; task 5.5 moved those verbs onto the
+    #: formal page's own endpoints (`/api/tools`, `/api/skills`), so the pattern
+    #: must stay unregistered — a resurrected route would be a second authority
+    #: next to the one the detail component writes through.
+    RETIRED_ROUTES = (
         ("/api/personal/resources", "GET"),
         ("/api/personal/resources", "POST"),
     )
@@ -340,6 +348,26 @@ class PersonalConsoleRouteTests(unittest.TestCase):
         rows = _baseline_rows()
         for pattern, method in self.PERSONAL_ROUTES:
             self.assertEqual(rows.get((pattern, method)), ("personal", ""),
+                             "%s %s" % (pattern, method))
+
+    def test_the_retired_resource_surface_is_unregistered_and_unpinned(self):
+        """The retired pattern answers like any unknown URL, in both tables.
+
+        `_baseline_rows` resolves the append-only override, so this pins the
+        retirement in the frozen record itself: a future edit that re-adds the
+        route would fail here *and* in the baseline equivalence check, instead of
+        quietly re-opening a second write path (task 5.5).
+        """
+        derived = derive_route_policy()
+        rows = _baseline_rows()
+        for pattern, method in self.RETIRED_ROUTES:
+            entry, matched = http_policy._match_policy(
+                _sample_path(pattern), method)
+            self.assertFalse(matched, "%s %s must not match a route"
+                             % (pattern, method))
+            self.assertIsNone(entry, "%s %s" % (pattern, method))
+            self.assertNotIn(pattern, derived, pattern)
+            self.assertEqual(rows.get((pattern, method)), ("REMOVED", ""),
                              "%s %s" % (pattern, method))
 
     def test_the_management_surfaces_keep_their_administrator_policies(self):

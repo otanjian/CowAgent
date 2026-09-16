@@ -317,16 +317,50 @@ class ConsolePageProjectionTests(unittest.TestCase):
     def test_opening_a_slice_does_not_hand_the_page_to_every_member(self):
         """The registry answers "is it served"; the identity still has to qualify.
 
-        The built-in member role carries ``memory.read``, so a page whose
-        consumer just opened would otherwise appear for every member — while the
-        handler (and the neighbouring management pages) also require a readable
-        Agent. The projection must keep those two answers the same.
+        The page whose consumer just opened must not appear for every member: the
+        memory page's qualification is the functional ``memory.read`` *and* — per
+        request — the object range ``auth.object_scope`` computes, so a member
+        without the permission never reaches the page while a member holding it
+        does, with the shared slice still refused at the request rather than
+        pre-filtered here (task 3.1/3.2).
+
+        The neighbouring page that *is* fully qualified per request keeps that
+        strict answer: the channel page is the same page for both roles
+        (task 6.1), so the member gets it as their own surface — with the
+        tenant's public connections never in their list, which is the range
+        ``auth.object_scope`` decides per request rather than here.
         """
         pages = self._pages(self.bare_token)
         entry = pages["admin.memory"]
+        self.assertTrue(entry["read_allowed"],
+                        "memory.read is the page's gate; the range is per request")
+        self.assertEqual(entry["scope"], "agent")
+        # Task 5.1's second half opened edit/delete/clear on this page, so the
+        # page now really is configurable — reporting ``config: False`` here
+        # would be the opposite mistake (hiding a write surface that exists).
+        # ``execution`` stays false: these verbs write stored data, they do not
+        # run anything, and the console must not be told an execution surface
+        # opened. Neither flag is a grant: the write is authorized per request
+        # against the resolved target's range (object_scope), which is what this
+        # test is about — the page arriving says nothing about *whose* memory
+        # the holder may rewrite.
+        self.assertTrue(entry["states"]["config"], entry)
+        self.assertFalse(entry["states"]["execution"], entry)
+        channels = pages["admin.channels"]
+        self.assertTrue(channels["available"], channels)
+        self.assertEqual(channels["scope"], "self")
+        self.assertNotEqual(pages["admin.memory"]["reason"], "deferred")
+
+    def test_a_member_without_the_functional_permission_is_refused_the_page(self):
+        """The registry opening a consumer is not a grant: the permission is."""
+        role = self.app.role("console-member-no-memory",
+                             ["chat.use", "agent.use", "agent.read"],
+                             grants=[("agent", "primary", "read")])
+        self.app.member("carol", [role["code"]])
+        token = self.app.login("carol")
+        entry = self._pages(token)["admin.memory"]
         self.assertFalse(entry["read_allowed"], entry)
         self.assertFalse(entry["available"], entry)
-        self.assertNotEqual(entry["reason"], "deferred", entry)
 
 
 if __name__ == "__main__":  # pragma: no cover

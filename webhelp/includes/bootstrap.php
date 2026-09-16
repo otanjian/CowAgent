@@ -116,11 +116,10 @@ function icon(string $name, string $class = 'icon'): string
     return render_icon($name, $class);
 }
 
-/** 当前语言的演示视频地址（本地素材） */
-function demo_video(): string
+/** 首页 Hero 演示图地址（本地素材） */
+function demo_image(): string
 {
-    $videos = (array) cfg('demo_video', []);
-    $path   = (string) ($videos[current_lang()] ?? $videos['zh'] ?? '');
+    $path = (string) cfg('demo_image', '');
 
     return $path === '' ? '' : asset($path);
 }
@@ -613,7 +612,7 @@ function section_heading(string $titleKey, string $subtitleKey = '', bool $left 
 
 // ---------------------------------------------------------------------------
 // 产品使用手册（manual.php）
-// 形态是「视频为主的目录」：主题（一句话定位 + 若干视频条目），不写逐条界面步骤。
+// 形态是「截图为主的步骤手册」：主题（一句话定位 + 若干编号步骤，每步一张真实界面截图）。
 // 结构见 content.php 的 manual_parts / manual_topics，文案见 lang/*.php 的 manual.*
 // ---------------------------------------------------------------------------
 
@@ -623,7 +622,7 @@ function manual_nav(): string
     $topics = (array) content('manual_topics', []);
     $byPart = [];
     foreach ($topics as $index => $item) {
-        $byPart[(string) ($item['part'] ?? 'workbench')][] = [$index, $item];
+        $byPart[(string) ($item['part'] ?? 'conversation')][] = [$index, $item];
     }
 
     $out = '<p class="doc-aside-title">' . e(t('manual.toc')) . '</p>';
@@ -649,83 +648,36 @@ function manual_nav(): string
 }
 
 /**
- * 一个视频条目：视频位 + 标题（含时长）+ 内容要点。
- * 视频 id 由 content.php 声明，文案按 manual.topics.<主题>.videos.<视频> 取。
- * 声明了 src 时渲染可直接播放的播放器；未声明时渲染 16:9 占位并标明待录制，
- * 避免使用者把尚未录制的条目误认为「加载失败」。
+ * 一个编号步骤：序号 + 目标 + 操作要点 + 真实界面截图。
+ * 步骤 id 与截图路径由 content.php 声明，文案按 manual.topics.<主题>.steps.<步骤>.{title,body} 取。
+ * 截图是 `assets/` 下的相对路径，经 asset() 输出；缺图会渲染成破图，因此由
+ * tools/check-manual.php 在提交前拦下。
+ * 截图本身是链接，点击在新标签打开原图——手册页面按阅读宽度缩放，细节控件要靠原图看清。
  */
-function manual_video(string $topicId, array $video): string
+function manual_step(string $topicId, int $number, array $step): string
 {
-    $videoId = (string) ($video['id'] ?? '');
-    $key     = 'manual.topics.' . $topicId . '.videos.' . $videoId;
-    $title   = trim(t_opt($key . '.title'));
-    $covers  = t_list($key . '.covers');
-    $length  = trim((string) ($video['duration'] ?? ''));
-    $src     = trim((string) ($video['src'] ?? ''));
-    $poster  = trim((string) ($video['poster'] ?? ''));
+    $stepId = (string) ($step['id'] ?? '');
+    $key    = 'manual.topics.' . $topicId . '.steps.' . $stepId;
+    $title  = trim(t_opt($key . '.title'));
+    $body   = trim(t_opt($key . '.body'));
+    $shot   = trim((string) ($step['shot'] ?? ''));
 
-    $out = '<figure class="manual-video" id="manual-' . e($topicId) . '-' . e($videoId) . '">'
-        . '<div class="manual-video-frame">';
+    $out = '<figure class="manual-step" id="manual-' . e($topicId) . '-' . e($stepId) . '">'
+        . '<figcaption class="manual-step-head">'
+        . '<span class="manual-step-no" aria-hidden="true">' . e((string) $number) . '</span>'
+        . '<span class="manual-step-copy">'
+        . '<span class="manual-step-title">' . e($title) . '</span>'
+        . '<span class="manual-step-body">' . e($body) . '</span>'
+        . '</span></figcaption>';
 
-    if ($src !== '') {
-        $out .= '<video class="manual-video-player" controls preload="metadata" playsinline'
-            . ($poster !== '' ? ' poster="' . e(asset($poster)) . '"' : '')
-            . ' src="' . e(asset($src)) . '">'
-            . e(t('manual.video_fallback'))
-            . '</video>';
-    } else {
-        $out .= '<div class="manual-video-placeholder" role="img"'
-            . ' aria-label="' . e($title . ' · ' . t('manual.video_pending')) . '">'
-            . '<span class="manual-video-play">' . icon('play') . '</span>'
-            . '<span class="manual-video-pending">' . e(t('manual.video_pending')) . '</span>'
-            . '</div>';
+    if ($shot !== '') {
+        $out .= '<a class="manual-shot" href="' . e(asset($shot)) . '" target="_blank" rel="noopener">'
+            . '<img class="manual-shot-img" src="' . e(asset($shot)) . '"'
+            . ' alt="' . e($title) . '" loading="lazy" decoding="async">'
+            . '</a>';
     }
 
-    $out .= '</div>'
-        . '<figcaption class="manual-video-body">'
-        . '<h3 class="manual-video-title">' . e($title);
-    if ($length !== '') {
-        $out .= '<span class="manual-video-duration">' . icon('clock') . e($length) . '</span>';
-    }
-    $out .= '</h3>';
-
-    if ($covers !== []) {
-        $out .= '<p class="manual-video-covers-label">' . e(t('manual.covers_label')) . '</p>'
-            . '<ul class="manual-video-covers">';
-        foreach ($covers as $cover) {
-            $out .= '<li>' . e((string) $cover) . '</li>';
-        }
-        $out .= '</ul>';
-    }
-
-    return $out . '</figcaption></figure>';
-}
-
-/**
- * 主题的查阅型补充：`manual.topics.<主题>.items` 里声明的「现象 → 处理」条目。
- * 视频讲流程，状态码与错误语义这类内容属于查阅型，视频不适用，故留在主题末尾作速查。
- */
-function manual_faq(string $topicId): string
-{
-    $items = t_list('manual.topics.' . $topicId . '.items');
-
-    return $items === [] ? '' : manual_issues($items);
-}
-
-/** 故障排查条目：「现象 → 处理」逐条列出 */
-function manual_issues(array $rows): string
-{
-    $out = '<div class="manual-issues">';
-    foreach ($rows as $row) {
-        $out .= '<div class="manual-issue">'
-            . '<p class="manual-issue-ask">' . icon('x-circle')
-            . '<span>' . e((string) ($row['ask'] ?? '')) . '</span></p>'
-            . '<p class="manual-issue-answer">' . icon('check-circle')
-            . '<span>' . e((string) ($row['answer'] ?? '')) . '</span></p>'
-            . '</div>';
-    }
-
-    return $out . '</div>';
+    return $out . '</figure>';
 }
 
 /**
@@ -769,58 +721,6 @@ function manual_refs(array $item): string
 
         $out .= '<div class="manual-refs">'
             . '<span class="manual-refs-label">' . e(t($labelKey)) . '</span>'
-            . '<div class="manual-refs-list">' . $links . '</div>'
-            . '</div>';
-    }
-
-    return $out;
-}
-
-/** 两张命令表（终端命令 / 对话内命令），复用 content.php 里既有的命令清单 */
-function manual_commands(): string
-{
-    $tables = [
-        'cli'   => (array) content('cli_commands', []),
-        'slash' => (array) content('slash_commands', []),
-    ];
-    $titles = ['cli' => 'manual.cli_title', 'slash' => 'manual.slash_title'];
-    $prefix = ['cli' => 'cli.commands.', 'slash' => 'cli.slash.'];
-
-    $out = '';
-    foreach ($tables as $key => $rows) {
-        if ($rows === []) {
-            continue;
-        }
-
-        $items = '';
-        foreach ($rows as $row) {
-            $items .= '<div class="cmd-row">'
-                . '<code>' . e((string) ($row['cmd'] ?? '')) . '</code>'
-                . '<span>' . e(t($prefix[$key] . (string) ($row['id'] ?? ''))) . '</span>'
-                . '</div>';
-        }
-
-        $out .= '<h3 class="manual-subtitle">' . e(t($titles[$key])) . '</h3>'
-            . '<div class="cmd-list">' . $items . '</div>';
-    }
-
-    return $out;
-}
-
-/** 深入阅读：按既有分组列出全部能力文档入口 */
-function manual_all_docs(): string
-{
-    $out = '';
-    foreach (doc_grouped() as $section => $items) {
-        $links = '';
-        foreach ($items as $slug => $meta) {
-            $slug  = (string) $slug;
-            $links .= '<a class="manual-ref" href="' . e(doc_url($slug)) . '">'
-                . e(doc_title($slug)) . icon('arrow') . '</a>';
-        }
-
-        $out .= '<div class="manual-doc-group">'
-            . '<p class="manual-doc-group-title">' . e(t('doc.sections.' . $section, (string) $section)) . '</p>'
             . '<div class="manual-refs-list">' . $links . '</div>'
             . '</div>';
     }

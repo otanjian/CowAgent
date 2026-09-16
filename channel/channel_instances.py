@@ -23,7 +23,7 @@ import os
 import secrets
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from common import const
 from common.log import logger
@@ -107,6 +107,40 @@ MULTI_INSTANCE_READY = frozenset({
     const.WEIXIN,
     const.WECOM_BOT,
 })
+
+
+# Channel types whose adapter actually stamps the inbound author's external
+# identity triple (provider / issuer / subject) — the precondition for *any*
+# non-Web inbound in database identity mode, because
+# ``channel.chat_channel._preflight_external_inbound`` refuses an unstamped
+# context as UNSUPPORTED_CHANNEL *before* it looks up any binding, and without
+# recording the attempt. A type outside this set can therefore never be talked
+# to, however thoroughly it is configured — which is why it must not be offered
+# for configuration either. Stamping call sites: ``feishu_channel``,
+# ``dingtalk_channel``, ``wecom_bot_channel``; add a type here only in the same
+# change that adds the stamp to its adapter.
+INBOUND_IDENTITY_STAMPING_TYPES = frozenset({
+    const.FEISHU,
+    const.DINGTALK,
+    const.WECOM_BOT,
+})
+
+
+def inbound_identity_admissible(channel_type: str) -> bool:
+    """Whether this type's inbound can *ever* be accepted on this deployment.
+
+    Deliberately mode-aware in form even though :func:`is_database_mode` is
+    currently constant ``True``: the requirement being tested is "database
+    identity mode has to prove the sender", so writing the mode into the
+    predicate keeps it derived from the same fact the inbound gate checks, and
+    lets it self-disable if a non-database path ever returns instead of
+    permanently barring types that would be harmless there. Today it is exactly
+    ``ctype in INBOUND_IDENTITY_STAMPING_TYPES``.
+    """
+    from channel.external_identity import is_database_mode
+    if not is_database_mode():
+        return True
+    return _normalize_type((channel_type or "").strip()) in INBOUND_IDENTITY_STAMPING_TYPES
 
 
 @dataclass(frozen=True)
@@ -736,6 +770,34 @@ def _owner_is_active_member(service, row) -> bool:
         return False
 
 
+def _personal_target_usable(service, row) -> Tuple[bool, str]:
+    """Whether a member-owned instance's stored target may still be routed to.
+
+    The third gate of a personal *connection* (task 2.5), alongside the member
+    check and the runtime switch. The target is re-derived here rather than
+    trusted from the row, because the facts it rests on — the Agent's private
+    ownership, its registry presence, its enabled flag, the owner's ``use``
+    grant — all change outside this instance and none of them are stored on it.
+
+    Returns ``(usable, reason)``. A service that cannot answer is *not* consent:
+    an unevaluable target keeps the connection closed, which is the same
+    fail-closed posture as :func:`_owner_is_active_member`.
+    """
+    resolver = getattr(service, "personal_target_state", None)
+    if not callable(resolver):
+        return False, "target_state_unavailable"
+    try:
+        state = resolver(row) or {}
+    except Exception as e:  # noqa: BLE001 - an unevaluable answer is not consent
+        logger.warning(
+            f"[ChannelInstances] cannot evaluate personal target for "
+            f"'{row.get('id')}': {e}")
+        return False, "target_state_unavailable"
+    if str(state.get("state") or "") == "ok":
+        return True, ""
+    return False, str(state.get("reason") or "personal_agent_forbidden")
+
+
 def apply_tenant_instance_runtime(instance_id: str) -> Dict[str, Any]:
     """Make one tenant instance's running state match its stored state, now.
 
@@ -782,6 +844,19 @@ def apply_tenant_instance_runtime(instance_id: str) -> Dict[str, Any]:
             return _record_runtime_state(
                 instance_id, applied=False,
                 error="the owning member is not an active member of this tenant")
+
+        if str(row.get("scope") or "tenant") == "user":
+            usable, reason = _personal_target_usable(service, row)
+            if not usable:
+                # An unusable target is not a temporary hiccup: the persona the
+                # member chose is gone, disabled or no longer theirs, and running
+                # the connection anyway would either fail at every message or
+                # serve the wrong Agent. Stopped and reported as a failure so the
+                # console shows "repair the target" rather than "connecting".
+                _stop_instance_runtime(instance_id)
+                return _record_runtime_state(
+                    instance_id, applied=False,
+                    error=f"personal target unusable: {reason}")
 
         if (str(row.get("scope") or "tenant") == "user"
                 and not personal_runtime_enabled(str(row.get("channel_type") or ""))):
@@ -914,6 +989,17 @@ def load_tenant_channel_instances() -> List[ChannelInstance]:
                     f"[ChannelInstances] personal instance '{instance_id}' "
                     f"not started: its owner is not an active member of tenant "
                     f"'{tenant_id}'"
+                )
+                continue
+            target_ok, target_reason = _personal_target_usable(service, row)
+            if not target_ok:
+                # The same gate the hot path applies: an instance whose target
+                # became unusable must not come back up on boot, or a restart
+                # would silently re-open a route the console reports as needing
+                # repair (task 2.5).
+                logger.info(
+                    f"[ChannelInstances] personal instance '{instance_id}' "
+                    f"not started: its target is unusable ({target_reason})"
                 )
                 continue
         try:
@@ -1086,6 +1172,16 @@ def tenant_channel_types() -> List[Dict[str, Any]]:
     console cannot present a type that ``create_tenant_channel_instance`` would
     then reject. Labels are display-only; the credential *keys* are the contract
     (the server rejects any field outside them).
+
+    This list deliberately serves two masters, and the two must not be
+    conflated: it is the candidate set for a *new* connection, and it is also
+    the field contract the console looks up for a row that already exists. A
+    type whose inbound can never be accepted (``inbound_admissible`` false) must
+    therefore stay listed *with its fields* — dropping the entry would render an
+    existing row's form with no fields at all — and carries its own verdict
+    instead, which the candidate side narrows on. The personal ``ready`` verdict
+    is not a substitute: it also carries member-only meanings (deployment
+    narrowing, tenant policy) that must not decide the administrator's surface.
     """
     out: List[Dict[str, Any]] = []
     for channel_type in sorted(MULTI_INSTANCE_READY):
@@ -1095,6 +1191,10 @@ def tenant_channel_types() -> List[Dict[str, Any]]:
         required = set(REQUIRED_CREDENTIAL_KEYS.get(channel_type) or ())
         out.append({
             "channel_type": channel_type,
+            # Whether a *new* connection of this type could ever receive a
+            # message here. False means "do not offer it as a candidate, but its
+            # row (if one exists) still has this contract".
+            "inbound_admissible": inbound_identity_admissible(channel_type),
             "label": TENANT_CHANNEL_LABELS.get(
                 channel_type, {"zh": channel_type, "en": channel_type}),
             # Appearance is presentation-only, but keeping it server-side stops
@@ -1125,13 +1225,16 @@ def tenant_channel_types() -> List[Dict[str, Any]]:
 #: Channel types whose **personal** (member-owned) onboarding boundary is
 #: declared ready (change enable-member-personal-console, task 6.3).
 #:
-#: A type is eligible only when it truly runs several instances *and* its
-#: inbound path can prove the sender per instance — the two are the same
-#: requirement, which is why this is seeded from :data:`MULTI_INSTANCE_READY`
-#: rather than guessed. Being listed here makes a type *offered*; it does not
-#: make it run. Each type still has to record a real inbound acceptance (task
-#: 7.5) before the personal-runtime switch is opened for it, and an operator may
-#: narrow this set per deployment with ``personal_channel_ready_types``.
+#: Being multi-instance ready is the *first* of two requirements, not both of
+#: them: running several instances is a different fact from being able to prove
+#: which sender a message came from, and :func:`personal_channel_ready` applies
+#: the second one (:func:`inbound_identity_admissible`) on top of this set.
+#: Seeding this from :data:`MULTI_INSTANCE_READY` is only the "runs several
+#: instances" half — do not read it as a readiness verdict. Being listed here
+#: makes a type *offered*; it does not make it run. Each type still has to record
+#: a real inbound acceptance (task 7.5) before the personal-runtime switch is
+#: opened for it, and an operator may narrow this set per deployment with
+#: ``personal_channel_ready_types``.
 PERSONAL_READY_CHANNEL_TYPES = frozenset(MULTI_INSTANCE_READY)
 
 #: Actionable reason codes for a type that is not open for personal access.
@@ -1140,6 +1243,10 @@ PERSONAL_READY_CHANNEL_TYPES = frozenset(MULTI_INSTANCE_READY)
 PERSONAL_NOT_READY_REASONS = frozenset({
     # The provider cannot dispatch per instance yet: one connection only.
     "not_multi_instance",
+    # Runs several instances, but the adapter never stamps the sender, so its
+    # inbound is refused before any binding lookup (see
+    # :data:`INBOUND_IDENTITY_STAMPING_TYPES`).
+    "no_inbound_identity",
     # Multi-instance, but its per-instance sender boundary is not declared.
     "not_declared",
     # Declared as not open for this deployment.
@@ -1175,7 +1282,10 @@ def personal_channel_ready(channel_type: str):
     ``ready`` is about the **declaration**, not the runtime: a ready type may be
     configured even while the personal-runtime switch keeps it from connecting,
     which is what lets the console collect a configuration without pretending
-    the channel is live.
+    the channel is live. The declaration has two halves — the type can run
+    several instances *and* its inbound can prove which sender a message came
+    from (:func:`inbound_identity_admissible`); a type missing either one is not
+    configurable, because the connection it produced could never be talked to.
     """
     ctype = _normalize_type((channel_type or "").strip())
     if not ctype:
@@ -1186,6 +1296,12 @@ def personal_channel_ready(channel_type: str):
                        else "no_credential_contract")
     if ctype not in MULTI_INSTANCE_READY:
         return False, "not_multi_instance"
+    if not inbound_identity_admissible(ctype):
+        # Checked before the declaration list below so the member is told the
+        # fact that actually blocks the type — the adapter cannot prove who sent
+        # a message — rather than the deployment-narrowing reason that would
+        # otherwise answer first and be wrong.
+        return False, "no_inbound_identity"
     if ctype not in PERSONAL_READY_CHANNEL_TYPES:
         return False, "not_declared"
     narrowed = _configured_personal_types()

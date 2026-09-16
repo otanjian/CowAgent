@@ -14,6 +14,24 @@ from agent.skills.formatter import format_skill_entries_for_prompt
 SKILLS_CONFIG_FILE = "skills_config.json"
 
 
+class SkillNameAmbiguous(ValueError):
+    """A bare skill ``name`` names more than one definition; ``resource_id`` needed.
+
+    A ``ValueError`` so the existing not-found/validation handlers keep working,
+    and its own type so the API can answer 400 for exactly this case instead of
+    reporting a generic failure.
+    """
+
+    def __init__(self, name: str, sources: List[str]):
+        unique = sorted({s for s in sources if s})
+        where = " and ".join(unique) if unique else "more than one source"
+        super().__init__(
+            f"skill name {name!r} is ambiguous ({where}); "
+            "pass resource_id to disambiguate")
+        self.name = name
+        self.sources = unique
+
+
 def build_skill_manager(
     agent_id: Optional[str] = None,
     workspace_dir: Optional[str] = None,
@@ -499,6 +517,14 @@ class SkillManager:
             # Fall back to the loaded source when config is not yet synced.
             if sk.name == name and sk.source == source:
                 return entry
+            # The definition this entry shadowed is still its own resource: a
+            # name collision no longer drops it from the registry, and a caller
+            # that answers an ambiguous name with the *other* id must reach the
+            # source it named rather than be served the winner's file.
+            shadow = entry.shadowed
+            if (shadow is not None and shadow.skill.name == name
+                    and shadow.skill.source == source):
+                return shadow
         return None
 
     def resolve_skill(self, *, resource_id: Optional[str] = None,
@@ -507,14 +533,66 @@ class SkillManager:
 
         ``name`` is only accepted when it maps to exactly one loaded skill in the
         current tenant/scope; an ambiguity (builtin + custom same name) is
-        reported by raising ``ValueError`` so the caller can demand ``resource_id``.
+        reported by raising ``SkillNameAmbiguous`` so the caller can demand
+        ``resource_id`` — and so answer 400 instead of doing the write the name
+        happened to pick.
         """
         if resource_id:
             return self.get_skill_by_resource_id(resource_id)
         if name:
             matches = [e for e in self.skills.values() if e.skill.name == name]
             if len(matches) > 1:
-                raise ValueError(
-                    f"skill name {name!r} is ambiguous; pass resource_id to disambiguate")
-            return matches[0] if matches else None
+                raise SkillNameAmbiguous(name, [e.skill.source for e in matches])
+            entry = matches[0] if matches else None
+            if entry is not None:
+                self.require_unique_name(entry)
+            return entry
         return None
+
+    def require_unique_name(self, entry: SkillEntry) -> None:
+        """Raise when ``entry``'s name also names a *different* definition.
+
+        :raises SkillNameAmbiguous: when a bare ``name`` cannot identify one
+            definition. Callers that hold a ``resource_id`` never get here.
+        """
+        sources = self.ambiguous_sources(entry)
+        if sources:
+            raise SkillNameAmbiguous(entry.skill.name,
+                                     [entry.skill.source] + sources)
+
+    def ambiguous_sources(self, entry: SkillEntry) -> List[str]:
+        """Sources of same-name definitions ``entry``'s bare name could mean.
+
+        Empty means the name is unique and safe to resolve. A shadowed entry
+        that *is* the installation's own copy is not a second definition —
+        startup copies every builtin skill directory into the workspace
+        (``_sync_builtin_skills`` in ``app.py``) and replaces it on the next
+        start, which is the same skill by a workspace path. Only a workspace
+        definition the installation does not ship is a distinct resource, and
+        only that makes the name ambiguous.
+        """
+        shadow = entry.shadowed
+        if shadow is None:
+            return []
+        if self.ships_with_install(entry.skill):
+            return []
+        return [shadow.skill.source]
+
+    def ships_with_install(self, skill: Skill) -> bool:
+        """True when this skill's files come back from the installation.
+
+        Not just ``source == "builtin"``: startup copies every builtin skill
+        directory into the workspace and deletes whatever was there first
+        (``_sync_builtin_skills``), so the copy the loader resolves is a
+        ``custom`` one that is *still* replaced on the next start. Answering
+        this in one place is what keeps the read/write refusal
+        (:meth:`SkillService._ships_with_install`) and the name-ambiguity
+        decision from disagreeing about the same pair of entries.
+        """
+        if skill.source == "builtin":
+            return True
+        try:
+            shadowed = os.path.join(self.builtin_dir, os.path.basename(skill.base_dir))
+        except Exception:
+            return False
+        return os.path.isfile(os.path.join(shadowed, "SKILL.md"))

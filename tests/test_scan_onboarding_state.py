@@ -877,7 +877,11 @@ class ScanOnboardingTestCase(unittest.TestCase):
 
     def test_personal_scope_uses_the_member_entry_point_binding(self):
         session = start(scope="personal")
-        ticket = mint()
+        # The grant names the console it belongs to (task 4.1): a private create
+        # presents the private surface, so a grant minted for the public page
+        # would not authorize it. This member's target is not named by the commit
+        # request here, so the grant records none either — the two must agree.
+        ticket = mint(scope=scan_authorization.SCOPE_PERSONAL)
         create = CreateStub()
         quota = QuotaStub()
         result = self._commit(session, ticket, create, quota)

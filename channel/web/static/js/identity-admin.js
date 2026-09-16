@@ -28,14 +28,6 @@
     // previous tenant are discarded (task 3.7 late-response guard).
     function bumpTenantGeneration() {
         _generation += 1;
-        // The member personal pages cache per-tenant lists and objects too, so a
-        // reply from the previous tenant must not repaint a page that now
-        // belongs to another one (task 8.4). The personal console owns its own
-        // counters and is invalidated through its published hook.
-        if (window.PersonalConsole
-            && typeof window.PersonalConsole.invalidatePersonalViews === 'function') {
-            window.PersonalConsole.invalidatePersonalViews();
-        }
     }
 
     async function apiFetch(path, options) {

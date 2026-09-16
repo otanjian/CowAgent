@@ -4,7 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/includes/bootstrap.php';
 
 $brand = (array) cfg('brand', []);
-$video = demo_video();
+$demo  = demo_image();
 
 require __DIR__ . '/includes/header.php';
 ?>
@@ -28,11 +28,7 @@ require __DIR__ . '/includes/header.php';
       </div>
 
       <div class="hero-demo">
-        <video class="demo-video" controls preload="metadata" playsinline
-               aria-label="<?= e(t('demo.aria')) ?>" src="<?= e($video) ?>">
-          <?= e(t('demo.fallback')) ?>
-          <a href="<?= e($video) ?>" target="_blank" rel="noopener"><?= e(t('demo.link')) ?></a>
-        </video>
+        <img class="demo-image" src="<?= e($demo) ?>" alt="<?= e(t('demo.aria')) ?>" />
       </div>
     </div>
   </section>

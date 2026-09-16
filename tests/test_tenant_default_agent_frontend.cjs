@@ -40,12 +40,20 @@ const agent = (extra = {}) => ({
 });
 
 // Load renderAgentDetail with just enough context for its own template.
-function renderCtx({ defaultAgentId }) {
+function renderCtx({ defaultAgentId, tenantDefaultManageable }) {
     const nodes = new Map();
     const ctx = {
         console,
         selectedAdminAgentId: 'beta',
         defaultAgentId,
+        // The tenant action is offered from the server's payload, so every case
+        // here says whether the caller may appoint it (task 4.4/4.5).
+        tenantDefaultManageable: tenantDefaultManageable !== false,
+        userDefault: { agent_id: '', revision: null, origin: null },
+        // Where the anchor a new session would use came from (task 4.6). The
+        // detail pane renders the resolved source, so the sandbox has to carry
+        // the same shape the page initialises with.
+        defaultResolution: { agent_id: '', source: null },
         t: key => key,
         escapeHtml: x => String(x),
         findAgent: id => (id === 'beta' ? agent() : null),
@@ -71,7 +79,7 @@ function renderCtx({ defaultAgentId }) {
     return { ctx, node: id => ctx.document.getElementById(id) };
 }
 
-test('a non-default agent offers "set as default"', () => {
+test('a non-default agent offers "set as tenant default"', () => {
     const { ctx, node } = renderCtx({ defaultAgentId: 'alpha' });
 
     ctx.renderAgentDetail();
@@ -79,7 +87,7 @@ test('a non-default agent offers "set as default"', () => {
     const html = node('agent-detail-profile').innerHTML;
     assert.ok(html.includes('setAgentAsDefault'), (
         'the Agent config page must offer the action for a non-default Agent'));
-    assert.ok(html.includes('agents_set_default'), 'the action must be labelled');
+    assert.ok(html.includes('agents_set_tenant_default'), 'the action must be labelled');
 });
 
 test('the current default agent offers no "set as default"', () => {

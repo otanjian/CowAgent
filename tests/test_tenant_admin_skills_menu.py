@@ -5,9 +5,15 @@ The console page ``admin.skills`` is registered with an empty functional
 permission, so it used to be invisible to everyone but a platform ``all``
 account. A tenant admin qualifies as its own tenant's manager and must see the
 page and read the tenant's skills/tools catalog without a per-resource grant
-(read-only, mirroring the tenant-admin Agent exemption). A plain member still
-needs the functional read permission *and* an explicit grant, and platform
-``all`` stays unrestricted.
+(read-only, mirroring the tenant-admin Agent exemption). Platform ``all`` stays
+unrestricted.
+
+Change ``unify-console-by-data-scope`` retired the personal pages: a plain
+member now **shares** 工具与技能 with the tenant admin (``nav:admin.skills`` is a
+built-in member default). The page is no longer the thing that is withheld — the
+object range is: a member with the functional read permission opens the page and
+sees only their own visible resources and their own actions, while a role
+without that permission is still refused the catalog.
 
 The projection is display-only, so the interface must agree: a page that reports
 ``read_allowed`` must not 403 at ``/api/skills`` / ``/api/tools``.
@@ -88,10 +94,23 @@ class ProjectionTests(_Fixture):
         self.assertTrue(page["available"], page)
         self.assertTrue(page["read_allowed"], page)
 
-    def test_a_plain_member_gets_no_skills_administration(self):
+    def test_a_plain_member_shares_the_skills_page_with_their_own_range(self):
+        """A plain member reaches the page; the object range narrows it.
+
+        ``nav:admin.skills`` is a built-in member default and the read gate is
+        the functional catalog read the member already carries, so the page is
+        available rather than denied. What the member may *see* is their own
+        visible resources and what they may *do* is their own actions — the page
+        id decides neither. The tenant-wide list a tenant admin reads is not
+        what this member gets (see
+        ``InterfaceTests.test_a_plain_member_sees_only_their_own_empty_catalog``).
+        """
         page = self._page(self.token_member)
-        self.assertFalse(page["read_allowed"], page)
-        self.assertFalse(page["available"], page)
+        self.assertTrue(page["available"], page)
+        self.assertTrue(page["read_allowed"], page)
+        self.assertEqual(page["reason"], "", page)
+        # Read-only: the page carries no catalog write action for this role.
+        self.assertEqual(page["actions"], {}, page)
 
 
 class InterfaceTests(_Fixture):
@@ -135,6 +154,24 @@ class InterfaceTests(_Fixture):
         self._patch_db()
         resp = self._get("/api/tools", self.token_plain)
         self.assertTrue(str(resp.status).startswith("403"), resp.data[:300])
+
+    def test_a_plain_member_sees_only_their_own_empty_catalog(self):
+        """The shared page answers a member with the member's own range.
+
+        The built-in member carries the functional read permission, so the
+        shared 工具与技能 page is served — but the *list* is the caller's own
+        grant-filtered catalog, not the tenant-wide one a tenant admin reads
+        (``test_a_tenant_admin_can_list_tools`` proves that side). A member with
+        no resource grant therefore gets an empty catalog, not a refusal and not
+        fabricated rows.
+        """
+        self._patch_db()
+        for path, key in (("/api/tools", "tools"), ("/api/skills", "skills")):
+            resp = self._get(path, self.token_member)
+            self.assertTrue(str(resp.status).startswith("200"), resp.data[:300])
+            data = json.loads(resp.data.decode("utf-8"))
+            self.assertEqual(data["status"], "success", path)
+            self.assertEqual(data[key], [], path)
 
     def test_a_tenant_admin_may_browse_skill_content_read_only(self):
         """Read-only includes opening a skill, but never writing it."""

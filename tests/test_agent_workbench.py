@@ -111,11 +111,19 @@ def _call_get(handler_cls, view=""):
         from agent.registry import get_agent_registry
         return [p.id for p in get_agent_registry().list(include_disabled=False)]
 
+    def _binding(_ctx, agent_id):
+        # Same stand-in for the object scope: the stub Agents are tenant-shared,
+        # so the projection shape is what these tests pin. Ownership and
+        # administrator exceptions are pinned by
+        # tests/test_object_scope.py and test_private_agent_owner_reachability.py.
+        return {"agent_id": agent_id, "tenant_id": "tnt_test"}
+
     with patch.object(web_channel, "_db_scope", _fake_db_scope), \
          patch.object(web_channel, "_require_read_permission"), \
          patch.object(web_channel, "_tenant_default_agent_id",
                       return_value="primary"), \
          patch.object(web_channel, "_tenant_ids_for_context", _scoped_ids), \
+         patch.object(web_channel, "_agent_binding_for", _binding), \
          patch.object(web_channel, "_workbench_chat_readiness",
                       return_value=(True, None)), \
          patch.object(web_channel.web, "header"), \
@@ -260,6 +268,12 @@ class TestWorkbenchProjection(unittest.TestCase):
             def get_agent_binding(self, agent_id):
                 return {"agent_id": agent_id, "tenant_id": "t1"}
 
+            def resolve_default_agent(self, tenant_id, *a, **kw):
+                # ``_resolve_default_agent`` reads the anchor *and* its source,
+                # so the stub has to answer the richer shape too (task 4.6).
+                return {"agent_id": self.resolved_default_agent_id(tenant_id, *a, **kw),
+                        "source": None}
+
             def resolved_default_agent_id(self, tenant_id, *a, **kw):
                 # This test pins the functional chat.use gate. There is no tenant
                 # default to relax onto, so the Agent stays grant-gated here.
@@ -294,6 +308,12 @@ class TestWorkbenchProjection(unittest.TestCase):
 
             def get_agent_binding(self, agent_id):
                 return {"agent_id": agent_id, "tenant_id": "t1"}
+
+            def resolve_default_agent(self, tenant_id, *a, **kw):
+                # ``_resolve_default_agent`` reads the anchor *and* its source,
+                # so the stub has to answer the richer shape too (task 4.6).
+                return {"agent_id": self.resolved_default_agent_id(tenant_id, *a, **kw),
+                        "source": None}
 
             def resolved_default_agent_id(self, tenant_id, *a, **kw):
                 # This test pins the explicit-grant path; keep the shared-default
@@ -388,6 +408,44 @@ class TestWorkbenchFrontEnd(unittest.TestCase):
             capture_output=True, text=True, timeout=30,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+class TenantAgentCandidateRangeTestCase(unittest.TestCase):
+    """Separating the management set from the chat/use set (task 4.2).
+
+    The management list is where a stopped Agent is found and re-enabled, so it
+    keeps disabled Agents; the chat read offers only what can actually be
+    chatted with, so it drops them. Both read the same denominator.
+    """
+
+    def _candidates(self, include_disabled):
+        import channel.web.web_channel as web_channel
+
+        class _RealDefaultRegistry(_Registry):
+            # ``AgentRegistry.list`` defaults to *including* disabled Agents and
+            # lets the caller narrow the range, so the stub mirrors that instead
+            # of the shared ``_Registry`` (whose enabled-only default only fits
+            # the projection-shape tests). Otherwise this test would silently
+            # pin the stub, not the shipped read.
+            def list(self, include_disabled=True):
+                return super().list(include_disabled=include_disabled)
+
+        registry = _RealDefaultRegistry([
+            _Profile("primary", "Primary"),
+            _Profile("archived", "Archived", enabled=False),
+        ])
+        with patch("agent.registry.get_agent_registry", return_value=registry), \
+             patch.object(web_channel, "_tenant_ids_for_context", return_value=None), \
+             patch.object(web_channel, "_tenant_default_agent_id",
+                          return_value="primary"):
+            return [profile.id for profile, _ in web_channel._tenant_agent_candidates(
+                _admin_ctx(), include_disabled=include_disabled)]
+
+    def test_the_management_read_keeps_a_disabled_agent(self):
+        self.assertEqual(self._candidates(True), ["primary", "archived"])
+
+    def test_the_chat_read_drops_the_disabled_agent(self):
+        self.assertEqual(self._candidates(False), ["primary"])
 
 
 if __name__ == "__main__":

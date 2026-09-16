@@ -1,5 +1,19 @@
 # 角色分配菜单、技能、工具、模型和智能体的实现方案
 
+## 2026-09-15 方案变更（部分已实施，2026-09-16 复核）
+
+正式控制台对获权普通用户开放，成员与管理员共用页面、接口和业务流程；数据范围由可信租户/owner 过滤。本人私有对象可由所有权派生维护资格，依赖模型/工具/技能仍逐资源验证；公共定义及公共凭据写入另须对应管理资格。旧个人菜单授权映射至正式页面，不重置自定义角色或主动撤权。
+
+最新方案：[统一控制台与数据范围方案](unified-console-access-plan.md)；实施契约：[unify-console-by-data-scope](../../openspec/changes/unify-console-by-data-scope/proposal.md)。
+
+**实际状态**：本文的授权底座（两张 grant 表、`roles.model_defaults_json`、平台 all）**已实现**；本 change 在其上补了
+「按 owner/scope 判定对象范围」（`auth/object_scope.py`）与「不用功能 grant 代替管理资格」（`ObjectScope.allows_public_configuration`）。
+本文第 3、5 节里的资源目录表、模型策略表、集中授权服务与七个角色页签仍属**规划**（§9 逐项核对）。
+判定口径见 [`evidence/8-5-doc-closure.md`](../../openspec/changes/unify-console-by-data-scope/evidence/8-5-doc-closure.md) §2.4。
+
+---
+
+
 日期：2026-09-09。基线：CowAgent 当前工作区（HEAD `27d291a1`，包含未提交内容）和本地 `../oneagent` 源码。本文是代码核对后的方案，不代表部署验收或已完成实现。承接用户要求：每个启用成员必须分配有效租户；平台管理员默认 all 权限。
 
 ## 1. 当前结论
@@ -75,7 +89,7 @@ OneAgent 的技能分配主要落在用户上，模型策略用于选择模型�
 
 ### 4.2 功能、资源、数据范围分别计算
 
-普通成员实际可执行某个动作，需要同时满足：
+原资源 grant 路径的计算方式如下；2026-09-15 新方案补充：本人私有对象维护由真实所有权派生，公共资源维护另须对应管理资格。两条路径都保持租户、状态和依赖资源边界，且使用同一正式业务服务。
 
 ```text
 有效身份与租户
@@ -104,13 +118,18 @@ OneAgent 的技能分配主要落在用户上，模型策略用于选择模型�
 
 保留 `identity.db`、User → Membership → Role、`roles.permissions_json`、Registry 和配置服务。资源内容与凭据不搬进授权表。
 
-| 数据结构 | 主要内容与约束 |
-| --- | --- |
-| `resource_catalog`（新增） | 稳定 resource_id、kind、source_ref、scope、owner_tenant_id、状态、revision。只存资源引用与非敏感元数据，不存技能正文或模型密钥；菜单由导航登记提供虚拟目录即可 |
-| `tenant_resource_grants`（新增） | 平台可分配给某租户的全局模型、工具/MCP 等资源及动作上限。租户自有资源从原归属系统派生；不重复维护 Agent 的租户 owner |
-| `role_resource_grants`（新增） | tenant_id、role_id、resource_kind、resource_id、action；同租户角色外键与组合唯一约束，角色整体版本控制 |
-| `model_policies`（新增） | tenant_id、role_id、capability、mode(default/fixed)、model_resource_id、priority、version；模型引用必须在可分配范围 |
-| `tenants.authorization_revision`（新增字段） | 授权相关写操作同事务递增，供能力投影、目录、运行缓存失效；不能替代每次请求的当前身份检查 |
+下表逐项标注**存在性**（2026-09-16 全仓检索核对）：
+
+| 数据结构 | 主要内容与约束 | 实际状态 |
+| --- | --- | --- |
+| `resource_catalog` | 稳定 resource_id、kind、source_ref、scope、owner_tenant_id、状态、revision。只存资源引用与非敏感元数据，不存技能正文或模型密钥；菜单由导航登记提供虚拟目录即可 | ⬜ **规划**：全仓 0 命中 |
+| `tenant_resource_grants` | 平台可分配给某租户的全局模型、工具/MCP 等资源及动作上限。租户自有资源从原归属系统派生；不重复维护 Agent 的租户 owner | ✅ **已实现**：`auth/store.py`（`_migration_11`）、读写 `auth/service.py:2039`、`:2443` |
+| `role_resource_grants` | tenant_id、role_id、resource_kind、resource_id、action；同租户角色外键与组合唯一约束，角色整体版本控制 | ✅ **已实现**：`auth/store.py:681` 起（含 menu 类资源的 view 动作） |
+| `model_policies` | tenant_id、role_id、capability、mode(default/fixed)、model_resource_id、priority、version；模型引用必须在可分配范围 | ⬜ **规划**：0 命中；已实现的是 `roles.model_defaults_json`（每角色每能力最多一个默认，`auth/service.py:6460`、`:6499`） |
+| `tenants.authorization_revision` | 授权相关写操作同事务递增，供能力投影、目录、运行缓存失效；不能替代每次请求的当前身份检查 | ⬜ **规划**：0 命中；`tenants` 只有 `version` |
+
+新增集中服务 `AuthorizationService`（`check_action`/`filter_resources`/`grantable_resources`/`effective_navigation`/`explain`）
+**尚未存在**：当前判定由 `auth/object_scope.py`（范围）与 `auth/service.py` 的角色 grant 读取（`:2020`、`:2039`）共同承担。
 
 资源标识规则：Agent 复用不可变 agent_id；技能区别内置来源和租户覆盖，不能只用显示名称；工具区分 builtin 和 MCP 连接 ID/工具名；模型使用服务端稳定资源 ID 关联厂商配置 ID、模型代码、能力和实例。自定义厂商已有 ID 可复用，传统厂商缺稳定 ID 时通过目录迁移建立映射。重命名不丢授权，删除后不把旧 ID 复用于另一资源。
 
@@ -189,3 +208,19 @@ OneAgent 的技能分配主要落在用户上，模型策略用于选择模型�
 | `tenant-resource-isolation`、`member-tenant-assignment` | 保留资源原归属、有效租户和数据隔离；平台 all 不改写 owner、不自动授予不存在的成员关系 |
 
 2026-09-08 的 [原对比报告](/Users/jiantan/ai_assistant/cowagent/docs/design/user-role-permission-gap-and-plan.md) 中“首批不做 all”及“平台管理员仅有限平台权限”的建议，针对本轮明确新增目标由本文替代；原身份安全、数据归属和非平台角色不得提权的约束继续保留。
+
+## 9. 按实际结果的分类（2026-09-16）
+
+判定口径与完整清单见
+[`evidence/8-5-doc-closure.md`](../../openspec/changes/unify-console-by-data-scope/evidence/8-5-doc-closure.md) §2。
+
+| 本文范围 | 实际状态 | 依据 / 说明 |
+| --- | --- | --- |
+| 平台管理员派生 all（§4.1） | ✅ 已实现并有用例 | `tests/test_identity_resource_authorization.py`；`authorization_mode=all` |
+| `role_resource_grants` / `tenant_resource_grants` / `roles.model_defaults_json`（§5） | ✅ 已实现 | `auth/store.py:681`、`auth/service.py:2020`、`:2443`、`:6460` |
+| 功能权限、菜单、技能、工具、模型、智能体六个页签 + 有效权限预览（§3） | ⬜ 规划 | `identity-admin.js` 无资源选择页签；保存路径只覆盖 `resource_grants` / `model_defaults` |
+| `resource_catalog`、`model_policies`、`tenants.authorization_revision`、`AuthorizationService`、`membership_resource_grants`（§5） | ⬜ 规划 | 全仓 0 命中（见 §5 表） |
+| 「管理不自动包含执行」「空集合不归一为全量」等规则（§4.2、§6） | 🟡 部分已实现 | 技能维护与 `agent.read` 已拆分（`evidence/5-4-public-surface-authority.md`）；`SkillManager._normalize_skill_filter` 的空数组语义仍是既有风险点，未在本轮改动 |
+| 五类资源的**对象范围**判定（本文原以 grant 表达） | ✅ 已由本 change 补齐 | `auth/object_scope.py`：owner 优先于管理员例外；公共配置需管理资格本身 |
+| 成员模型目录（§6「模型」一行） | 🟡 已实现（未验收） | 快照内 `admin.models` 页 scope 已改为 `tenant`（`auth/service.py:103`），新增 `model_catalog_open()`（`:3393`），写面仍单独报 `actions.manage`（平台资格）；用例 `tests/test_member_model_catalog.py` 等 29 项 + 前端 7 项通过（本周期重跑）。属主证据 `evidence/5-4-public-surface-authority.md` §3 尚未回填，故不记为已验收 |
+| 运行消费者开放、真实链路验收（§7 阶段 C/D 的执行部分） | ⬜ 未覆盖 | 阻塞于真实凭据与真实运行进程（`evidence/7-1-runtime-preflight.md`）；不得用组件集成测试代替 |

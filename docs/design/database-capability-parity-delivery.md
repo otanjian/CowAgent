@@ -1,12 +1,27 @@
 # 数据库能力补齐——交付、迁移与运维说明
 
+## 2026-09-15 方案变更（已复核，2026-09-16）
+
+本文保留原 database 能力切片的交付证据和未验收边界。新方案将原个人入口与正式记忆/渠道业务收敛为相同页面、接口和运行流程，成员仅有数据范围差异；旧开关按统一状态迁移，显式关闭和未通过的真实运行条件不能被新入口绕过。归档不等于真实渠道或原生 Desktop 已验收。
+
+最新方案：[统一控制台与数据范围方案](unified-console-access-plan.md)；实施契约：[unify-console-by-data-scope](../../openspec/changes/unify-console-by-data-scope/proposal.md)。
+
+**实际状态**：本文第 1–2 节的开放登记与未通过项**仍然有效**（真实渠道执行、Desktop 真实客户端演练保持未通过）；
+本 change 在其上完成的是「同一页面/同一服务」的收口：记忆读面统一按范围、写面限管理资格，渠道配置面合流、
+运行面合流（角色标记为零、分支键只有行自身 `scope`/`owner_user_id`）。逐项判定与原因见
+[`evidence/8-5-doc-closure.md`](../../openspec/changes/unify-console-by-data-scope/evidence/8-5-doc-closure.md) §2，
+本节末尾的 §11 是两者的关系表。
+
+---
+
+
 日期：2026-09-15。对应 OpenSpec change：`complete-database-capability-parity`（已于 2026-09-15 **部分归档**）。
 本文是**交付/运维层面**的说明：哪些切片已经开放、凭什么开放、如何撤下、如何恢复、哪些仍未通过。
 已归档切片的**行为契约以主规范 `openspec/specs/` 为准**；未取得验收的 Desktop 与微信执行验收以
-`openspec/changes/complete-desktop-and-scan-real-acceptance/specs/` 为准。
+`openspec/changes/archive/2026-09-15-complete-desktop-and-scan-real-acceptance/specs/` 为准。
 本文只作操作与证据索引（证据见
 `openspec/changes/archive/2026-09-15-complete-database-capability-parity/evidence/` 与
-`openspec/changes/complete-desktop-and-scan-real-acceptance/evidence/`）。
+`openspec/changes/archive/2026-09-15-complete-desktop-and-scan-real-acceptance/evidence/`）。
 
 ---
 
@@ -147,7 +162,7 @@ Desktop 客户端跑完两租户两成员全链路，本轮未执行，因此在
 ## 8 证据索引
 
 下表路径相对 `openspec/changes/archive/2026-09-15-complete-database-capability-parity/`；第 8 组（Desktop）
-的后续验收证据见承接方 `openspec/changes/complete-desktop-and-scan-real-acceptance/evidence/`。
+的后续验收证据见承接方 `openspec/changes/archive/2026-09-15-complete-desktop-and-scan-real-acceptance/evidence/`。
 
 | 组 | 内容 | 证据 |
 | --- | --- | --- |
@@ -195,3 +210,19 @@ Desktop 客户端跑完两租户两成员全链路，本轮未执行，因此在
 - **残留验收的承接方**：`desktop_tenant_context` 的真实客户端演练（前序 8.7/8.8/R2）与微信真实执行验收
   （前序 7.8/7.10）及其联测（前序 11.3）由 `complete-desktop-and-scan-real-acceptance` 的任务
   2.1-2.2、3.1-3.3、4.1 承接。在取得真实验收前，本文不声明这两块已开放，承接方也不得放宽判据。
+
+## 11 与 `unify-console-by-data-scope` 的关系（2026-09-16）
+
+| 本文的切片 | 本 change 之后的状态 | 依据 |
+| --- | --- | --- |
+| `memory_browse`（记忆列表/正文浏览） | ✅ 已验收，且统一为一个页面/一个服务：读面按范围，写面限管理资格 | `evidence/5-1-memory-target-set.md`、`5-1b-write-path-and-acceptance.md`、`5-4-public-surface-authority.md` |
+| `weixin_scan`（扫码配置面） | ✅ 已验收并合流到共用渠道页 | `evidence/6-3-to-6-6-write-merge-and-scan.md` |
+| `scheduler` / `project_browse` | ✅ 未受本 change 影响 | 本文第 2 节 |
+| `desktop_tenant_context` | ⬜ 仍未通过（真实打包客户端演练未执行），移交承接方 | 本文第 2、10 节 |
+| 个人渠道**执行**（含微信真实收发） | ⬜ 未覆盖 | `PERSONAL_RUNTIME_ACCEPTED_TYPES`/`PUBLIC_PERSONAL_INGRESS_TYPES` 为空集（`channel/channel_instances.py:1340`、`:1346`）、`personal_channel_runtime=False`（`config.py:290`）；阻塞条件见 `evidence/7-1-runtime-preflight.md` |
+| 适用动作审批（第 9 节） | ✅ 已交付，未被本 change 改动 | 本文第 9 节 |
+| 「个人入口作为独立消费者」的登记口径 | 🔁 被取代：成员与管理员共用同一路由与页面，仅数据范围不同 | `evidence/8-2-compat-cycle.md` §2；`auth/object_scope.py` |
+
+**Desktop 相关补充**：本 change 的调用观测只能证明**受版本控制的** `desktop/`（`git ls-files desktop` 共 117 个文件，其中 `desktop/src/**` 96 个）检索不到旧个人令牌
+（`PersonalConsole` / `personal-console` / `nav:personal` 命中 0）；`desktop/dist/**` 是本地构建产物、
+未纳入版本控制，**不作为依据**。这不改变本文第 2 节「真实客户端演练未执行」的结论。

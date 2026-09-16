@@ -28,7 +28,7 @@ TOOLS_BASE = "http://localhost:9899"
 
 
 class PersonalConsoleTransportTests(unittest.TestCase):
-    """``/api/personal/resources`` and ``/api/agents?view=personal``."""
+    """The personal-parameter verbs on the shared page, and ``/api/agents?view=personal``."""
 
     def setUp(self):
         from channel.web import auth_handlers
@@ -53,16 +53,27 @@ class PersonalConsoleTransportTests(unittest.TestCase):
             self.admin_id, self.tenant_id, "personalizer", "Personalizer",
             ["agent.read", "tool.read", "skill.read"],
             resource_grants=[
-                {"resource_kind": "tool", "resource_id": "builtin:echo",
+                # The console's grant picker emits the kind's whole action set
+                # (``identity-admin.js``: tool = read/execute/configure), so a
+                # granted tool carries ``read`` as well as ``execute``. The read
+                # is what puts the row on the shared 工具与技能 page; the
+                # ``execute`` is what the owner-scoped personal write answers to.
+                {"resource_kind": "tool", "resource_id": "builtin:read",
+                 "action": "read"},
+                {"resource_kind": "tool", "resource_id": "builtin:read",
                  "action": "execute"},
+                {"resource_kind": "skill", "resource_id": "custom:writer",
+                 "action": "read"},
                 {"resource_kind": "skill", "resource_id": "custom:writer",
                  "action": "use"},
             ])
         self.alice_id = self._member("alice", ["personalizer"])
+        self.carol_id = self._member("carol", ["personalizer"])
         self.limited_role = self.service.create_role(
             self.admin_id, self.tenant_id, "limited", "Limited", ["history.read"])
         self.bob_id = self._member("bob", ["limited"])
         self.alice_token = self._login("alice", "MemPassFinal1")
+        self.carol_token = self._login("carol", "MemPassFinal1")
         self.bob_token = self._login("bob", "MemPassFinal1")
 
         settings = {
@@ -102,17 +113,19 @@ class PersonalConsoleTransportTests(unittest.TestCase):
             headers["Content-Type"] = "application/json"
         return headers
 
-    def _get_resources(self, token, *, tenant=True, kind=""):
-        path = "/api/personal/resources"
-        if kind:
-            path += "?kind=" + kind
-        return self.app.request(path, headers=self._headers(token, tenant=tenant))
+    def _get_tools(self, token, *, tenant=True):
+        return self.app.request("/api/tools",
+                                headers=self._headers(token, tenant=tenant))
 
-    def _post_resource(self, token, body, *, tenant=True):
+    def _post_tools(self, token, body, *, tenant=True):
         return self.app.request(
-            "/api/personal/resources", method="POST",
+            "/api/tools", method="POST",
             headers=self._headers(token, tenant=tenant, json_body=True),
             data=json.dumps(body))
+
+    def _tool_row(self, token, resource_id="builtin:read"):
+        rows = self._body(self._get_tools(token))["tools"]
+        return [r for r in rows if r["resource_id"] == resource_id][0]
 
     def _get_agents(self, token, *, view="personal", tenant=True):
         return self.app.request(
@@ -122,46 +135,48 @@ class PersonalConsoleTransportTests(unittest.TestCase):
     def _body(self, response):
         return json.loads(response.data.decode("utf-8"))
 
-    # -- the personal resource surface -----------------------------------
+    # -- the personal parameters on the shared 工具与技能 page ---------------
 
-    def test_a_member_sees_only_the_resources_they_are_granted(self):
-        response = self._get_resources(self.alice_token)
+    def test_a_granted_member_gets_the_personal_state_on_the_row(self):
+        """The detail component reads its panel from the row, not a second call."""
+        row = self._tool_row(self.alice_token)
 
-        self.assertEqual(response.status, "200 OK")
-        body = self._body(response)
-        self.assertEqual(body["status"], "success")
-        self.assertEqual(body["scope"], "personal")
-        self.assertEqual(
-            {(r["resource_kind"], r["resource_id"]) for r in body["resources"]},
-            {("tool", "builtin:echo"), ("skill", "custom:writer")})
+        self.assertEqual(row["resource_id"], "builtin:read")
+        self.assertEqual(row["personal"]["resource_kind"], "tool")
+        self.assertFalse(row["personal"]["configured"])
+        self.assertEqual(row["personal"]["params"], {})
+        self.assertTrue(row["personal"]["actions"]["configure"],
+                        "a granted resource offers its owner the editor")
+        self.assertFalse(row["personal"]["actions"]["clear"],
+                         "nothing is saved yet, so there is nothing to clear")
 
-    def test_a_member_without_grants_sees_an_empty_list(self):
-        response = self._get_resources(self.bob_token)
+    def test_the_catalog_shows_no_row_the_member_may_not_read(self):
+        response = self._get_tools(self.alice_token)
 
-        self.assertEqual(response.status, "200 OK")
-        self.assertEqual(self._body(response)["resources"], [])
+        ids = {row["resource_id"] for row in self._body(response)["tools"]}
+        self.assertEqual(ids, {"builtin:read"},
+                         "the shared page is read-filtered; one grant, one row")
 
-    def test_a_kind_filter_narrows_the_transport_list(self):
-        body = self._body(self._get_resources(self.alice_token, kind="tool"))
-        self.assertEqual([r["resource_kind"] for r in body["resources"]], ["tool"])
+    def test_a_member_without_the_read_permission_is_refused_rather_than_shown_an_empty_page(self):
+        """Control case: the page says no instead of pretending the catalog is empty."""
+        response = self._get_tools(self.bob_token)
 
-    def _entry(self, resources, kind):
-        return [r for r in resources if r["resource_kind"] == kind][0]
+        self.assertEqual(response.status, "403 Forbidden")
 
-    def test_saving_parameters_round_trips(self):
-        saved = self._post_resource(self.alice_token, {
-            "resource_kind": "tool", "resource_id": "builtin:echo",
+    def test_saving_parameters_round_trips_through_the_page_endpoint(self):
+        saved = self._post_tools(self.alice_token, {
+            "action": "save-personal", "resource_id": "builtin:read",
             "params": {"timeout": 12}})
         self.assertIn(saved.status, ("200", "200 OK"))
 
-        entry = self._entry(
-            self._body(self._get_resources(self.alice_token))["resources"], "tool")
-        self.assertTrue(entry["configured"])
-        self.assertEqual(entry["params"], {"timeout": 12})
+        personal = self._tool_row(self.alice_token)["personal"]
+        self.assertTrue(personal["configured"])
+        self.assertEqual(personal["params"], {"timeout": 12})
+        self.assertTrue(personal["actions"]["clear"])
 
     def test_a_save_lands_on_the_callers_own_row_only(self):
-        self._post_resource(self.alice_token, {
-            "resource_kind": "tool", "resource_id": "builtin:echo",
+        self._post_tools(self.alice_token, {
+            "action": "save-personal", "resource_id": "builtin:read",
             "params": {"timeout": 12}})
 
         rows = self.service._store.execute(
@@ -169,16 +184,18 @@ class PersonalConsoleTransportTests(unittest.TestCase):
         self.assertEqual([r["user_id"] for r in rows], [self.alice_id])
 
     def test_another_member_never_sees_the_saved_configuration(self):
-        self._post_resource(self.alice_token, {
-            "resource_kind": "tool", "resource_id": "builtin:echo",
+        """Carol holds the same grant: same row, her own (empty) configuration."""
+        self._post_tools(self.alice_token, {
+            "action": "save-personal", "resource_id": "builtin:read",
             "params": {"timeout": 12}})
 
-        listing = self._body(self._get_resources(self.bob_token))["resources"]
-        self.assertEqual([r for r in listing if r["configured"]], [])
+        other = self._tool_row(self.carol_token)["personal"]
+        self.assertFalse(other["configured"])
+        self.assertEqual(other["params"], {})
 
     def test_saving_an_ungranted_resource_is_refused(self):
-        response = self._post_resource(self.alice_token, {
-            "resource_kind": "tool", "resource_id": "builtin:rm",
+        response = self._post_tools(self.alice_token, {
+            "action": "save-personal", "resource_id": "builtin:rm",
             "params": {}})
 
         self.assertEqual(response.status, "403 Forbidden")
@@ -188,22 +205,46 @@ class PersonalConsoleTransportTests(unittest.TestCase):
         self.assertEqual(rows[0]["c"], 0)
 
     def test_clearing_is_idempotent_over_the_wire(self):
-        self._post_resource(self.alice_token, {
-            "resource_kind": "tool", "resource_id": "builtin:echo",
+        self._post_tools(self.alice_token, {
+            "action": "save-personal", "resource_id": "builtin:read",
             "params": {"timeout": 12}})
 
-        cleared = self._post_resource(self.alice_token, {
-            "action": "clear", "resource_kind": "tool",
-            "resource_id": "builtin:echo"})
-        again = self._post_resource(self.alice_token, {
-            "action": "clear", "resource_kind": "tool",
-            "resource_id": "builtin:echo"})
+        cleared = self._post_tools(self.alice_token, {
+            "action": "clear-personal", "resource_id": "builtin:read"})
+        again = self._post_tools(self.alice_token, {
+            "action": "clear-personal", "resource_id": "builtin:read"})
 
         self.assertIn(cleared.status, ("200", "200 OK"))
         self.assertIn(again.status, ("200", "200 OK"))
-        entry = self._entry(
-            self._body(self._get_resources(self.alice_token))["resources"], "tool")
-        self.assertFalse(entry["configured"])
+        self.assertFalse(self._tool_row(self.alice_token)["personal"]["configured"])
+
+    def test_the_public_definition_fields_are_untouched_by_a_personal_save(self):
+        """A personal write may not become a tool-definition write.
+
+        The same method carries the management verbs, so the boundary is asserted
+        on the effect rather than on the verb name: the catalog row's own fields
+        (name/description/resource_id) are identical after the save.
+        """
+        before = {k: v for k, v in self._tool_row(self.alice_token).items()
+                  if k != "personal"}
+
+        self._post_tools(self.alice_token, {
+            "action": "save-personal", "resource_id": "builtin:read",
+            "params": {"timeout": 12}, "description": "hijacked", "name": "rm",
+            "enabled": False})
+
+        after = {k: v for k, v in self._tool_row(self.alice_token).items()
+                 if k != "personal"}
+        self.assertEqual(after, before)
+
+    def test_the_retired_personal_resource_route_is_gone(self):
+        for method, kwargs in (("GET", {}), ("POST", {"data": "{}"})):
+            response = self.app.request(
+                "/api/personal/resources", method=method,
+                headers=self._headers(self.alice_token, json_body=bool(kwargs)),
+                **kwargs)
+            self.assertNotIn(response.status, ("200", "200 OK"),
+                             "the retired surface must answer like any unknown URL")
 
     # -- the member Agents surface ---------------------------------------
 
@@ -236,8 +277,10 @@ class PersonalConsoleTransportTests(unittest.TestCase):
 
     def test_the_personal_surfaces_require_a_session(self):
         for response in (
-            self.app.request("/api/personal/resources",
-                             headers={"Host": "localhost:9899"}),
+            self.app.request("/api/tools", method="POST",
+                             headers={"Host": "localhost:9899",
+                                      "Content-Type": "application/json"},
+                             data="{}"),
             self.app.request("/api/agents?view=personal",
                              headers={"Host": "localhost:9899"}),
         ):
@@ -245,7 +288,7 @@ class PersonalConsoleTransportTests(unittest.TestCase):
                              "an unauthenticated request must not be served")
 
     def test_a_personal_surface_needs_a_tenant_selection(self):
-        response = self._get_resources(self.alice_token, tenant=False)
+        response = self._get_tools(self.alice_token, tenant=False)
 
         self.assertNotIn(response.status, ("200", "200 OK"))
 
@@ -257,12 +300,19 @@ class PersonalConsoleTransportTests(unittest.TestCase):
             admin_username="other-root", admin_display="Other Root",
             admin_password="OtherStr0ngPass", recent_password="Str0ngRootFinal")
 
-        headers = self._headers(self.alice_token)
+        headers = self._headers(self.alice_token, json_body=True)
         headers["X-Tenant-ID"] = other["id"]
-        response = self.app.request("/api/personal/resources", headers=headers)
+        response = self.app.request(
+            "/api/tools", method="POST", headers=headers,
+            data=json.dumps({"action": "save-personal",
+                             "resource_id": "builtin:read",
+                             "params": {"timeout": 12}}))
 
         self.assertNotIn(response.status, ("200", "200 OK"))
         self.assertNotIn(self.alice_id, json.dumps(self._body(response)))
+        rows = self.service._store.execute(
+            "SELECT COUNT(*) c FROM personal_resource_configs")
+        self.assertEqual(rows[0]["c"], 0, "a foreign tenant writes nothing")
 
 
 if __name__ == "__main__":

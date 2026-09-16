@@ -1,8 +1,23 @@
 # 成员个人控制台——交付、迁移与运维说明
 
+## 2026-09-15 方案变更（已实施，2026-09-16 复核）
+
+本文保留旧个人控制台的交付、开关和验收记录。新方案取消独立个人页面、个人业务实现和角色专属运行分支，改由现有控制台共用功能、仅按数据归属筛选；“我的资源”标题及五项入口一并删除。既有对象、owner/scope、凭据、配额、审计和记忆版本保护继续作为统一服务基础。下文可启用结论只针对原切片，不代表新方案已实现。
+
+最新方案：[统一控制台与数据范围方案](unified-console-access-plan.md)；实施契约：[unify-console-by-data-scope](../../openspec/changes/unify-console-by-data-scope/proposal.md)。
+
+**实际状态**：五项入口与页面容器已删除、旧地址已受权转接、菜单 grant 已幂等映射、个人资源面（旧视图与
+`/api/personal/resources`）已移除（见 §10 与 `evidence/8-2-compat-cycle.md`）；**仍在发行的是退役组件本体
+`personal-console.js`（剩 3 个视图）、旧 i18n 文件与后端签发的 `personal.*` 页**，
+删除属生产代码改动、随 8.6 收口。五项开关仍各自被逐点读取，尚未由统一能力状态供给。
+逐项判定见 [`evidence/8-5-doc-closure.md`](../../openspec/changes/unify-console-by-data-scope/evidence/8-5-doc-closure.md) §2。
+
+---
+
+
 日期：2026-09-14。对应 OpenSpec change：`enable-member-personal-console`。
 本文是**交付/运维层面**的说明，回答「哪些切片可以启用、如何升级、如何撤下能力、如何恢复、哪些尚未通过」。
-行为契约以 `openspec/changes/enable-member-personal-console/specs/` 与主规范 `openspec/specs/` 为准；本文只作操作与证据索引。
+行为契约以 `openspec/changes/archive/2026-09-15-enable-member-personal-console/specs/` 与主规范 `openspec/specs/` 为准；本文只作操作与证据索引。
 
 ---
 
@@ -57,7 +72,7 @@
 | 23 | `tenant_channel_instances.app_fingerprint`（DEFAULT `''`）+ 启用中的唯一索引 | 存量行指纹为空、不参与冲突判定；仅启用中的 `scope='user'` 行受约束 |
 | 24 | `binding_challenges.target_agent_id`、`personal_channel_links.target_agent_id` | 纯新增，用于「每次入站按绑定时选定的目标」而不是事后重推 |
 
-升级为**就地**升级：直接重启即可，无需维护窗口、无需人工清理。`openspec/changes/enable-member-personal-console/evidence/9-4-delivery-drill.md`
+升级为**就地**升级：直接重启即可，无需维护窗口、无需人工清理。`openspec/changes/archive/2026-09-15-enable-member-personal-console/evidence/9-4-delivery-drill.md`
 记录了幂等升级与「升级中途崩溃可重试」的演练结果。
 
 ## 5 运维操作
@@ -138,3 +153,25 @@
 复核发现：`dreams/` 与 `evolution/` 日志**有意不受清空影响**（非用户撰写的条目），这是 5.4 的明确边界，
 不是缺口。兄弟 change 若重新开放 `/api/memory` 的列表/正文，必须复用同一服务与同一屏蔽机制，
 不要新建读索引的旁路。
+
+## 10. 新方案下的实际状态（2026-09-16）
+
+第 1–9 节保留原切片的交付与可启用结论（它们描述的是**当时**的独立个人控制台）。本节只记录新方案
+落地后的状态，判定口径见
+[`evidence/8-5-doc-closure.md`](../../openspec/changes/unify-console-by-data-scope/evidence/8-5-doc-closure.md) §2。
+
+| 收口项 | 状态 | 依据 |
+| --- | --- | --- |
+| 账号菜单「我的资源」标题 + 五项入口 | ✅ 已删除并有用例 | `chat.html` 中 `id="view-personal` 计数 0；`tests/test_account_menu_no_personal_resources.cjs` 7 passed；账号命名空间五个旧键（`account_menu_resources`/`_checking`/`_failed`/`_retry`/`account_menu_region_personal`）已从三语删除 |
+| 旧地址 `#view-personal-*` | ✅ 已受权转接 | `evidence/8-1-legacy-personal-address-forward.md`；`tests/test_personal_address_forward_frontend.cjs` 6 passed |
+| 存量角色的旧个人菜单 grant | ✅ 已幂等映射到正式页 | `_migration_26`（`auth/store.py:1348-1428`）+ `evidence/8-2-compat-cycle.md`、`8-3-migration-drill.md` |
+| 独立个人资源面（`/api/personal/resources`、`personal-tools` / `personal-skills` 视图） | ✅ 已移除 | 路由表不再有该端点、冻结基线标 `REMOVED`（`route-baseline.txt:245-246`）；视图零注册；个人参数改由 `/api/tools`、`/api/skills` 与共用详情组件承载（`console.js:12050`、`12100-12142`） |
+| 后端签发的 `personal.*` 页面与五个能力开关 | 🟡 仍在（未收口） | `auth/service.py:117-121`、`173-187`、`3451` 起逐页签名；五个开关的读取台账见 `evidence/8-2-compat-cycle.md` §3 |
+| `personal-console.js` 组件与 4 条旧个人路由（`personal` 策略，7 个方法） | 🟡 仍在发行（未收口） | `chat.html:2821` 仍加载（i18n 在 `:2803`）；`route_registry.py:200-203` 仍是活的薄适配端点（`/api/memory/personal`、`/api/memory/personal/content`、`/api/personal/channels` ×2）。删除属生产代码改动，随 8.6 |
+| 本人连接的真实运行 | ⬜ 未覆盖 | `PERSONAL_RUNTIME_ACCEPTED_TYPES` / `PUBLIC_PERSONAL_INGRESS_TYPES` 为空集、`personal_channel_runtime=False`；真实提供方验收阻塞于凭据（`evidence/7-1-runtime-preflight.md`） |
+| 成员写本人私有智能体记忆 | ⬜ 未覆盖 | 数据库形态下智能体记忆根就是租户共享根，写面改限管理资格；前置是每个智能体独立记忆根（`evidence/5-1b-write-path-design.md` §6） |
+| 成员模型目录与个人参数并入共用详情组件 | 🟡 已实现（未验收） | `admin.models` 页 scope 改为 `tenant`（`auth/service.py:103`）+ `model_catalog_open()`（`:3393`），用例 29 项 + 前端 7 项通过；个人参数在共用详情组件（`console.js:12050`、`12100-12142`）写 `/api/tools`、`/api/skills`。属主证据 `evidence/5-4-public-surface-authority.md` §3 尚未回填，故不记为已验收 |
+| 退役后未同步的 i18n 快照 | ⬜ 未覆盖（登记） | 删掉账号命名空间五个旧键后，`tests/test_console_i18n_parity.cjs` 变为 `3/5`（HEAD 内容下为 `5/5`）；快照更新属属主范围（`evidence/8-2-compat-cycle.md` §7） |
+
+**取代关系**：本节取代的是第 1 节的入口/页面形态（独立个人页面不再存在），保留的是第 2–6 节的开关语义、
+迁移机制、恢复不变量与第 9 节的共享面登记。回退不变量（不误启动个人实例、不复活管理员私有读取）继续适用。

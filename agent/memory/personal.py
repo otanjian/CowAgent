@@ -250,6 +250,23 @@ def scope_publish_is_current(identity=None, token: Optional[Dict[str, int]] = No
     }
 
 
+def pending_index_labels_for_root(root) -> Set[str]:
+    """The masking set of one explicit storage root.
+
+    The personal domain resolves its root from the identity; an Agent workspace
+    is not identity-addressed, so the Agent writer records its tombstones in
+    *its own* workspace scope file and retrieval has to look there. Both
+    domains must answer this question with the same rule, or one of them would
+    serve content the other considers deleted.
+    """
+    state = read_scope_state(Path(root))
+    labels = set(str(x) for x in state.get("pending_index") or [])
+    stale = _stale_publish(state)
+    if stale:
+        labels.update(stale["labels"])
+    return labels
+
+
 def pending_index_labels(identity=None) -> Set[str]:
     """Labels whose index contents may not be trusted yet.
 
@@ -262,12 +279,7 @@ def pending_index_labels(identity=None) -> Set[str]:
         root = Path(state_dir.user_root(identity))
     except Exception:
         return set()
-    state = read_scope_state(root)
-    labels = set(str(x) for x in state.get("pending_index") or [])
-    stale = _stale_publish(state)
-    if stale:
-        labels.update(stale["labels"])
-    return labels
+    return pending_index_labels_for_root(root)
 
 
 def scope_incomplete(identity=None) -> bool:
@@ -346,13 +358,19 @@ def _purge_label(db_path, label: str) -> None:
         storage.close()
 
 
-def _index_label(db_path, label: str, text: str, user_id: str) -> None:
+def _index_label(db_path, label: str, text: str, user_id: str,
+                 scope: str = "user") -> None:
     """Replace one label's rows with ``text``'s current chunks.
 
     Embeddings are deliberately not synthesised here: this process does not own
     the Agent's embedding provider, and writing an unverified vector is worse
     than writing none. The file metadata row is therefore left absent, so the
     Agent's own next ``sync()`` re-reads the file and adds vectors.
+
+    ``scope`` must match what ``MemoryManager.sync`` records for the same file,
+    or the published rows land in a retrieval scope that will never see them:
+    personal entries are ``user``, an Agent workspace's own files are
+    ``shared``.
     """
     from agent.memory.chunker import TextChunker
     from agent.memory.storage import MemoryStorage, MemoryChunk
@@ -375,7 +393,7 @@ def _index_label(db_path, label: str, text: str, user_id: str) -> None:
             batch.append(MemoryChunk(
                 id=chunk_id,
                 user_id=user_id,
-                scope="user",
+                scope=scope,
                 source="memory",
                 path=label,
                 start_line=chunk.start_line,
@@ -431,6 +449,16 @@ class PersonalMemoryService:
                 "本人记忆根目录被替换", code="unsafe_path", status=403)
         return root
 
+    def _entry_id_pattern(self):
+        """The addressable-id grammar of this domain.
+
+        An override point rather than a module constant because the two domains
+        really do address different sets: personal memory is exactly
+        ``MEMORY.md`` and ``memory/*.md`` under the user's own root, while an
+        Agent workspace also owns ``memory/dreams/`` and ``memory/evolution/``.
+        """
+        return _ENTRY_ID_RE
+
     def _entry_relative(self, entry_id: str) -> str:
         """Validate the addressable id and return the path relative to the root.
 
@@ -439,7 +467,7 @@ class PersonalMemoryService:
         name still resolves to a plain file inside the caller's own root.
         """
         self._require_scope()
-        if not isinstance(entry_id, str) or not _ENTRY_ID_RE.match(entry_id):
+        if not isinstance(entry_id, str) or not self._entry_id_pattern().match(entry_id):
             raise PersonalMemoryError(
                 "无效的记忆标识", code="invalid_entry", status=400)
         return entry_id if entry_id != MAIN_ENTRY_ID else MAIN_ENTRY_ID
@@ -813,10 +841,20 @@ class PersonalMemoryService:
         state = read_scope_state(self.user_root())
         return _coerce_int(state.get("op_version")) == token
 
+    def _chunk_identity(self):
+        """``(user_id, scope)`` the index rows of this domain carry.
+
+        Personal memory is user-scoped. The Agent domain overrides this with
+        ``(None, "shared")`` so its rows match what ``MemoryManager.sync``
+        records for the same files — a mismatch does not fail loudly, it just
+        publishes rows into a retrieval scope that never sees them.
+        """
+        return str(self._require_scope().user_id), "user"
+
     def _after_write(self, entry_id: str, content: str, token: int) -> str:
         """Refresh the edited entry in every known index; report the outcome."""
-        ident = self._require_scope()
         label = self.label_for(entry_id)
+        user_id, scope = self._chunk_identity()
         failures = []
         for db in self._index_dbs():
             if not self._publish_is_current(token):
@@ -828,7 +866,7 @@ class PersonalMemoryService:
                 _record_pending(self.user_root(), [label])
                 return "obsolete"
             try:
-                _index_label(db, label, content, str(ident.user_id))
+                _index_label(db, label, content, user_id, scope)
             except Exception as e:
                 logger.warning("[PersonalMemory] index refresh failed %s %s: %s",
                                db, label, e)

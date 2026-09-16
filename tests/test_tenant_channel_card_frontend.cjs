@@ -12,6 +12,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { loadDictionaries } = require('./support/i18n_namespaces.cjs');
+const { loadWithModule } = require('./support/channel_workbench.cjs');
 
 const source = fs.readFileSync(path.join(__dirname, '../channel/web/static/js/console.js'), 'utf8');
 
@@ -60,6 +61,7 @@ const CORE = [
     'tenantChannelSupportsScan', 'tenantChannelScanCopy', 'tenantChannelFieldInput',
     'buildTenantChannelForm', 'renderTenantChannelCard',
     'channelTypeLabel', 'channelFieldLabel', 'tenantChannelAgentOptions',
+    'tenantChannelTypeChoices',
     'channelsFailureKey', 'scanFailureText',
 ];
 
@@ -73,13 +75,22 @@ function boot({ types = [], instances = [], draft = null, i18n = null } = {}) {
         tenantChannelTypes: types,
         tenantChannelInstances: instances,
         tenantChannelDraft: draft,
+        // The shared page answers a member with their own range; the card and
+        // form tests exercise the administrative surface unless a case says
+        // otherwise (task 6.1).
+        tenantChannelSelfScope: false,
+        // Empty means "the server did not send candidates", so the picker falls
+        // back to the local catalogue — the pre-6.2 behaviour (task 6.2).
+        tenantChannelTargets: [],
         agentCatalog: [],
         escapeHtml: (v) => String(v === undefined || v === null ? '' : v),
         multiAgentMode: () => false,
     };
     sandbox.t = (key) => (sandbox.I18N[sandbox.currentLang] || {})[key] || key;
     const core = CORE_CONSTS.map(constSource).concat(CORE.map(fnSource));
-    vm.runInNewContext(core.join('\n'), sandbox);
+    // The presentation functions delegate to window.ChannelWorkbench, so the
+    // shared module is evaluated in the same sandbox first.
+    vm.runInNewContext(loadWithModule(core, sandbox), sandbox);
     return sandbox;
 }
 
@@ -283,6 +294,7 @@ const FEISHU_REQUIRED = {
     ],
 };
 const SUBMIT_CORE = [
+    'tenantChannelType',
     'tenantChannelMissingRequiredFields', 'collectTenantChannelFields',
     'tenantChannelPayload', 'tenantChannelWriteErrorKey',
     'tenantChannelRuntimeNoticeFrom', 'submitTenantChannel',
@@ -353,7 +365,9 @@ function bootSubmit({ draft, inputs, extraCore = [], displayValue = 'Support',
     sandbox.t = (key) => (sandbox.I18N[sandbox.currentLang] || {})[key] || key;
     const core = CORE_CONSTS.map(constSource)
         .concat(SUBMIT_CORE.concat(extraCore).map(fnSource));
-    vm.runInNewContext(core.join('\n'), sandbox);
+    // collectTenantChannelFields / tenantChannelPayload / tenantChannelAutoName
+    // delegate to the shared module, so it is evaluated in the same sandbox.
+    vm.runInNewContext(loadWithModule(core, sandbox), sandbox);
     return { sandbox, requests, errors, passwordAsked };
 }
 
@@ -489,8 +503,7 @@ test('a scan persists itself with a name derived from the app id', async () => {
             agent_id: '', mode: 'scan', credentials: {},
         },
         inputs: [inputEl('feishu_app_id', ''), inputEl('feishu_app_secret', '')],
-        extraCore: ['applyScanToTenantForm', 'applyFeishuScanToTenantForm',
-                    'tenantChannelType'],
+        extraCore: ['applyScanToTenantForm', 'applyFeishuScanToTenantForm'],
         displayValue: '',
     });
 
@@ -609,8 +622,7 @@ test('an agent chosen before the scan survives the auto-save', async () => {
             agent_id: '', mode: 'scan', credentials: {},
         },
         inputs: [inputEl('feishu_app_id', 'cli_x'), inputEl('feishu_app_secret', '')],
-        extraCore: ['applyScanToTenantForm', 'applyFeishuScanToTenantForm',
-                    'tenantChannelType'],
+        extraCore: ['applyScanToTenantForm', 'applyFeishuScanToTenantForm'],
     });
     sandbox.document.getElementById('tenant-channel-agent').value = 'agent-picked';
     sandbox.applyFeishuScanToTenantForm('cli_x', 'sec', 'grant-3');
@@ -655,4 +667,71 @@ test('the password dialog offers a real field the code can actually read', () =>
     assert.match(html, /type="password"/);
     assert.match(html, /data-recent-password-ok/);
     assert.match(html, /data-recent-password-cancel/);
+});
+
+// --- 6.2 the target picker is the server's answer --------------------------
+
+function bootPicker({ self = false, targets = [], catalog = [] } = {}) {
+    const sandbox = {
+        console,
+        currentLang: 'zh',
+        I18N: { zh: { tenant_channel_agent_none: '不绑定' }, en: {} },
+        tenantChannelTypes: [],
+        tenantChannelInstances: [],
+        tenantChannelDraft: null,
+        tenantChannelSelfScope: self,
+        tenantChannelTargets: targets,
+        agentCatalog: catalog,
+        escapeHtml: (v) => String(v == null ? '' : v),
+        multiAgentMode: () => false,
+    };
+    sandbox.t = (key) => (sandbox.I18N[sandbox.currentLang] || {})[key] || key;
+    vm.runInNewContext(fnSource('tenantChannelAgentOptions'), sandbox);
+    return sandbox;
+}
+
+test('the target list comes from the server, ownership included', () => {
+    // Only the server knows which targets this caller may name, so the picker
+    // must not rebuild the list from the console's own catalogue (task 6.2).
+    const sandbox = bootPicker({
+        targets: [
+            { id: 'mine', name: 'Mine', scope: 'user', is_tenant_default: false },
+            { id: 'shared', name: 'Shared', scope: 'tenant', is_tenant_default: true },
+        ],
+        // A catalogue entry the server did NOT offer must not appear: it is
+        // exactly the target the create would refuse.
+        catalog: [{ id: 'not-offered', name: 'Nope', enabled: true }],
+    });
+    // Cross-realm array: copy it into this realm before comparing.
+    const values = Array.from(sandbox.tenantChannelAgentOptions(), o => o.value);
+    assert.deepEqual(values, ['', 'mine', 'shared']);
+    assert.ok(!values.includes('not-offered'),
+        'the picker invented a candidate the server did not offer');
+});
+
+test("the own surface offers only its own targets, and requires one", () => {
+    // Every legal target for a member is their own, and an empty target would be
+    // refused on save — so the option must not be there to click (task 6.1/6.2).
+    const sandbox = bootPicker({
+        self: true,
+        targets: [
+            { id: 'mine', name: 'Mine', scope: 'user', is_tenant_default: false },
+            { id: 'shared', name: 'Shared', scope: 'tenant', is_tenant_default: false },
+        ],
+    });
+    const values = Array.from(sandbox.tenantChannelAgentOptions(), o => o.value);
+    assert.deepEqual(values, ['mine']);
+    assert.ok(!values.includes(''), 'a required target must not offer "none"');
+});
+
+test('an unread or older backend still produces a usable picker', () => {
+    // The catalogue fallback keeps a deployment that does not send candidates
+    // working; an empty picker would read as "you may connect nothing".
+    const sandbox = bootPicker({
+        self: true,
+        targets: [],
+        catalog: [{ id: 'a', name: 'A', enabled: true }],
+    });
+    const values = Array.from(sandbox.tenantChannelAgentOptions(), o => o.value);
+    assert.deepEqual(values, ['a']);
 });

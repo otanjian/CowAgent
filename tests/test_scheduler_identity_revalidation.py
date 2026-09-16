@@ -256,3 +256,83 @@ class _FakeBridge:
     def __getattr__(self, name):
         self.calls.append(name)
         raise AssertionError(f"bridge must not be reached, touched {name}")
+
+
+# --- 4.8 D: a scheduled task keeps the Agent it was created under ---------
+
+
+def test_a_default_change_does_not_re_point_an_existing_task(svc, tmp_path,
+                                                            monkeypatch):
+    """Task 4.8 D (后台任务不改变): a task fires as the Agent it named.
+
+    A task snapshots its creator **and the Agent it was created under** at
+    creation time, and the fire resolves identity from that stored snapshot
+    (``execution_identity``) — never from the creator's current preference. So
+    moving the member's default afterwards is a statement about the next
+    conversation they start; the already-scheduled task keeps running as the
+    Agent it named, and trigger-time policy is still a question about *that*
+    Agent rather than about the new default.
+    """
+    from agent.tools.scheduler.integration import _make_execute_callback
+    from agent.tools.scheduler.task_store import TaskStore
+    from common.runtime_identity import RuntimeIdentity, use_identity
+
+    member, tenant = svc["member"], svc["tenant"]
+    svc["service"].bind_agent(tenant_id=tenant, agent_id="member-private",
+                              private_owner_user_id=member, origin="user_created")
+
+    # The task is created inside a conversation already anchored to
+    # ``shared-agent``, which is also the default at that moment.
+    with use_identity(RuntimeIdentity(agent_id="shared-agent", user_id=member,
+                                      tenant_id=tenant, session_id="sess-1")):
+        owner = owner_snapshot({"agent_id": "shared-agent", "session_id": "sess-1"})
+    task = _task(svc, owner=owner)
+    assert task["owner"]["agent_id"] == "shared-agent"
+
+    svc["service"].set_user_default_agent(
+        tenant_id=tenant, user_id=member, agent_id="member-private",
+        actor_user_id=member)
+    assert svc["service"].resolved_default_agent_id(tenant, member) == "member-private", (
+        "the preference really did move; otherwise this test proves nothing")
+
+    # The fire's identity comes from the task, not from the new preference.
+    identity = sid.execution_identity(task, "shared-agent")
+    assert identity.agent_id == "shared-agent"
+    assert identity.user_id == member and identity.tenant_id == tenant
+    assert identity.agent_id != svc["service"].resolved_default_agent_id(tenant, member), (
+        "the firing Agent is the one the task named, not the member's new default"
+        " (a task's store is per-Agent, and the scheduler instance is bound to it)")
+
+    # Falsifiability, from the other side: the resolver must never be consulted
+    # while this task fires, so the preference cannot re-point it silently.
+    consulted = []
+    real = type(svc["service"]).resolve_default_agent
+    monkeypatch.setattr(
+        svc["service"], "resolve_default_agent",
+        lambda *a, **k: consulted.append(a) or real(svc["service"], *a, **k))
+
+    # The policy follows the task's own Agent: removing *its* grant denies the
+    # fire even though the member's new default is fully usable.
+    store = TaskStore(str(tmp_path / "scheduler" / "tasks.json"))
+    store.add_task(dict(task, id="keeps-its-agent"))
+    callback = _make_execute_callback(_FakeBridge([]), "shared-agent", store)
+    assert callback(store.get_task("keeps-its-agent")) is True  # baseline fire
+    assert consulted == [], "a fire resolves from the task, never from a default"
+
+    role = [r for r in svc["service"].list_roles(tenant) if r["code"] == "chat-op"][0]
+    svc["service"].update_role(
+        svc["root"], tenant, role["id"], "Chat operator",
+        ["chat.use", "agent.use", "agent.read"], expected_version=role["version"],
+        resource_grants=[], model_defaults={},
+    )
+    assert svc["service"].resolved_default_agent_id(tenant, member) == "member-private"
+
+    assert callback(store.get_task("keeps-its-agent")) is True
+    stored = store.get_task("keeps-its-agent")
+    assert stored["last_skip_reason"] == AGENT_DENIED, (
+        "the denial is about the task's Agent, not about the member's default")
+    # A skip changes nothing about what the task is: no re-pointing, no rewrite
+    # of the Agent it named, and the schedule survives for a later fire.
+    assert stored["owner"]["agent_id"] == "shared-agent"
+    assert stored["enabled"] is True
+    assert not (stored.get("action") or {}).get("agent_id")

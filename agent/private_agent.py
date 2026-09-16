@@ -38,6 +38,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from agent.deletion_guard import deletion_conflicts
 from agent.tenant_provisioning import _MAX_AGENT_ID_LEN, _sanitise_agent_id
 from auth.service import IdentityServiceError
 
@@ -58,7 +59,7 @@ class PrivateAgentService:
         # ``runtime_probe(agent_id) -> bool`` answers "is a task still using this
         # Agent?". Injectable so the delete gate can be tested without standing
         # up a live bridge; the default asks the real one (see
-        # ``_bridge_has_live_agent``).
+        # ``deletion_guard.bridge_has_live_agent``).
         self._runtime_probe = runtime_probe
 
     # --- collaborators ---------------------------------------------------
@@ -202,6 +203,10 @@ class PrivateAgentService:
         # has withdrawn private-agent creation (task 9.1). Non-authoritative: the
         # atomic bind below re-checks inside the quota transaction.
         self._svc.require_personal_capability("user_private_agent_management")
+        # The console-wide switch, in the same cheap position: it is enforced by
+        # ``bind_private_agent_with_quota`` below, and reading it here too means a
+        # withdrawn console does not clone a workspace only to delete it again.
+        self._svc.require_personal_capability("member_personal_console")
 
         if source_agent_id:
             self._require_usable_source(user_id, tenant_id, source_agent_id)
@@ -352,64 +357,17 @@ class PrivateAgentService:
     def _deletion_conflicts(self, tenant_id: str, agent_id: str) -> list:
         """Reasons deleting ``agent_id`` right now would break something.
 
-        A list rather than the first hit, because the member has to fix *all* of
-        them and a second round trip for the second reason is pure friction. Each
-        entry names what depends on the Agent, so the message is actionable.
-
-        The channel read is authoritative (storage, not a cache). An unreadable
-        store yields a conflict rather than a silent pass: "I could not check" is
-        not "nothing depends on it".
+        Delegated to :mod:`agent.deletion_guard` so this path, the console's
+        shared delete and the roster service answer the same question once
+        (task 4.3): a member erasing their own object and an administrator
+        retiring a shared one must not differ in what counts as "still in use".
         """
-        reasons = []
-        refs = None
-        try:
-            refs = self._svc.channel_instances_referencing_agent(
-                tenant_id, agent_id)
-        except Exception as exc:
-            logger.warning(
-                "[PrivateAgent] channel reference check for %s failed: %s",
-                agent_id, exc)
-        if refs is None:
-            reasons.append("its channel references could not be checked")
-        else:
-            for ref in refs:
-                label = ref.get("display_name") or ref.get("id")
-                reasons.append(
-                    "channel instance '%s' (%s) still routes to this agent"
-                    % (label, ref.get("channel_type") or "unknown"))
-        if self._has_live_runtime(agent_id):
-            reasons.append("the agent is currently running")
-        return reasons
-
-    def _has_live_runtime(self, agent_id: str) -> bool:
-        probe = self._runtime_probe or _bridge_has_live_agent
-        try:
-            return bool(probe(agent_id))
-        except Exception as exc:
-            # Fail closed: an unanswerable "is it running?" must never be read
-            # as "no" and turn into a delete racing a live task.
-            logger.warning(
-                "[PrivateAgent] runtime probe for %s failed: %s", agent_id, exc)
-            return True
-
-
-def _bridge_has_live_agent(agent_id: str) -> bool:
-    """Default runtime probe: ask the process's AgentBridge.
-
-    A missing bridge (import error, or a process that never started channels)
-    means there is no runtime to endanger, so it answers ``False``. Any other
-    failure propagates to :meth:`PrivateAgentService._has_live_runtime`, which
-    fails closed.
-    """
-    try:
-        from bridge.bridge import Bridge
-    except Exception:  # pragma: no cover - defensive, import-time only
-        return False
-    bridge = getattr(Bridge(), "_agent_bridge", None)
-    checker = getattr(bridge, "has_live_agent", None)
-    if not callable(checker):
-        return False
-    return bool(checker(agent_id))
+        return deletion_conflicts(
+            agent_id,
+            tenant_id=tenant_id,
+            identity_service=self._svc,
+            runtime_probe=self._runtime_probe,
+        )
 
 
 def get_private_agent_service() -> PrivateAgentService:

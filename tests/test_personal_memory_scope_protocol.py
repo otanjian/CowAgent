@@ -201,10 +201,10 @@ class CommitPublishAtomicityTests(_Fixture):
         from agent.memory import personal as personal_mod
         real_index_label = personal_mod._index_label
 
-        def slow_publish(db, label_, text, user_id):
+        def slow_publish(db, label_, text, user_id, scope="user"):
             entered.set()
             release.wait(5)
-            return real_index_label(db, label_, text, user_id)
+            return real_index_label(db, label_, text, user_id, scope)
 
         errors = []
 

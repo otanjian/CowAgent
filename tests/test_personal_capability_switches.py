@@ -16,6 +16,23 @@ The rule this file fixes is narrow but load-bearing:
   retract (revoke, unlink, disable, delete and clear stay reachable);
 * an unevaluable switch is a **closed** switch, and an unknown name is not an
   enabled one.
+
+Change ``unify-console-by-data-scope`` retired the ``personal.*`` pages from the
+menu contract, so a built-in member now reaches their own surface through the
+shared business pages (``admin.agents`` / ``admin.channels`` / ``admin.memory`` /
+``admin.skills``). Task 8.8 closed the loop and stopped *issuing* the retired ids
+entirely, so the switch semantics now show up in exactly one place: the shared
+page that carries the slice.
+
+* the retired ids are **gone from the projection** — a withdrawal cannot be read
+  off a page that no longer exists, and a legacy grant's withdrawal is still a
+  *write-path* refusal (``capability_disabled``, asserted below on each service);
+* the page that carries the member's own channel surface (``admin.channels`` for
+  a member, ``scope='self'``) reports the same switch block the retired
+  ``personal.channels`` reported, so the console can name the capability that is
+  off instead of inferring it from a missing grant;
+* withdrawing one slice must not close another surface — the shared pages stay
+  exactly as available as they were, which is asserted on the pages themselves.
 """
 
 import os
@@ -27,7 +44,6 @@ import config
 from auth.policy import (
     PERSONAL_CAPABILITY_DEFAULTS,
     PERSONAL_CAPABILITY_SWITCHES,
-    PERSONAL_CONSOLE_PAGES,
     PERSONAL_PAGE_CAPABILITIES,
     personal_capability_enabled,
     personal_page_capabilities,
@@ -36,7 +52,20 @@ from auth.policy import (
 from auth.service import IdentityService, IdentityServiceError
 
 from tests.test_personal_console_acceptance import (
-    PERSONAL_IDS, _Fixture as _AcceptanceFixture, _menu)
+    _Fixture as _AcceptanceFixture, _menu)
+
+#: The five ids the personal console was projected on, and the keys of
+#: :data:`PERSONAL_PAGE_CAPABILITIES`. Task 8.8 retired the pages but kept the
+#: switch map, because the *carrier* pages read it; restating the ids here (as
+#: plain data, not as an import from a registry that no longer exists) is what
+#: lets these tests assert the switch map's key set and its carrier semantics.
+PERSONAL_IDS = (
+    "personal.agents",
+    "personal.channels",
+    "personal.memory",
+    "personal.tools",
+    "personal.skills",
+)
 
 TOOLS_BASE = "http://localhost:9899"
 
@@ -91,10 +120,15 @@ class SwitchRegistryTests(unittest.TestCase):
                 "member_personal_console", config={"member_personal_console": raw}),
                 raw)
 
-    def test_every_personal_page_names_the_switches_it_depends_on(self):
+    def test_every_switch_map_entry_names_a_retired_page_and_its_master(self):
+        """The map still keys the *retired* ids (its only vocabulary).
+
+        Nothing projects ``personal.*`` any more (task 8.8), so the map is read
+        by the carriers through the ids: keeping the key set pinned is what stops
+        a carrier from silently losing the slice switch it consults.
+        """
         self.assertEqual(set(PERSONAL_PAGE_CAPABILITIES), set(PERSONAL_IDS))
         for pid in PERSONAL_IDS:
-            self.assertIn(pid, PERSONAL_CONSOLE_PAGES, pid)
             self.assertIn("member_personal_console",
                           PERSONAL_PAGE_CAPABILITIES[pid], pid)
 
@@ -128,84 +162,123 @@ class _SwitchFixture(_AcceptanceFixture):
 
 
 class ProjectionTests(_SwitchFixture):
-    """The authoritative projection is where a withdrawal becomes visible."""
+    """The authoritative projection is where a withdrawal becomes visible.
 
-    def test_the_shipped_configuration_opens_every_personal_page(self):
+    The retired ``personal.*`` ids are **absent** from the projection (task 8.8),
+    so the withdrawal is asserted where it is *observable* now: on the shared page
+    that carries the member's own surface — ``admin.channels`` reports the
+    ``switches`` block of the retired ``personal.channels``, and ``admin.agents``
+    withdraws ``create``. Absence of the retired ids is asserted alongside, because
+    "the page is gone" must never be what a withdrawal looks like: it is one
+    deployment fact, read in two places, and neither may become the other.
+    """
+
+    #: The shared pages a member's own surface lives on — the successors of the
+    #: five retired personal pages (change ``unify-console-by-data-scope``).
+    MEMBER_PAGES = ("admin.agents", "admin.channels", "admin.memory",
+                    "admin.skills")
+
+    def test_the_shipped_configuration_opens_the_members_own_surface(self):
         _, token = self._member("plain", ["member"])
         pages = self._pages(token)
-        for pid in PERSONAL_IDS:
+        for pid in self.MEMBER_PAGES:
             self.assertTrue(pages[pid]["available"], pid)
-            self.assertEqual(pages[pid]["switches"],
-                             personal_page_capabilities(pid), pid)
+        # The retired ids are not issued at all, whether or not a switch is off.
+        for pid in PERSONAL_IDS:
+            self.assertNotIn(pid, pages, pid)
+        # The carrier of the retired ``personal.channels`` switches: the same
+        # block travels with the shared page.
+        self.assertEqual(pages["admin.channels"]["switches"],
+                         personal_page_capabilities("personal.channels"))
+        self.assertTrue(all(pages["admin.channels"]["switches"].values()))
 
-    def test_the_console_wide_switch_withdraws_every_personal_page(self):
+    def test_the_console_wide_switch_withdraws_the_members_surface(self):
         _, token = self._member("plain", ["member"])
         self.switches(member_personal_console=False)
 
         pages = self._pages(token)
         for pid in PERSONAL_IDS:
-            entry = pages[pid]
-            self.assertFalse(entry["available"], pid)
-            self.assertFalse(entry["read_allowed"], pid)
-            self.assertEqual(entry["reason"], "capability_disabled", pid)
-            self.assertFalse(entry["switches"]["member_personal_console"], pid)
-            self.assertEqual(entry["actions"], {}, pid)
-            # A withdrawn capability must not be reported as a menu denial:
-            # the member's grants did not change.
-            self.assertNotIn("menu_denied", entry, pid)
+            self.assertNotIn(pid, pages, pid)
+        # The page that carries the member's own channel surface reports the
+        # withdrawal in the switch block it owns, and stops offering the create
+        # its write path now refuses (the "clickable but refused" shape).
+        self.assertFalse(
+            pages["admin.channels"]["switches"]["member_personal_console"])
+        self.assertFalse(pages["admin.channels"]["actions"]["create"])
+        self.assertTrue(pages["admin.channels"]["available"],
+                        "the page stays readable: revocation must stay reachable")
 
-    def test_withdrawing_a_slice_does_not_close_the_other_personal_pages(self):
+    def test_withdrawing_a_slice_leaves_the_carrier_pages_open(self):
         _, token = self._member("plain", ["member"])
         self.switches(personal_memory_write=False)
 
         pages = self._pages(token)
-        self.assertEqual(pages["personal.memory"]["reason"],
-                         "capability_disabled")
-        for pid in ("personal.agents", "personal.tools", "personal.skills"):
+        for pid in PERSONAL_IDS:
+            self.assertNotIn(pid, pages, pid)
+        for pid in ("admin.agents", "admin.channels", "admin.skills"):
             self.assertTrue(pages[pid]["available"], pid)
             self.assertEqual(pages[pid]["reason"], "", pid)
+        # Memory is the other carrier of the same withdrawal shape: its *slice*
+        # switch gates the write path, not the page, so the page stays open and
+        # the refusal is answered by `PersonalMemoryService.save` (asserted in
+        # ``PersonalMemoryWriteTests`` below).
+        self.assertTrue(pages["admin.memory"]["available"])
 
     def test_a_withdrawal_never_touches_the_admin_projection_of_the_same_actor(self):
-        """The switch is scoped to the personal surface, both ways: the actor
-        loses every personal page and keeps every page they hold as an
-        operator."""
+        """The switch is scoped to the member slice, both ways: the actor keeps
+        every page they hold as an operator, and the retired ids are absent for
+        them too (nobody is handed one any more)."""
         before = self._pages(self.root_token)
         for pid in PERSONAL_IDS:
-            self.assertTrue(before[pid]["available"], pid)
+            self.assertNotIn(pid, before, pid)
 
         self.switches(member_personal_console=False)
         after = self._pages(self.root_token)
         for pid in PERSONAL_IDS:
-            self.assertEqual(after[pid]["reason"], "capability_disabled", pid)
+            self.assertNotIn(pid, after, pid)
+        for pid in self.MEMBER_PAGES:
+            self.assertTrue(after[pid]["available"], pid)
         self.assertTrue(after["admin.members"]["available"])
         self.assertTrue(after["admin.roles"]["available"])
 
     def test_a_withdrawal_never_widens_a_page_that_was_denied(self):
         """Off is off: a member whose role carries a menu set that excludes the
-        personal pages stays bound to it, and the menu reason is what they see —
-        a withdrawal must not look like a capability they were never offered."""
-        self._role("one-page", ["memory.read"], [_menu("personal.memory")])
+        shared pages stays bound to it, and the reason they see is the one their
+        own grants produced — a withdrawal must not look like a capability they
+        were never offered."""
+        self._role("one-page", ["memory.read"], [_menu("admin.memory")])
         _, token = self._member("narrow", ["one-page"])
 
         pages = self._pages(token)
-        self.assertTrue(pages["personal.memory"]["available"])
-        self.assertEqual(pages["personal.tools"]["reason"], "menu_not_granted")
+        self.assertTrue(pages["admin.memory"]["available"])
+        self.assertEqual(pages["admin.memory"]["scope"], "agent")
+        self.assertTrue(pages["admin.skills"]["menu_denied"])
+        self.assertFalse(pages["admin.skills"]["available"])
+        withheld_reason = pages["admin.skills"]["reason"]
 
         self.switches(member_personal_console=False)
         after = self._pages(token)
-        self.assertEqual(after["personal.memory"]["reason"],
-                         "capability_disabled")
-        # The menu denial is unchanged: the member's grants were not touched, so
-        # the payload must not start advertising a capability reason either.
-        self.assertEqual(after["personal.tools"]["reason"], "menu_not_granted")
-        self.assertTrue(after["personal.tools"]["menu_denied"])
+        # The withheld page stays withheld, with the reason its own grants
+        # produced: the withdrawal did not hand the member a new one.
+        self.assertTrue(after["admin.skills"]["menu_denied"])
+        self.assertFalse(after["admin.skills"]["available"])
+        self.assertEqual(after["admin.skills"]["reason"], withheld_reason)
+        # The granted page is neither withdrawn nor silently re-scoped by a
+        # switch that was never about its range.
+        self.assertTrue(after["admin.memory"]["available"])
+        self.assertEqual(after["admin.memory"]["scope"], "agent")
+        # The retired id is not an escape hatch under a withdrawal either: the
+        # page does not exist, so "the capability answers separately" now means
+        # the write paths still refuse while the projection simply has no entry.
+        self.assertNotIn("personal.memory", after)
+        self.assertNotIn("personal.memory", pages)
 
     def test_the_runtime_switch_closes_execution_without_hiding_the_catalogue(
             self):
         """目录可读、执行关闭 — and the *reverse* shape task 9.1 adds: turning
         the execution switch off must not take the accepted catalogue away."""
         _, token = self._member("plain", ["member"])
-        entry = self._pages(token)["personal.channels"]
+        entry = self._pages(token)["admin.channels"]
         self.assertTrue(entry["available"], "the catalogue stays readable")
         self.assertEqual(entry["states"]["read"], True)
         self.assertFalse(entry["states"]["execution"],
@@ -218,7 +291,7 @@ class ProjectionTests(_SwitchFixture):
                    frozenset({"feishu"})):
             self.assertTrue(self.service._personal_channel_execution_open())
             _, token = self._member("plain", ["member"])
-            entry = self._pages(token)["personal.channels"]
+            entry = self._pages(token)["admin.channels"]
             self.assertTrue(entry["states"]["execution"])
 
 
@@ -425,14 +498,18 @@ class PersonalChannelOnboardingTests(_SwitchFixture):
     """``personal_channel_onboarding`` gates opening, never closing."""
 
     MASTER_KEY = "00112233445566778899aabbccddeeff"
+    #: Alice's private Agent, from the roster the parent fixture installs. The
+    #: personal create has to name a target she owns (task 2.6): ``agent-a`` used
+    #: to stand in here and is exactly the *shared* shape the service must refuse.
+    TARGET = "target-alice"
 
     def setUp(self):
         super().setUp()
         self._previous_key = os.environ.get("COW_CREDENTIAL_MASTER_KEY")
         os.environ["COW_CREDENTIAL_MASTER_KEY"] = self.MASTER_KEY
         self.addCleanup(self._restore_master_key)
-        self.service.bind_agent(tenant_id=self.tenant_id, agent_id="agent-a")
         self.alice = self._member("alice", ["member"])[0]
+        self._private_agent(self.alice, self.TARGET)
 
     def _restore_master_key(self):
         if self._previous_key is None:
@@ -450,7 +527,7 @@ class PersonalChannelOnboardingTests(_SwitchFixture):
     def _create(self):
         return self.service.create_personal_channel_instance(
             actor_user_id=self.alice, tenant_id=self.tenant_id,
-            channel_type="feishu", display_name="mine", agent_id="agent-a",
+            channel_type="feishu", display_name="mine", agent_id=self.TARGET,
             credentials={"feishu_app_id": "cli_personal_a",
                          "feishu_app_secret": "s3cr3t-personal"},
             recent_password="MemPassFinal1")

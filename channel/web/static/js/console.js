@@ -66,6 +66,15 @@ let _accountAppVisible = false;
 let _accountEntryRequest = null;
 let _pendingTenantPicker = false;
 let _accountMenuOpen = false;
+// Target of the account menu's 「帮助与关于」 entry. The product's own site
+// declares its address (webhelp/includes/config.php) and the public brand
+// snapshot delivers the resolved value; this constant is only the local
+// development fallback for the window before that read lands, and for a read
+// that fails or carries an unusable value, so the entry is never dead. It
+// mirrors the server-side default — the authoritative decision on "the site has
+// not declared an address" is the server's, not this file's.
+const ACCOUNT_ABOUT_FALLBACK_URL = 'http://localhost:8080/';
+let _accountAboutUrl = ACCOUNT_ABOUT_FALLBACK_URL;
 // The mobile account surface is a bottom sheet: below the sidebar breakpoint the
 // one account panel DOM is hosted at the document root (outside the off-canvas
 // sidebar's transform) and behaves as a modal dialog. Desktop keeps the anchored
@@ -258,178 +267,12 @@ function _renderSidebarAccount() {
         _accountText('login-btn', t(_pendingTenantPicker ? 'login_enter_tenant' : 'account_login'));
     }
     renderAccountVersion();
-    // The 「我的资源」 group and the account trigger's region state are part of
-    // the same identity repaint: a language switch, brand update or identity
-    // refresh must not lose the current personal marker or resurrect a stale
-    // entry (the verdict is recomputed from the authoritative projection).
-    _renderAccountResources();
-    _syncAccountPersonalCurrent();
     // A retry may disappear once data arrives. Keep focus inside the open
     // popover, instead of losing it to the page or focusing the chat input.
     if (_accountMenuOpen && active && ['account-menu-retry', 'account-menu-logout'].includes(active.id)
             && (active.disabled || active.classList.contains('hidden'))) {
         document.getElementById('sidebar-version')?.focus();
     }
-}
-
-/* ---- Personal resources inside the account panel --------------------------
-   change move-personal-menu-to-account: the five 「我的」 pages left the main
-   navigation and are now hosted by the account panel (「我的资源」), which the
-   workbench and the console share. The panel consumes the *same* authoritative
-   projection (/auth/context -> console_pages) as the rest of the shell; it never
-   keeps a second role list, grant list or capability copy. */
-
-const ACCOUNT_PERSONAL_VIEWS = ['personal-agents', 'personal-channels', 'personal-memory',
-    'personal-tools', 'personal-skills'];
-
-function _isPersonalView(viewId) {
-    return ACCOUNT_PERSONAL_VIEWS.indexOf(viewId) >= 0;
-}
-
-function _accountPersonalEntries() {
-    const group = document.getElementById('account-menu-resources');
-    if (!group || typeof group.querySelectorAll !== 'function') return [];
-    return Array.from(group.querySelectorAll('.account-menu-personal'))
-        .filter(el => el.dataset && el.dataset.view);
-}
-
-function _accountPersonalEntry(viewId) {
-    return _accountPersonalEntries().filter(el => el.dataset.view === viewId)[0] || null;
-}
-
-// The projection the member sees: 'checking' until the authoritative
-// /auth/context answer arrives, 'failed' when it could not be read, 'ready' when
-// it did, and 'unknown' while no answer applies (legacy identity, or a database
-// session that has not picked a tenant yet). Only 'ready' can show an entry:
-// every other phase counts as unconfirmed.
-function _accountProjectionPhase() {
-    if ((typeof _baseAuthContext === 'function') && _baseAuthContext()) return 'ready';
-    if (_authContextPhase === 'failed') return 'failed';
-    if (_authContextPhase === 'checking') return 'checking';
-    return 'unknown';
-}
-
-// One verdict per signed view id, shared by the main navigation and the account
-// panel so the two hosts cannot disagree. ``known: false`` means the backend did
-// not sign the page (or the projection is not loaded yet): never hide on a guess.
-function _consolePageEntryState(viewId) {
-    const ctx = (typeof _baseAuthContext === 'function') ? _baseAuthContext() : null;
-    const key = (typeof _consolePageForView === 'function') ? _consolePageForView(viewId) : '';
-    if (!ctx || !key) return { known: false, hidden: false };
-    const pages = (ctx.console_pages && typeof ctx.console_pages === 'object') ? ctx.console_pages : null;
-    const info = pages && pages[key];
-    if (!info) return { known: false, hidden: false };
-    // A withheld menu grant hides the entry in every area, including workbench
-    // pages: it is the authoritative server signal, not a client inference.
-    if (info.menu_denied === true) return { known: true, hidden: true };
-    // A capability the deployment withdrew is not offered either; the page body
-    // still names it when reached by a direct address.
-    if (info.reason === 'capability_disabled') return { known: true, hidden: true };
-    if (key.indexOf('admin.') !== 0) return { known: true, hidden: false };
-    const allMode = (ctx.authorization_mode === 'all');
-    const available = allMode ? true : !!(info.available);
-    const readOk = allMode ? true : !!(info.read_allowed);
-    return { known: true, hidden: !(available || readOk) };
-}
-
-// Full recompute of the 「我的资源」 group: visibility is *computed*, never
-// accumulated, so withdrawing a menu hides the entry and re-granting it brings it
-// back. All five entries refused (or no entry signed) removes the empty group and
-// leaves the account actions in place.
-function _renderAccountResources() {
-    const group = document.getElementById('account-menu-resources');
-    if (!group) return;
-    const status = document.getElementById('account-menu-resources-status');
-    const retry = document.getElementById('account-menu-resources-retry');
-    const entries = _accountPersonalEntries();
-    const hasUser = _accountState.phase !== 'loading' && _accountState.authenticated === true
-        && !!_accountState.username;
-    const isDb = (typeof _identityMode === 'function') && _identityMode() === 'database';
-    let tenant = '';
-    try { tenant = sessionStorage.getItem('cow_tenant_id') || ''; } catch (_) {}
-    const applies = isDb && hasUser;
-
-    if (!applies || !entries.length) {
-        group.classList.add('hidden');
-        _accountHidden('account-menu-resources-status', true);
-        _accountHidden('account-menu-resources-retry', true);
-        return;
-    }
-    entries.forEach(el => {
-        const state = _consolePageEntryState(el.dataset.view);
-        el.classList.toggle('hidden', state.known && state.hidden);
-    });
-    const phase = _accountProjectionPhase();
-    // A tenant-scoped projection that has not answered yet is a *checking* state,
-    // not an empty list, so an unconfirmed entry is never activatable. Database
-    // mode without a selected tenant is unconfirmed for the same reason: the
-    // shell keeps that state behind the tenant picker, and the account panel must
-    // never become a way around it.
-    const checking = !tenant || phase === 'checking' || phase === 'unknown';
-    const failed = !!tenant && phase === 'failed';
-    if (checking || failed) entries.forEach(el => el.classList.add('hidden'));
-    if (status) status.textContent = failed
-        ? t('account_menu_resources_failed') : t('account_menu_resources_checking');
-    _accountHidden('account-menu-resources-status', !(checking || failed));
-    _accountHidden('account-menu-resources-retry', !failed);
-    const visible = entries.some(el => !el.classList.contains('hidden'));
-    group.classList.toggle('hidden', !(visible || checking || failed));
-}
-
-// Re-read the capability projection behind the personal entries after a failed
-// read. Identity itself is untouched: this only re-asks the tenant-scoped
-// summary, and no personal page data is requested by opening or retrying.
-function refreshAccountResources() {
-    if (typeof _fetchTenantAuthorization !== 'function') return Promise.resolve(null);
-    // Drop the stale summary first, then mark the fresh read as in flight so the
-    // panel shows the checking state (not an empty list) while it is answered.
-    _invalidateAuthContext();
-    _authContextPhase = 'checking';
-    _renderAccountResources();
-    return _fetchTenantAuthorization().then(result => {
-        _applySidebarPermissions(_baseAccountSelf());
-        return result;
-    });
-}
-
-// The shell's single current-page marker: for a personal page it lives on the
-// account entry, never on the main navigation, and the account trigger only
-// shows a lightweight region state (no second aria-current).
-function _syncAccountPersonalCurrent() {
-    const viewId = (typeof currentView === 'string') ? currentView : '';
-    const onPersonal = _isPersonalView(viewId);
-    let marked = false;
-    _accountPersonalEntries().forEach(item => {
-        const selected = onPersonal && item.dataset.view === viewId
-            && !item.classList.contains('hidden');
-        if (selected) marked = true;
-        item.classList.toggle('active', selected);
-        if (selected) item.setAttribute('aria-current', 'page');
-        else item.removeAttribute('aria-current');
-    });
-    // The region state exists only while a *visible* account entry is the current
-    // page: an entry withdrawn by a new projection leaves no stale marking.
-    const footer = document.getElementById('sidebar-account-footer');
-    if (footer) footer.classList.toggle('is-personal', marked);
-    _accountHidden('sidebar-account-region', !marked);
-}
-
-// Forget every account-panel personal entry and the region state (account or
-// tenant change, logout, lost eligibility): a late reply from the previous
-// context must not restore an old entry or an old current item.
-function _clearAccountPersonalState() {
-    _accountPersonalEntries().forEach(item => {
-        item.classList.add('hidden');
-        item.classList.remove('active');
-        item.removeAttribute('aria-current');
-    });
-    const group = document.getElementById('account-menu-resources');
-    if (group) group.classList.add('hidden');
-    _accountHidden('account-menu-resources-status', true);
-    _accountHidden('account-menu-resources-retry', true);
-    const footer = document.getElementById('sidebar-account-footer');
-    if (footer) footer.classList.remove('is-personal');
-    _accountHidden('sidebar-account-region', true);
 }
 
 function _accountMenuOutside(event) {
@@ -517,14 +360,12 @@ function _applyAccountMenuHeight() {
     menu.style.maxHeight = available + 'px';
 }
 
-// Re-opening the panel must show where the member currently is, even when the
-// entry sits at the end of the group.
+// Re-opening the panel must land on the first actionable stop: the panel is a
+// plain action list now, so there is no current resource item to scroll back to.
 function _syncAccountMenuScroll() {
-    const current = _accountPersonalEntries()
-        .filter(el => el.getAttribute && el.getAttribute('aria-current') === 'page')[0];
-    if (current && typeof current.scrollIntoView === 'function') {
-        current.scrollIntoView({ block: 'nearest' });
-    }
+    const menu = document.getElementById('sidebar-account-menu');
+    if (!menu || typeof menu.scrollTop !== 'number') return;
+    menu.scrollTop = 0;
 }
 
 function _accountMenuKey(event) {
@@ -618,14 +459,16 @@ function _invalidateAccountIdentity(phase) {
     _authContext = null;
     _authContextRequest = null;
     _authContextPhase = 'unknown';
+    // The Agents and the default pointers belonged to the tenant that just went
+    // away. The next catalogue read repopulates them; until then the detail pane
+    // must not offer "设为我的默认" against the previous tenant's pointer.
+    userDefault = { agent_id: '', revision: null, origin: null };
+    tenantDefaultManageable = false;
+    defaultResolution = { agent_id: '', source: null };
     _accountState = _emptyAccount(phase);
     if (_forcedPassword) _closeForcedPasswordModal();
     _clearTenantPicker();
     closeAccountMenu();
-    // Account switch / logout / lost eligibility: the old personal entries and
-    // the old personal current item go with the old context, and a late reply
-    // from it cannot bring either back.
-    _clearAccountPersonalState();
 }
 
 function _normalizeAccountCheck(data) {
@@ -1266,6 +1109,13 @@ function rerenderDynamicViews() {
             && modelsState && (modelsState.providers || modelsState.capabilities)) {
         renderModelsView();
     }
+    // The member catalog is the same view's other shape: re-render it from the
+    // rows already in hand so a language switch does not silently drop back to
+    // the loading skeleton while the request is repeated.
+    if (currentView === 'config' && typeof renderMemberCatalog === 'function'
+            && (memberCatalogState.items || []).length) {
+        renderMemberCatalog();
+    }
     // Reload task list after language switch
     if (currentView === 'tasks') {
         tasksLoaded = false;
@@ -1614,10 +1464,14 @@ const VIEW_META = {
     tasks:    { group: 'nav_workbench', page: 'menu_tasks', console: 'workbench.schedules' },
     knowledge:{ group: 'nav_workbench', page: 'menu_knowledge', console: 'workbench.knowledge' },
     scenes:   { group: 'nav_workbench', page: 'menu_scenes', console: 'workbench.scenes' },
-    // The member personal pages are self-scoped workbench entries: their console
-    // page ids all live under ``personal.``, so the sidebar's admin availability
-    // gate deliberately skips them and the page body reports read/config/execute
-    // separately (task 8.1/8.4).
+    // The retired member personal pages are kept here as **addresses only**
+    // (change unify-console-by-data-scope, task 8.8): the five view ids no
+    // longer have a host in the shell, no module registers them, and the backend
+    // no longer signs their ``personal.*`` page ids. `navigateTo` rewrites each
+    // one to the shared page that carries the same objects (task 8.1) — which is
+    // why the entries must stay: the hash bootstrap only forwards an address it
+    // can resolve through ``VIEW_META``, so deleting them would break an old
+    // bookmark instead of redirecting it.
     'personal-agents':   { group: 'nav_group_personal', page: 'menu_personal_agents', console: 'personal.agents' },
     'personal-channels': { group: 'nav_group_personal', page: 'menu_personal_channels', console: 'personal.channels' },
     'personal-memory':   { group: 'nav_group_personal', page: 'menu_personal_memory', console: 'personal.memory' },
@@ -1763,9 +1617,19 @@ const ADMIN_HOME_SHORTCUT_COLORS = {
 };
 
 function _adminHomeFormatInt(n) {
+    // ``null`` means "the server could not read this", which is NOT zero, and
+    // ``Number(null)`` is ``0`` — so the absent case has to be caught *before*
+    // the coercion. Rendering a failed read as 0 tells the operator their tenant
+    // is empty when in fact the source broke (task 3.5: 不用零值冒充成功). A
+    // real ``0`` still prints as 0, which is the distinction being kept.
+    if (n === null || n === undefined) return t('admin_home_kpi_dash');
     const x = Number(n);
     if (!Number.isFinite(x)) return t('admin_home_kpi_dash');
     return x.toLocaleString();
+}
+
+function _adminHomeKpiUnavailable(meta) {
+    return !!(meta && Array.isArray(meta.unavailable) && meta.unavailable.length);
 }
 
 function _renderAdminHomeKpis(kpis, meta) {
@@ -1773,8 +1637,10 @@ function _renderAdminHomeKpis(kpis, meta) {
     if (!box) return;
     const status = (kpis && kpis.system_status) || 'degraded';
     const member = kpis && kpis.member_count;
-    const memberText = (member == null || (meta && meta.member_count_scope === 'unavailable'))
-        ? t('admin_home_kpi_dash')
+    // ``not_permitted`` is a member's normal state and not a failure, so it must
+    // not raise the retry hint: retrying will never produce a member count.
+    const memberScope = meta && meta.member_count_scope;
+    const memberText = (member == null) ? t('admin_home_kpi_dash')
         : _adminHomeFormatInt(member);
     const statusOk = status === 'ok';
     box.innerHTML = `
@@ -1806,6 +1672,24 @@ function _renderAdminHomeKpis(kpis, meta) {
         </div>
         <div class="admin-home-kpi-icon" style="background:#dcfce7;color:#16a34a"><i class="fas fa-check"></i></div>
       </div>`;
+    // A region the server could not read says so and offers a retry, while the
+    // regions that did read stay usable — the requirement asks for exactly that
+    // per-region behaviour rather than one failed load blanking the page.
+    const hintId = 'admin-home-kpi-unavailable';
+    let hint = document.getElementById(hintId);
+    if (_adminHomeKpiUnavailable(meta)) {
+        if (!hint) {
+            hint = document.createElement('div');
+            hint.id = hintId;
+            hint.className = 'admin-home-kpi-note';
+            box.parentNode.insertBefore(hint, box.nextSibling);
+        }
+        hint.dataset.unavailable = (meta.unavailable || []).join(',');
+        hint.innerHTML = `${escapeHtml(t('admin_home_kpi_unavailable'))}`
+            + ` <button type="button" class="btn btn-link" data-admin-home-retry>${escapeHtml(t('admin_home_kpi_retry'))}</button>`;
+    } else if (hint) {
+        hint.remove();
+    }
 }
 
 function _renderAdminHomeShortcuts() {
@@ -1844,6 +1728,16 @@ function initAdminHomeView() {
     if (kpiBox) {
         kpiBox.innerHTML = `<div class="admin-home-kpi"><div class="admin-home-kpi-label">${escapeHtml(t('admin_home_kpi_loading'))}</div></div>`;
     }
+    // The retry is delegated from the container so it survives the re-render
+    // that follows a failed read (the button is created inside that render).
+    if (kpiBox && !kpiBox.dataset.retryWired) {
+        kpiBox.dataset.retryWired = '1';
+        kpiBox.parentNode.addEventListener('click', (event) => {
+            if (event.target && event.target.closest('[data-admin-home-retry]')) {
+                initAdminHomeView();
+            }
+        });
+    }
     _renderAdminHomeShortcuts();
     fetch('/api/admin/overview', { credentials: 'same-origin' })
         .then(r => r.json().then(body => ({ ok: r.ok, body })))
@@ -1878,8 +1772,8 @@ function showUnavailableView(viewId, reason) {
         item.classList.remove('active');
         item.removeAttribute('aria-current');
     });
-    // A denied or unavailable target keeps no personal current marker either.
-    _syncAccountPersonalCurrent();
+    // A denied or unavailable target keeps no current marker on the account panel
+    // either: the account panel no longer claims a current item.
     document.getElementById('breadcrumb-group').textContent = t('nav_system');
     document.getElementById('breadcrumb-group').dataset.i18n = 'nav_system';
     const pageKey = denied ? 'nav_denied' : 'nav_unavailable';
@@ -1904,18 +1798,59 @@ function showUnavailableView(viewId, reason) {
 }
 
 // === ACCOUNT_PERSONAL_NAV_BEGIN ===
-// Host migration (change move-personal-menu-to-account): the account-panel
-// personal entries are activated through this adapter and the shared protected
-// navigation. The marked block is executed on its own by
-// tests/test_sidebar_account_frontend.cjs, so the ordering contract (leave
-// decision before any commit) is asserted against the shipped code rather than
-// a paraphrase of it.
+// The shared protected navigation: every entry (main navigation, page-internal
+// links, deep addresses) commits through ``navigateTo``, so the deny gate, the
+// unsaved checks and the current-item update cannot drift apart. The marked block
+// is executed on its own by tests/test_sidebar_account_frontend.cjs, so the
+// ordering contract (leave decision before any commit) is asserted against the
+// shipped code rather than a paraphrase of it.
 let currentView = 'chat';
 let agentNavigationVersion = 0;
+
+// Retired personal page ids and the shared page that carries the same objects
+// now (change unify-console-by-data-scope, task 8.1). A member's own objects are
+// managed on the formal pages — the same ones an administrator uses, with the
+// range decided by ``auth.object_scope`` — so an old bookmark or a pasted
+// ``#view-personal-*`` link forwards instead of painting a retired page.
+const LEGACY_PERSONAL_FORWARD = {
+    'personal-agents': 'agents',      // 智能体管理, filtered to the caller's range
+    'personal-channels': 'channels',  // 消息渠道, member = their own connections
+    'personal-memory': 'memory',      // 记忆管理, target set served by the backend
+    'personal-tools': 'skills',       // 工具与技能
+    'personal-skills': 'skills',      // 工具与技能
+};
+
+// The destination for a retired personal address, or '' to leave it alone.
+// Only ``VIEW_META`` decides what is addressable, so a forward can never name a
+// view the console does not have.
+function legacyPersonalForward(viewId) {
+    const target = LEGACY_PERSONAL_FORWARD[viewId];
+    return (target && VIEW_META[target]) ? target : '';
+}
 
 function navigateTo(viewId) {
     // 旧「场景应用」占位 id 重定向到真实 scenes 视图（收藏/直链不失效）。
     if (viewId === 'scenarios') viewId = 'scenes';
+    // Retired personal addresses forward to the shared page carrying the same
+    // objects (task 8.1). The address is rewritten so the URL shows the page
+    // that is actually displayed rather than the one it replaced; the retired
+    // independent implementation (``personal-console.js``) is gone, so there is
+    // no in-flight personal load left to invalidate.
+    //
+    // The forward is *authorised*, not exempt: it runs BEFORE the availability
+    // and leave gates below, so the destination is judged by exactly the
+    // verdicts it would get on its own. A forward into a page this identity
+    // cannot use renders that page's denial, and the leave check still runs
+    // before anything is committed — an old bookmark is never a way around a
+    // gate, and never a way to silently discard an unsaved draft.
+    const legacyForward = legacyPersonalForward(viewId);
+    if (legacyForward) {
+        if (typeof window !== 'undefined' && window.history && window.history.replaceState
+                && String(location.hash || '').indexOf('#view-') === 0) {
+            window.history.replaceState(null, '', '#view-' + legacyForward);
+        }
+        viewId = legacyForward;
+    }
     if (UNAVAILABLE_VIEWS.has(viewId)) {
         showUnavailableView(viewId);
         return;
@@ -1991,9 +1926,6 @@ function navigateTo(viewId) {
     document.getElementById('breadcrumb-page').textContent = t(meta.page);
     document.getElementById('breadcrumb-page').dataset.i18n = meta.page;
     currentView = viewId;
-    // After the commit, so the account entry is the current page and a cancelled
-    // leave never moves the marker.
-    _syncAccountPersonalCurrent();
     document.getElementById('chat-agent-identity')?.classList.toggle('hidden', viewId !== 'chat');
     document.getElementById('workspace-toggle-btn')?.classList.toggle('hidden', viewId !== 'chat');
     if (viewId === 'branding') initBrandingView();
@@ -2034,9 +1966,6 @@ function navigateTo(viewId) {
     if (viewId === 'history') _renderHistoryStatus();
 
     if (window.innerWidth < 1024) closeSidebar();
-    // Focus the target only after the commit, so a cancelled leave keeps the
-    // original page (and its focus) untouched.
-    if (_isPersonalView(viewId)) _focusPersonalTarget(viewId);
 }
 
 // The leave check has already run for this target (the cross-area path commits
@@ -2065,68 +1994,21 @@ function _viewLeaveCheck(viewId) {
         && !window.__identityAdminDirtyGuard__()) {
         return false;
     }
-    if (typeof window.__personalConsoleDirtyGuard__ === 'function'
-        && !window.__personalConsoleDirtyGuard__()) {
-        return false;
-    }
     return true;
 }
 
-// Put focus on the entered personal page once it is committed and visible. The
-// heading is focused (not the input area): a member lands on a described target
-// instead of the shell's chat composer.
-function _focusPersonalTarget(viewId) {
-    const place = () => {
-        const node = document.getElementById('view-' + viewId);
-        if (!node || !node.classList.contains('active')) return;
-        const heading = node.querySelector('h2') || node.querySelector('[data-personal-body]');
-        if (!heading) return;
-        if (!heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1');
-        heading.focus();
-    };
-    place();
-    // The page body is built by a registered loader, so the first paint may not
-    // exist yet; one deferred attempt covers it without polling.
-    setTimeout(place, 0);
-}
-
-// The five personal entries are activated through this adapter: it releases the
-// account surface (including the mobile focus trap) and then uses the *same*
-// protected navigation as every other entry, so the deny gate, the unsaved
-// checks and the single current-item update cannot drift apart.
-function openPersonalEntry(viewId) {
-    if (!_isPersonalView(viewId)) return;
-    const entry = _accountPersonalEntry(viewId);
-    if (!entry || entry.classList.contains('hidden')) return;
-    // Focus returns to the account trigger (a visible control on the original
-    // page) when the leave is cancelled; a successful commit moves focus to the
-    // target page instead.
-    closeAccountMenu(true);
-    navigateTo(viewId);
-}
-
-// The entries are anchors with ``role="link"`` (no href, so the address bar is
-// never touched), which means Enter/Space have to be translated into activation
-// the same way the main navigation items do. Wired once: the panel DOM is a
-// single copy shared by both areas.
-function _initAccountMenuResources() {
+// The account panel's own chrome. The five 「我的」 entries that this block used to
+// wire (change move-personal-menu-to-account) are retired by task 3.3, so the panel
+// now owns no business entry and no activation adapter.
+function _initAccountMenuChrome() {
     if (typeof document.getElementById !== 'function') return;
-    _accountPersonalEntries().forEach(item => {
-        const activate = event => {
-            if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
-            event.preventDefault();
-            openPersonalEntry(item.dataset.view);
-        };
-        item.addEventListener('click', activate);
-        item.addEventListener('keydown', activate);
-    });
     // Tapping the backdrop of the mobile sheet closes it, like the drawer behind
     // it; the sheet itself never closes on an inner click.
     document.getElementById('account-menu-backdrop')
         ?.addEventListener('click', () => closeAccountMenu(true));
 }
 
-_initAccountMenuResources();
+_initAccountMenuChrome();
 // === ACCOUNT_PERSONAL_NAV_END ===
 
 function toggleSidebar() {
@@ -2284,15 +2166,47 @@ window.addEventListener('resize', () => {
 // Agents
 // =====================================================================
 let agentCatalog = [];
+// The roster the chat pickers read: the Agents the caller may *chat with* (the
+// use range — tenant-shared Agents plus their own private ones), which is not
+// the same list as ``agentCatalog`` (the management range: what they may
+// configure). ``null`` means "not read yet", and the pickers fall back to the
+// management catalogue so a backend that cannot serve the use-range read
+// behaves exactly as it did before this list existed.
+let chatAgentCatalog = null;
 let channelInstances = [];
 let rosterRevision = '';
 let defaultAgentId = readScopedPreference('cow_default_agent') || '';
+// The caller's *own* registered default Agent, as the server reports it:
+// `{agent_id, revision, origin}`. Distinct from `defaultAgentId` above, which is
+// the resolved anchor (the member's own choice, else the tenant's, else a
+// deterministic fallback) — a fallback is not a preference, and the detail pane
+// must be able to tell them apart. `revision` is the optimistic lock the
+// "set as my default" write round-trips; `origin` is 'user' or 'provisioned',
+// and null means nothing was ever registered.
+let userDefault = { agent_id: '', revision: null, origin: null };
+// Whether the caller may appoint the *tenant* default Agent (a management act,
+// task 4.5). Taken from the payload rather than guessed from a role name, so the
+// button can never offer an action the request would refuse.
+let tenantDefaultManageable = false;
+// Where the anchor a *new session* would use came from (task 4.6):
+// {agent_id, source} with source 'user' | 'tenant' | 'shared' | 'own' | null.
+// Kept apart from `defaultAgentId` on purpose — `defaultAgentId` answers "which
+// Agent leads the lists" and `defaultResolution` answers "will this actually be
+// used, and why". Only the second can tell a user's own choice from a bare
+// fallback, which is what the detail pane renders.
+let defaultResolution = { agent_id: '', source: null };
 let selectedAdminAgentId = '';
 let selectedCoreRevision = '';
 let installedSkills = [];
 let installedTools = [];
 function findAgent(agentId) {
-    return agentCatalog.find(a => a.id === agentId) || null;
+    // The management catalogue is the richer record (it carries workspace and
+    // configuration state), so it wins when both know the Agent. The use range
+    // is the fallback that keeps a shared Agent resolvable for the chat
+    // surfaces of a member who does not manage it — the composer face, the
+    // message speakers and the session rows all read this.
+    return agentCatalog.find(a => a.id === agentId)
+        || (chatAgentCatalog || []).find(a => a.id === agentId) || null;
 }
 
 function normalizeAgentCatalogEntry(agent) {
@@ -2311,8 +2225,22 @@ function enabledAgents() {
     return agentCatalog.filter(a => a.enabled === true);
 }
 
+/* Which Agents the caller may *chat with* — the use range. This is a different
+   question from the management grid's, and the two lists differ for every
+   non-admin: their management range is the Agents they own, while their use
+   range also holds the tenant-shared Agents they were granted. Drawing the
+   chat pickers from the management catalogue therefore hid every shared Agent
+   from a plain member. ``chatAgents`` reads the use-range roster and degrades
+   to the management catalogue while that read is missing (an older backend),
+   never the other way round: the management surfaces keep reading
+   ``enabledAgents`` so the extra Agents never leak into configuration. */
+function chatAgents() {
+    const roster = chatAgentCatalog || agentCatalog;
+    return roster.filter(a => a.enabled !== false && a.can_chat !== false);
+}
+
 function availableChatAgents() {
-    return enabledAgents().filter(a => a.can_chat === undefined || a.can_chat === true);
+    return chatAgents();
 }
 
 /* An uploaded avatar reuses the same URL every time, so the browser would keep
@@ -2396,9 +2324,34 @@ function randomAgentId() {
     return 'agent-' + Math.random().toString(36).slice(2, 8);
 }
 
+// Read the use-range roster the chat pickers work from, alongside (not instead
+// of) the management catalogue. The workbench read is exactly that projection —
+// the same call the 智能体 workbench cards are drawn from — so it is reused here
+// rather than duplicated: its shape validation and its refusal to accept a
+// management snapshot both apply to the pickers' roster too.
+// A failure is not surfaced: the pickers keep the management catalogue they
+// used before, which is the correct answer whenever the two lists agree (every
+// admin) and only narrower for a member on a backend that cannot serve it.
+function loadChatAgentCatalog() {
+    return fetchAgentWorkbench().then(agents => {
+        chatAgentCatalog = agents;
+        // The composer face, the caret and any open picker are drawn from this
+        // roster, so a list that arrives after the first paint repaints them
+        // instead of leaving the earlier (narrower) reading on screen.
+        renderComposerIdentity();
+        document.getElementById('new-chat-caret')?.classList.toggle('hidden', !multiAgentMode());
+        const menu = document.getElementById('new-chat-menu');
+        if (menu && !menu.classList.contains('hidden')) paintNewChatMenu(menu);
+    }).catch(() => {});
+}
+
 function loadAgentCatalog() {
     const epoch = _authEpoch, tenant = sessionStorage.getItem('cow_tenant_id');
     const current = () => epoch === _authEpoch && tenant === sessionStorage.getItem('cow_tenant_id');
+    // The pickers' own roster, read in parallel: it is a separate projection
+    // (the use range) from the management catalogue this function returns, and
+    // a failure of it must not fail the catalogue read.
+    loadChatAgentCatalog();
     return fetch('/api/agents')
         .then(r => r.json())
         .then(data => {
@@ -2408,6 +2361,25 @@ function loadAgentCatalog() {
             agentCatalog = (data.agents || []).map(normalizeAgentCatalogEntry);
             channelInstances = data.channel_instances || [];
             rosterRevision = data.revision || '';
+            // The caller's own preference and the tenant-level capability, taken
+            // from the same payload as the roster so the detail pane's two
+            // "default" actions always agree with what the server would allow.
+            const pointer = data.user_default;
+            userDefault = (pointer && typeof pointer === 'object')
+                ? {
+                    agent_id: pointer.agent_id || '',
+                    revision: (typeof pointer.revision === 'number' ? pointer.revision : null),
+                    origin: pointer.origin || null,
+                }
+                : { agent_id: '', revision: null, origin: null };
+            tenantDefaultManageable = data.tenant_default_manageable === true;
+            // Why the anchor is the anchor (task 4.6). Server-decided, like every
+            // other authorization fact here: the pane must not re-derive the
+            // resolution rule, or a fallback could be presented as a decision.
+            const anchor = data.default_resolution;
+            defaultResolution = (anchor && typeof anchor === 'object')
+                ? { agent_id: anchor.agent_id || '', source: anchor.source || null }
+                : { agent_id: '', source: null };
             // Never invent an Agent id. The global fetch wrapper copies the active
             // id onto every /message and /api call, so a made-up fallback becomes a
             // real request the server rejects ("agent not found") — a routing error
@@ -2593,6 +2565,9 @@ async function fetchAgentWorkbench() {
 
 function applyAgentWorkbench(agents) {
     agentWorkbench = agents;
+    // The workbench cards and the chat pickers read the same use-range
+    // projection, so whichever read lands first fills both.
+    chatAgentCatalog = agents;
     _wbEmptyReason = agents.emptyReason || '';
     // Avatars can be replaced without changing their URL or roster revision.
     const version = String(Date.now());
@@ -2601,7 +2576,23 @@ function applyAgentWorkbench(agents) {
 
 function agentUnavailableLabel(reason) {
     if (reason === 'permission_denied') return t('agent_permission_denied');
+    if (reason === 'agent_disabled') return t('agent_disabled');
     return t(reason === 'runtime_not_enabled' ? 'agent_runtime_not_enabled' : 'agent_cannot_run');
+}
+
+/* Why this Agent is what a new session uses (task 4.6).
+   The source is not decoration: `user` and `tenant` are decisions somebody made,
+   while `shared` and `own` are fallbacks nobody chose — the second pair is
+   exactly what an operator needs to see before concluding "the tenant set this
+   up on purpose". An unknown or absent source yields the neutral sentence rather
+   than a guess, so a newer server can add a value without this lying about it. */
+function agentAnchorHintText() {
+    const source = defaultResolution.source;
+    if (source === 'user') return t('agents_anchor_source_user');
+    if (source === 'tenant') return t('agents_anchor_source_tenant');
+    if (source === 'shared') return t('agents_anchor_source_shared');
+    if (source === 'own') return t('agents_anchor_source_own');
+    return t('agents_anchor_source_unknown');
 }
 
 function agentWorkbenchCardHTML(agent, canChat, unavailableReason) {
@@ -2907,6 +2898,17 @@ function renderAgentDetail() {
             <div class="text-xs text-slate-400 font-mono truncate">${escapeHtml(agent.id)}</div>
         </div>`;
     const isDefault = agent.id === defaultAgentId;
+    // *My* registered default, which is a different fact from `isDefault` above:
+    // that one is the resolved anchor, and a fallback (the tenant's choice, or
+    // the deterministic first shared Agent) is not a preference the user made.
+    // Offering "设为我的默认" only against the registered pointer is what keeps
+    // the button from claiming a choice nobody made.
+    const isMyDefault = !!userDefault.agent_id && userDefault.agent_id === agent.id;
+    // The Agent a *new session* would land on right now, which is what makes the
+    // hint below worth showing. `defaultAgentId` is the same fact for the
+    // catalogue ordering, but it is written with a defensive fallback chain, so
+    // the resolution's own answer is the one to trust here.
+    const isAnchor = !!defaultResolution.agent_id && defaultResolution.agent_id === agent.id;
     profile.innerHTML = `
         <div class="agent-field">
             <label class="agent-field-label">${escapeHtml(t('agents_avatar'))}</label>
@@ -2989,10 +2991,12 @@ function renderAgentDetail() {
                 <span id="agent-knowledge-status" class="agent-field-hint" style="margin-top:0"></span>
             </div>
         </div>`}
+        ${isAnchor ? `<p id="agent-anchor-hint" class="agent-field-hint agent-anchor-hint">${escapeHtml(agentAnchorHintText())}</p>` : ''}
         <div class="agent-detail-actions">
             <button type="button" onclick="saveAgentProfile()" class="agent-btn agent-btn-primary">${escapeHtml(t('save'))}</button>
             <button type="button" onclick="startChatWithAgent('${escapeHtml(agent.id)}')" class="agent-btn agent-btn-ghost">${escapeHtml(t('agents_chat'))}</button>
-            ${isDefault ? '' : `<button type="button" onclick="setAgentAsDefault('${escapeHtml(agent.id)}')" class="agent-btn agent-btn-ghost">${escapeHtml(t('agents_set_default'))}</button>`}
+            ${isMyDefault || agent.enabled === false ? '' : `<button type="button" onclick="setAgentAsMyDefault('${escapeHtml(agent.id)}')" class="agent-btn agent-btn-ghost">${escapeHtml(t('agents_set_my_default'))}</button>`}
+            ${tenantDefaultManageable && !isDefault ? `<button type="button" onclick="setAgentAsDefault('${escapeHtml(agent.id)}')" class="agent-btn agent-btn-ghost">${escapeHtml(t('agents_set_tenant_default'))}</button>` : ''}
             ${isDefault ? '' : `<button type="button" onclick="deleteAgent('${escapeHtml(agent.id)}')" class="agent-btn agent-btn-danger agent-detail-delete">${escapeHtml(t('agents_delete'))}</button>`}
         </div>
         <div id="agent-profile-status" class="agent-field-hint mt-3"></div>`;
@@ -3685,10 +3689,72 @@ function uploadAgentAvatar(agentId, file) {
         });
 }
 
+/* Register this Agent as *my* default — the Agent my own conversation with no
+   explicit target anchors to.
+
+   A different act from `setAgentAsDefault` below: that one appoints the
+   *tenant's* entry, which is a management decision and the same for everybody,
+   while this writes only the caller's own preference and every user may set it.
+   The server derives the subject from the session, so the body names the target
+   and the revision that was read — never a user or a tenant.
+
+   The revision is the pointer's own optimistic lock. Sending the one we read is
+   what makes a stale form (two tabs, a double click, a slow network) fail loudly
+   instead of quietly overwriting a newer choice; `null` is only meaningful while
+   nothing has been registered. The marker moves after the server says so, and
+   the catalogue is reloaded rather than patched in place so the resolved anchor,
+   the grid order and the remembered preference all move together. */
+function setAgentAsMyDefault(agentId) {
+    if (!agentId) return Promise.resolve(false);
+    const statusEl = () => document.getElementById('agent-profile-status')
+        || document.getElementById('agent-editor-status');
+    return fetch('/api/agents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            action: 'set_user_default',
+            id: agentId,
+            default_revision: userDefault.revision,
+        }),
+    }).then(r => r.json()).then(data => {
+        if (data.status !== 'success') {
+            throw new Error(data.code === 'version_conflict'
+                ? t('agents_set_my_default_conflict')
+                : (data.code === 'agent_not_usable'
+                    ? t('agents_set_my_default_disabled')
+                    : (data.code === 'forbidden'
+                        ? t('agents_set_my_default_forbidden')
+                        : (data.message || t('agents_set_my_default_failed')))));
+        }
+        return loadAgentCatalog().then(() => {
+            renderAgentsGrid();
+            if (selectedAdminAgentId) renderAgentDetail();
+            const status = statusEl();
+            if (status) {
+                status.textContent = t('agents_set_my_default_done');
+                status.classList.add('agent-status-ok');
+            }
+            return true;
+        });
+    }).catch(err => {
+        const status = statusEl();
+        if (status) {
+            status.classList.remove('agent-status-ok');
+            status.textContent = err.message;
+        }
+        return false;
+    });
+}
+
 /* Make one Agent the tenant's default — the entry an Agent-less conversation
-   anchors to, and the one whose badge leads the config grid and the workbench.
-   Tenant-scoped and administrator-only on the server; the config page is only
-   reachable by an administrator, so the button follows the same audience.
+   anchors to for every member, and the one whose badge leads the config grid and
+   the workbench.
+
+   Tenant-scoped and administrator-only on the server, and *not* the same act as
+   `setAgentAsMyDefault` above: this one changes what the tenant shares, so it is
+   only offered when the server's payload says the caller may appoint it
+   (`tenantDefaultManageable`) — never inferred from a role name on the client,
+   which would offer an action the request then refuses.
 
    The default flag is derived server-side, so we reload the catalogue rather
    than patching one Agent in place: the badge, the grid order and the remembered
@@ -3705,7 +3771,9 @@ function setAgentAsDefault(agentId) {
         if (data.status !== 'success') {
             throw new Error(data.code === 'forbidden'
                 ? t('agents_set_default_forbidden')
-                : (data.message || t('agents_set_default_failed')));
+                : (data.code === 'private_agent_not_shareable'
+                    ? t('agents_set_default_private')
+                    : (data.message || t('agents_set_default_failed'))));
         }
         return loadAgentCatalog().then(() => {
             renderAgentsGrid();
@@ -4411,19 +4479,55 @@ function channelBoundAgentId(channelType) {
     return inst ? (inst.agent_id || '') : '';
 }
 
+// The target the memory page is addressing. `MEMORY_PERSONAL` is a *chosen*
+// target (my own user memory), distinct from `''` which means "nothing chosen
+// yet" — collapsing the two would make the personal domain unreachable, because
+// `''` falls back to the Agent the console is working with (task 5.1).
+const MEMORY_PERSONAL = 'personal';
+
 let memoryAgentId = readScopedPreference('cow_memory_agent') || '';
 
-function viewingMemoryAgentId() {
-    return memoryAgentId || activeAgentId || defaultAgentId;
+// The legal target set, served with the list (task 5.1). Empty on an older
+// backend, in which case the local catalogue is used as before.
+let memoryTargets = [];
+
+function viewingMemoryTarget() {
+    return memoryAgentId || activeAgentId || defaultAgentId || '';
+}
+
+function memoryTargetQuery() {
+    // Naming the personal domain explicitly rather than "no agent_id" keeps the
+    // two meanings apart: an absent target is a refusal, the personal domain is
+    // a choice.
+    return viewingMemoryTarget() === MEMORY_PERSONAL
+        ? 'scope=personal'
+        : `agent_id=${encodeURIComponent(viewingMemoryTarget() || '')}`;
+}
+
+function memoryTargetOptions() {
+    // The server's set is authoritative when present: it is derived from the
+    // same predicate the read and the write are authorised by, so it cannot
+    // offer the tenant's shared memory to a member the request would refuse.
+    const fromServer = Array.isArray(memoryTargets) && memoryTargets.length > 0;
+    if (fromServer) {
+        return memoryTargets.map(row => ({
+            value: row.value,
+            label: row.kind === 'personal'
+                ? t('memory_target_personal')
+                : (row.name || row.agent_id),
+            agent: row.kind === 'personal' ? null : { id: row.agent_id, name: row.name },
+        }));
+    }
+    // Older backend: keep the previous behaviour rather than emptying the picker.
+    const list = agentCatalog.length ? agentCatalog : enabledAgents();
+    return [{ value: MEMORY_PERSONAL, label: t('memory_target_personal'), agent: null }]
+        .concat(list.map(a => ({ value: a.id, label: a.name || a.id, agent: a })));
 }
 
 function renderMemoryAgentSelect() {
     const el = document.getElementById('memory-agent-select');
     if (!el) return;
-    const current = viewingMemoryAgentId();
-    const list = agentCatalog.length ? agentCatalog : enabledAgents();
-    const options = list.map(a => ({ value: a.id, label: a.name || a.id, agent: a }));
-    initDropdown(el, options, current, (value) => selectMemoryAgent(value), { withAvatar: true });
+    initDropdown(el, memoryTargetOptions(), viewingMemoryTarget(), (value) => selectMemoryAgent(value), { withAvatar: true });
 }
 
 function selectMemoryAgent(agentId) {
@@ -4899,6 +5003,11 @@ function fetchPublicBrand(seq) {
             // consistent without a second source of truth.
             if (appConfig) appConfig.title = productTitle(brandState.brand_name);
         }
+        // The 「帮助与关于」 target travels in this projection. It is an
+        // instance-level fact independent of the brand record, so it is adopted
+        // even when the payload carries no usable brand name; an unusable or
+        // absent value keeps the local-development default.
+        if (data) _applyAccountAboutUrl(data.help_url);
         applyBrandToDocument();
         applyBrandToAgentAvatars();
     }).catch(() => { /* keep last known brand; never break the console */ });
@@ -8501,7 +8610,14 @@ function openNewChatMenu() {
     const menu = document.getElementById('new-chat-menu');
     if (!menu) { newChat(true); return; }
     if (!menu.classList.contains('hidden')) { menu.classList.add('hidden'); return; }
-    const rows = enabledAgents().map(agent => `
+    paintNewChatMenu(menu);
+    menu.classList.remove('hidden');
+}
+
+/* The picker rows, split out so an already-open menu can be repainted when the
+   use-range roster arrives without toggling itself shut. */
+function paintNewChatMenu(menu) {
+    const rows = availableChatAgents().map(agent => `
         <button type="button" class="new-chat-item" onclick="startSoloChat('${escapeHtml(agent.id)}')">
             ${agentAvatarHTML(agent, 22)}
             <span>${escapeHtml(agent.name)}</span>
@@ -8513,7 +8629,6 @@ function openNewChatMenu() {
             <span class="new-chat-team-ico"><i class="fas fa-user-group"></i></span>
             <span>${escapeHtml(t('new_team_chat'))}</span>
         </button>`;
-    menu.classList.remove('hidden');
 }
 
 function startSoloChat(agentId) {
@@ -8559,7 +8674,7 @@ function toggleTeamChatPick(agentId) {
 function renderTeamChatList() {
     const list = document.getElementById('team-chat-list');
     if (!list) return;
-    list.innerHTML = enabledAgents().map(agent => {
+    list.innerHTML = availableChatAgents().map(agent => {
         const rank = _teamChatPicks.indexOf(agent.id);
         const on = rank !== -1;
         const owner = rank === 0;
@@ -8573,7 +8688,7 @@ function renderTeamChatList() {
 }
 
 function startTeamChat() {
-    const picks = _teamChatPicks.filter(id => enabledAgents().some(a => a.id === id));
+    const picks = _teamChatPicks.filter(id => availableChatAgents().some(a => a.id === id));
     if (picks.length < 2) {
         const status = document.getElementById('team-chat-status');
         if (status) status.textContent = t('new_team_chat_min');
@@ -11088,16 +11203,60 @@ function loadConfigView() {
     }).catch(() => {});
 }
 
+// The public model service (vendor addresses, keys, provider defaults) is the
+// platform's to maintain; ``actions.manage`` on 模型与接入 is that qualification
+// alone and is what /config and /api/models gate on server-side. Read from the
+// authoritative projection rather than assuming: rendering those editors for a
+// caller whose write would be refused is exactly the affordance the projection
+// exists to prevent.
+const CONFIG_VIEW_CONSOLE_PAGE = 'admin.models';
+
+function _modelsManageAllowed() {
+    // Legacy identity mode has a single, unrestricted surface: there is no page
+    // projection to read and no member catalog to show.
+    if (_identityMode() !== 'database') return true;
+    const ctx = _baseAuthContext();
+    const page = ctx && ctx.console_pages && typeof ctx.console_pages === 'object'
+        ? ctx.console_pages[CONFIG_VIEW_CONSOLE_PAGE] : null;
+    if (page && page.actions) return page.actions.manage === true;
+    // Projection undecided (a deep link into /admin/config can enter the view
+    // before /auth/context answers). The platform qualification is known from
+    // /auth/me and is exactly what ``actions.manage`` is computed from, so this
+    // cannot disagree with the server: a member is not platform admin, and an
+    // unresolved projection never becomes a way to show them the editors.
+    const self = _baseAccountSelf();
+    return !!(self && self.user && self.user.is_platform_admin);
+}
+
 function switchConfigTab(tab) {
-    ['basic', 'models'].forEach(name => {
+    ['basic', 'models', 'catalog'].forEach(name => {
         document.getElementById(`config-tab-${name}`)?.classList.toggle('active', name === tab);
         document.getElementById(`config-panel-${name}`)?.classList.toggle('hidden', name !== tab);
     });
     if (tab === 'models') loadModelsView();
+    if (tab === 'catalog') loadMemberCatalog();
     // Re-pull /config when returning to Basic: a provider added on the Models
     // tab must show up in the basic main-model provider picker without a manual
     // page refresh. loadConfigView re-renders from the fresh provider list.
     if (tab === 'basic') loadConfigView();
+}
+
+// Enter 模型与接入 in whichever shape the caller is entitled to. A platform
+// admin gets the tabbed page (基础配置 / 模型配置) exactly as before; anyone
+// else gets the authorized-model catalog and *no* tab strip, because both tabs
+// are management surfaces — an empty tab row is not a way to say "you have a
+// catalog, but not this". The catalog is the page's own content, not a
+// read-only copy of the vendor grid.
+function enterConfigView() {
+    const manage = _modelsManageAllowed();
+    const tabs = document.getElementById('config-tabs');
+    if (tabs) tabs.classList.toggle('hidden', !manage);
+    if (manage) {
+        loadConfigView();
+        switchConfigTab('basic');
+        return;
+    }
+    switchConfigTab('catalog');
 }
 
 // =====================================================================
@@ -11635,6 +11794,14 @@ document.addEventListener('DOMContentLoaded', function() {
 // Skills View
 // =====================================================================
 let toolsLoaded = false;
+//: The rows the tools section last received, so a card can hand its own row
+//: (with its server-decided ``personal`` state) to the detail component instead
+//: of re-reading a state the server already answered.
+let toolsState = { rows: [] };
+//: The skill rows the list last received, by name — the same reason as
+//: ``toolsState``: a card hands the detail component the row the server decided,
+//: not a reconstruction from data attributes.
+let skillsState = { byName: {} };
 
 const TOOL_ICONS = {
     bash: 'fa-terminal',
@@ -11669,6 +11836,7 @@ function loadToolsSection() {
     fetch('/api/tools').then(r => r.json()).then(data => {
         if (data.status !== 'success') return;
         const tools = data.tools || [];
+        toolsState.rows = tools;
         emptyEl.classList.add('hidden');
         if (tools.length === 0) {
             emptyEl.classList.remove('hidden');
@@ -11680,7 +11848,12 @@ function loadToolsSection() {
         listEl.innerHTML = '';
         tools.forEach(tool => {
             const card = document.createElement('div');
-            card.className = 'bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10 p-4 flex items-start gap-3';
+            // The card *is* the entry point to the resource's detail component
+            // (task 5.5): the personal parameters a member may set for this tool
+            // are reached from here, on the same page, instead of from a page of
+            // their own. Rendered as a clickable row so the affordance is visible
+            // rather than a surprise.
+            card.className = 'bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10 p-4 flex items-start gap-3 cursor-pointer hover:border-slate-300 dark:hover:border-white/20';
             card.innerHTML = `
                 <div class="w-9 h-9 rounded-lg bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center flex-shrink-0">
                     <i class="fas ${getToolIcon(tool.name)} text-blue-500 dark:text-blue-400 text-sm"></i>
@@ -11690,7 +11863,9 @@ function loadToolsSection() {
                         <span class="font-medium text-sm text-slate-700 dark:text-slate-200 font-mono">${escapeHtml(tool.name)}</span>
                     </div>
                     <p class="text-xs text-slate-400 dark:text-slate-500 mt-1 line-clamp-2">${escapeHtml(tool.description || '--')}</p>
-                </div>`;
+                </div>
+                <i class="fas fa-chevron-right text-[11px] text-slate-300 dark:text-slate-600 mt-1"></i>`;
+            card.onclick = () => openResourceDetail('tool', tool);
             listEl.appendChild(card);
         });
         listEl.classList.remove('hidden');
@@ -11709,6 +11884,8 @@ function loadSkillsSection() {
     fetch('/api/skills').then(r => r.json()).then(data => {
         if (data.status !== 'success') return;
         const skills = data.skills || [];
+        skillsState.byName = {};
+        skills.forEach(sk => { if (sk && sk.name) skillsState.byName[sk.name] = sk; });
         if (skills.length === 0) {
             const p = emptyEl.querySelector('p');
             if (p) p.textContent = currentLang === 'zh' ? '暂无技能' : 'No skills found';
@@ -11736,11 +11913,32 @@ function loadSkillsSection() {
 
 function renderSkillCard(card, sk) {
     const enabled = sk.enabled;
+    // The global enable/disable decides the state every member and Agent reads,
+    // so the server reports per row whether this caller may move it. Rendering
+    // the switch regardless would advertise a request that is refused; the state
+    // itself stays visible either way, because reading it is not the action.
+    const canToggle = !sk.actions || sk.actions.enable !== false;
     const iconColor = enabled ? 'text-primary-400' : 'text-slate-300 dark:text-slate-600';
     const trackClass = enabled
         ? 'bg-primary-400'
         : 'bg-slate-200 dark:bg-slate-700';
     const thumbTranslate = enabled ? 'translate-x-3' : 'translate-x-0.5';
+    const switchMarkup = canToggle
+        ? `<button
+                    role="switch"
+                    data-skill-switch
+                    aria-checked="${enabled}"
+                    class="relative inline-flex h-4 w-7 flex-shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus:outline-none ${trackClass}"
+                    title="${enabled ? t('skill_disable') : t('skill_enable')}"
+                >
+                    <span class="inline-block h-3 w-3 mt-0.5 rounded-full bg-white shadow transform transition-transform duration-200 ease-in-out ${thumbTranslate}"></span>
+                </button>`
+        : `<span
+                    data-skill-state
+                    aria-disabled="true"
+                    class="text-xs flex-shrink-0 ${enabled ? 'text-primary-400' : 'text-slate-400 dark:text-slate-500'}"
+                    title="${t('skill_global_toggle_managed')}"
+                >${enabled ? t('skill_enable') : t('skill_disable')}</span>`;
     card.innerHTML = `
         <div class="w-9 h-9 rounded-lg bg-amber-50 dark:bg-amber-900/20 flex items-center justify-center flex-shrink-0">
             <i class="fas fa-bolt ${iconColor} text-sm"></i>
@@ -11748,15 +11946,7 @@ function renderSkillCard(card, sk) {
         <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2 mb-1">
                 <span class="font-medium text-sm text-slate-700 dark:text-slate-200 truncate flex-1">${escapeHtml(sk.display_name || sk.name)}</span>
-                <button
-                    role="switch"
-                    data-skill-switch
-                    aria-checked="${enabled}"
-                    class="relative inline-flex h-4 w-7 flex-shrink-0 cursor-pointer rounded-full transition-colors duration-200 ease-in-out focus:outline-none ${trackClass}"
-                    title="${enabled ? (currentLang === 'zh' ? '点击禁用' : 'Click to disable') : (currentLang === 'zh' ? '点击启用' : 'Click to enable')}"
-                >
-                    <span class="inline-block h-3 w-3 mt-0.5 rounded-full bg-white shadow transform transition-transform duration-200 ease-in-out ${thumbTranslate}"></span>
-                </button>
+                ${switchMarkup}
             </div>
             <p class="text-xs text-slate-400 dark:text-slate-500 line-clamp-2">${escapeHtml(sk.description || '--')}</p>
         </div>`;
@@ -11765,7 +11955,7 @@ function renderSkillCard(card, sk) {
     // from its own frontmatter, and one containing a quote would break out of
     // an inline onclick attribute.
     card.title = t('skill_open_hint');
-    card.onclick = () => openSkillFile(sk.name);
+    card.onclick = () => openResourceDetail('skill', sk);
     const sw = card.querySelector('[data-skill-switch]');
     if (sw) {
         sw.onclick = (e) => {
@@ -11779,34 +11969,282 @@ function toggleSkill(name, currentlyEnabled) {
     const action = currentlyEnabled ? 'close' : 'open';
     const card = document.querySelector(`[data-skill-name="${CSS.escape(name)}"]`);
     if (card) card.style.opacity = '0.5';
+    // The row the list received, kept so the card can be re-rendered *whole*:
+    // the switch's answer only changes `enabled`, while `actions` and the
+    // caller's `personal` state have to survive the repaint (a card rebuilt
+    // without them would forget what the server said it may offer).
+    const row = skillsState.byName[name];
 
-    fetch('/api/skills', {
+    return fetch('/api/skills', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, name })
     })
     .then(r => r.json())
     .then(data => {
-        if (data.status === 'success') {
-            if (card) {
-                card.dataset.enabled = currentlyEnabled ? '0' : '1';
-                card.style.opacity = '1';
-                renderSkillCard(card, {
-                    name: name,
-                    description: card.dataset.skillDesc || '',
-                    display_name: card.dataset.skillDisplayName || '',
-                    enabled: !currentlyEnabled,
-                });
-            }
-        } else {
+        if (data.status !== 'success') {
             if (card) card.style.opacity = '1';
             alert(currentLang === 'zh' ? '操作失败，请稍后再试' : 'Operation failed, please try again');
+            return false;
         }
+        if (row) row.enabled = !currentlyEnabled;
+        if (card) {
+            card.dataset.enabled = currentlyEnabled ? '0' : '1';
+            card.style.opacity = '1';
+            renderSkillCard(card, row || {
+                name: name,
+                description: card.dataset.skillDesc || '',
+                display_name: card.dataset.skillDisplayName || '',
+                enabled: !currentlyEnabled,
+            });
+        }
+        return true;
     })
     .catch(() => {
         if (card) card.style.opacity = '1';
         alert(currentLang === 'zh' ? '操作失败，请稍后再试' : 'Operation failed, please try again');
+        return false;
     });
+}
+
+// ---------------------------------------------------------------------
+// Resource detail (工具与技能, task 5.5)
+// ---------------------------------------------------------------------
+//
+// One detail component for both kinds on this page, and the place a member's
+// personal usage parameters live — the spec forbids a second, standalone
+// personal resource page, because two surfaces for one configuration means two
+// places to keep honest and one more way to advertise what the server refuses.
+//
+// Nothing here decides authorization. The row arrives with the server's own
+// answer (``personal`` : the caller's saved parameters plus its ``configure`` /
+// ``clear`` verbs, grant- and switch-aware), and the component renders exactly
+// that: a row with no state gets no parameter section at all, a row that may not
+// be configured but still holds saved parameters gets them read-only with the
+// clear verb only.
+
+let resourceDetailState = null;   // { kind: 'tool' | 'skill', row: {...} }
+
+const RESOURCE_DETAIL_ENDPOINTS = { tool: '/api/tools', skill: '/api/skills' };
+
+function openResourceDetail(kind, row) {
+    const overlay = document.getElementById('resource-detail-overlay');
+    if (!overlay || !row) return;
+    resourceDetailState = { kind: kind, row: row };
+    renderResourceDetail();
+    overlay.classList.remove('hidden');
+}
+
+function closeResourceDetail() {
+    document.getElementById('resource-detail-overlay')?.classList.add('hidden');
+    resourceDetailState = null;
+}
+
+function renderResourceDetail() {
+    if (!resourceDetailState) return;
+    const kind = resourceDetailState.kind;
+    const row = resourceDetailState.row;
+    const title = document.getElementById('resource-detail-title');
+    const chip = document.getElementById('resource-detail-kind');
+    const body = document.getElementById('resource-detail-body');
+    if (!body) return;
+    if (title) title.textContent = row.display_name || row.name || '';
+    if (chip) {
+        chip.textContent = t(kind === 'skill' ? 'resource_detail_kind_skill'
+                                              : 'resource_detail_kind_tool');
+    }
+
+    body.innerHTML = `
+        <p class="text-sm text-slate-600 dark:text-slate-300 whitespace-pre-wrap">${escapeHtml(row.description || '--')}</p>
+        ${kind === 'skill' ? skillDetailActions(row) : ''}
+        ${personalParamsSection(row)}`;
+
+    const defineBtn = body.querySelector('[data-resource-detail-define]');
+    if (defineBtn) {
+        defineBtn.onclick = () => {
+            closeResourceDetail();
+            openSkillFile(row.name);
+        };
+    }
+    const saveBtn = body.querySelector('[data-resource-personal-save]');
+    if (saveBtn) saveBtn.onclick = () => savePersonalParamsFromDetail();
+    const clearBtn = body.querySelector('[data-resource-personal-clear]');
+    if (clearBtn) clearBtn.onclick = () => clearPersonalParamsFromDetail();
+    const toggleBtn = body.querySelector('[data-resource-detail-toggle]');
+    if (toggleBtn) {
+        toggleBtn.onclick = () => {
+            // The switch's answer decides what the *list* shows too, and the
+            // detail's own label must follow the server's outcome rather than a
+            // predicted one: a refused toggle leaves both unchanged.
+            toggleSkill(row.name, !!row.enabled).then(ok => {
+                if (ok) renderResourceDetail();
+            });
+        };
+    }
+}
+
+/** The skill-only half of the detail body: its definition and its global switch. */
+function skillDetailActions(row) {
+    // The 定义 entry stays a *viewer*: a builtin's file is not editable, and the
+    // viewer already reports that from the server's own `editable` answer.
+    const define = `
+        <button type="button" data-resource-detail-define
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/5 cursor-pointer">
+            <i class="fas fa-file-lines text-[11px]"></i>${t('resource_detail_skill_definition')}
+        </button>`;
+    // The switch is offered only where the server said the caller may move it
+    // (``actions.enable``); otherwise the state is stated, never the control.
+    const enabled = !!row.enabled;
+    const toggle = row.actions && row.actions.enable !== false
+        ? `<button type="button" data-resource-detail-toggle
+                   class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/5 cursor-pointer">
+               <i class="fas fa-power-off text-[11px]"></i>${t(enabled ? 'skill_disable' : 'skill_enable')}
+           </button>`
+        : `<span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-50 dark:bg-white/5 text-xs text-slate-500 dark:text-slate-400"
+                 title="${t('skill_global_toggle_managed')}"
+                 data-resource-detail-state>${t('skill_global_toggle_managed')}</span>`;
+    return `<div class="flex flex-wrap items-center gap-2 mt-4">${define}${toggle}</div>`;
+}
+
+/** The personal-parameter section, or '' when the server reported no state. */
+function personalParamsSection(row) {
+    const personal = row && row.personal;
+    if (!personal) return '';
+    const actions = personal.actions || {};
+    const configured = !!personal.configured;
+    const paramsText = JSON.stringify(personal.params || {}, null, 2);
+    const header = `
+        <div class="mt-5 pt-4 border-t border-slate-100 dark:border-white/5">
+            <h4 class="text-sm font-medium text-slate-700 dark:text-slate-200">${t('resource_detail_personal_title')}</h4>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">${t('resource_detail_personal_desc')}</p>
+        </div>`;
+    const status = `<p data-resource-personal-status class="hidden mt-2 text-xs"></p>`;
+    const clear = actions.clear
+        ? `<button type="button" data-resource-personal-clear
+                   class="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-white/10 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/5 cursor-pointer">${t('personal_action_clear')}</button>`
+        : '';
+
+    if (!actions.configure) {
+        // Saved parameters whose use grant has been withdrawn (or whose
+        // capability was switched off): still readable and still removable —
+        // the save is what would be refused — but never editable.
+        return `${header}
+            <pre class="mt-3 px-3 py-2 rounded-lg bg-slate-50 dark:bg-white/5 text-xs text-slate-600 dark:text-slate-300 overflow-x-auto">${escapeHtml(paramsText)}</pre>
+            <p class="mt-2 text-xs text-amber-600 dark:text-amber-400">${t('resource_detail_personal_readonly')}</p>
+            <div class="flex items-center gap-2 mt-3">${clear}</div>
+            ${status}`;
+    }
+
+    const secretPlaceholder = personal.has_credential
+        ? t('resource_detail_personal_secret_saved')
+        : t('resource_detail_personal_secret');
+    return `${header}
+        <label class="block mt-3 text-xs text-slate-500 dark:text-slate-400">${t('resource_detail_personal_params')}</label>
+        <textarea data-resource-personal-params rows="4" spellcheck="false"
+                  class="mt-1 w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-white/5 text-xs font-mono text-slate-800 dark:text-slate-100 focus:outline-none focus:border-primary-500">${escapeHtml(paramsText)}</textarea>
+        <label class="block mt-3 text-xs text-slate-500 dark:text-slate-400">${t('resource_detail_personal_secret_label')}</label>
+        <input type="password" data-resource-personal-secret autocomplete="new-password"
+               placeholder="${secretPlaceholder}"
+               class="mt-1 w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-white/5 text-sm text-slate-800 dark:text-slate-100 focus:outline-none focus:border-primary-500">
+        <div class="flex items-center gap-2 mt-3">
+            <button type="button" data-resource-personal-save
+                    class="px-3 py-1.5 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium cursor-pointer">${t('save')}</button>
+            ${clear}
+        </div>
+        ${status}`;
+}
+
+function _personalDetailStatus(key, isError) {
+    const el = document.querySelector('[data-resource-personal-status]');
+    if (!el) return;
+    el.dataset.i18n = key;
+    el.textContent = t(key);
+    el.classList.remove('hidden');
+    el.classList.toggle('text-red-500', !!isError);
+    el.classList.toggle('text-emerald-500', !isError);
+}
+
+function _personalDetailRequest(payload, okKey) {
+    if (!resourceDetailState) return Promise.resolve();
+    const kind = resourceDetailState.kind;
+    const body = Object.assign({}, payload);
+    if (kind === 'skill') {
+        // The skill's *service* is the anchor Agent's library; without this the
+        // object the server resolves could differ from the row the page listed.
+        body.agent_id = activeAgentId;
+    }
+    return fetch(RESOURCE_DETAIL_ENDPOINTS[kind], {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    }).then(res => res.json().then(data => ({ ok: res.ok, data: data })))
+    .then(({ ok, data }) => {
+        if (!ok || data.status !== 'success') {
+            // The refusal is the server's own message: a revoked grant, a
+            // withdrawn capability and an invalid payload are different
+            // situations and the page must not flatten them into one.
+            _personalDetailStatus((data && data.message) || 'resource_detail_personal_error', true);
+            return;
+        }
+        _applyPersonalConfig(kind, payload.action, data.config);
+        renderResourceDetail();
+        _personalDetailStatus(okKey, false);
+        if (kind === 'skill') loadSkillsSection();
+    }).catch(() => _personalDetailStatus('resource_detail_personal_error', true));
+}
+
+/** Fold a save/clear answer back into the row the component is showing. */
+function _applyPersonalConfig(kind, action, config) {
+    if (!resourceDetailState) return;
+    const personal = resourceDetailState.row.personal || {};
+    const mayConfigure = !!(personal.actions && personal.actions.configure);
+    if (action === 'clear-personal') {
+        resourceDetailState.row.personal = Object.assign({}, personal, {
+            configured: false, params: {}, has_credential: false, version: 0,
+            actions: { configure: mayConfigure, clear: false },
+        });
+        return;
+    }
+    resourceDetailState.row.personal = Object.assign({}, personal, {
+        resource_kind: kind,
+        resource_id: (config && config.resource_id) || personal.resource_id,
+        configured: true,
+        params: (config && config.params) || {},
+        has_credential: !!(config && config.credential_id),
+        version: (config && config.version) || personal.version,
+        actions: { configure: mayConfigure, clear: true },
+    });
+}
+
+function savePersonalParamsFromDetail() {
+    if (!resourceDetailState) return;
+    const row = resourceDetailState.row;
+    const area = document.querySelector('[data-resource-personal-params]');
+    const secretEl = document.querySelector('[data-resource-personal-secret]');
+    let params;
+    const raw = area ? area.value.trim() : '';
+    try {
+        params = raw ? JSON.parse(raw) : {};
+    } catch (_) {
+        return _personalDetailStatus('resource_detail_personal_invalid_json', true);
+    }
+    if (!params || typeof params !== 'object' || Array.isArray(params)) {
+        return _personalDetailStatus('resource_detail_personal_invalid_json', true);
+    }
+    const payload = { action: 'save-personal', resource_id: row.resource_id, params: params };
+    const secret = secretEl ? secretEl.value : '';
+    // An empty field means "leave the saved secret alone": a save that silently
+    // replaced a stored credential with nothing would be indistinguishable from
+    // a rotation, and the server has no third state to express it.
+    if (secret) payload.secret = secret;
+    return _personalDetailRequest(payload, 'resource_detail_personal_saved');
+}
+
+function clearPersonalParamsFromDetail() {
+    if (!resourceDetailState) return;
+    return _personalDetailRequest(
+        { action: 'clear-personal', resource_id: resourceDetailState.row.resource_id },
+        'resource_detail_personal_cleared');
 }
 
 // ---------------------------------------------------------------------
@@ -11956,9 +12394,9 @@ function _memoryRefusal(data, opts) {
 function loadMemoryView(page) {
     page = page || 1;
     memoryPage = page;
-    const agent = viewingMemoryAgentId();
-    fetch(`/api/memory?page=${page}&page_size=${memoryPageSize}&category=${memoryCategory}&agent_id=${encodeURIComponent(agent || '')}`).then(r => r.json()).then(data => {
+    fetch(`/api/memory?page=${page}&page_size=${memoryPageSize}&category=${memoryCategory}&${memoryTargetQuery()}`).then(r => r.json()).then(data => {
         if (data.status !== 'success') return _memoryRefusal(data);
+        if (Array.isArray(data.targets)) memoryTargets = data.targets;
         const emptyEl = document.getElementById('memory-empty');
         const listEl = document.getElementById('memory-list');
         const files = data.list || [];
@@ -12085,26 +12523,238 @@ const memoryEditor = createDocEditor({
         save: document.getElementById('memory-btn-save'),
         cancel: document.getElementById('memory-btn-cancel'),
     }),
-    read: (doc) => docReadFile(doc.relPath),
-    write: (doc, content, mtime) => docWriteFile(doc.relPath, content, mtime),
+    read: (doc) => memoryDocRead(doc),
+    write: (doc, content, expectedRevision) => memoryDocWrite(doc, content, expectedRevision),
+    // Read-only categories (the Agent's own dream/evolution diaries) report it in
+    // the payload; hiding the button beats letting the click fail server-side.
+    canEdit: (doc) => doc.canEdit === true,
     render: (doc) => docRenderBody('memory-viewer-content', doc.content),
-    onState: (state) => docRenderTitle('memory-viewer-title', memoryEditor.current()?.filename, state),
+    onState: (state) => {
+        docRenderTitle('memory-viewer-title', memoryEditor.current()?.filename, state);
+        memorySyncDocButtons(state);
+    },
 });
+
+/**
+ * The memory API body naming the target this page is showing.
+ *
+ * Mirrors {@link memoryTargetQuery} for POST bodies: the personal domain is a
+ * choice and is named as one, and the memory *writes* refuse it anyway (the
+ * member's own memory has its own endpoint) — so a personal target simply never
+ * gets an edit or delete button.
+ */
+function memoryTargetBody() {
+    return viewingMemoryTarget() === MEMORY_PERSONAL
+        ? { scope: 'personal' }
+        : { agent_id: viewingMemoryTarget() || '' };
+}
+
+/**
+ * Whether the server says this entry may be edited.
+ *
+ * Two independent reasons say no, and both arrive in the read payload: the
+ * category (the Agent writes its own dream and evolution diaries, so a manual
+ * edit is overwritten by the next consolidation) and the caller's range on the
+ * memory *root* (in database mode an Agent's memory root is the tenant's shared
+ * root, so a member may read their private Agent's memory but not rewrite what
+ * the shared Agent also reads). Stated once here so the editor never offers a
+ * verb the write would refuse.
+ */
+function memoryEntryEditable(data) {
+    return !data.read_only && !data.readOnly &&
+        !(data.actions && data.actions.edit === false);
+}
+
+/**
+ * Read one memory entry through the memory API rather than the workspace file
+ * API this page used to use.
+ *
+ * Why it matters: a memory entry edited as a plain workspace file skipped the
+ * version condition and the index publish, so a save could silently overwrite a
+ * newer revision and a new body never reached retrieval. The memory surface
+ * hands out the revision to send back and publishes the index in the same
+ * operation. The editor treats the value opaquely and round-trips it, so the
+ * content revision fills the slot an mtime filled for other pages.
+ */
+async function memoryDocRead(doc) {
+    const url = `/api/memory/content?filename=${encodeURIComponent(doc.filename)}` +
+        `&category=${encodeURIComponent(doc.category || 'memory')}&${memoryTargetQuery()}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.status !== 'success') throw new Error(data.message || 'load failed');
+    return {
+        content: data.content || '',
+        mtime: data.revision,
+        editable: memoryEntryEditable(data),
+    };
+}
+
+/** Save one memory entry, version-conditioned, through the memory API. */
+async function memoryDocWrite(doc, content, expectedRevision) {
+    let revision = expectedRevision;
+    if (revision == null) {
+        // The user chose "overwrite" over a newer revision, so the *current*
+        // revision is what we commit against: the server refuses a blind write
+        // of an existing entry by design (that refusal is what protects the
+        // other page's edit), so re-reading is how an intentional overwrite is
+        // expressed here.
+        revision = (await memoryDocRead(doc)).mtime;
+    }
+    const data = await memoryRequest('/api/memory/save', {
+        filename: doc.filename,
+        category: doc.category || 'memory',
+        content: content,
+        revision: revision,
+    });
+    if (!data) return { status: 'error', code: 'failed' };
+    // The editor knows one conflict code; the memory API names the same
+    // condition `stale_revision`. Translated here so the page's existing
+    // "someone else changed it — overwrite?" flow runs instead of a bare error.
+    if (data.code === 'stale_revision') {
+        return { ...data, code: 'conflict' };
+    }
+    // A `pending` index is reported to the user by `memoryRequest`, but the
+    // content operation did succeed — so the editor must see success, or it
+    // would throw "save failed" over a saved body. The spread comes first so
+    // the fields below, not the response's own `status`, decide.
+    if (!memorySucceeded(data)) return data;
+    return { ...data, status: 'success', mtime: (data.result || {}).revision };
+}
+
+/** True when a write response means the content operation is done.
+ *
+ * ``pending`` counts: the body is committed and only the index is behind, which
+ * ``memoryRequest`` has already told the user about. Treating it as failure
+ * would have the page claim a saved edit was lost.
+ */
+function memorySucceeded(data) {
+    return !!data && (data.status === 'success' || data.status === 'pending');
+}
+
+/**
+ * POST one memory write and hand the payload back to the caller.
+ *
+ * The response is returned for *every* parsed answer, including refusals: the
+ * save path has to see the API's own code (``stale_revision``) to run the
+ * editor's overwrite flow, so swallowing it here would silently turn a
+ * resolvable conflict into a dead end. Only a transport failure yields ``null``.
+ */
+async function memoryRequest(path, body) {
+    try {
+        const res = await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...body, ...memoryTargetBody() }),
+        });
+        const data = await res.json();
+        if (data.status === 'pending') {
+            // The content operation succeeded; the search index did not. Saying
+            // nothing would let the user believe retrieval is already updated.
+            _wsToast(t('memory_index_pending'));
+        }
+        return data;
+    } catch (e) {
+        _memoryRefusal(null);
+        return null;
+    }
+}
+
+/** Report a delete/clear outcome the way the page does; true when it applied. */
+function memoryReportMutation(data, okMessage) {
+    if (!memorySucceeded(data)) {
+        if (data) _memoryRefusal(data);
+        return false;
+    }
+    _wsToast(t(okMessage));
+    return true;
+}
+
+/** Show delete/clear only where the server says the verb is available. */
+function memorySyncDocButtons(state) {
+    const doc = memoryEditor.current();
+    const editing = !!(state && state.editing);
+    const onAgent = viewingMemoryTarget() !== MEMORY_PERSONAL;
+    const del = document.getElementById('memory-btn-delete');
+    const clear = document.getElementById('memory-btn-clear');
+    if (del) {
+        del.classList.toggle('hidden',
+            editing || !doc || !!doc.readOnly ||
+            !!(doc.actions && doc.actions.delete === false));
+    }
+    if (clear) {
+        // Clear is a delete-class verb on the same *root*, and the server
+        // reports ``delete: false`` whenever a write to that root is refused
+        // (read-only category, or a member on the tenant's shared memory root),
+        // so it follows that signal rather than keeping a second rule that
+        // could disagree with the one the write enforces.
+        clear.classList.toggle('hidden',
+            editing || !onAgent ||
+            !doc || !!(doc.actions && doc.actions.delete === false));
+    }
+}
+
+/** Delete the entry on screen, after confirming and after guarding edits. */
+function memoryDocDelete() {
+    if (!memoryEditor.guard(memoryDocDelete)) return;
+    const doc = memoryEditor.current();
+    if (!doc) return;
+    showConfirmDialog({
+        title: t('memory_delete_title'),
+        message: t('memory_delete_msg').replace('{name}', doc.filename || ''),
+        okText: t('memory_delete_ok'),
+        onConfirm: () => {
+            memoryRequest('/api/memory/delete',
+                { filename: doc.filename, category: doc.category || 'memory' })
+                .then((data) => {
+                    if (!memoryReportMutation(data, 'memory_deleted')) return;
+                    closeMemoryViewer();
+                });
+        },
+    });
+}
+
+/** Clear the current category of an Agent's memory, after confirming. */
+function memoryDocClear() {
+    if (!memoryEditor.guard(memoryDocClear)) return;
+    if (viewingMemoryTarget() === MEMORY_PERSONAL) return;
+    showConfirmDialog({
+        title: t('memory_clear_title'),
+        message: t('memory_clear_msg'),
+        okText: t('memory_clear_ok'),
+        onConfirm: () => {
+            memoryRequest('/api/memory/clear',
+                { category: memoryCategory || 'memory' }).then((data) => {
+                    if (!memoryReportMutation(data, 'memory_cleared')) return;
+                    closeMemoryViewer();
+                });
+        },
+    });
+}
 
 function openMemoryFile(filename, category) {
     category = category || 'memory';
-    const agent = viewingMemoryAgentId();
-    fetch(`/api/memory/content?filename=${encodeURIComponent(filename)}&category=${category}&agent_id=${encodeURIComponent(agent || '')}`).then(r => r.json()).then(data => {
+    fetch(`/api/memory/content?filename=${encodeURIComponent(filename)}&category=${category}&${memoryTargetQuery()}`).then(r => r.json()).then(data => {
         if (data.status !== 'success') return _memoryRefusal(data, { keepList: true });
         document.getElementById('memory-panel-list').classList.add('hidden');
         document.getElementById('memory-panel-viewer').classList.remove('hidden');
         memoryEditor.open({
             filename: filename,
+            category: category,
             // The memory API reports where the file sits under the workspace
-            // root; the editor addresses it there rather than rebuilding the
-            // path from filename plus category.
+            // root; kept for display and for the workspace-file fallbacks, but
+            // the editor now addresses the entry through the memory API so a
+            // save carries the revision and publishes the index.
             relPath: data.rel_path || filename,
             content: data.content || '',
+            // Whether this entry may be edited/deleted at all, and the version
+            // token a save has to carry back. Both come from the server so the
+            // page never offers a verb the write would refuse.
+            readOnly: !!data.read_only,
+            actions: data.actions || {},
+            // The editor asks the document, not the payload, so both reasons
+            // above are folded into one flag here and read from one place.
+            canEdit: memoryEntryEditable(data),
+            revision: data.revision,
         });
     }).catch(() => _memoryRefusal(null, { keepList: true }));
 }
@@ -12206,6 +12856,14 @@ const MODELS_PROVIDER_LOGO_DARK_INVERT = new Set([
 
 let modelsState = { providers: [], capabilities: {} };
 
+// The member's 模型与接入 content: the grant-filtered catalog
+// (``GET /api/tenant/authorization/catalog?kind=model&purpose=use``), which is
+// the *same* answer the page's ``read_allowed`` is computed from. Kept apart
+// from ``modelsState`` on purpose — the vendor grid and the authorized catalog
+// are different questions, and one state object would let a stale answer from
+// one render into the other's panel.
+let memberCatalogState = { items: [] };
+
 // One-shot: { capabilityId, providerId } stashed before a Models reload,
 // consumed by renderCapabilityBody to preselect a just-configured vendor.
 let pendingCapabilitySelection = null;
@@ -12254,6 +12912,87 @@ function renderModelsView() {
     container.innerHTML = '';
     container.appendChild(renderVendorsSection());
     MODELS_CAPABILITY_DEFS.forEach(def => container.appendChild(renderCapabilityCard(def)));
+}
+
+// ---------- Member model catalog (task 5.4) ----------------------------
+//
+// 模型与接入 for everyone who is not the platform's model-service maintainer:
+// the models they are authorized for, and nothing about how the service behind
+// them is configured. ``purpose=use`` is the endpoint's own name for "what the
+// caller may use" — the same query the page projection is computed from — so a
+// page that is open always has rows to render, and a member's catalog is
+// whatever their grants say rather than whatever the deployment has installed.
+
+function loadMemberCatalog() {
+    const loading = document.getElementById('catalog-loading');
+    const content = document.getElementById('catalog-content');
+    if (!loading || !content) return;
+    loading.classList.remove('hidden');
+    content.classList.add('hidden');
+
+    fetch('/api/tenant/authorization/catalog?kind=model&purpose=use&page_size=200')
+        .then(r => r.json()).then(data => {
+            if (data.status !== 'success') {
+                loading.innerHTML = `<span class="text-sm text-red-400">${escapeHtml(data.message || 'Failed to load')}</span>`;
+                return;
+            }
+            memberCatalogState.items = data.items || [];
+            renderMemberCatalog();
+            loading.classList.add('hidden');
+            content.classList.remove('hidden');
+        }).catch(err => {
+            loading.innerHTML = `<span class="text-sm text-red-400">${escapeHtml(String(err))}</span>`;
+        });
+}
+
+function renderMemberCatalog() {
+    const container = document.getElementById('catalog-content');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const wrap = document.createElement('div');
+    wrap.className = 'bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10 p-6';
+    const header = `
+        <div class="flex items-start gap-3 mb-5">
+            <div class="w-9 h-9 rounded-lg bg-primary-50 dark:bg-primary-900/30 flex items-center justify-center flex-shrink-0">
+                <i class="fas fa-microchip text-primary-500 text-sm"></i>
+            </div>
+            <div class="flex-1 min-w-0">
+                <h3 class="font-semibold text-slate-800 dark:text-slate-100">${t('models_catalog_title')}</h3>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">${t('models_catalog_desc')}</p>
+            </div>
+        </div>`;
+
+    const items = memberCatalogState.items || [];
+    let body;
+    if (items.length === 0) {
+        body = `
+            <div class="flex flex-col items-center justify-center py-8 px-4 rounded-lg border border-dashed border-slate-200 dark:border-white/10">
+                <p class="text-sm text-slate-500 dark:text-slate-400 text-center">${t('models_catalog_empty')}</p>
+            </div>`;
+    } else {
+        body = `<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            ${items.map(renderMemberCatalogRow).join('')}
+        </div>`;
+    }
+    wrap.innerHTML = header + body;
+    container.appendChild(wrap);
+}
+
+function renderMemberCatalogRow(item) {
+    // ``resource_id`` is ``provider:<provider>:<model>``; the middleware name is
+    // what a person recognises, so it is the title and the provider is the chip.
+    const parts = String(item.resource_id || '').split(':');
+    const provider = parts.length > 2 ? parts[1] : '';
+    const model = item.name || parts[parts.length - 1] || '';
+    return `
+        <div class="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-white/5 text-left">
+            <i class="fas fa-cube text-[11px] text-slate-400 dark:text-slate-500"></i>
+            <span class="flex-1 min-w-0">
+                <span class="block text-sm font-medium text-slate-800 dark:text-slate-100 truncate">${escapeHtml(model)}</span>
+                ${provider ? `<span class="block text-[11px] text-slate-500 dark:text-slate-400 truncate">${escapeHtml(provider)}</span>` : ''}
+            </span>
+        </div>`;
 }
 
 // True when a provider card is one of the expanded custom (OpenAI-compatible)
@@ -14051,15 +14790,25 @@ function isMultiInstanceType(name) {
 // The 消息渠道 page is ONE console page serving two scopes (server reports the
 // relative scope in the projection). These helpers are pure so the contract is
 // testable without a DOM.
-function channelScope() {
+function channelPageScope() {
     const ctx = (typeof _baseAuthContext === 'function') ? _baseAuthContext() : null;
     const pages = ctx && ctx.console_pages && typeof ctx.console_pages === 'object'
         ? ctx.console_pages : null;
     const page = pages && pages['admin.channels'];
-    if (page && (page.scope === 'tenant' || page.scope === 'platform')) return page.scope;
+    // ``self`` is the member's range on the *same* business surface (task 6.1):
+    // the server answered them with their own connections, so they load the
+    // tenant page rather than the platform instance page.
+    if (page && page.scope === 'self') return 'self';
+    if (page && page.scope === 'tenant') return 'tenant';
+    if (page && page.scope === 'platform') return 'platform';
     // Unknown projection (legacy install / not yet loaded) keeps the historic
     // instance-level page rather than guessing the tenant scope.
     return 'platform';
+}
+
+function channelScope() {
+    const scope = channelPageScope();
+    return scope === 'self' ? 'tenant' : scope;
 }
 
 // The page header is static markup in chat.html and is shared by both scopes,
@@ -14069,7 +14818,12 @@ function channelScope() {
 function syncChannelsHeader(scope) {
     const subtitle = document.getElementById('channels-subtitle');
     if (!subtitle) return;
-    const key = scope === 'tenant' ? 'tenant_channel_desc' : 'channels_desc';
+    // Three scopes, three descriptions, one page: the platform instance list,
+    // the tenant's public connections, and the member's own — the last one is
+    // the same business surface as the tenant's but must say whose connections
+    // these are (task 6.1).
+    const key = scope === 'self' ? 'tenant_channel_self_desc'
+        : (scope === 'tenant' ? 'tenant_channel_desc' : 'channels_desc');
     subtitle.dataset.i18n = key;
     subtitle.textContent = t(key);
 }
@@ -14125,6 +14879,14 @@ function renderChannelsUnavailable(container, status, code) {
 // write is rejected, so a conflict or a policy error does not clear the form.
 let tenantChannelTypes = [];
 let tenantChannelInstances = [];
+// Whether the server answered this caller with their *own* range on the shared
+// page (task 6.1). It decides what the form may offer — not which page is
+// rendered, because there is only one page.
+let tenantChannelSelfScope = false;
+// The choose-a-target candidates the server offered, each with the ownership it
+// produces (task 6.2). Empty until the page's first read; the picker falls back
+// to the local catalogue meanwhile so an unread/older backend still works.
+let tenantChannelTargets = [];
 let tenantChannelDraft = null;
 
 function tenantChannelType(type) {
@@ -14132,18 +14894,32 @@ function tenantChannelType(type) {
 }
 
 function channelTypeLabel(type) {
-    const spec = tenantChannelType(type);
-    if (!spec || !spec.label) return type;
-    return spec.label[currentLang] || spec.label.en || type;
+    // Label resolution lives in the shared module (task 3.1) so the public and
+    // personal surfaces cannot disagree about what a type is called. The type
+    // declaration is still looked up here: it is this controller's own state.
+    return window.ChannelWorkbench.typeLabel(tenantChannelType(type), type, currentLang);
 }
 
 function channelFieldLabel(field) {
-    if (!field || !field.label) return (field && field.key) || '';
-    return field.label[currentLang] || field.label.en || field.key;
+    return window.ChannelWorkbench.fieldLabel(field, currentLang);
 }
 
 // The form's type list is exactly what the server offered — never a local copy,
 // so an unsupported type (e.g. the deferred 企微自建应用) cannot be submitted.
+// On the caller's *own* surface (task 6.1) it is narrowed to the types the
+// server reports as ready for personal onboarding. On the shared surface it is
+// narrowed by the server's separate `inbound_admissible` verdict (task 7.7): a
+// type whose adapter cannot stamp the sender would otherwise be created,
+// started and reported connected while every message is refused at the inbound
+// gate. The full list is kept for looking up the contract of an instance that
+// already exists, and `!== false` means a payload from a deployment that does
+// not send the verdict yet is not narrowed by it.
+function tenantChannelTypeChoices() {
+    return tenantChannelSelfScope
+        ? tenantChannelTypes.filter(spec => spec.ready)
+        : tenantChannelTypes.filter(spec => spec.inbound_admissible !== false);
+}
+
 function tenantChannelTypeOptions() {
     return tenantChannelTypes.map(spec => ({
         value: spec.channel_type,
@@ -14151,14 +14927,42 @@ function tenantChannelTypeOptions() {
     }));
 }
 
-function tenantChannelAgentOptions(selected) {
-    return [
-        { value: '', label: t('tenant_channel_agent_none') },
-        ...(agentCatalog || []).map(a => ({
-            value: a.id,
-            label: a.name ? `${a.name} (${a.id})` : a.id,
-        })),
-    ];
+function tenantChannelAgentOptions() {
+    // The candidates come from the server (task 6.2): only it knows which
+    // targets this caller may name and which ownership each produces.
+    const fromServer = tenantChannelTargets.length > 0;
+    const source = fromServer
+        ? tenantChannelTargets.map(t => ({
+            value: t.id,
+            label: t.name ? `${t.name} (${t.id})` : t.id,
+            scope: t.scope,
+            is_tenant_default: !!t.is_tenant_default,
+        }))
+        // The local catalogue is the fallback for a backend that does not send
+        // candidates yet, so an older deployment keeps working rather than
+        // showing an empty picker. Its entries carry no derived ownership —
+        // the catalogue *is* the caller's management range — so the own-surface
+        // filter below is only applied to what the server derived. Filtering the
+        // fallback by an ownership it never had would empty a member's picker
+        // on exactly the deployments the fallback exists for.
+        : (agentCatalog || [])
+            .filter(a => a.enabled !== false)
+            .map(a => ({
+                value: a.id,
+                label: a.name ? `${a.name} (${a.id})` : a.id,
+                scope: null,
+                is_tenant_default: false,
+            }));
+    // On the caller's own surface every legal target is one of their own, and
+    // the target is **required**: selecting "none" would be refused on save, and
+    // an option that cannot succeed is the "clickable but refused" shape this
+    // change removes (task 6.1). The administrative surface keeps it — a tenant
+    // connection may legitimately be unbound.
+    const options = (tenantChannelSelfScope && fromServer)
+        ? source.filter(o => o.scope === 'user')
+        : source;
+    if (tenantChannelSelfScope) return options;
+    return [{ value: '', label: t('tenant_channel_agent_none') }, ...options];
 }
 
 // Channel types whose setup can be completed by scanning a QR code, and the
@@ -14196,26 +15000,24 @@ const TENANT_CHANNEL_SCAN_COPY = {
 // with Feishu's wording — and the card contract test fails if one is added
 // without the other.
 function tenantChannelSupportsScan(channelType) {
-    const type = channelType || '';
-    return Object.prototype.hasOwnProperty.call(TENANT_CHANNEL_SCAN_TYPES, type)
-        && Object.prototype.hasOwnProperty.call(TENANT_CHANNEL_SCAN_COPY, type);
+    // Both tables must know the type: the start function to run and the copy to
+    // show. The module owns the pairing rule; the tables stay here because they
+    // name page-global start functions (startFeishuRegister, …).
+    return window.ChannelWorkbench.scanReady(
+        TENANT_CHANNEL_SCAN_TYPES, TENANT_CHANNEL_SCAN_COPY, channelType);
 }
 
 // The scan copy for a type. Only called for types ``tenantChannelSupportsScan``
 // accepted, so the null branch is unreachable by construction; it stays explicit
 // rather than borrowing another type's wording.
 function tenantChannelScanCopy(channelType) {
-    return TENANT_CHANNEL_SCAN_COPY[channelType || ''] || null;
+    return window.ChannelWorkbench.scanCopy(TENANT_CHANNEL_SCAN_COPY, channelType);
 }
 
 // Icon / colour come from the server's type description (the same declaration
 // the platform page uses) with a neutral fallback for an unknown type.
 function tenantChannelAppearance(channelType) {
-    const spec = tenantChannelType(channelType);
-    return {
-        icon: (spec && spec.icon) || 'fa-tower-broadcast',
-        color: (spec && spec.color) || 'primary',
-    };
+    return window.ChannelWorkbench.appearance(tenantChannelType(channelType));
 }
 
 // The inline create/edit form for one tenant channel, in the same shape as the
@@ -14235,58 +15037,35 @@ function buildTenantChannelForm(inst) {
     const mode = draft.mode === 'scan' && supportsScan ? 'scan' : 'manual';
     const scanStatusId = `tenant-channel-scan-status-${iid}`;
 
-    const activeClasses = 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 shadow-sm';
-    const inactiveClasses = 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200';
-    const tabs = supportsScan ? `
-        <div class="flex items-center justify-center gap-1 mb-5 bg-slate-100 dark:bg-white/5 rounded-lg p-1">
-            <button type="button" data-tenant-channel-mode="scan"
-                onclick="switchTenantChannelMode('${escapeHtml(iid)}', 'scan')"
-                class="flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${mode === 'scan' ? activeClasses : inactiveClasses}">
-                ${t(scanCopy.tab)}
-            </button>
-            <button type="button" data-tenant-channel-mode="manual"
-                onclick="switchTenantChannelMode('${escapeHtml(iid)}', 'manual')"
-                class="flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${mode === 'manual' ? activeClasses : inactiveClasses}">
-                ${t(scanCopy.manualTab)}
-            </button>
-        </div>` : `
-        <div class="flex items-center justify-center gap-1 mb-5 bg-slate-100 dark:bg-white/5 rounded-lg p-1">
-            <button type="button" data-tenant-channel-mode="manual"
-                class="flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${activeClasses}">
-                ${t('feishu_mode_manual')}
-            </button>
-        </div>`;
+    // Presentation is the shared module's (task 3.1). Everything it reads is
+    // passed explicitly: the prefix namespaces the DOM so the personal form can
+    // never collide with this one, the injected escape/t/lang keep the rendered
+    // text identical, and the switch handler stays a page-global inline call so
+    // the markup contract this page already publishes is unchanged.
+    const wb = window.ChannelWorkbench;
+    const view = {
+        prefix: 'tenant-channel', iid, mode,
+        escape: escapeHtml, t, lang: currentLang,
+    };
+    const tabs = wb.modeTabs(Object.assign({}, view, {
+        supportsScan, copy: scanCopy,
+        // Only a scan-capable type has two tabs to switch between; a manual-only
+        // strip keeps the handler-free button it has always rendered.
+        switchCall: supportsScan
+            ? (id, target) => `switchTenantChannelMode('${escapeHtml(id)}', '${target}')`
+            : undefined,
+    }));
 
     // Both panes stay in the DOM and only their visibility toggles, so switching
     // to the scan tab and back cannot wipe credentials the operator already
     // typed. The scan pane never persists anything: it only fills the draft.
-    const scanPane = supportsScan ? `
-        <div id="tenant-channel-pane-scan-${escapeHtml(iid)}" class="${mode === 'scan' ? '' : 'hidden'}">
-            <div class="flex flex-col items-center py-4">
-                <p class="text-sm text-slate-600 dark:text-slate-300 mb-3 text-center">${t(scanCopy.desc)}</p>
-                <button type="button" onclick="${scanStart}('${scanStatusId}', '${escapeHtml(iid)}')"
-                    class="mt-2 px-6 py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-medium
-                           cursor-pointer transition-colors duration-150">
-                    <i class="fas fa-qrcode mr-2"></i>${t(scanCopy.btn)}
-                </button>
-                <div id="${scanStatusId}" class="mt-4 w-full"></div>
-            </div>
-        </div>` : '';
+    const scanPane = wb.scanPane(Object.assign({}, view, {
+        supportsScan, copy: scanCopy, statusId: scanStatusId, startCall: scanStart,
+    }));
 
-    const manualPane = `
-        <div id="tenant-channel-pane-manual-${escapeHtml(iid)}" class="${mode === 'manual' ? '' : 'hidden'}">
-            <div class="space-y-4">
-                <div id="tenant-channel-fields" class="space-y-4">
-                    ${fields.map(f => `
-                        <div>
-                            <label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">
-                                ${escapeHtml(channelFieldLabel(f))}${f.required ? ' <span class="text-red-500">*</span>' : ''}</label>
-                            ${tenantChannelFieldInput(f, (draft.credentials || {})[f.key])}
-                        </div>`).join('')}
-                </div>
-                <p class="text-xs text-slate-400 dark:text-slate-500">${t('tenant_channel_secret_note')}</p>
-            </div>
-        </div>`;
+    const manualPane = wb.manualPane(Object.assign({}, view, {
+        fields, values: draft.credentials || {},
+    }));
 
     return `
         <div class="space-y-4" data-tenant-channel-form="${escapeHtml(iid)}">
@@ -14297,7 +15076,7 @@ function buildTenantChannelForm(inst) {
                 <select id="tenant-channel-type" onchange="changeTenantChannelType(this.value)"
                     class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-[#141414] text-sm">
                     <option value="">${t('channels_select_placeholder')}</option>
-                    ${tenantChannelTypes.map(s =>
+                    ${tenantChannelTypeChoices().map(s =>
                         `<option value="${escapeHtml(s.channel_type)}" ${s.channel_type === channelType ? 'selected' : ''}>
                             ${escapeHtml(s.label[currentLang] || s.label.en)}</option>`).join('')}
                 </select>
@@ -14373,69 +15152,34 @@ function renderTenantChannelCard(inst) {
 }
 
 function tenantChannelFieldInput(field, value) {
-    const val = value === undefined || value === null ? '' : String(value);
-    // Required-ness is the server's declaration; without it the console would
-    // keep a second copy of the minimum set and drift from what the server
-    // enforces on save.
-    const required = field.required ? ' data-tenant-channel-required="1"' : '';
-    if (field.secret) {
-        // Never pre-filled: the server has no plaintext to send back, and an
-        // edit must not render a stored secret. A scan is the one case where
-        // the console does hold the plaintext, and the operator cannot
-        // otherwise tell that it arrived — so say so, without putting the value
-        // in the DOM.
-        const held = val
-            ? `<p class="mt-1 text-xs text-emerald-600 dark:text-emerald-400"
-                   data-tenant-channel-held="${escapeHtml(field.key)}">${escapeHtml(t('tenant_channel_held_hint'))}</p>`
-            : '';
-        return `<input type="password" autocomplete="new-password"${required}
-                       data-tenant-channel-field="${escapeHtml(field.key)}"
-                       value="" placeholder="${escapeHtml(channelFieldLabel(field))}"
-                       class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10
-                              bg-white dark:bg-[#141414] text-sm text-slate-700 dark:text-slate-200">${held}`;
-    }
-    return `<input type="text"${required}
-                   data-tenant-channel-field="${escapeHtml(field.key)}"
-                   value="${escapeHtml(val)}" placeholder="${escapeHtml(channelFieldLabel(field))}"
-                   class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-white/10
-                          bg-white dark:bg-[#141414] text-sm text-slate-700 dark:text-slate-200">`;
+    // Required-ness, the secret/blank rule and the "held" hint all come from the
+    // shared module (task 3.1): one definition for both surfaces. The prefix is
+    // what keeps the emitted attributes this page's own (data-tenant-channel-*).
+    return window.ChannelWorkbench.fieldInput({
+        field, value, prefix: 'tenant-channel',
+        escape: escapeHtml, t, lang: currentLang,
+    });
 }
 
 // Required credential fields the operator has left empty, for a create. An edit
 // is deliberately exempt: a blank secret there means "keep the stored value",
 // which the server honours by merging over the existing bundle.
 function tenantChannelMissingRequiredFields(channelType, collected) {
-    const entry = (tenantChannelTypes || []).find(
-        item => item.channel_type === channelType);
+    const entry = tenantChannelType(channelType);
     if (!entry) return [];  // unknown type: the server decides, not the console
-    const provided = collected || {};
-    return (entry.credential_fields || []).filter(
-        field => field.required && !String(provided[field.key] || '').trim());
+    return window.ChannelWorkbench.missingRequiredFields(entry.credential_fields, collected);
 }
 
 function collectTenantChannelFields() {
-    const out = {};
-    document.querySelectorAll('[data-tenant-channel-field]').forEach(el => {
-        const key = el.getAttribute('data-tenant-channel-field');
-        const value = (el.value || '').trim();
-        if (value) out[key] = value;
-    });
-    return out;
+    // Scoped to this page's prefix, so a personal form on the same document can
+    // never contribute values to a public write.
+    return window.ChannelWorkbench.collectFields(document, 'tenant-channel');
 }
 
 // Build the create/update body. Only the fields the caller actually supplied
 // are sent, so editing a display name never blanks a stored secret.
 function tenantChannelPayload(form) {
-    const payload = {};
-    if (form.display_name !== undefined) payload.display_name = form.display_name;
-    if (form.agent_id !== undefined) payload.agent_id = form.agent_id;
-    if (form.credentials !== undefined) payload.credentials = form.credentials;
-    if (form.expected_version !== undefined) payload.expected_version = form.expected_version;
-    payload.recent_password = form.recent_password || '';
-    // Only sent when a scan minted one: the server treats it as standing in for
-    // the password, so an empty value must stay absent rather than be sent.
-    if (form.scan_ticket) payload.scan_ticket = form.scan_ticket;
-    return payload;
+    return window.ChannelWorkbench.payload(form);
 }
 
 function tenantChannelWriteErrorKey(status, code) {
@@ -14470,6 +15214,14 @@ function loadTenantChannelsView() {
             }
             tenantChannelTypes = data.channel_types || [];
             tenantChannelInstances = data.items || [];
+            // ``self`` means the server answered with the caller's own range
+            // (task 6.1). The page is the same one; what changes is that the
+            // form must offer only what this caller's create would accept — a
+            // type the member cannot configure, or an Agent that is not theirs,
+            // is refused on save, and offering it would be the "clickable but
+            // refused" shape this change removes.
+            tenantChannelSelfScope = data.scope === 'self';
+            tenantChannelTargets = data.targets || [];
             renderTenantChannels();
         })
         .catch(() => renderChannelsUnavailable(container, 0, 'network')));
@@ -14521,7 +15273,7 @@ function renderTenantChannels() {
                     <i class="fas fa-tower-broadcast text-blue-400 text-xl"></i>
                 </div>
                 <p class="text-slate-500 dark:text-slate-400 font-medium">${t('channels_empty')}</p>
-                <p class="text-sm text-slate-400 dark:text-slate-500 mt-1">${t('tenant_channel_empty_desc')}</p>
+                <p class="text-sm text-slate-400 dark:text-slate-500 mt-1">${t(tenantChannelSelfScope ? 'tenant_channel_empty_desc_self' : 'tenant_channel_empty_desc')}</p>
                 <button onclick="openTenantChannelForm()"
                     class="mt-4 px-4 py-2 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium cursor-pointer">
                     ${t('channels_add')}</button>
@@ -14588,16 +15340,15 @@ function openTenantChannelForm(instanceId) {
 function switchTenantChannelMode(iid, mode) {
     if (!tenantChannelDraft) return;
     tenantChannelDraft.mode = mode === 'scan' ? 'scan' : 'manual';
-    const scanPane = document.getElementById(`tenant-channel-pane-scan-${iid}`);
-    const manualPane = document.getElementById(`tenant-channel-pane-manual-${iid}`);
-    if (scanPane) scanPane.classList.toggle('hidden', mode !== 'scan');
-    if (manualPane) manualPane.classList.toggle('hidden', mode !== 'manual');
+    // Pane visibility is the shared module's job: it knows the prefixed pane ids
+    // it emitted, so a personal form's panes are never touched from here.
+    window.ChannelWorkbench.applyMode(document, 'tenant-channel', iid, tenantChannelDraft.mode);
     const card = document.querySelector(`[data-tenant-channel-row="${iid}"]`);
     if (!card) return;
     const activeClasses = 'bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 shadow-sm';
     const inactiveClasses = 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200';
     card.querySelectorAll('[data-tenant-channel-mode]').forEach(btn => {
-        const isActive = btn.getAttribute('data-tenant-channel-mode') === mode;
+        const isActive = btn.getAttribute('data-tenant-channel-mode') === tenantChannelDraft.mode;
         btn.className = `flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${isActive ? activeClasses : inactiveClasses}`;
     });
 }
@@ -14660,14 +15411,8 @@ function applyScanTicketToTenantForm(scanTicket) {
 // app id is the only part of a scan result a person can tell apart in a list,
 // so the name is the type plus its last four characters.
 function tenantChannelAutoName(channelType, credentials) {
-    const spec = tenantChannelType(channelType) || {};
-    const typeLabel = (spec.label && (spec.label[currentLang] || spec.label.en))
-        || channelType || '';
-    const firstKey = (spec.credential_fields || []).length
-        ? spec.credential_fields[0].key : '';
-    const source = String((credentials || {})[firstKey] || '');
-    const tail = source.slice(-4);
-    return tail ? `${typeLabel} · ${tail}` : typeLabel;
+    return window.ChannelWorkbench.autoName(
+        tenantChannelType(channelType), channelType, credentials, currentLang);
 }
 
 // A password must be collected in a real element. ``window.prompt`` is a native
@@ -14928,8 +15673,9 @@ function toggleTenantChannel(instanceId, active) {
 }
 
 function loadChannelsView() {
+    // The header follows the *relative* scope; the loader follows the surface.
+    syncChannelsHeader(channelPageScope());
     const scope = channelScope();
-    syncChannelsHeader(scope);
     if (scope === 'tenant') return loadTenantChannelsView();
     const container = document.getElementById('channels-content');
     if (!container) return Promise.resolve();
@@ -14976,33 +15722,14 @@ function channelRenderList() {
 
 // Shared channel-card shell for the platform (instance) page and the tenant
 // channel page. Both render the same kinds of channels, so the icon / status
-// dot / label / subtitle / action-slot markup lives in one place: two copies
-// would drift and the two pages would slowly stop looking like each other.
-// ``bodyHtml`` is whatever the caller needs below the header (Tabs, credential
-// form, QR flow), and ``actionsHtml`` replaces the right-hand slot (the
-// platform page passes its disconnect button, the tenant page its own actions).
+// dot / label / subtitle / action-slot markup lives in the shared module
+// (task 3.1): two copies would drift and the two pages would slowly stop looking
+// like each other. ``bodyHtml`` is whatever the caller needs below the header
+// (Tabs, credential form, QR flow), and ``actionsHtml`` replaces the right-hand
+// slot (the platform page passes its disconnect button, the tenant page its own
+// actions).
 function buildChannelCardShell(opts) {
-    const {
-        iid, label, icon = 'fa-tower-broadcast', color = 'primary',
-        statusDot = 'bg-primary-400', statusText = '', subtitle = '',
-        headerMb = true, actionsHtml = '', bodyHtml = '',
-    } = opts || {};
-    return `
-            <div class="flex items-center gap-4${headerMb ? ' mb-5' : ''}">
-                <div class="w-10 h-10 rounded-xl bg-${color}-50 dark:bg-${color}-900/20 flex items-center justify-center flex-shrink-0">
-                    <i class="fas ${icon} text-${color}-500 text-base"></i>
-                </div>
-                <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2">
-                        <span class="font-semibold text-slate-800 dark:text-slate-100">${escapeHtml(label)}</span>
-                        <span class="w-2 h-2 rounded-full ${statusDot}"></span>
-                        ${statusText}
-                    </div>
-                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-mono">${escapeHtml(subtitle || iid)}</p>
-                </div>
-                ${actionsHtml}
-            </div>
-            ${bodyHtml}`;
+    return window.ChannelWorkbench.cardShell(opts);
 }
 
 function renderActiveChannels() {
@@ -16548,7 +17275,7 @@ navigateTo = function(viewId) {
     _origNavigateTo(viewId);
 
     // Lazy-load view data
-    if (viewId === 'config') { loadConfigView(); switchConfigTab('basic'); }
+    if (viewId === 'config') { enterConfigView(); }
     else if (viewId === 'skills') { resetSkillViewer(); loadSkillsView(); }
     else if (viewId === 'memory') {
         memoryEditor.forget();
@@ -16556,7 +17283,8 @@ navigateTo = function(viewId) {
         document.getElementById('memory-panel-list').classList.remove('hidden');
         // Keep the last viewed Agent across refreshes, but drop it if that
         // Agent has since been deleted so we don't point at a ghost.
-        if (memoryAgentId && agentCatalog.length && !agentCatalog.some(a => a.id === memoryAgentId)) {
+        if (memoryAgentId && memoryAgentId !== MEMORY_PERSONAL
+                && agentCatalog.length && !agentCatalog.some(a => a.id === memoryAgentId)) {
             memoryAgentId = '';
             removeScopedPreference('cow_memory_agent');
         }
@@ -17626,10 +18354,45 @@ function _openNavArea(area, path) {
     // full-page-load path does.
     if (typeof loadSidebarRecentSessions === 'function') loadSidebarRecentSessions();
 }
+// Whether the 控制台 (admin area) entry is offered to this identity.
+//
+// Admission is the trusted formal-page projection, not an administrative
+// qualification: a member whose role reaches a business page opens the same
+// console shell as an administrator, and the pages inside it are filtered per
+// item by that same projection (change unify-console-by-data-scope, task 3.1).
+// 组织与权限 and the platform surface keep their own checks — the former through
+// the read gate on its page keys, the latter through the platform-scope shell
+// flag — so dropping the tenant_admin requirement does not widen either.
 function _qualifyAdminConsoleEntry(opts) {
-    // opts: { identityMode, isPlatformAdmin, isTenantAdmin }
-    if (!opts || opts.identityMode !== 'database') return true;
-    return !!(opts.isPlatformAdmin || opts.isTenantAdmin);
+    // opts: { identityMode, isPlatformAdmin, isTenantAdmin, mode, pages }
+    if (!opts) return true;
+    if (opts.identityMode !== 'database') return true; // legacy: no gate
+    if (opts.isPlatformAdmin || opts.isTenantAdmin) return true;
+    const pages = opts.pages;
+    // Unknown projection: don't guess / don't block, the same rule _viewNavDenied
+    // follows. The server still authorizes /admin and every API behind it.
+    if (!pages || typeof pages !== 'object') return true;
+    const allMode = opts.mode === 'all';
+    return Object.keys(pages).some(pid => {
+        // Only 管理区 (console shell) pages admit the entry. Workbench and
+        // personal pages are not reachable from the console, so they must not
+        // open a shell with nothing in it (console-information-architecture:
+        // 没有管理区可访问页面时隐藏该区域入口). `admin.` is the same marker the
+        // per-item gate below uses to tell shell pages from workbench pages.
+        if (pid.indexOf('admin.') !== 0) return false;
+        const info = pages[pid];
+        if (!info || typeof info !== 'object') return false;
+        // A withheld menu grant is not an admission.
+        if (info.menu_denied === true) return false;
+        // Neither is a capability the deployment withdrew: the per-item gate
+        // hides that entry, so counting it would open an empty console.
+        if (info.reason === 'capability_disabled') return false;
+        // Platform-scope pages are not business entry points: a member cannot
+        // reach the console through 平台运维.
+        if (String(info.scope || '') === 'platform') return false;
+        if (allMode) return true;
+        return info.available === true || info.read_allowed === true;
+    });
 }
 function _applyNavAreaAttribute() {
     const appEl = document.getElementById('app');
@@ -18096,12 +18859,11 @@ async function _fetchTenantAuthorization() {
     if (!tenantId) { _authContextPhase = 'unknown'; return null; }
     const seq = ++_authContextSeq;
     const epoch = _authEpoch;
-    // From here on the member's personal entries have an authoritative answer
-    // pending: the account panel reports "checking" rather than an empty list,
-    // and never offers an unconfirmed entry (change
-    // move-personal-menu-to-account, task 3.2).
+    // The tenant-scoped capability summary is in flight. The account panel owns no
+    // resource entry any more (task 3.3), so this only marks the projection as
+    // pending for the navigation gate below; it neither reports a personal
+    // "checking" list nor offers an unconfirmed entry.
     _authContextPhase = 'checking';
-    _renderAccountResources();
     const request = Promise.resolve().then(async () => {
         try {
             const resp = await fetch('/auth/context', {
@@ -18196,12 +18958,16 @@ function _applySidebarPermissions(self) {
         ? ctx.console_pages : null;
 
     const isDb = _identityMode() === 'database';
-    // Entry to /admin: platform admin OR current-tenant tenant_admin only.
-    // Do not use "any readable admin page" for this entry (stricter than area menus).
+    // Entry to /admin: any identity the trusted projection gives a business page,
+    // or a platform/tenant administrator. The gate is the formal page
+    // projection, never a client role array and never the tenant_admin
+    // qualification alone (change unify-console-by-data-scope, task 3.1).
     const showAdminEntry = _qualifyAdminConsoleEntry({
         identityMode: _identityMode(),
         isPlatformAdmin,
         isTenantAdmin,
+        mode,
+        pages,
     });
     const openAdminEl = document.getElementById('nav-open-admin');
     if (openAdminEl) openAdminEl.classList.toggle('hidden', !showAdminEntry);
@@ -18275,20 +19041,27 @@ function _applySidebarPermissions(self) {
         if (recentEl && typeof _sidebarRecentDenied === 'function') {
             recentEl.classList.toggle('hidden', _sidebarRecentDenied());
         }
+        // A group whose every page was withheld is hidden along with them. Now
+        // that the console entry is no longer admin-only an ordinary member
+        // reaches this area, and an empty 组织与权限 / 模型与接入 heading would
+        // advertise a surface the identity cannot read
+        // (console-information-architecture: 不展示空分组). Visibility is
+        // recomputed from the items on every pass, never accumulated, so
+        // withdrawing a grant hides the group again.
+        document.querySelectorAll('#sidebar-nav .menu-group.sidebar-hidden-admin-area')
+            .forEach(group => {
+                const items = group.querySelectorAll('.sidebar-item[data-view]');
+                let reachable = false;
+                items.forEach(item => {
+                    if (!item.classList.contains('hidden')) reachable = true;
+                });
+                group.classList.toggle('hidden', !reachable);
+            });
     }
 
     // Per-item: platform entries only for a platform admin.
     const platformEl = document.querySelector('.sidebar-item[data-view="platform"]');
     if (platformEl) platformEl.classList.toggle('hidden', !isPlatformAdmin);
-
-    // The five 「我的」 entries no longer live in #sidebar-nav: they are hosted by
-    // the account panel, which consumes the *same* authoritative verdict through
-    // _consolePageEntryState. Recomputing it here keeps one owner for the
-    // projection, so withdrawing a menu hides the account entry, re-granting it
-    // brings it back, and no client-side role list is introduced (change
-    // move-personal-menu-to-account, task 3.1).
-    _renderAccountResources();
-    _syncAccountPersonalCurrent();
 }
 
 function openAccountProfile() {
@@ -18738,12 +19511,35 @@ function _accountPrefStorageWarn() {
 
 // --- about ---------------------------------------------------------------
 
+// An openable external target: absolute http/https only. A relative value would
+// silently become a same-origin page, and a non-http scheme (javascript:, data:)
+// must never reach window.open.
+function _externalUrlOrEmpty(value) {
+    const raw = String(value == null ? '' : value).trim();
+    if (!raw) return '';
+    try {
+        const url = new URL(raw);
+        return (url.protocol === 'http:' || url.protocol === 'https:') ? url.href : '';
+    } catch (_) {
+        return '';
+    }
+}
+
+// Adopt the address the public brand snapshot carried. An unusable or absent
+// value keeps the current target rather than clearing it, so a failed refresh
+// cannot leave the entry without a destination.
+function _applyAccountAboutUrl(value) {
+    const url = _externalUrlOrEmpty(value);
+    if (url) _accountAboutUrl = url;
+}
+
 function openAccountAbout() {
     closeAccountMenu();
-    // Reuse the version link row: navigate to the release changelog, which is
-    // the existing "original update log" entry.
-    const version = document.getElementById('sidebar-version');
-    if (version && version.href) window.open(version.href, '_blank', 'noopener');
+    // The target is the product's own site, not the brand-version row: the two
+    // entries stayed linked only while they shared the one sidebar anchor. The
+    // address arrives with the public brand snapshot; until it does (or when it
+    // is unusable) the local development default is used.
+    if (_accountAboutUrl) window.open(_accountAboutUrl, '_blank', 'noopener');
     _setAccountPanel(null);
 }
 

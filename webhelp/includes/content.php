@@ -157,161 +157,70 @@ return [
 
     // 产品使用手册（manual.php）
     // 面向使用者的「应用操作手册」：讲怎么用，不讲怎么装（安装见 quickstart.php）。
-    // 形态是**视频为主的目录**：每个主题一句话定位 + 若干视频条目（标题、时长、内容要点、视频位）。
-    // 文字只做主题定位与视频内容概览，不写逐条界面步骤与字段口径——细节由视频承载或深链能力文档。
-    // 主题顺序即页面与侧栏顺序：先工作台的日常使用，再管理控制台的配置与治理。
-    // 结构只声明 id / 分组 / 图标 / 视频清单（id、时长、可选视频源）/ 引用的文档 slug 与站内页面；
+    // 形态是**截图与编号步骤为主**：每个主题一句话定位 + 若干步骤（目标、操作要点、真实界面截图）。
+    // 步骤文案只写界面上稳定的名称（页面名、控件名），不写像素位置——那类描述改版即失效。
+    // 主题集合只收成员（member 角色）看得到、做得了的操作；管理侧治理主题（成员与组织、
+    // 角色权限、租户与审计、租户级模型服务配置）不收，成员照做时会撞到「无权访问」。
+    // 主题顺序即页面与侧栏顺序：先对话与协作（在对话界面内完成），再我的资源（属于我、我来维护）。
+    // 结构只声明 id / 分组 / 图标 / 步骤（id + 截图路径）/ 引用的文档 slug 与站内页面；
     // 文案全部在 lang/*.php 的 manual.* 下按同一 id 组织（语言包中按 id 索引，与顺序无关）。
     //
-    // 补片方式：录制完成后在对应视频里加 'src' => 'assets/video/<文件名>.mp4'
-    // （可选 'poster' => 'assets/video/<文件名>.jpg'），页面即由占位切换为播放器，无需改模板。
-    // src 是相对路径，不是网址，因此仍满足「正文不出现网址」。
+    // 截图放在 assets/img/manual/，用相对路径声明（不是网址，因此仍满足「正文不出现网址」）。    // tools/check-manual.php 会断言每个步骤声明的截图真实存在，缺图即校验失败。
     'manual_parts' => [
-        ['id' => 'workbench'],
-        ['id' => 'console'],
-        ['id' => 'personal'],
+        ['id' => 'conversation'],
+        ['id' => 'resources'],
     ],
 
     'manual_topics' => [
-        // ---- 工作台：日常使用 ----
+        // ---- 对话与协作：都在对话界面内完成 ----
         [
-            'id' => 'start', 'part' => 'workbench', 'icon' => 'rocket',
-            'videos' => [
-                ['id' => 'login', 'duration' => '2:40'],
-                ['id' => 'navigate', 'duration' => '3:20'],
+            'id' => 'chat', 'part' => 'conversation', 'icon' => 'chat',
+            'steps' => [
+                ['id' => 'login', 'shot' => 'assets/img/manual/chat-1-login.jpg'],
+                ['id' => 'compose', 'shot' => 'assets/img/manual/chat-2-compose.png'],
+                ['id' => 'agent', 'shot' => 'assets/img/manual/chat-3-agent.png'],
+                ['id' => 'model', 'shot' => 'assets/img/manual/chat-4-model.png'],
+                ['id' => 'run', 'shot' => 'assets/img/manual/chat-5-answer.png'],
             ],
             'docs' => [], 'links' => [],
         ],
         [
-            'id' => 'chat', 'part' => 'workbench', 'icon' => 'chat',
-            'videos' => [
-                ['id' => 'new', 'duration' => '2:30'],
-                ['id' => 'compose', 'duration' => '3:10'],
-                ['id' => 'attach', 'duration' => '2:20'],
-                ['id' => 'session', 'duration' => '2:50'],
+            'id' => 'team', 'part' => 'conversation', 'icon' => 'multiagent',
+            'steps' => [
+                ['id' => 'entry', 'shot' => 'assets/img/manual/team-1-menu.png'],
+                ['id' => 'pick', 'shot' => 'assets/img/manual/team-2-picker.png'],
+                ['id' => 'route', 'shot' => 'assets/img/manual/team-3-collab.png'],
             ],
-            'docs' => [], 'links' => [],
+            'docs' => ['multiagent'], 'links' => [],
         ],
+
+        // ---- 我的资源：属于我、我来维护 ----
         [
-            'id' => 'agents', 'part' => 'workbench', 'icon' => 'users',
-            'videos' => [
-                ['id' => 'browse', 'duration' => '2:40'],
-            ],
-            'docs' => [], 'links' => [],
-        ],
-        [
-            'id' => 'knowledge', 'part' => 'workbench', 'icon' => 'knowledge',
-            'videos' => [
-                ['id' => 'overview', 'duration' => '2:30'],
-                ['id' => 'document', 'duration' => '3:30'],
-                ['id' => 'bind', 'duration' => '2:20'],
+            'id' => 'knowledge', 'part' => 'resources', 'icon' => 'knowledge',
+            'steps' => [
+                ['id' => 'open', 'shot' => 'assets/img/manual/knowledge-1-overview.png'],
+                ['id' => 'category', 'shot' => 'assets/img/manual/knowledge-2-category.png'],
+                ['id' => 'document', 'shot' => 'assets/img/manual/knowledge-3-doc.png'],
+                ['id' => 'result', 'shot' => 'assets/img/manual/knowledge-4-result.png'],
             ],
             'docs' => ['knowledge'], 'links' => [],
         ],
         [
-            'id' => 'todo', 'part' => 'workbench', 'icon' => 'list',
-            'videos' => [
-                ['id' => 'todo', 'duration' => '2:40'],
-                ['id' => 'task', 'duration' => '3:00'],
-            ],
-            'docs' => ['tools-scheduler'], 'links' => [],
-        ],
-
-        // ---- 管理控制台：配置与治理 ----
-        [
-            'id' => 'agents-admin', 'part' => 'console', 'icon' => 'users',
-            'videos' => [
-                ['id' => 'create', 'duration' => '3:20'],
-                ['id' => 'configure', 'duration' => '3:40'],
-                ['id' => 'capability', 'duration' => '3:10'],
+            'id' => 'agent', 'part' => 'resources', 'icon' => 'planning',
+            'steps' => [
+                ['id' => 'open', 'shot' => 'assets/img/manual/agent-1-overview.png'],
+                ['id' => 'create', 'shot' => 'assets/img/manual/agent-2-create.png'],
+                ['id' => 'files', 'shot' => 'assets/img/manual/agent-3-files.png'],
             ],
             'docs' => ['multiagent'], 'links' => [],
         ],
         [
-            'id' => 'memory', 'part' => 'console', 'icon' => 'memory',
-            'videos' => [
-                ['id' => 'view', 'duration' => '2:40'],
-                ['id' => 'index', 'duration' => '2:10'],
-            ],
-            'docs' => ['memory'], 'links' => [],
-        ],
-        [
-            'id' => 'models', 'part' => 'console', 'icon' => 'models',
-            'videos' => [
-                ['id' => 'basic', 'duration' => '3:00'],
-                ['id' => 'vendor', 'duration' => '2:40'],
-                ['id' => 'capability', 'duration' => '2:50'],
-            ],
-            'docs' => ['models'], 'links' => [],
-        ],
-        [
-            'id' => 'channels', 'part' => 'console', 'icon' => 'channels',
-            'videos' => [
-                ['id' => 'scope', 'duration' => '2:20'],
-                ['id' => 'credentials', 'duration' => '3:30'],
-                ['id' => 'scan', 'duration' => '3:20'],
+            'id' => 'channel', 'part' => 'resources', 'icon' => 'channels',
+            'steps' => [
+                ['id' => 'open', 'shot' => 'assets/img/manual/channel-1-overview.png'],
+                ['id' => 'add', 'shot' => 'assets/img/manual/channel-2-add.png'],
             ],
             'docs' => ['channels'], 'links' => [],
-        ],
-        [
-            'id' => 'roles', 'part' => 'console', 'icon' => 'rbac',
-            'videos' => [
-                ['id' => 'editor', 'duration' => '3:30'],
-                ['id' => 'permissions', 'duration' => '3:00'],
-                ['id' => 'assign', 'duration' => '2:40'],
-            ],
-            'docs' => [], 'links' => [],
-        ],
-        [
-            'id' => 'members', 'part' => 'console', 'icon' => 'org',
-            'videos' => [
-                ['id' => 'create', 'duration' => '2:50'],
-                ['id' => 'password', 'duration' => '2:30'],
-                ['id' => 'org', 'duration' => '2:40'],
-            ],
-            'docs' => [], 'links' => [],
-        ],
-        [
-            'id' => 'tenant', 'part' => 'console', 'icon' => 'tenant',
-            'videos' => [
-                ['id' => 'tenant', 'duration' => '3:10'],
-                ['id' => 'audit', 'duration' => '2:40'],
-            ],
-            'docs' => [], 'links' => [],
-        ],
-
-        // ---- 个人与参考 ----
-        [
-            'id' => 'account', 'part' => 'personal', 'icon' => 'key',
-            'videos' => [
-                ['id' => 'profile', 'duration' => '2:10'],
-                ['id' => 'password', 'duration' => '2:20'],
-                ['id' => 'tenant-switch', 'duration' => '1:50'],
-            ],
-            'docs' => [], 'links' => [],
-        ],
-        [
-            'id' => 'commands', 'part' => 'personal', 'icon' => 'terminal',
-            'videos' => [
-                ['id' => 'commands', 'duration' => '4:00'],
-            ],
-            'docs' => ['cli-skill'], 'links' => [],
-        ],
-        [
-            'id' => 'troubleshoot', 'part' => 'personal', 'icon' => 'x-circle',
-            'videos' => [
-                ['id' => 'issues', 'duration' => '4:30'],
-            ],
-            'docs' => [], 'links' => [],
-        ],
-        [
-            'id' => 'further', 'part' => 'personal', 'icon' => 'book',
-            'videos' => [
-                ['id' => 'docs', 'duration' => '2:00'],
-            ],
-            'docs' => [], 'links' => [
-                'architecture', 'quickstart', 'enterprise', 'features',
-            ],
         ],
     ],
 

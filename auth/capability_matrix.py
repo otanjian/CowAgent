@@ -200,18 +200,44 @@ SLICES: Tuple[Slice, ...] = (
         # surface over the delivered personal memory service — an explicit
         # ``personal`` | ``private_agent`` | ``shared`` target, the owner check
         # *before* the read, and a stable machine code (never a 200 carrying an
-        # error message) for every refusal. Both methods are reads; the writes
-        # stay where they already are (``POST /api/memory/personal``).
+        # error message) for every refusal. The member's *own* memory writes
+        # stay where they already are (``POST /api/memory/personal``); the
+        # Agent-domain edit/delete/clear verbs declared below are the second
+        # half of task 5.1.
         #
         # Acceptance: tests/test_memory_console_scope.py drives the real
         # ``build_web_app()`` application — the member's own personal list/read,
         # the personal-scope-only fallback refusal, a same-tenant other member
         # and a tenant administrator refused on a private Agent *with the
         # memory service replaced by a tripwire* (refuse-before-read), a
-        # foreign-tenant selection and a second membership refused, unknown
-        # scope/category/entry refused, the symlink cases, and the regression of
-        # the already-open ``/api/memory/personal*`` endpoints.
-        open={"list": ACCESS_READ, "content": ACCESS_READ},
+        # foreign-tenant selection and a second membership refused,
+        # unknown scope/category/entry refused, the symlink cases, and the
+        # regression of the already-open ``/api/memory/personal*`` endpoints.
+        # The write verbs are covered by ``tests/test_memory_console_write.py``
+        # (owner/admin allowed, other member and read-only categories refused
+        # with the mutation never reached, revision conflicts, and the
+        # tombstone masking that keeps a deleted entry out of retrieval).
+        open={"list": ACCESS_READ, "content": ACCESS_READ,
+              # Task 5.1 second half: the same page's edit/delete/clear. They
+              # are ``config``, not ``execute``, following this registry's own
+              # convention: an action that writes/adjusts a resource is config
+              # (channel creation, a skill edit), while ``execute`` is reserved
+              # for actions that *run* something (a tool import). Editing memory
+              # writes stored data; nothing about the page starts running — and
+              # marking it execute would tell the console an execution surface
+              # had opened on a page that only edits files.
+              #
+              # One access class for all three, because the *authorization* is
+              # not a permission id: it is the caller's range on the resolved
+              # target (owner for a private Agent, tenant-administration
+              # qualification for a shared one), re-checked on every request by
+              # ``memory_console.resolve_target`` before any mutation. No stored
+              # ``memory.write`` is introduced — ``knowledge.write`` was
+              # deliberately retired in favour of management qualification, and
+              # the same mistake here would make a role grant able to widen
+              # whose memory may be rewritten.
+              "save": ACCESS_CONFIG, "delete": ACCESS_CONFIG,
+              "clear": ACCESS_CONFIG},
         implemented=True,
         accepted=True,
         reason="",

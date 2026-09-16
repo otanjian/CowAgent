@@ -132,44 +132,61 @@ def register(tenant_code, admin_username):
             except Exception as e:
                 click.echo(click.style(f"  skipped {agent_id}: {e}", fg="yellow"))
 
-        # Close the loop: if the Agent this tenant resolves as its default is
-        # one of the private ones just registered, share it. Members can then
-        # chat without picking an Agent, while their sessions stay private to
-        # their owner (a different dimension from the Agent's binding).
-        shared = svc.ensure_shared_default_agents()
+        # Close the loop: the Agent this tenant resolves as its default is one of
+        # the private ones just registered, so share *that* one explicitly.
+        # Members can then chat without picking an Agent, while their sessions
+        # stay private to their owner (a different dimension from the Agent's
+        # binding). Sharing an Agent is a deliberate act, so this names its
+        # target and is audited as an explicit share — no correction path may
+        # publish a private Agent behind the operator's back (change
+        # ``unify-console-by-data-scope``: 租户默认任命不改变私有归属).
+        #
+        # The question is asked *with* the register-designated owner as subject.
+        # A subject-less caller has no private pool to fall back into by design
+        # (task 4.8: 绝不回落他人私有对象), so the bare form answers ``None``
+        # here — the tenant has no pointer yet and nothing shared to resolve to —
+        # and the share would never fire. Naming the subject asks exactly what a
+        # send from that member asks, so the Agent this command publishes is the
+        # one resolution would actually have served.
+        default_agent_id = (svc.tenant_default_agent_id(tid)
+                            or svc.resolved_default_agent_id(tid, admin_id))
+        binding = svc.get_agent_binding(default_agent_id) if default_agent_id else None
+        if binding and binding.get("private_owner_user_id") is not None:
+            svc.make_agent_tenant_shared(
+                agent_id=default_agent_id, actor_user_id=admin_id)
 
         click.echo(click.style(
             f"Registered {summary['bound']} agent(s) (already bound: "
             f"{summary['already_registered']}); backfilled owner on "
             f"{backfilled} conversation(s).", fg="green"))
-        if shared["updated"]:
+        if default_agent_id and binding and binding.get("private_owner_user_id") is not None:
             click.echo(click.style(
-                f"Shared {shared['updated']} tenant default Agent(s) so members "
+                f"Shared the tenant default Agent '{default_agent_id}' so members "
                 f"can chat without selecting one.", fg="green"))
     except IdentityServiceError as e:
         click.echo(click.style(f"Failed: {e}", fg="red"))
         raise click.Abort()
 
 
-@management.command("share-default-agents")
+@management.command("repair-tenant-defaults")
 @click.option("--tenant-code", default=None,
               help="Limit to one tenant. Defaults to every tenant.")
 @click.option("--dry-run", is_flag=True, default=False,
               help="Report what would change without writing.")
-def share_default_agents(tenant_code, dry_run):
-    """Correct existing private defaults so the tenant default is shared.
+def repair_tenant_defaults(tenant_code, dry_run):
+    """Release tenant defaults that could never have resolved, keeping owners.
 
-    Earlier writes made an Agent private to whoever created or registered it
-    (the initial admin, or the user who adopted it from the console). When such
-    an Agent is also the tenant's default, every other member is refused — which
-    is exactly the "conversation must pick an Agent" symptom. This is the
-    operational half of that fix; the code path no longer introduces private
-    defaults.
+    An Agent may not be both private and the tenant's default: the default is the
+    entry every member shares. The historical fix for that was to clear the
+    private owner, which silently published somebody's Agent — and the change
+    survived the default being moved away, so the Agent kept reading as a
+    tenant-level one (it showed up in every member's picker). This command only
+    releases the *pointer*; ownership is left exactly as it was, and sharing an
+    Agent stays an explicit console action.
 
-    Idempotent, audited, and scoped: only the Agent each tenant actually
-    resolves as its default is touched, so unrelated private Agents keep their
-    owner. Run from a stopped/maintenance window and back up ``identity.db``
-    first.
+    Idempotent and audited (``tenant.default_agent.repaired``), and the store
+    performs the same repair at open. Run it to preview or to re-check an
+    installation; back up ``identity.db`` first.
     """
     ensure_sys_path()
     from auth.service import IdentityService, IdentityServiceError
@@ -179,32 +196,131 @@ def share_default_agents(tenant_code, dry_run):
 
     try:
         if dry_run:
-            report = _preview_shared_default_corrections(svc, tenant_code)
+            report = _preview_illegal_tenant_defaults(svc, tenant_code)
             if not report:
-                click.echo("No private default Agent needs correcting.")
+                click.echo("No illegal tenant default needs releasing.")
                 return
             for tid, agent_id, owner in report:
                 click.echo(
                     f"  tenant {tid}: default Agent '{agent_id}' is private to "
-                    f"{owner} -> would become tenant-shared")
+                    f"{owner} -> would release the pointer (owner preserved)")
             click.echo(click.style(
-                f"{len(report)} Agent(s) would become tenant-shared. "
+                f"{len(report)} pointer(s) would be released. "
                 f"Re-run without --dry-run to apply.", fg="yellow"))
             return
 
-        summary = svc.ensure_shared_default_agents()
+        summary = svc.release_illegal_tenant_defaults()
+        for tid, agent_id, owner in summary["released"]:
+            click.echo(
+                f"  tenant {tid}: released default Agent '{agent_id}' "
+                f"(still private to {owner})")
         for tid, agent_id in sorted(summary["resolved"].items()):
             click.echo(f"  tenant {tid} resolves default Agent '{agent_id}'")
         click.echo(click.style(
-            f"Updated {summary['updated']} Agent(s) to tenant-shared. "
-            f"Safe to re-run (a second run reports 0).", fg="green"))
+            f"Released {summary['updated']} illegal tenant default pointer(s); "
+            f"no owner was changed. Safe to re-run (a second run reports 0).",
+            fg="green"))
     except IdentityServiceError as e:
         click.echo(click.style(f"Failed: {e}", fg="red"))
         raise click.Abort()
 
 
-def _preview_shared_default_corrections(svc, tenant_code=None):
-    """(tenant_id, agent_id, owner) for defaults that are still private."""
+management.add_command(
+    click.Command(
+        "share-default-agents",
+        callback=repair_tenant_defaults.callback,
+        params=repair_tenant_defaults.params,
+        help="Deprecated alias of repair-tenant-defaults. It no longer shares"
+             " anything: that repair released the pointer instead.",
+    )
+)
+
+
+@management.command("restore-private-owner")
+@click.option("--agent-id", required=True,
+              help="The tenant-shared Agent to narrow back to one owner.")
+@click.option("--owner-username", required=True,
+              help="The member who owns the Agent (an active member of its tenant).")
+@click.option("--actor-username", default=None,
+              help="The tenant admin performing the repair, recorded on the"
+                   " audit event. Omit for an operator run with direct database"
+                   " access; when given, the account must actually qualify.")
+@click.option("--reason", default=None,
+              help="Recorded on the audit event, e.g. the incident or date.")
+@click.option("--dry-run", is_flag=True, default=False,
+              help="Report what would change without writing.")
+def restore_private_owner(agent_id, owner_username, actor_username, reason, dry_run):
+    """Give a tenant-shared Agent its private owner back.
+
+    An Agent can be shared without anyone deciding to share it: the appointment
+    path used to clear ``private_owner_user_id`` to keep a private Agent usable
+    as the tenant default, and the Agent then read as a tenant-level one — it
+    appeared in every member's picker while its owner had never shared it.
+    ``repair-tenant-defaults`` releases the illegal *pointer*; this command
+    undoes the publication that already happened.
+
+    Deliberately narrow, because it takes the Agent back out of other members'
+    hands: only an unowned (shared) Agent is repaired, the owner must be an
+    active member of the Agent's tenant, and a tenant default stays shared (move
+    the default first). Idempotent and audited
+    (``agent.restore_private_owner``). Run ``--dry-run`` first, and back up
+    ``identity.db`` before applying.
+    """
+    ensure_sys_path()
+    from auth.service import IdentityService, IdentityServiceError
+
+    db_path = _identity_db_path()
+    svc = IdentityService(db_path)
+
+    owner = svc._find_user_by_username(owner_username)
+    if not owner or not owner.get("active"):
+        click.echo(click.style(
+            f"Account '{owner_username}' not found or disabled.", fg="red"))
+        raise click.Abort()
+    actor_id = None
+    if actor_username:
+        actor = svc._find_user_by_username(actor_username)
+        if not actor or not actor.get("active"):
+            click.echo(click.style(
+                f"Actor account '{actor_username}' not found or disabled.", fg="red"))
+            raise click.Abort()
+        actor_id = actor["id"]
+
+    try:
+        result = svc.restore_private_agent_owner(
+            agent_id=agent_id, owner_user_id=owner["id"],
+            actor_user_id=actor_id, reason=reason, dry_run=dry_run)
+    except IdentityServiceError as e:
+        # A refusal is the answer, not a crash: name the reason and the state
+        # that has to move first.
+        click.echo(click.style(f"Refused: {e}", fg="red"))
+        raise click.Abort()
+
+    if not result["changed"]:
+        click.echo(click.style(
+            f"Nothing to do: '{agent_id}' is already private to "
+            f"{owner_username}.", fg="green"))
+        return
+    if dry_run:
+        click.echo(
+            f"  tenant {result['tenant_id']}: '{agent_id}' is shared "
+            f"-> would become private to {owner_username} ({owner['id']})")
+        click.echo(click.style(
+            "1 repair would be applied. Re-run without --dry-run to apply.",
+            fg="yellow"))
+        return
+    click.echo(click.style(
+        f"Restored private ownership: '{agent_id}' now belongs to "
+        f"{owner_username} ({owner['id']}). Other members no longer see it.",
+        fg="green"))
+
+
+def _preview_illegal_tenant_defaults(svc, tenant_code=None):
+    """(tenant_id, agent_id, owner) for tenant defaults that are still private.
+
+    Only a *stored* pointer can be illegal: a private Agent that merely resolves
+    as the fallback is not a default, so there is nothing to release.
+    """
     rows = []
     tenants = svc.list_tenants()
     if tenant_code:
@@ -215,8 +331,7 @@ def _preview_shared_default_corrections(svc, tenant_code=None):
             raise click.Abort()
     for tenant in tenants:
         tenant_id = tenant["id"]
-        target = (svc.tenant_default_agent_id(tenant_id)
-                  or svc.resolved_default_agent_id(tenant_id))
+        target = svc.tenant_default_agent_id(tenant_id)
         if not target:
             continue
         binding = svc.get_agent_binding(target)

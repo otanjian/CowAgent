@@ -25,10 +25,17 @@ const CHAT_HTML = path.join(ROOT, 'channel/web/chat.html');
 const CONSOLE = path.join(ROOT, 'channel/web/static/js/console.js');
 const PERSONAL = path.join(ROOT, 'channel/web/static/js/personal-console.js');
 
-const VIEW_IDS = ['personal-agents', 'personal-channels', 'personal-memory',
-    'personal-tools', 'personal-skills'];
-const PAGE_IDS = ['personal.agents', 'personal.channels', 'personal.memory',
-    'personal.tools', 'personal.skills'];
+const VIEW_IDS = ['personal-agents', 'personal-channels', 'personal-memory'];
+const PAGE_IDS = ['personal.agents', 'personal.channels', 'personal.memory'];
+//: Task 5.5 retired these two views together with the personal resource surface
+//: they served: a member's parameters for a tool or a skill are edited in that
+//: resource's detail component on the formal 工具与技能 page. Their *addresses*
+//: still forward (``LEGACY_PERSONAL_FORWARD``), so the shell must still host no
+//: entry for them and console.js must still sign their page keys — while nothing
+//: may register them as views again.
+const REMOVED_VIEW_IDS = ['personal-tools', 'personal-skills'];
+const ALL_VIEW_IDS = VIEW_IDS.concat(REMOVED_VIEW_IDS);
+const ALL_PAGE_IDS = PAGE_IDS.concat(['personal.tools', 'personal.skills']);
 
 function loadPersonalConsole() {
     const registrations = [];
@@ -88,60 +95,68 @@ test('the view ids map one-to-one to the signed personal pages', () => {
     assert.deepEqual(pages, PAGE_IDS.slice().sort());
 });
 
+test('the retired resource views are registered by nobody', () => {
+    // Task 5.5. The view ids may only survive as *addresses* in the shell's
+    // forwarding table (`console.js`), never as a registration here: a view that
+    // came back would bring its own list and its own write path with it, which is
+    // exactly the second surface the change removes.
+    const ids = registrations.map(spec => spec.id);
+    for (const id of REMOVED_VIEW_IDS) {
+        assert.ok(!ids.includes(id), `${id} must not be registered`);
+        assert.equal(api.personalView(id), null, `${id} resolves to no view`);
+    }
+});
+
 test('each view reads and writes the personal surface, not a public one', () => {
-    // A member page may only reach the personal collection endpoints, the
-    // self-scoped Agents read/write, or the personal memory surface. Anything
-    // else would be a public maintenance path reachable from a member page.
+    // A member page may only reach the personal collection endpoints or the
+    // self-scoped Agents read/write. Anything else would be a public maintenance
+    // path reachable from a member page.
     const allowedWrites = ['/api/agents', '/api/personal/channels',
-        '/api/personal/resources', '/api/memory/personal'];
+        '/api/memory/personal'];
     for (const view of api.PERSONAL_VIEWS) {
         assert.ok(view.endpoint.startsWith('/api/'),
             `${view.id} endpoint: ${view.endpoint}`);
         assert.ok(allowedWrites.includes(view.write),
             `${view.id} write: ${view.write}`);
+        assert.notEqual(view.write, '/api/personal/resources',
+            `${view.id} must not write the retired resource surface`);
     }
     const channels = api.personalView('personal-channels');
     assert.equal(channels.itemWrite, '/api/personal/channels/');
-    const tools = api.personalView('personal-tools');
-    assert.equal(tools.resourceKind, 'tool');
-    const skills = api.personalView('personal-skills');
-    assert.equal(skills.resourceKind, 'skill');
+    // The retired views carried a `resourceKind`; nothing may declare one now,
+    // because the personal-resource request builder is gone with them.
+    for (const view of api.PERSONAL_VIEWS) {
+        assert.equal(view.resourceKind, undefined, `${view.id} resourceKind`);
+    }
 });
 
 // ---- sidebar / shell wiring ------------------------------------------------
 
-test('the five personal entries live in the account menu, in their original order', () => {
-    // change move-personal-menu-to-account: the entries left the main navigation
-    // and are hosted by the account panel (「我的资源」), shared by both areas.
+test('the five personal entries are gone from the shell, with no new host', () => {
+    // change unify-console-by-data-scope, task 3.3: the entries had moved from the
+    // main navigation into the account panel (move-personal-menu-to-account) and
+    // are now removed from the panel as well. Business resources are reached
+    // through the console, so the shell must host no entry for them anywhere — a
+    // re-hosted entry would reinstate the second product surface the user rejected.
     const html = fs.readFileSync(CHAT_HTML, 'utf8');
-    const groupAt = html.indexOf('id="account-menu-resources"');
-    assert.ok(groupAt > 0, 'the account panel carries the 「我的资源」 group');
-    const groupEnd = html.indexOf('id="account-menu-settings"', groupAt);
-    assert.ok(groupEnd > groupAt, 'the resources group closes before the account actions');
-    const group = html.slice(groupAt, groupEnd);
-    assert.ok(group.includes('data-i18n="account_menu_resources"'), 'the group label exists');
-    let cursor = -1;
-    for (const id of VIEW_IDS) {
-        const at = group.indexOf(`data-view="${id}"`);
-        assert.ok(at > cursor, `account entry ${id} in its original order`);
-        cursor = at;
-    }
-    // Exactly one host: no duplicate entry of the same page anywhere in the shell.
-    for (const id of VIEW_IDS) {
+    assert.ok(!html.includes('id="account-menu-resources"'),
+        'the account panel no longer carries a 「我的资源」 group');
+    assert.ok(!html.includes('data-i18n="account_menu_resources"'), 'no group label survives');
+    for (const id of ALL_VIEW_IDS) {
         const occurrences = html.split(`data-view="${id}"`).length - 1;
-        assert.equal(occurrences, 1, `${id} has exactly one host`);
+        assert.equal(occurrences, 0, `${id} has no host in the shell`);
     }
-    // The old main-navigation personal group is gone, so no stale group label or
-    // second current-item marker can survive in #sidebar-nav.
+    // The old main-navigation personal group stays gone too, so no stale group
+    // label or second current-item marker can survive in #sidebar-nav.
     const nav = html.slice(html.indexOf('id="sidebar-nav"'), html.indexOf('data-nav-shell="admin"'));
-    for (const id of VIEW_IDS) {
+    for (const id of ALL_VIEW_IDS) {
         assert.ok(!nav.includes(`data-view="${id}"`), `${id} is not in #sidebar-nav`);
     }
     assert.ok(!nav.includes('data-i18n="nav_group_personal"'),
-        'the workbench sidebar no longer carries the 「我的」 group label');
+        'the workbench sidebar carries no 「我的」 group label');
 });
 
-test('the account trigger names the account and its personal-resource hint', () => {
+test('the account trigger names the account and its account-settings hint', () => {
     const html = fs.readFileSync(CHAT_HTML, 'utf8');
     const triggerAt = html.indexOf('id="sidebar-account-toggle"');
     const trigger = html.slice(triggerAt, html.indexOf('</button>', triggerAt));
@@ -149,9 +164,11 @@ test('the account trigger names the account and its personal-resource hint', () 
     assert.ok(trigger.includes('id="sidebar-account-name"'), 'the account name stays');
     assert.ok(trigger.includes('sidebar-account-chevron'), 'the expand chevron stays');
     assert.ok(trigger.includes('aria-controls="sidebar-account-menu"'), 'the panel is named');
-    assert.ok(trigger.includes('aria-describedby="sidebar-account-region"'),
-        'the personal-area region state is described');
-    assert.ok(trigger.includes('id="sidebar-account-region"'), 'the region state node exists');
+    // The personal-area region state described the five entries, so it left with
+    // them; the trigger now names account settings only.
+    assert.ok(!trigger.includes('sidebar-account-region'), 'no personal-area description');
+    assert.ok(!trigger.includes('aria-describedby'),
+        'nothing personal is left to describe on the trigger');
     const source = fs.readFileSync(CONSOLE, 'utf8');
     assert.ok(source.includes("t('account_menu_trigger_hint')"),
         'the trigger hint comes from the shared dictionary');
@@ -163,7 +180,7 @@ test('the personal entries are not marked as admin-only', () => {
     // ``sidebar-hidden-admin-area`` is toggled by admin qualification; a member
     // page must not carry it or the entry would disappear for members.
     const html = fs.readFileSync(CHAT_HTML, 'utf8');
-    for (const id of VIEW_IDS) {
+    for (const id of ALL_VIEW_IDS) {
         const from = html.indexOf(`data-view="${id}"`);
         const lineStart = html.lastIndexOf('<a ', from);
         const lineEnd = html.indexOf('>', from);
@@ -175,10 +192,10 @@ test('the personal entries are not marked as admin-only', () => {
 
 test('console.js signs every personal view id with its console page key', () => {
     const source = fs.readFileSync(CONSOLE, 'utf8');
-    for (let i = 0; i < VIEW_IDS.length; i += 1) {
+    for (let i = 0; i < ALL_VIEW_IDS.length; i += 1) {
         const pattern = new RegExp(
-            `'${VIEW_IDS[i]}':\\s*\\{[^}]*console:\\s*'${PAGE_IDS[i]}'`);
-        assert.ok(pattern.test(source), `${VIEW_IDS[i]} -> ${PAGE_IDS[i]}`);
+            `'${ALL_VIEW_IDS[i]}':\\s*\\{[^}]*console:\\s*'${ALL_PAGE_IDS[i]}'`);
+        assert.ok(pattern.test(source), `${ALL_VIEW_IDS[i]} -> ${ALL_PAGE_IDS[i]}`);
     }
 });
 
@@ -439,21 +456,17 @@ test('memory writes carry the revision the server compares', () => {
         { action: 'delete', id: 'MEMORY.md', revision: 'rev-1' });
 });
 
-test('a personal resource write never names a public field', () => {
-    const request = api.personalActionRequest('personal-tools', 'configure',
-        { resource_id: 'builtin:echo' }, { params: { timeout: 5 }, secret: 'tok' });
-    assert.equal(request.path, '/api/personal/resources');
-    assert.deepEqual(Object.keys(request.body).sort(),
-        ['action', 'params', 'resource_id', 'resource_kind', 'secret']);
-    assert.equal(request.body.resource_kind, 'tool');
-    assert.equal(request.body.action, 'save');
-});
-
-test('clearing a personal resource is scoped to the kind and id', () => {
-    const request = api.personalActionRequest('personal-skills', 'clear',
-        { resource_id: 'custom:writer' }, {});
-    assert.deepEqual(request.body,
-        { action: 'clear', resource_kind: 'skill', resource_id: 'custom:writer' });
+test('a personal resource write no longer exists on the retired module', () => {
+    // Task 5.5: the personal-parameter verbs moved to the formal page's own
+    // endpoints, so the retired module must not be able to build one. The
+    // observable effect: no request comes back, whatever verb is asked for.
+    for (const id of REMOVED_VIEW_IDS) {
+        for (const verb of ['configure', 'clear']) {
+            assert.equal(api.personalActionRequest(id, verb,
+                { resource_id: 'builtin:echo' }, { params: {}, secret: 'tok' }), null,
+                `${id} ${verb} must build no request`);
+        }
+    }
 });
 
 test('an unimplemented verb yields no request instead of a guess', () => {
@@ -504,11 +517,15 @@ test('the credential step is built from the selected type declaration', () => {
     assert.deepEqual(api.personalChannelCredentialFields(null, 'zh'), []);
 });
 
-test('the memory form edits content, the resource form edits params', () => {
+test('the memory form edits content, and no resource form survives', () => {
     assert.deepEqual(api.personalFormFields('personal-memory', 'edit', { id: 'M.md' }, {})
         .map(f => f.name), ['content']);
+    // Task 5.5: the retired views have no form either — a form would be a way to
+    // collect parameters the request builder above can no longer send.
     assert.deepEqual(api.personalFormFields('personal-tools', 'configure',
-        { resource_id: 'r' }, {}).map(f => f.name), ['params', 'secret']);
+        { resource_id: 'r' }, {}), []);
+    assert.deepEqual(api.personalFormFields('personal-skills', 'configure',
+        { resource_id: 'r' }, {}), []);
 });
 
 test('credential fields come from the server declaration', () => {

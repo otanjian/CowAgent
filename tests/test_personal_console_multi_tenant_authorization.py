@@ -99,11 +99,22 @@ class _TwoTenantFixture(_AcceptanceFixture):
             headers=self._headers_for(token, tenant_id, json_body=body is not None),
             data=json.dumps(body) if body is not None else None)
 
-    def _personal_instance(self, user_id, tenant_id, display_name, app_id):
+    def _personal_instance(self, user_id, tenant_id, display_name, app_id, *,
+                           agent_id):
+        """Create one member's personal instance, over a target they own.
+
+        ``agent_id`` is a parameter rather than something derived from the
+        member, because the target is now part of what a personal instance *is*:
+        the fixture has to bind that Agent as the member's own private one first,
+        and the id has to be in :data:`ROSTER_AGENTS` so the registry resolves it
+        as enabled too.
+        """
+        self._private_agent(user_id, tenant_id, agent_id)
         with patch.dict(os.environ, {"COW_CREDENTIAL_MASTER_KEY": "multi-tenant-key"}):
             self.service.create_personal_channel_instance(
                 actor_user_id=user_id, tenant_id=tenant_id,
                 channel_type="feishu", display_name=display_name,
+                agent_id=agent_id,
                 credentials={"feishu_app_id": app_id,
                              "feishu_app_secret": "fixture-secret",
                              "feishu_token": "fixture-token",
@@ -129,7 +140,8 @@ class CrossTenantPersonalChannelTests(_TwoTenantFixture):
         self.carol_id, self.carol_token = self._plain_member(
             self.beta_id, self.beta_admin_id, "carol")
         self.instance = self._personal_instance(
-            self.alice_id, self.tenant_id, "alice's", "cli_mt_alice")
+            self.alice_id, self.tenant_id, "alice's", "cli_mt_alice",
+            agent_id="target-alice")
 
     def test_the_other_tenants_member_sees_nothing(self):
         listing = self.service.list_personal_channel_instances(
@@ -378,18 +390,43 @@ class PublicChannelSurfaceRegressionTests(_TwoTenantFixture):
         self.carol_id, self.carol_token = self._plain_member(
             self.beta_id, self.beta_admin_id, "carol")
 
-    def test_the_member_still_cannot_reach_the_tenant_channel_api(self):
-        """Both the platform catalogue (``/api/channels``) and the tenant
-        catalogue (``/api/tenant/channels``) keep their administrator gate."""
-        for path in ("/api/channels", "/api/tenant/channels"):
-            for method, body in (("GET", None),
-                                 ("POST", {"channel_type": "feishu",
-                                           "display_name": "mine"})):
-                response = self._request_in(path, self.alice_token,
-                                            self.tenant_id, method=method,
-                                            body=body)
-                self.assertNotIn(response.status, ("200", "200 OK"),
-                                 (path, method))
+    def test_the_member_reaches_the_shared_api_scoped_to_their_own_range(self):
+        """One interface serves both roles; the range is what differs (task 6.1).
+
+        The platform catalogue (``/api/channels``) is still platform-domain and
+        keeps its administrator gate. The tenant catalogue is no longer gated by
+        role: a member reaches it and is answered with **their own** connections,
+        which is the same surface an administrator uses. What must not change is
+        that they cannot read or write anything outside that range — asserted by
+        the *shape* of the answer here, and by the write refusals below.
+        """
+        for method, body in (("GET", None),
+                             ("POST", {"channel_type": "feishu",
+                                       "display_name": "mine"})):
+            response = self._request_in("/api/channels", self.alice_token,
+                                        self.tenant_id, method=method,
+                                        body=body)
+            self.assertNotIn(response.status, ("200", "200 OK"),
+                             ("/api/channels", method))
+
+        listed = self._body(self._request_in("/api/tenant/channels",
+                                             self.alice_token, self.tenant_id))
+        self.assertEqual(listed.get("status"), "success")
+        self.assertEqual(listed.get("scope"), "self")
+        # Alice owns one personal instance (see ``_personal_instance`` callers in
+        # this class); what matters is that only rows she owns are named, so a
+        # colleague's row never appears.
+        self.assertNotIn("cli_mt_catalogue", json.dumps(listed, ensure_ascii=False))
+
+        # And she cannot create on the tenant's public surface: naming a target
+        # she does not own is refused, and her connection would be her own anyway.
+        created = self._request_in("/api/tenant/channels", self.alice_token,
+                                   self.tenant_id, method="POST",
+                                   body={"channel_type": "feishu",
+                                         "display_name": "shared attempt",
+                                         "agent_id": "target-alice"})
+        self.assertNotIn(created.status, ("200", "200 OK"),
+                         "a member must not create a tenant-wide connection")
 
     def test_each_tenant_admin_sees_only_their_own_tenant_channels(self):
         body = self._body(self._request_in("/api/tenant/channels",
@@ -407,14 +444,16 @@ class PublicChannelSurfaceRegressionTests(_TwoTenantFixture):
 
         # And acme's own personal rows are not in beta's tenant catalogue.
         instance = self._personal_instance(
-            self.alice_id, self.tenant_id, "alice's", "cli_mt_catalogue")
+            self.alice_id, self.tenant_id, "alice's", "cli_mt_catalogue",
+            agent_id="target-alice")
         self.assertNotIn(instance["id"], {row["id"] for row in beta_rows})
 
     def test_a_personal_instance_does_not_appear_in_the_tenant_catalogue(self):
         """Personal rows and tenant rows stay separate catalogues: the member's
         object must not leak into the operator's list of their own tenant."""
         instance = self._personal_instance(
-            self.alice_id, self.tenant_id, "alice's", "cli_mt_catalogue_b")
+            self.alice_id, self.tenant_id, "alice's", "cli_mt_catalogue_b",
+            agent_id="target-alice")
         rows = self.service.list_tenant_channel_instances(
             actor_user_id=self.root_user_id, tenant_id=self.tenant_id)["items"]
         self.assertNotIn(instance["id"], {row["id"] for row in rows})

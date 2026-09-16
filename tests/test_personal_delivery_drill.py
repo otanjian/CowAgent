@@ -48,6 +48,11 @@ MASTER_KEY = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
 class _DrillFixture(_TwoTenantFixture):
     """Two tenants, a member-owned instance, and the startup loader wired up."""
 
+    #: The private Agent tenant A's member drills with. It is in the roster the
+    #: acceptance fixture installs, which is the registry half of the personal
+    #: target predicate; the binding half is made where the instance is created.
+    ALICE_TARGET = "target-alice"
+
     def setUp(self):
         super().setUp()
         self.alice_id, self.alice_token = self._plain_member(
@@ -70,9 +75,15 @@ class _DrillFixture(_TwoTenantFixture):
 
     def _personal_instance(self, owner_id=None, app_id="cli_drill"):
         owner = owner_id or self.alice_id
+        # A personal instance has to name a target its own owner holds privately
+        # and that the roster has enabled; the parent fixture's helper binds the
+        # identity half, and it is idempotent so the retries below do not consume
+        # a second private-Agent slot.
+        agent_id = self._private_agent(owner, self.tenant_id, self.ALICE_TARGET)
         return self.service.create_personal_channel_instance(
             actor_user_id=owner, tenant_id=self.tenant_id,
             channel_type="feishu", display_name="drill",
+            agent_id=agent_id,
             credentials={"feishu_app_id": app_id,
                          "feishu_app_secret": "drill-secret",
                          "feishu_token": "drill-token",
@@ -254,8 +265,15 @@ class SwitchWithdrawalDrill(_DrillFixture):
             self.alice_token, self.tenant_id)["console_pages"]
         for pid in ("personal.agents", "personal.channels", "personal.memory",
                     "personal.tools", "personal.skills"):
-            self.assertEqual(pages[pid]["reason"], "capability_disabled", pid)
-            self.assertFalse(pages[pid]["read_allowed"], pid)
+            self.assertNotIn(pid, pages, pid)
+        # The withdrawal is observable where the member's surface now lives: the
+        # carrier page keeps its switch block and stops offering the create its
+        # write path refuses (task 8.8 — the retired ids are not issued at all,
+        # so "withdrawn" can no longer be read off them).
+        self.assertFalse(
+            pages["admin.channels"]["switches"]["member_personal_console"])
+        self.assertFalse(pages["admin.channels"]["actions"]["create"])
+        self.assertTrue(pages["admin.channels"]["available"])
 
         # The catalogue is still stated (it is not a private object), so an
         # operator can see what the deployment would offer if re-enabled.

@@ -283,10 +283,23 @@
 #   Policy `tenant` + permission `memory.read`: the content belongs to one
 #   tenant, so the gate resolves the session and the tenant selection; which
 #   object the caller may read (their own memory, or a private Agent they own)
-#   stays a per-object decision inside the handler. The writes keep their
-#   existing `/api/memory/personal*` rows above.
+#   stays a per-object decision inside the handler.
+#
+# 2026-09-15  change: unify-console-by-data-scope (task 5.1, second half)
+#   The same page's edit/delete/clear for the *Agent* domain leave `closed`.
+#   One route per verb so the gate can close one verb without closing the
+#   others. Access class is `config` (they write stored data) rather than
+#   `execute`, which this registry reserves for actions that run something.
+#   Authorization is not a permission id: the handler resolves the target and
+#   applies the caller's range (owner for a private Agent, tenant-administration
+#   qualification for a shared one) before any mutation. The member's own memory
+#   keeps its separate `/api/memory/personal*` write rows below/above — these
+#   verbs refuse `scope=personal` so there is exactly one write path per domain.
 /api/memory	GET	tenant	memory.read
 /api/memory/content	GET	tenant	memory.read
+/api/memory/save	POST	tenant	memory.read
+/api/memory/delete	POST	tenant	memory.read
+/api/memory/clear	POST	tenant	memory.read
 
 # 2026-09-15  change: complete-database-capability-parity (tasks 6.5-6.6 / 9.2)
 #   Project browsing leaves `closed` and the controlled local import becomes a
@@ -321,3 +334,59 @@
 #   never part of a route-level grant.
 /api/weixin/qrlogin	GET	tenant	
 /api/weixin/qrlogin	POST	tenant	
+# 2026-09-16  change: unify-console-by-data-scope (task 5.5, first half)
+#   The standalone personal resource surface is retired. A member's own
+#   parameters for a granted tool or skill are edited in that resource's detail
+#   component on the formal 工具与技能 page, so the write arrives on the page's
+#   own endpoint -- one surface, one authority, and no second path that could
+#   drift from the first. The owner-scoped storage/service
+#   (`save_personal_resource_config` / `clear_personal_resource_config`) is
+#   unchanged: it is what the shared endpoint now writes through.
+#   Both rows are REMOVED (the pattern is no longer registered, so the gate
+#   answers 404 like any other unknown URL) rather than moved, because the
+#   *authority* is what the two rows below pin: the personal verbs keep their
+#   place on the endpoints that already carry the read.
+/api/personal/resources	GET	REMOVED	-
+/api/personal/resources	POST	REMOVED	-
+
+# 2026-09-16  change: unify-console-by-data-scope (task 5.5, second half)
+#   `/api/tools` and `/api/skills` gain the personal-parameter verbs on POST.
+#   Policy `tenant`: the gate resolves the session *and* the tenant selection,
+#   while `actor_user_id` is the session's and the resource's grant stays a
+#   per-object decision in the handler -- there is no `user_id` parameter to
+#   widen, so a route-level permission would be a second, weaker authority.
+#   The public definition/enable verbs on the same methods keep their own
+#   management qualification inside the handler (task 5.4), so a member holding
+#   only `tool.execute` / `skill.use` reaches their own parameters and nothing
+#   else.
+/api/tools	POST	tenant	-
+/api/skills	POST	tenant	-
+
+# 2026-09-16  change: unify-console-by-data-scope (task 8.8, recompute)
+#   Recomputed from the registry rather than hand-patched, because the file had
+#   drifted from `route_registry.ROUTE_POLICY` since task 5.5. Current state:
+#   128 patterns / 166 method entries; every non-REMOVED baseline row matches the
+#   derived policy and permission (0 mismatches), and the three REMOVED rows are
+#   the two from task 5.5 above plus the historical `GET /api/sessions/(.*)`.
+#
+#   Task 8.8 retired the *component* axis -- the `personal-console.js` module,
+#   its i18n namespace and the issuance of the five `personal.*` page ids. That
+#   has no route footprint: the four thin personal endpoints below stay
+#   registered, unchanged, because they are the spec-sanctioned forwarding to
+#   the unified services (design.md D-memory: "`/api/memory/personal*` 只作参数
+#   转换和正式服务委托"; the memory/channel rows keep the services' own
+#   owner/version/generation rules). Their only in-repo caller was the retired
+#   module, so the rows are now pinned by `tests/test_route_registry.py`
+#   (`PersonalConsoleRouteTests`) rather than by a live frontend call.
+#
+#   The recompute also found three registry entries with no baseline row, from
+#   the archived change `complete-desktop-and-scan-real-acceptance`
+#   (`fork:desktop-auth`, `channel/web/auth_handlers.py`). They are recorded
+#   here so the frozen file covers the registry; `public` is the registry's own
+#   policy: the consent page and the code exchange must work before a tenant
+#   selection exists, and the authorization itself is the one-time code bound to
+#   the initiating Web AuthSession, PKCE S256 verifier and exact origin.
+/auth/desktop/authorize	GET	public	-
+/auth/desktop/authorize	POST	public	-
+/auth/desktop/token	POST	public	-
+

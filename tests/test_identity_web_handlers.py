@@ -142,6 +142,60 @@ class DatabaseAuthHandlerTests(unittest.TestCase):
         data = self._json(resp)
         self.assertEqual(data["status"], "success")
 
+    # --- 组织与权限 is a qualification surface, not a permission one --------
+
+    def _member_token_with_org_read(self, username="orgreader"):
+        """A *plain member* whose role carries both 组织读取 and 成员读取.
+
+        The read permissions are deliberately held: the refusal under test must
+        come from the missing management qualification, not from a missing
+        functional permission, or it would pass for the wrong reason.
+        """
+        self.svc.create_role(
+            actor_user_id=self.root["id"], tenant_id=self.tid,
+            code="org_read_only", name="组织只读",
+            permissions=["tenant.members.read", "tenant.org.read"])
+        self.svc.create_member(
+            actor_user_id=self.root["id"], tenant_id=self.tid, operation="create-new",
+            username=username, display_name="Org Reader",
+            temporary_password="Str0ngPassTmp", roles=["org_read_only"])
+        with self.svc._tx() as con:
+            con.execute(
+                "UPDATE users SET must_change_password=0 WHERE username=?", (username,))
+            con.commit()
+        return self.svc.login(username, "Str0ngPassTmp").token
+
+    def test_holding_the_read_permission_does_not_open_the_member_surface(self):
+        """rbac-authorization: 组织读取权限不能打开组织与权限管理.
+
+        A member holding ``tenant.members.read`` / ``tenant.org.read`` is still
+        refused the management interfaces; the console page projection refuses
+        the same three pages (see ``_console_pages_projection``), so the entry
+        and the data behind it agree.
+        """
+        token = self._member_token_with_org_read()
+        for path in ("/api/tenant/members", "/api/tenant/roles",
+                     "/api/tenant/departments"):
+            resp = self._request(path, method="GET", token=token, tenant=self.tid)
+            status = str(getattr(resp, "status", ""))
+            self.assertTrue(status.startswith("403"), (path, status))
+
+    def test_the_tenant_admin_keeps_the_same_surface(self):
+        """The negative control: the qualification is what opens it, not the read."""
+        self.svc.create_member(
+            actor_user_id=self.root["id"], tenant_id=self.tid, operation="create-new",
+            username="acmeadmin", display_name="Acme Admin",
+            temporary_password="Str0ngPassTmp", roles=["tenant_admin"])
+        with self.svc._tx() as con:
+            con.execute(
+                "UPDATE users SET must_change_password=0 WHERE username='acmeadmin'")
+            con.commit()
+        token = self.svc.login("acmeadmin", "Str0ngPassTmp").token
+        for path in ("/api/tenant/members", "/api/tenant/roles",
+                     "/api/tenant/departments"):
+            resp = self._request(path, method="GET", token=token, tenant=self.tid)
+            self.assertEqual(self._json(resp)["status"], "success", path)
+
     def test_member_create_short_password_is_json_4xx_not_500(self):
         # Regression: a <8-char temporary password raised auth.password.PasswordError
         # out of create_member. The handler only translated IdentityServiceError,

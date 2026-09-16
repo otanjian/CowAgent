@@ -25,7 +25,7 @@ projects.
 
 ### Requirement: 租户成员可读取知识库内容与图谱
 
-已认证且持有 `knowledge.read` 的租户成员 SHALL 能读取其租户可见 Agent 的知识库目录、单篇正文与关系图谱。读取 SHALL 先校验 `agent_id` 属于调用者租户（缺省时解析该租户绑定默认 Agent），再按 Agent 私有归属裁剪：私有 Agent 的知识库只对该 owner、同租户 `tenant_admin` 与平台管理员在合法租户成员范围内可见。平台管理员 SHALL 在具备有效租户成员资格时按 `all` 放行功能权限。响应 MUST NOT 暴露宿主绝对路径或其他租户内容。
+已认证且持有 knowledge.read 的租户成员 SHALL 能读取当前租户内其可见 Agent 的知识目录、正文与图谱。读取 SHALL 先校验 Agent 的真实租户绑定，再按实际私有归属裁剪：私有 Agent 的私有知识内容仅 owner 本人可见，非 owner 的 tenant_admin 和平台管理员 MUST NOT 因角色或 all 放行。明确公共知识继续按既有功能和资源授权读取；共享回退不得公开实际来自他人私有工作区的内容。响应 MUST NOT 暴露宿主绝对路径或其他租户内容。
 
 #### Scenario: 租户成员读取知识库目录
 
@@ -49,7 +49,7 @@ projects.
 
 ### Requirement: 跨租户与越权知识访问被拒绝
 
-系统 SHALL 按租户绑定与私有归属统一裁剪知识读取与写入：指向其他租户 Agent 的 `agent_id` MUST 返回 `404`（不暴露存在性），私有 Agent 的知识库 MUST 只对 owner、同租户 `tenant_admin` 与平台管理员开放。授权判定 SHALL 每次请求按当前身份事实重新计算，MUST NOT 依赖客户端声明的权限或旧上下文。
+系统 SHALL 按可信租户绑定和实际资源私有归属统一裁剪知识读取与写入；其他租户 Agent 返回 404，成员私有 Agent 及其私有知识内容只对 owner 开放。授权 SHALL 每次请求按当前身份事实重新计算，MUST NOT 使用客户端权限、旧上下文或管理员资格绕过 private owner，也不得通过图谱、索引、文件别名和共享回退泄漏私有内容。
 
 #### Scenario: 跨租户指定 Agent
 
@@ -58,7 +58,7 @@ projects.
 
 #### Scenario: 非 owner 读取私有 Agent 知识库
 
-- **WHEN** 普通成员请求一个私有归属给其他成员的 Agent 的 `/api/knowledge/read`
+- **WHEN** 非 owner 的普通成员、tenant_admin 或平台管理员请求一个私有归属给其他成员的 Agent 的 `/api/knowledge/read`
 - **THEN** 系统拒绝该请求并返回 `404`/`403` 类拒绝，不返回私有内容
 
 ### Requirement: 控制台知识库页面不因消费者关闭而无限加载
@@ -174,4 +174,23 @@ projects.
 
 - **WHEN** 成员在知识库页从一个自己有写权的私有智能体切换到一个租户共享库智能体
 - **THEN** 页面按所选智能体的 `can_write_knowledge` 重新渲染，隐藏新建与文件级写操作，且读取仍正常展示该智能体的数据根内容
+
+### Requirement: 私有归属先于知识写入资格
+
+知识写入 SHALL 先按实际数据根判定私有与共享归属，再应用当前生效的写入规则。非 owner 的管理员 MUST NOT 修改成员私有自有知识库；私有智能体 owner 也 MUST NOT 因拥有智能体而取得租户共享库写权。对象写能力投影 SHALL 与实际写入使用同一结论，不把某个公共写资格投影为所有私有对象可写。
+
+#### Scenario: 管理员写入他人私有自有知识库
+
+- **WHEN** 管理员持有公共知识维护资格但目标实际属于成员私有 Agent 的自有知识
+- **THEN** 在写入前拒绝，不能新建、删除、移动、导入或借文件服务改写该私有库
+
+#### Scenario: 所有者通过私有 Agent 指向共享库
+
+- **WHEN** 私有 Agent owner 请求修改该 Agent 当前引用的租户共享知识库
+- **THEN** 仍按公共知识写规则判定，个人所有权不会扩大共享写权限
+
+#### Scenario: 对象写能力不一致的旧页面
+
+- **WHEN** 旧页面仍显示允许写入而当前真实归属或授权已不允许
+- **THEN** 服务端拒绝并要求刷新能力，不执行写入，也不将失败显示为已保存
 

@@ -58,6 +58,14 @@ class SkillEntry:
     skill: Skill
     metadata: Optional[SkillMetadata] = None
     user_invocable: bool = True  # Can users invoke this skill directly
+    #: The same-name definition this entry replaced while loading, if any.
+    #:
+    #: The registry is keyed by name, so the override would otherwise be
+    #: invisible: a bare ``name`` would silently mean "whichever source won",
+    #: and the grant recorded for one definition could be spent on the other.
+    #: Kept here so :meth:`SkillManager.resolve_skill` can refuse that instead
+    #: of choosing by override order.
+    shadowed: Optional["SkillEntry"] = None
 
 
 @dataclass

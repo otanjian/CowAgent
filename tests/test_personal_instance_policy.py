@@ -14,6 +14,15 @@ Change task 2.5 wires three tenant controls into the channel-instance service:
 
 Readiness of individual channel types is *not* here: that is task 6.3. This slice
 is the tenant policy and the enforcement points it feeds.
+
+Since task 6.1 the personal rows below are driven through the **owner**
+self-service branch (``allow_owner=True`` with the member as the actor): the
+unified interface refuses an administrator who would edit another member's
+``scope='user'`` instance, so the policy, quota and switch checks a member
+triggers can only be reached by the member. The administrator keeps the
+separate governance action (``set_personal_instance_governance``) used by
+:class:`GovernanceDisableTests`, which is deliberately *not* routed through the
+owner path.
 """
 
 import os
@@ -23,6 +32,7 @@ import threading
 import unittest
 
 from auth.service import IdentityService, IdentityServiceError
+from tests._helpers import install_personal_target_roster, personal_channel_target
 
 FEISHU_BUNDLE = {
     "feishu_app_id": "cli_personal_a",
@@ -51,11 +61,21 @@ def _expect_error(test, code, status, fn, *args, **kwargs):
 class _PolicyFixture(unittest.TestCase):
     MASTER_KEY = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
     ROOT_PASSWORD = "Str0ngRootFinal"
+    #: Members are created with this temporary password and never change it, so
+    #: it is their current password: the owner-path writes prove presence with it.
+    MEMBER_PASSWORD = "MemTempPass1"
+
+    #: The Agents this suite's fixtures may name. ``agent-a`` stays shared so the
+    #: *public* path keeps a candidate of its own; the ``target-*`` ids are the
+    #: members' private ones, and the roster below is the registry half of the
+    #: personal target predicate.
+    ROSTER = ("agent-a", "target-alice", "target-bob")
 
     def setUp(self):
         self._previous_key = os.environ.get("COW_CREDENTIAL_MASTER_KEY")
         os.environ["COW_CREDENTIAL_MASTER_KEY"] = self.MASTER_KEY
         self.addCleanup(self._restore_master_key)
+        install_personal_target_roster(self, *self.ROSTER)
         self._app_seq = 0
         self._app_seq_lock = threading.Lock()
 
@@ -74,6 +94,15 @@ class _PolicyFixture(unittest.TestCase):
                             private_owner_user_id=None)
         self.member = self._member("alice")
         self.other = self._member("bob")
+        # Each member owns the private Agent their personal instance routes to.
+        self.target = {
+            self.member: personal_channel_target(
+                self.svc, tenant_id=self.ta, user_id=self.member,
+                agent_id="target-alice"),
+            self.other: personal_channel_target(
+                self.svc, tenant_id=self.ta, user_id=self.other,
+                agent_id="target-bob"),
+        }
 
     def _restore_master_key(self):
         if self._previous_key is None:
@@ -88,7 +117,7 @@ class _PolicyFixture(unittest.TestCase):
             self.svc.create_member(
                 actor_user_id=self.root["id"], tenant_id=self.ta,
                 operation="create-new", username=username, display_name=username,
-                temporary_password="MemTempPass1", roles=["member"])
+                temporary_password=self.MEMBER_PASSWORD, roles=["member"])
         return [m for m in self.svc.list_members(self.ta)["items"]
                 if m["username"] == username][0]["user_id"]
 
@@ -112,13 +141,33 @@ class _PolicyFixture(unittest.TestCase):
         return dict(FEISHU_BUNDLE, feishu_app_id="cli_personal_%d" % seq)
 
     def _create(self, *, owner=None, name="我的飞书", channel_type="feishu",
-                bundle=None, actor=None, agent_id="agent-a", scope="user"):
+                bundle=None, agent_id=None, scope="user"):
+        # A personal row is created by its **owner** through the self-service
+        # branch (``allow_owner=True``), which forces the scope/owner pair from
+        # the verified actor instead of from the request; a public row keeps the
+        # tenant-control actor. Routing a personal create through the
+        # administrator would now be refused before the policy under test runs
+        # (task 6.1: the editable list is not a second owner of somebody's row).
+        #
+        # The default target follows the scope: a personal instance must name its
+        # own owner's private Agent, a shared one must not name a private Agent at
+        # all. Passing a shared target here would be refused before the policy
+        # under test is ever consulted.
+        credentials = bundle or self._bundle(channel_type)
+        if scope == "user":
+            owner = owner or self.member
+            return self.svc.create_tenant_channel_instance(
+                actor_user_id=owner, tenant_id=self.ta,
+                channel_type=channel_type, display_name=name,
+                recent_password=self.MEMBER_PASSWORD,
+                agent_id=agent_id or self.target[owner],
+                credentials=credentials, allow_owner=True)
         return self.svc.create_tenant_channel_instance(
-            actor_user_id=actor or self.root["id"], tenant_id=self.ta,
+            actor_user_id=self.root["id"], tenant_id=self.ta,
             channel_type=channel_type, display_name=name,
-            recent_password=self.ROOT_PASSWORD, agent_id=agent_id,
-            credentials=bundle or self._bundle(channel_type),
-            scope=scope, owner_user_id=(owner or self.member) if scope == "user" else None)
+            recent_password=self.ROOT_PASSWORD,
+            agent_id=agent_id or "agent-a",
+            credentials=credentials, scope="tenant")
 
     def _set_policy(self, **kwargs):
         return self.svc.set_tenant_channel_policy(
@@ -255,20 +304,22 @@ class AllowedTypesTests(_PolicyFixture):
 
     def test_the_enable_path_rechecks_the_policy(self):
         instance = self._create(channel_type="feishu", name="我的飞书")
+        # Both the disable and the refused re-enable are the *owner's* writes:
+        # the policy must be re-decided on the path a member actually takes.
         self.svc.set_tenant_channel_instance_active(
-            actor_user_id=self.root["id"], tenant_id=self.ta,
+            actor_user_id=self.member, tenant_id=self.ta,
             instance_id=instance["id"], active=False,
             expected_version=instance["version"],
-            recent_password=self.ROOT_PASSWORD)
+            recent_password=self.MEMBER_PASSWORD, allow_owner=True)
         self._set_policy(allowed_types=["dingtalk"])
         row = self.svc.get_tenant_channel_instance_row(instance["id"])
 
         _expect_error(self, "channel_type_not_allowed", 403,
                       self.svc.set_tenant_channel_instance_active,
-                      actor_user_id=self.root["id"], tenant_id=self.ta,
+                      actor_user_id=self.member, tenant_id=self.ta,
                       instance_id=instance["id"], active=True,
                       expected_version=row["version"],
-                      recent_password=self.ROOT_PASSWORD)
+                      recent_password=self.MEMBER_PASSWORD, allow_owner=True)
 
 
 class PersonalQuotaTests(_PolicyFixture):
@@ -308,11 +359,12 @@ class PersonalQuotaTests(_PolicyFixture):
         """停用不能成为无限创建对象的配额绕过。"""
         self._set_policy(personal_instance_limit=1)
         instance = self._create(name="第一个")
+        # 本人自助停用（不是治理停机）：停用后名额仍被占用。
         self.svc.set_tenant_channel_instance_active(
-            actor_user_id=self.root["id"], tenant_id=self.ta,
+            actor_user_id=self.member, tenant_id=self.ta,
             instance_id=instance["id"], active=False,
             expected_version=instance["version"],
-            recent_password=self.ROOT_PASSWORD)
+            recent_password=self.MEMBER_PASSWORD, allow_owner=True)
 
         _expect_error(self, "quota_exceeded", 403, self._create, name="第二个")
 
@@ -409,20 +461,23 @@ class PersonalAccessSwitchTests(_PolicyFixture):
 
     def test_the_enable_path_respects_the_switch(self):
         instance = self._create()
+        # The switch is the tenant's policy, but the write that must obey it is
+        # the owner's own: the disable and the refused enable both go through
+        # the self-service branch.
         self.svc.set_tenant_channel_instance_active(
-            actor_user_id=self.root["id"], tenant_id=self.ta,
+            actor_user_id=self.member, tenant_id=self.ta,
             instance_id=instance["id"], active=False,
             expected_version=instance["version"],
-            recent_password=self.ROOT_PASSWORD)
+            recent_password=self.MEMBER_PASSWORD, allow_owner=True)
         self._set_policy(personal_enabled=False)
         row = self.svc.get_tenant_channel_instance_row(instance["id"])
 
         _expect_error(self, "personal_access_disabled", 403,
                       self.svc.set_tenant_channel_instance_active,
-                      actor_user_id=self.root["id"], tenant_id=self.ta,
+                      actor_user_id=self.member, tenant_id=self.ta,
                       instance_id=instance["id"], active=True,
                       expected_version=row["version"],
-                      recent_password=self.ROOT_PASSWORD)
+                      recent_password=self.MEMBER_PASSWORD, allow_owner=True)
 
 
 class GovernanceDisableTests(_PolicyFixture):
@@ -510,13 +565,16 @@ class GovernanceDisableTests(_PolicyFixture):
     def test_the_owner_cannot_clear_the_restriction_by_editing(self):
         """owner MUST NOT 通过重新保存或启用解除治理限制。"""
         instance = self._create()
+        # 治理停机仍只经独立治理动作（管理员），不由可编辑列表下发。
         self._disable(instance["id"])
         row = self.svc.get_tenant_channel_instance_row(instance["id"])
 
+        # ...而本人的"重新保存"走本人自助分支：改名可以，但治理标记不许被清掉。
         self.svc.update_tenant_channel_instance(
-            actor_user_id=self.root["id"], tenant_id=self.ta,
+            actor_user_id=self.member, tenant_id=self.ta,
             instance_id=instance["id"], expected_version=row["version"],
-            recent_password=self.ROOT_PASSWORD, display_name="改个名")
+            recent_password=self.MEMBER_PASSWORD, display_name="改个名",
+            allow_owner=True)
 
         after = self.svc.get_tenant_channel_instance_row(instance["id"])
         self.assertIsNotNone(after["governance_disabled_at"])
@@ -529,10 +587,10 @@ class GovernanceDisableTests(_PolicyFixture):
 
         _expect_error(self, "governance_disabled", 403,
                       self.svc.set_tenant_channel_instance_active,
-                      actor_user_id=self.root["id"], tenant_id=self.ta,
+                      actor_user_id=self.member, tenant_id=self.ta,
                       instance_id=instance["id"], active=True,
                       expected_version=row["version"],
-                      recent_password=self.ROOT_PASSWORD)
+                      recent_password=self.MEMBER_PASSWORD, allow_owner=True)
 
         after = self.svc.get_tenant_channel_instance_row(instance["id"])
         self.assertFalse(after["active"])
@@ -544,10 +602,10 @@ class GovernanceDisableTests(_PolicyFixture):
 
         _expect_error(self, "governance_disabled", 403,
                       self.svc.update_tenant_channel_instance,
-                      actor_user_id=self.root["id"], tenant_id=self.ta,
+                      actor_user_id=self.member, tenant_id=self.ta,
                       instance_id=instance["id"], expected_version=row["version"],
-                      recent_password=self.ROOT_PASSWORD,
-                      credentials=FEISHU_BUNDLE)
+                      recent_password=self.MEMBER_PASSWORD,
+                      credentials=FEISHU_BUNDLE, allow_owner=True)
 
         after = self.svc.get_tenant_channel_instance_row(instance["id"])
         self.assertIsNotNone(after["governance_disabled_at"])
@@ -579,10 +637,10 @@ class GovernanceDisableTests(_PolicyFixture):
         row = self.svc.get_tenant_channel_instance_row(instance["id"])
 
         enabled = self.svc.set_tenant_channel_instance_active(
-            actor_user_id=self.root["id"], tenant_id=self.ta,
+            actor_user_id=self.member, tenant_id=self.ta,
             instance_id=instance["id"], active=True,
             expected_version=row["version"],
-            recent_password=self.ROOT_PASSWORD)
+            recent_password=self.MEMBER_PASSWORD, allow_owner=True)
 
         self.assertTrue(enabled["active"])
 

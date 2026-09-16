@@ -100,7 +100,8 @@ class _JointFixture(unittest.TestCase):
         self.harness.add_agent(SHARED, PRIVATE, ASSISTANT, PEER)
         personal = self.harness.role(
             "personal-user", ["tool.read", "skill.read", "memory.read"],
-            grants=[("tool", "builtin:echo", "execute"),
+            grants=[("tool", "builtin:read", "read"),
+                    ("tool", "builtin:read", "execute"),
                     ("skill", "custom:writer", "use")])
         self.alice = self.harness.member("alice", ["member", personal["code"]])
         self.bob = self.harness.member("bob", ["member"])
@@ -256,13 +257,21 @@ class MemberOwnedObjectTests(_JointFixture):
         self.assertEqual(body.get("status"), "success", body)
         self.assertEqual(self._roster_row(PRIVATE)["name"], "Alice Helper")
 
-        # disable -> the object stops being an entry point, ownership survives
+        # disable -> the object is no longer an entry point (the chat directory
+        # drops it) but it stays findable in the *management* range, because the
+        # owner has to be able to re-enable it from the same page (spec
+        # ``agent-workbench``: 管理列表 SHALL 包含范围内停用对象 … 管理页仍可找到并
+        # 重新启用本人对象), and ownership survives.
         body = self._agents_post(self.alice_token, action="update", id=PRIVATE,
                                  enabled=False)
         self.assertEqual(body.get("status"), "success", body)
         self.assertFalse(self._roster_row(PRIVATE).get("enabled", True))
-        self.assertNotIn(PRIVATE, [row["id"] for row in
-                                   self._personal_agents(self.alice_token)["agents"]])
+        managed = {row["id"]: row for row in
+                   self._personal_agents(self.alice_token)["agents"]}
+        self.assertIn(PRIVATE, managed, "a stopped object must stay manageable")
+        self.assertFalse(managed[PRIVATE]["can_chat"],
+                         "a stopped object is not a chat entry point")
+        self.assertEqual(managed[PRIVATE]["actions"], by_id[PRIVATE]["actions"])
         disabled = self._binding(PRIVATE)
         self.assertEqual(disabled["private_owner_user_id"], self.alice)
         self.assertEqual(disabled["tenant_id"], self.tenant)
@@ -472,26 +481,34 @@ class PersonalConfigurationTests(_JointFixture):
     """11.2 — personal parameters and personal memory over the hardened service."""
 
     def test_11_2_personal_parameters_are_owner_scoped_and_the_catalog_is_not(self):
+        # The personal parameters live on the resource row of the *shared*
+        # 工具与技能 page (task 5.5 of unify-console-by-data-scope), so the grant
+        # that puts the row there is the resource ``read`` — exactly the action
+        # set the console's own grant picker emits for a tool
+        # (``identity-admin.js``: read/execute/configure). The ``execute`` grant
+        # is what the owner-scoped write answers to.
         granted = self.harness.json(
-            self.harness.get("/api/personal/resources?kind=tool", token=self.alice_token))
-        rows = {row["resource_id"]: row for row in granted["resources"]}
-        self.assertIn("builtin:echo", rows)
-        self.assertFalse(rows["builtin:echo"]["configured"])
-        self.assertEqual(rows["builtin:echo"]["params"], {})
+            self.harness.get("/api/tools", token=self.alice_token))
+        rows = {row["resource_id"]: row for row in granted["tools"]}
+        self.assertIn("builtin:read", rows)
+        personal = rows["builtin:read"]["personal"]
+        self.assertFalse(personal["configured"])
+        self.assertEqual(personal["params"], {})
+        self.assertTrue(personal["actions"]["configure"])
 
         # An item the *catalog* carries but this member holds no grant for is
         # refused, not silently configured.
         refusal = self.harness.post(
-            "/api/personal/resources",
-            {"resource_kind": "tool", "resource_id": "builtin:scheduler",
+            "/api/tools",
+            {"action": "save-personal", "resource_id": "builtin:scheduler",
              "params": {"timeout": 1}},
             token=self.alice_token)
         self.assertEqual(refusal.status, "403 Forbidden", refusal.data)
         self.assertEqual(self.harness.json(refusal).get("code"), "forbidden")
 
         saved = self.harness.post(
-            "/api/personal/resources",
-            {"resource_kind": "tool", "resource_id": "builtin:echo",
+            "/api/tools",
+            {"action": "save-personal", "resource_id": "builtin:read",
              "params": {"timeout": 9}, "secret": "alice-token"},
             token=self.alice_token)
         self.assertEqual(saved.status, "200 OK", saved.data)
@@ -501,10 +518,10 @@ class PersonalConfigurationTests(_JointFixture):
         self.assertTrue(config["credential_id"])
 
         reread = self.harness.json(
-            self.harness.get("/api/personal/resources?kind=tool", token=self.alice_token))
-        rows = {row["resource_id"]: row for row in reread["resources"]}
-        self.assertTrue(rows["builtin:echo"]["configured"])
-        self.assertTrue(rows["builtin:echo"]["has_credential"])
+            self.harness.get("/api/tools", token=self.alice_token))
+        rows = {row["resource_id"]: row for row in reread["tools"]}
+        self.assertTrue(rows["builtin:read"]["personal"]["configured"])
+        self.assertTrue(rows["builtin:read"]["personal"]["has_credential"])
 
         # The credential is the member's own, never a public one.
         owned = self.harness.service._store.execute(
@@ -512,10 +529,13 @@ class PersonalConfigurationTests(_JointFixture):
             (config["credential_id"],))
         self.assertEqual(owned[0]["owner_user_id"], self.alice)
 
-        # Nothing of the member's configuration is visible to another member.
+        # Nothing of the member's configuration is visible to another member:
+        # Bob holds no tool grant, so his catalogue carries no row at all (and
+        # certainly not Alice's parameters).
         peer = self.harness.json(
-            self.harness.get("/api/personal/resources", token=self.bob_token))
-        self.assertEqual(peer["resources"], [])
+            self.harness.get("/api/tools", token=self.bob_token))
+        self.assertEqual([row for row in peer["tools"]
+                          if row.get("personal")], [])
 
     def test_11_2_personal_memory_takes_relative_ids_and_refuses_hostile_ones(self):
         # a member maintaining their own surface, read back through the memory
@@ -602,9 +622,11 @@ class PersonalConfigurationTests(_JointFixture):
         self.harness.post("/api/memory/personal",
                           {"action": "save", "id": MAIN_ENTRY,
                            "content": "ALICE\n"}, token=self.alice_token)
-        self.harness.post("/api/personal/resources",
-                          {"resource_kind": "skill", "resource_id": "custom:writer",
-                           "params": {"tone": "brief"}}, token=self.alice_token)
+        personal_write = self.harness.post(
+            "/api/tools",
+            {"action": "save-personal", "resource_id": "builtin:read",
+             "params": {"tone": "brief"}}, token=self.alice_token)
+        self.assertEqual(personal_write.status, "200 OK", personal_write.data)
 
         with open(team.team_file(self.harness._settings), encoding="utf-8") as handle:
             self.assertEqual(handle.read(), roster_before,

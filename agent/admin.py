@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Optional
 
 from agent import team
+from agent.deletion_guard import conflict_message, deletion_conflicts
 from agent.registry import AgentProfile, AgentRegistry
 from common.log import logger
 from common.utils import expand_path
@@ -37,6 +38,19 @@ _UNSET = object()
 
 class AgentAdminError(ValueError):
     pass
+
+
+class AgentInUseError(AgentAdminError):
+    """Raised when an Agent still has a channel or runtime reference (task 4.3).
+
+    Its own class rather than a message prefix, because callers have to answer
+    it differently: it is a *conflict* (409) the operator resolves by unlinking
+    the channel or stopping the task, not a bad request that retrying the same
+    way might fix.
+    """
+
+    code = "conflict"
+    status = 409
 
 
 class StaleAgentFileError(AgentAdminError):
@@ -901,17 +915,29 @@ class AgentAdminService:
     def archive_agent(self, agent_id: str, revision: str = None) -> Dict:
         return self.update_agent(agent_id, enabled=False, revision=revision)
 
-    def delete_agent(self, agent_id: str, revision: str = None) -> Dict:
+    def delete_agent(self, agent_id: str, revision: str = None, *,
+                     require_unreferenced: bool = True) -> Dict:
         """Remove an Agent from the roster for good, files and all.
 
         The default Agent is the instance itself — its workspace is the
         instance root, holding every other Agent and the shared library — so it
-        can never be deleted. For anyone else we drop the roster entry, unbind
-        any channel instances that pointed at them (so those channels fall back
-        to the default Agent rather than routing into the void), and delete
-        their own workspace, but only when it is the layout we created
+        can never be deleted. For anyone else we drop the roster entry and
+        delete their own workspace, but only when it is the layout we created
         (``<instance root>/agents/<id>``): a hand-picked path could be anywhere,
         and we will not recursively erase a directory we did not make.
+
+        A channel instance that still routes to the Agent is a **conflict**
+        (task 4.3), not something to paper over by clearing its ``agent_id``.
+        The old behaviour — silently unbinding the channel so it "falls back to
+        the default Agent" — moved live traffic to an Agent nobody chose, which
+        is exactly the automatic rebind the spec forbids
+        (``user-private-agent-management``: 存在运行或有效渠道引用时 SHALL 返回冲突，
+        不自动终止、改绑或回落). The operator unlinks the channel first, then
+        deletes; :mod:`agent.deletion_guard` is the one place that decides.
+
+        ``require_unreferenced=False`` is the escape hatch for *compensation*:
+        rolling back a create that has just failed has to remove the object it
+        made, and nothing can reference an object that was never reachable.
         """
         with self._lock:
             settings = self._load()
@@ -919,31 +945,25 @@ class AgentAdminService:
             profile = registry.get(agent_id, require_enabled=False)
             if agent_id == registry.default_agent_id:
                 raise AgentAdminError("the default agent cannot be deleted")
+            if require_unreferenced:
+                conflicts = deletion_conflicts(
+                    agent_id, tenant_id=None, settings=settings)
+                if conflicts:
+                    raise AgentInUseError(conflict_message(conflicts))
 
             profiles = [
                 item.to_dict()
                 for item in registry.list()
                 if item.id != agent_id
             ]
-            # A channel instance bound to a now-missing Agent would route
-            # messages into the void, so clear those bindings (the channel keeps
-            # running and falls back to the default Agent).
-            instances = []
-            for item in (settings.get("channel_instances") or []):
-                inst = dict(item)
-                if (inst.get("agent_id") or "") == agent_id:
-                    inst["agent_id"] = ""
-                instances.append(inst)
             candidate = dict(settings)
             candidate["agents"] = profiles
-            candidate["channel_instances"] = instances
             candidate["default_agent_id"] = registry.default_agent_id
             # Validate the resulting roster before writing anything.
             self._registry(candidate)
             self._commit(
                 {
                     "agents": profiles,
-                    "channel_instances": instances,
                     "default_agent_id": registry.default_agent_id,
                 },
                 revision,

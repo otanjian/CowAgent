@@ -183,6 +183,18 @@ class MemoryManager:
             tombstoned = pending_index_labels()
         except Exception:
             tombstoned = set()
+        # The Agent's own deletions record their tombstones in this workspace's
+        # scope file, because nothing else masks them: `sync` replaces a file's
+        # chunks but never sweeps chunks whose file is gone, so a deleted entry
+        # would otherwise stay retrievable through this very filter's blind
+        # spot. Union rather than replace: one manager can index both a
+        # workspace's own files and (from the tenant root) members' user files.
+        try:
+            from agent.memory.personal import pending_index_labels_for_root
+            tombstoned |= pending_index_labels_for_root(
+                Path(self.config.get_workspace()))
+        except Exception:
+            pass
         if tombstoned:
             filtered = [r for r in filtered if getattr(r, "path", None) not in tombstoned]
         return filtered[:max_results]

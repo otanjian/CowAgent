@@ -199,26 +199,164 @@ class PersonalAgentsHandlerTests(_WebHarness):
 
 
 class _HandlerHarness(_WebHarness):
-    """Drives ``PersonalResourceHandler`` with a patched request context."""
+    """Drives the personal-parameter verbs on the shared 工具与技能 endpoints.
 
-    def _get(self, service, ctx=None, **params):
-        class _Params(dict):
-            def __getattr__(self, item):
-                return self.get(item, "")
+    The write no longer lives on a surface of its own: the member's parameters
+    are edited inside the resource's detail component on the formal page, so the
+    request it makes is the page's own endpoint (task 5.5). What is asserted here
+    is unchanged from the retired handler — the owner is the session and nothing
+    else, and no parameter of the request can reach another member's row or the
+    shared definition.
+    """
 
-        with patch.object(web_channel.web, "input", return_value=_Params(params)), \
-             patch.object(web_channel, "_db_scope",
-                          return_value=self._scope(ctx or _ctx())), \
-             patch("auth.service.get_identity_service", return_value=service):
-            return json.loads(web_channel.PersonalResourceHandler().GET())
-
-    def _post(self, service, body, ctx=None):
+    def _post(self, handler_class, service, body, ctx=None):
         with patch.object(web_channel.web, "data",
                           return_value=json.dumps(body).encode("utf-8")), \
              patch.object(web_channel, "_db_scope",
                           return_value=self._scope(ctx or _ctx())), \
+             patch.object(web_channel, "_require_catalog_read"), \
+             patch.object(web_channel, "_require_read_permission"), \
              patch("auth.service.get_identity_service", return_value=service):
-            return json.loads(web_channel.PersonalResourceHandler().POST())
+            return json.loads(handler_class().POST())
+
+
+class PersonalResourceVerbTests(_HandlerHarness):
+    """``POST /api/tools`` and ``POST /api/skills``: my own parameters only."""
+
+    def test_saving_writes_only_the_callers_own_configuration(self):
+        service = _RecordingService(saved={"resource_id": "builtin:echo",
+                                           "params": {"timeout": 5}, "version": 1})
+        out = self._post(web_channel.ToolsHandler, service,
+                         {"action": "save-personal",
+                          "resource_id": "builtin:echo",
+                          "params": {"timeout": 5}})
+
+        self.assertEqual(out["status"], "success")
+        call = service.seen[0][1]
+        self.assertEqual(call["actor_user_id"], "u1")
+        self.assertEqual(call["tenant_id"], "t1")
+        self.assertEqual(call["resource_kind"], "tool")
+        self.assertEqual(call["params"], {"timeout": 5})
+
+    def test_a_client_supplied_user_is_never_forwarded(self):
+        """The owner is the session: a body field cannot name another member."""
+        service = _RecordingService(saved={"resource_id": "builtin:echo"})
+        self._post(web_channel.ToolsHandler, service,
+                   {"action": "save-personal", "resource_id": "builtin:echo",
+                    "params": {}, "user_id": "someone-else"})
+
+        self.assertNotIn("user_id", service.seen[0][1])
+        self.assertEqual(service.seen[0][1]["actor_user_id"], "u1")
+
+    def test_a_secret_is_passed_through(self):
+        service = _RecordingService(saved={"resource_id": "builtin:echo",
+                                           "credential_id": "cred_1"})
+        self._post(web_channel.ToolsHandler, service,
+                   {"action": "save-personal", "resource_id": "builtin:echo",
+                    "secret": "tok"})
+
+        self.assertEqual(service.seen[0][1]["secret"], "tok")
+
+    def test_a_skill_saves_under_the_resolved_authorization_object(self):
+        """The grant is recorded as ``{source}:{name}``, so the write must be too."""
+        service = _RecordingService(saved={"resource_id": "custom:tenant-note"})
+        skill_service = _RecordingSkillService()
+
+        with patch.object(web_channel, "_db_scope",
+                          return_value=self._scope(_ctx())), \
+             patch.object(web_channel, "_require_read_permission"), \
+             patch.object(web_channel, "_skill_service",
+                          return_value=skill_service), \
+             patch.object(web_channel, "_personal_channel_service",
+                          return_value=service), \
+             patch.object(web_channel.web, "data",
+                          return_value=json.dumps({
+                              "action": "save-personal",
+                              "name": "tenant-note",
+                              "resource_id": "custom:tenant-note",
+                              "params": {"lang": "zh"}}).encode("utf-8")):
+            out = json.loads(web_channel.SkillsHandler().POST())
+
+        self.assertEqual(out["status"], "success")
+        call = service.seen[0][1]
+        self.assertEqual(call["resource_kind"], "skill")
+        self.assertEqual(call["resource_id"], "custom:tenant-note")
+        self.assertEqual(call["actor_user_id"], "u1")
+
+    def test_clearing_calls_the_owner_scoped_clear(self):
+        service = _RecordingService(removed=True)
+        out = self._post(web_channel.ToolsHandler, service,
+                         {"action": "clear-personal",
+                          "resource_id": "builtin:echo"})
+
+        self.assertEqual(out["status"], "success")
+        self.assertIsNone(out["config"])
+        self.assertEqual(service.seen[0][0], "clear")
+        self.assertEqual(service.seen[0][1]["actor_user_id"], "u1")
+
+    def test_an_unknown_action_is_refused_without_touching_the_service(self):
+        service = _RecordingService()
+        out = self._post(web_channel.ToolsHandler, service,
+                         {"action": "grant-everything",
+                          "resource_id": "builtin:rm"})
+
+        self.assertEqual(out["code"], "bad_request")
+        self.assertEqual(service.seen, [])
+
+    def test_a_service_refusal_is_rendered_with_its_code(self):
+        from auth.service import IdentityServiceError
+
+        service = _RecordingService(
+            error=IdentityServiceError("resource is not available to this member",
+                                       code="forbidden", status=403))
+        with self.assertRaises(web_channel.web.HTTPError) as caught:
+            self._post(web_channel.ToolsHandler, service,
+                       {"action": "save-personal", "resource_id": "builtin:rm"})
+
+        # web.py's HTTPError keeps the status in ``args[0]`` and the JSON body
+        # on ``.data`` (it has no ``.status`` attribute in this version).
+        self.assertEqual(caught.exception.args[0], "403 Forbidden")
+        body = json.loads(caught.exception.data)
+        self.assertEqual(body["code"], "forbidden")
+
+
+class _RecordingSkillService:
+    """The skill manager ``_resolved_skill`` resolves the object through.
+
+    ``resolve`` returns the entry the write is keyed on, which is how the
+    handler learns the ``{source}:{name}`` id the grant is recorded under.
+    """
+
+    def __init__(self, source="custom", name="tenant-note"):
+        self.skill = SimpleNamespace(source=source, name=name)
+
+    def resolve(self, resource_id=None, name=None):
+        return SimpleNamespace(skill=self.skill)
+
+
+class RetiredResourceSurfaceTests(unittest.TestCase):
+    """The standalone personal resource surface is gone, its authority is not."""
+
+    def test_the_standalone_route_is_no_longer_registered(self):
+        paths = {entry.pattern for entry in ROUTES}
+        self.assertNotIn("/api/personal/resources", paths,
+                         "a retired surface must not come back as a second path "
+                         "to the same configuration")
+        self.assertNotIn("PersonalResourceHandler", vars(web_channel))
+
+    def test_the_shared_endpoints_serve_the_personal_verbs(self):
+        policy = derive_route_policy()
+        for path in ("/api/tools", "/api/skills"):
+            self.assertIn("POST", policy[path], path)
+            self.assertEqual(policy[path]["POST"]["policy"], "tenant", path)
+        self.assertNotIn("/api/personal/resources", policy)
+
+    def test_the_public_tool_and_skill_surfaces_keep_their_own_gates(self):
+        """Adding a personal verb must not relax a management one."""
+        policy = derive_route_policy()
+        self.assertEqual(policy["/api/tools"]["GET"]["policy"], "tenant")
+        self.assertEqual(policy["/api/skills"]["GET"]["policy"], "tenant")
+        self.assertEqual(policy["/api/skills"]["POST"]["policy"], "tenant")
 
 
 class _RecordingService:
@@ -242,117 +380,6 @@ class _RecordingService:
     def clear_personal_resource_config(self, **kwargs):
         self.seen.append(("clear", kwargs))
         return self._removed
-
-
-class PersonalResourceHandlerTests(_HandlerHarness):
-    """The surface is owner-scoped by construction: no ``user_id`` parameter."""
-
-    def test_the_list_is_the_callers_own(self):
-        service = _RecordingService(listing=[{"resource_kind": "tool",
-                                              "resource_id": "builtin:echo"}])
-        out = self._get(service)
-
-        self.assertEqual(out["status"], "success")
-        self.assertEqual(out["scope"], "personal")
-        self.assertEqual(out["resources"][0]["resource_id"], "builtin:echo")
-        self.assertEqual(service.seen[0][1]["actor_user_id"], "u1")
-        self.assertEqual(service.seen[0][1]["tenant_id"], "t1")
-
-    def test_the_handler_never_forwards_a_client_supplied_user(self):
-        service = _RecordingService()
-        self._get(service, user_id="someone-else")
-        self.assertNotIn("user_id", service.seen[0][1])
-
-    def test_a_kind_filter_is_forwarded(self):
-        service = _RecordingService()
-        self._get(service, kind="skill")
-        self.assertEqual(service.seen[0][1]["resource_kind"], "skill")
-
-    def test_an_unsupported_kind_is_refused(self):
-        service = _RecordingService()
-        out = self._get(service, kind="knowledge")
-
-        self.assertEqual(out["code"], "bad_request")
-        self.assertEqual(service.seen, [], "a bad kind must not reach the service")
-
-    def test_saving_writes_only_the_callers_own_configuration(self):
-        service = _RecordingService(saved={"resource_id": "builtin:echo",
-                                           "version": 1})
-        out = self._post(service, {"resource_kind": "tool",
-                                   "resource_id": "builtin:echo",
-                                   "params": {"timeout": 5}})
-
-        self.assertEqual(out["status"], "success")
-        call = service.seen[0][1]
-        self.assertEqual(call["actor_user_id"], "u1")
-        self.assertEqual(call["params"], {"timeout": 5})
-
-    def test_a_secret_is_passed_through_but_never_echoed_in_the_list(self):
-        service = _RecordingService(saved={"resource_id": "builtin:echo",
-                                           "credential_id": "cred_1"})
-        self._post(service, {"resource_kind": "tool",
-                             "resource_id": "builtin:echo",
-                             "secret": "tok"})
-
-        self.assertEqual(service.seen[0][1]["secret"], "tok")
-
-    def test_clearing_calls_the_owner_scoped_clear(self):
-        service = _RecordingService(removed=True)
-        out = self._post(service, {"action": "clear", "resource_kind": "tool",
-                                   "resource_id": "builtin:echo"})
-
-        self.assertEqual(out["status"], "success")
-        self.assertIsNone(out["config"])
-        self.assertEqual(service.seen[0][0], "clear")
-        self.assertEqual(service.seen[0][1]["actor_user_id"], "u1")
-
-    def test_an_unknown_action_is_refused(self):
-        service = _RecordingService()
-        out = self._post(service, {"action": "grant-everything"})
-
-        self.assertEqual(out["code"], "bad_request")
-        self.assertEqual(service.seen, [])
-
-    def test_a_service_refusal_is_rendered_with_its_code(self):
-        from auth.service import IdentityServiceError
-
-        service = _RecordingService(
-            error=IdentityServiceError("resource is not available to this member",
-                                       code="forbidden", status=403))
-        with self.assertRaises(web_channel.web.HTTPError) as caught:
-            self._post(service, {"resource_kind": "tool",
-                                 "resource_id": "builtin:rm"})
-
-        # web.py's HTTPError keeps the status in ``args[0]`` and the JSON body
-        # on ``.data`` (it has no ``.status`` attribute in this version).
-        self.assertEqual(caught.exception.args[0], "403 Forbidden")
-        body = json.loads(caught.exception.data)
-        self.assertEqual(body["code"], "forbidden")
-
-
-class PersonalResourceRouteTests(unittest.TestCase):
-    """The surface is a separate, self-scoped registration."""
-
-    def _entry(self, pattern):
-        return [r for r in ROUTES if r.pattern == pattern]
-
-    def test_the_route_is_registered_for_both_methods(self):
-        entries = self._entry("/api/personal/resources")
-        self.assertEqual(len(entries), 1)
-        self.assertEqual(set(entries[0].methods), {"GET", "POST"})
-        self.assertEqual(entries[0].handler, "PersonalResourceHandler")
-        self.assertEqual(entries[0].source, "fork:member-personal-console")
-
-    def test_both_methods_carry_the_personal_policy(self):
-        policy = derive_route_policy()["/api/personal/resources"]
-        for method in ("GET", "POST"):
-            self.assertEqual(policy[method]["policy"], "personal", method)
-
-    def test_the_public_tool_and_skill_surfaces_keep_their_own_gates(self):
-        """Adding a personal surface must not relax a management one."""
-        policy = derive_route_policy()
-        self.assertEqual(policy["/api/tools"]["GET"]["policy"], "tenant")
-        self.assertEqual(policy["/api/skills"]["GET"]["policy"], "tenant")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,23 @@
 # 个人会话与个人记忆 — 验收记录（沙箱真实实例）
 
+## 2026-09-15 方案变更（已实施，2026-09-16 复核）
+
+本文是历史验收记录，原测试和运维动作不改写。新方案中共用“设为默认”只修改用户偏好，任何默认任命/修复不再清除私有 owner；原 share-default-agents 校正记录仅说明当时操作，不能作为新方案迁移指令。统一记忆管理、用户默认和双角色一致性需重新按新 change 验收。
+
+最新方案：[统一控制台与数据范围方案](unified-console-access-plan.md)；实施契约：[unify-console-by-data-scope](../../openspec/changes/unify-console-by-data-scope/proposal.md)。
+
+**本轮关系（2026-09-16）**：本文的 23/23 是**当时实现**的真实实例验收，其结论（当前 tenant/user 的记忆归属、
+跨获准智能体检索、清空一致性）在本轮被**继承**而非推翻。新方案新增的两点已在别处验收与记录，本文不重跑：
+
+- 用户默认「设为默认」统一作用于当前用户：见 `evidence/4-4-user-default-agent.md`；
+- 记忆统一页面按范围读取、写面限管理资格：见 `evidence/5-1-memory-target-set.md` 与
+  `evidence/5-1b-write-path-and-acceptance.md`（**「成员写本人私有智能体记忆」为未覆盖**，
+  前置是每个智能体独立记忆根）。
+  逐项判定见 [8-5-doc-closure.md](../../openspec/changes/unify-console-by-data-scope/evidence/8-5-doc-closure.md) §2。
+
+---
+
+
 对应 `openspec/changes/personal-conversation-and-memory` 的 **7.3 / 7.4**。
 
 验收对象是一个**真实实例**：真实 `app.py` 进程、真实 HTTP 控制台、真实

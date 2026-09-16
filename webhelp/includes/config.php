@@ -24,11 +24,8 @@ return [
     // 部署命令中的 {site_url} 占位符会在渲染时替换为该值。
     'site_url' => 'http://YOUR-SITE-DOMAIN',
 
-    // 演示视频（已本地化；上游英文版资源缺失，复用中文版）
-    'demo_video' => [
-        'zh' => 'assets/video/cow-demo-zh-v1.mp4',
-        'en' => 'assets/video/cow-demo-zh-v1.mp4',
-    ],
+    // 首页 Hero 演示图（本地素材，中英文共用：控制台对话界面截图）
+    'demo_image' => 'assets/img/home-demo-console.jpg',
 
     // 导航：文件名 => 语言包键
     'nav' => [

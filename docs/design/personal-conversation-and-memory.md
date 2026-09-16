@@ -1,5 +1,19 @@
 # 个人层：综合会话锚点、专属人设与独立长期记忆
 
+## 2026-09-15 方案变更（已实施，2026-09-16 复核）
+
+用户记忆仍按当前 tenant/user 归属，但从现有记忆管理共用页面维护，不建立独立个人功能。详情“设为默认”对所有用户统一设置本人当前租户偏好，租户默认单独管理且不再隐式清除私有 owner。第 3.3 节已更新为新方案；其余关于早期“不新建个人智能体”等取舍只代表当时阶段，不能用于阻止现有供应助理或用户私有对象。
+
+最新方案：[统一控制台与数据范围方案](unified-console-access-plan.md)；实施契约：[unify-console-by-data-scope](../../openspec/changes/unify-console-by-data-scope/proposal.md)。
+
+**实际状态**：第 3.3 节的用户默认/租户默认已实现并取得切片验收（4.4–4.8、`evidence/4-4-*`、`4-6-*`、`4-7-*`、`4-8-*`）；
+个人记忆改由统一记忆页面维护的**读面**已验收，**写面在数据库形态下限管理资格**——「成员写本人私有智能体记忆」
+因智能体记忆根就是租户共享根而**未覆盖**（`evidence/5-1b-write-path-design.md` §6）。
+逐项判定见 [`evidence/8-5-doc-closure.md`](../../openspec/changes/unify-console-by-data-scope/evidence/8-5-doc-closure.md) §2。
+
+---
+
+
 对应 change：`openspec/changes/personal-conversation-and-memory/`。
 本文说明**实现落地后的材料与取舍**，供后续维护与验收引用；行为契约以该 change 的
 `specs/` 为准。
@@ -60,29 +74,22 @@ memory / task records 划给 **Per end user（`user_root`）**——"Wang 喜欢
 - 跨租户：用户域位于各租户的 `shared_root()` 之下，租户边界仍由
   `agent/permission/isolation.py` 拦截，本 change **未放宽**该边界。
 
-### 3.3 默认智能体 = 综合会话锚点
+### 3.3 用户默认与租户默认（2026-09-15 新方案，已实施并验收）
 
-- 每个租户恒可解析出一个默认智能体：**配置默认 → 租户共享中稳定 id 最小 →
-  其余**（`IdentityService.resolved_default_agent_id`，只读、确定性）。
-- 未显式指定 `agent_id` 的会话请求解析到该默认，不再因"多智能体且未配置默认"
-  返回 403 `default agent ambiguous`。跨租户的全局默认**绝不**回退借用。
-- 前端：进入对话与"新对话"**不再强制选择**；`multiAgentMode()` 只决定
-  "切换/团队"这个**可选**入口（新对话按钮右侧的 caret）是否出现。
-- **默认智能体恒为租户共享**（`private_owner_user_id = NULL`）。这是实现期发现的
-  叠加拦截：历史写入会把创建者/初始管理员推定为私有 owner，使默认智能体只有
-  该用户可用，其他成员仍被拦。因此：新建/采用不再推定 owner；任命默认会清空
-  owner；提供显式"转为租户共享"操作；并提供幂等校正
-  `ensure_shared_default_agents()` 与运维入口
-  `cow management share-default-agents [--dry-run]`。私有归属是**显式**动作，
-  永不推定。
+- 正式智能体详情的“设为默认”统一设置当前用户在当前租户的偏好，复用 `memberships.default_agent_id` 并增加独立版本。普通用户与管理员操作一致，成功后不需要重启。
+- 新会话解析顺序：有效用户默认 → 本人可用的租户共享默认 → 获准共享候选的稳定标识 → 本人可用私有候选的稳定标识。无合法候选则拒绝，不能从全租户私有对象中任取，也不能借用全局或其他租户默认。
+- 解析只读；已有会话、显式选择、后台任务及渠道绑定不因用户默认变化重绑。系统供应只初始化空偏好，不覆盖用户选择。
+- 租户默认在独立管理配置中明确命名，只接受已共享对象。用户默认可以是本人私有对象；任何默认设置、启动校正或数据迁移都不能清除私有 owner。
+- 普通用户创建租户首个智能体仍归本人私有，不因“首个”自动共享。本人维护走共用生命周期，模型/工具/技能依赖继续验权。
+- 旧“任命默认即清空 owner”及 `share-default-agents` 的相关记录仅保留在历史验收材料；新迁移清理非法租户默认指针并保留私有归属。
 
-> **2026-09-14 补记（`fix-private-agent-owner-reachability`）**：上条约束的是**租户**
-> 默认智能体，仍然成立——租户默认不得带私有归属。当时遗漏的是另一侧：**成员本人的**
-> 私属个人助理。它由成员创建流程自动生成并登记为该成员的**个人默认**，因带私有归属
-> 而同样被 `_tenant_shared_default_agent` 排除，又因成员不持有 `agent:<id>` 授权被投影
-> 过滤，导致该成员两端皆空。现由 `fix-private-agent-owner-reachability` 补齐：**所有权
-> 本身**成为 `read` / `use` 的授权来源，`edit` / `enable` 仍须逐项授权。本节所述
-> 解析顺序（个人默认 → 配置默认 → 租户共享最小 id → 其余）与只读性质均未改动。
+> **落点（2026-09-16）**：`set_user_default_agent`（`auth/service.py:861`）与详情动作 `set_user_default`
+> （`channel/web/web_channel.py:10820`、`:10846`）；租户默认保留 `set_tenant_default_agent`（`auth/service.py:1603`），
+> 旧 `appoint_tenant_default_agent`（`:1620`）仍受管理资格保护且拒绝私有目标；非法指针清理与 owner 保留由
+> `_migration_25`（`auth/store.py:1233-1345`）完成，并由本 change 的迁移演练验证「无迁移改写
+> `private_owner_user_id`」。**已知差异**：租户默认无乐观锁（规范未要求），`agent_bindings.agent_id`
+> 主键使「一个 Agent 绑两个租户」不可表示，仓库无「克隆来源」模板判据——见
+> `evidence/4-7-lifecycle-and-defaults-verification.md`。
 
 ## 4. 兼容与迁移
 
@@ -96,7 +103,22 @@ memory / task records 划给 **Per end user（`user_root`）**——"Wang 喜欢
 
 - **个人档案与个人记忆的编辑入口**（控制台页面 vs 对话内编辑）不在本轮范围；
   本轮先保证运行时注入与隔离正确。档案目前以文件形式存在，可由运维/工具写入。
+
+  > **现状（2026-09-16）**：记忆的编辑入口已由 `unify-console-by-data-scope` 落地一部分——
+  > 统一记忆页面提供列表/正文/写入，本人用户记忆可写（`POST /api/memory/personal`），
+  > 管理员可写获准共享记忆；**成员写本人私有智能体记忆未交付**（写面限管理资格，
+  > 前置是每个智能体独立记忆根，见 `evidence/5-1b-write-path-design.md` §6）。
+  > 个人人设的编辑入口仍未实现。
 - 共享/团队会话中是否允许注入调用者个人人设（当前：**不注入**），需产品确认。
 - 规范中"个人助理是否为独立实体 / 自动固化默认归属 / 个人记忆是否跨租户或跨设备
   同步"三处口径，当前以 `openspec/specs/` 相关 capability（`self-account-context`、
   `tenant-resource-isolation`、`agent-memory-explicit-add-tool`）为准；需要变更时另开 change。
+
+## 6. 取代关系与判定依据
+
+本文作为旧「个人层」设计材料，被
+[统一控制台与数据范围方案](unified-console-access-plan.md) 取代的部分是**入口与页面形态**：
+个人页面不再是独立管理入口，用户记忆与用户默认从现有正式页面维护。保留的是数据事实——
+`user_root()` 归属、`scope=user` + `user_id` 的可信来源、唯一的记忆版本与检索协议、
+跨获准智能体的一致性。本 change 对旧要求的逐行取代矩阵与实际落点见
+[`evidence/8-5-doc-closure.md`](../../openspec/changes/unify-console-by-data-scope/evidence/8-5-doc-closure.md) §3。

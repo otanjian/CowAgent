@@ -53,9 +53,6 @@ test('nav area helpers: path, open, qualify entry', () => {
     assert.equal(appEl._attrs['data-nav-area'], 'workbench');
     assert.equal(sandbox._boots, 2);
     assert.equal(sandbox._qualifyAdminConsoleEntry({
-        identityMode: 'database', isPlatformAdmin: false, isTenantAdmin: false,
-    }), false);
-    assert.equal(sandbox._qualifyAdminConsoleEntry({
         identityMode: 'database', isPlatformAdmin: false, isTenantAdmin: true,
     }), true);
     assert.equal(sandbox._qualifyAdminConsoleEntry({
@@ -64,6 +61,71 @@ test('nav area helpers: path, open, qualify entry', () => {
     assert.equal(sandbox._qualifyAdminConsoleEntry({
         identityMode: 'legacy', isPlatformAdmin: false, isTenantAdmin: false,
     }), true);
+});
+
+// The 控制台 entry is no longer tenant_admin-only (change
+// unify-console-by-data-scope, task 3.1): admission is the trusted formal-page
+// projection, so an ordinary member whose role reaches a business page gets the
+// entry. 组织与权限 and the platform surface keep their own management checks —
+// via their page keys and the platform-scope shell flag — not via this gate.
+test('console entry qualification follows the formal page projection', () => {
+    const code = section('// === NAV_AREA_BEGIN ===', '// === NAV_AREA_END ===');
+    const sandbox = { window: { addEventListener() {} }, document: { getElementById() { return null; } },
+                      location: { pathname: '/chat' } };
+    vm.runInNewContext(code, sandbox);
+    const qualify = (opts) => sandbox._qualifyAdminConsoleEntry(opts);
+
+    // Unknown projection: don't guess / don't block, same rule as _viewNavDenied.
+    assert.equal(qualify({ identityMode: 'database' }), true);
+    assert.equal(qualify({ identityMode: 'database', pages: null }), true);
+
+    // A readable business page admits an ordinary member.
+    assert.equal(qualify({
+        identityMode: 'database',
+        pages: { 'admin.agents': { available: true, read_allowed: true, scope: 'agent' } },
+    }), true);
+
+    // Nothing readable: the entry stays hidden rather than opening an empty shell.
+    assert.equal(qualify({
+        identityMode: 'database',
+        pages: { 'admin.agents': { available: false, read_allowed: false, scope: 'agent' } },
+    }), false);
+
+    // Platform-scope pages are not business entry points: they never admit on
+    // their own, so a member cannot reach the console through 平台运维.
+    assert.equal(qualify({
+        identityMode: 'database',
+        pages: { 'admin.logs': { available: true, read_allowed: true, scope: 'platform' } },
+    }), false);
+
+    // A withheld menu grant withholds the entry too.
+    assert.equal(qualify({
+        identityMode: 'database',
+        pages: { 'admin.agents': { available: true, read_allowed: true, scope: 'agent', menu_denied: true } },
+    }), false);
+
+    // A capability the deployment withdrew is not an admission either: the
+    // per-item gate hides it, so counting it here would open an empty console.
+    assert.equal(qualify({
+        identityMode: 'database',
+        pages: { 'admin.agents': { available: false, read_allowed: true, scope: 'agent', reason: 'capability_disabled' } },
+    }), false);
+
+    // Workbench and personal pages are not reachable from the console shell, so
+    // they must not open a shell with nothing in it: the 管理区 entry is admitted
+    // by 管理区 pages only (console-information-architecture: 没有管理区可访问页面时
+    // 隐藏该区域入口).
+    assert.equal(qualify({
+        identityMode: 'database',
+        pages: { 'workbench.todos': { available: true, read_allowed: true, scope: 'self' } },
+    }), false);
+    assert.equal(qualify({
+        identityMode: 'database',
+        pages: {
+            'workbench.todos': { available: true, read_allowed: true, scope: 'self' },
+            'personal.agents': { available: true, read_allowed: true, scope: 'self' },
+        },
+    }), false);
 });
 
 test('chat.html has area markers and admin home', () => {

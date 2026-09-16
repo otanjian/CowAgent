@@ -532,14 +532,18 @@ class KnowledgeWriteProjectionTests(_WebCtxCase):
 
 
 class AdminKnowledgeWriteProjectionTests(_WebCtxCase):
-    """Task 3.5: the write-capability projection is owner-first for admins too.
+    """Task 2.1/3.5: the management read is scoped *before* write-capability.
 
-    A tenant admin's console lists the whole tenant, so a member's private Agent
-    appears in it. The projection must then say "not writable" — the same answer
-    the write path gives — instead of projecting a *public* maintenance
-    qualification onto every private object in the list. Two directions are
-    checked, because a projection that simply said "never writable" would pass the
-    first one alone.
+    A tenant admin's console now reads the **management object scope**
+    (``auth.object_scope``), so a member's private Agent is not in the roster at
+    all: the read never names it, which is what removes the existence leak the
+    earlier per-row "not writable" flag still carried. The write path
+    (``_knowledge_write_authorized``) has always been owner-first; the projection
+    now agrees with it because both answer from the same scope.
+
+    Non-vacuity is kept in both directions: the tenant's **shared** Agent stays in
+    the roster and stays writable, and the private Agent's owner still sees and
+    writes their own base.
     """
 
     def setUp(self):
@@ -587,14 +591,16 @@ class AdminKnowledgeWriteProjectionTests(_WebCtxCase):
     def _admin_ctx(self):
         return _ctx(self.svc, self.tenant_admin, self.tid, is_tenant_admin=True)
 
-    def test_a_tenant_admin_does_not_get_write_on_a_members_private_base(self):
+    def test_a_tenant_admin_does_not_see_a_members_private_base(self):
         ctx = self._admin_ctx()
         with self._env():
             agents = {a["id"]: a for a in _tenant_agents_admin_projection(ctx)["agents"]}
 
-        self.assertFalse(agents["own-assistant"]["can_write_knowledge"], (
-            "a public maintenance qualification must not be projected onto a"
-            " member's private object"))
+        self.assertNotIn("own-assistant", agents, (
+            "the management read must not name another member's private Agent:"
+            " a per-row 'not writable' flag still leaks that the object exists"))
+        self.assertIn("shared-assistant", agents, (
+            "the scope is not a blanket refusal: the tenant's shared Agent stays"))
 
     def test_the_same_projection_still_marks_shared_agents_writable(self):
         """Non-vacuity: the projection is an answer, not a constant ``False``."""

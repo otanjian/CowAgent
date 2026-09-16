@@ -7,16 +7,50 @@ callable from the cloud client (LinkAI) or a future web console.
 Memory file layout (under workspace_root):
     MEMORY.md               -> type: global
     memory/2026-02-20.md    -> type: daily
+
+Editing, deleting and clearing live here too (task 5.1 second half), but the
+*implementation* is not a second one: this class subclasses
+``PersonalMemoryService`` and overrides only the five hooks that differ between
+a member's own memory domain and an Agent workspace — the storage root, the
+addressable-id grammar, the index label, the retrieval scope its rows carry, and
+which index databases hold a copy. Version conditions, the atomic write, the
+publish intent/generation journal, tombstone masking and the pending-index retry
+are the **same** code path the personal domain runs, which is what the module
+docstring of ``channel/web/memory_console.py`` requires ("no second memory
+CRUD, no second index, no second route table").
+
+Why the hooks matter more than they look: three of them fail *silently* if
+wrong. A wrong label publishes rows no ``sync`` will ever reconcile; a wrong
+scope writes a ``user``-scoped row for an Agent's own file (or the reverse), so
+retrieval never sees it; a wrong index-db set purges nothing while reporting
+success. Hence each one states where its value comes from.
 """
 
 import os
+import re
 from datetime import datetime
 from typing import Dict, List, Optional
 from pathlib import Path
+
+from agent.memory.personal import PersonalMemoryError, PersonalMemoryService
 from common.log import logger
 
+#: Entries an Agent workspace may address. Wider than the personal grammar
+#: because the workspace also owns the Agent's own self-evolution logs and its
+#: nightly dream diaries.
+_AGENT_ENTRY_ID_RE = re.compile(
+    r"^(?:MEMORY\.md"
+    r"|memory/[A-Za-z0-9._-]+\.md"
+    r"|memory/(?:dreams|evolution)/[A-Za-z0-9._-]+\.md)$")
 
-class MemoryService:
+#: Categories the Agent writes itself. A human editing one of these files would
+#: be overwritten by the next consolidation run, and the edit is not what the
+#: page is for — so both roles are refused, not just members. Read stays open:
+#: seeing what the Agent learned is the point of the tab.
+_AGENT_READ_ONLY_PREFIXES = ("memory/dreams/", "memory/evolution/")
+
+
+class MemoryService(PersonalMemoryService):
     """
     High-level service for memory file queries.
     Operates directly on the filesystem — no MemoryManager dependency.
@@ -26,8 +60,105 @@ class MemoryService:
         """
         :param workspace_root: Workspace root directory (e.g. ~/cow)
         """
+        super().__init__(None)
         self.workspace_root = workspace_root
         self.memory_dir = os.path.join(workspace_root, "memory")
+
+    # ------------------------------------------------------------------
+    # The hooks this domain overrides (see the module docstring)
+    # ------------------------------------------------------------------
+    def _require_scope(self):
+        """An Agent workspace needs no (tenant, user) scope to be addressed.
+
+        The caller cannot reach a write here without ``memory_console`` having
+        resolved *this* Agent as the request's single target and authorized it
+        against the caller's range — owner for a private Agent, tenant
+        administration qualification for a shared one. The root below is that
+        already-named workspace, so there is no second identity left to check;
+        inventing one here would be the "second authority" the split forbids.
+        """
+        from common.runtime_identity import current_identity
+        return current_identity()
+
+    def user_root(self) -> Path:
+        """The Agent workspace, guarded against a replaced root.
+
+        Same reasoning as the personal domain: every containment promise in
+        ``safe_fs`` is relative to this path, so a symlinked workspace would
+        make "inside the Agent's memory" mean somewhere else entirely.
+        """
+        root = Path(self.workspace_root)
+        if os.path.islink(root):
+            raise PersonalMemoryError(
+                "智能体记忆根目录被替换", code="unsafe_path", status=403)
+        return root
+
+    def _entry_id_pattern(self):
+        return _AGENT_ENTRY_ID_RE
+
+    def label_for(self, entry_id: str) -> str:
+        """The index label ``MemoryManager.sync`` uses for this entry.
+
+        For an Agent workspace the label *is* the workspace-relative path —
+        ``MEMORY.md``, ``memory/notes.md`` — because the Agent's own index is
+        rooted at that workspace. (The personal domain must prefix
+        ``memory/users/<user_id>/`` instead, since its files are indexed from
+        the tenant shared root.)
+        """
+        self._entry_relative(entry_id)
+        return entry_id
+
+    def _chunk_identity(self):
+        """``(None, "shared")``: what ``sync`` records for a workspace's own files.
+
+        Not ``("user", <someone>)``: these chunks belong to the Agent's shared
+        workspace scope, and a member's user scope is a different retrieval
+        space that must not be handed the Agent's rows.
+        """
+        return None, "shared"
+
+    def _index_dbs(self) -> List[Path]:
+        """The Agent's own index — the only copy of its workspace memory.
+
+        Deliberately not the personal domain's cross-Agent sweep: personal
+        memory is visible from every Agent (so it must be purged everywhere),
+        while an Agent's workspace memory is indexed only here.
+        """
+        return [Path(self.workspace_root) / "memory" / "long-term" / "index.db"]
+
+    @staticmethod
+    def _require_write_capability() -> None:
+        """No-op: the ``personal_memory_write`` switch governs the personal domain.
+
+        That switch exists so a deployment can stop members *adding* to their
+        own memory without stranding them (task 9.1). An Agent workspace memory
+        is a different resource whose authorization is the caller's management
+        range on that Agent, checked before this service is reached — wiring
+        the member's personal switch in here would instead let a personal
+        policy silently disable an administrator's shared-Agent memory.
+        """
+        return None
+
+    # ------------------------------------------------------------------
+    # Write guards that belong to this domain's own shape
+    # ------------------------------------------------------------------
+    def _require_writable_entry(self, entry_id: str) -> None:
+        if isinstance(entry_id, str) and entry_id.startswith(
+                _AGENT_READ_ONLY_PREFIXES):
+            raise PersonalMemoryError(
+                "该分类由智能体自己写入，不支持手工修改",
+                code="read_only_category", status=403)
+
+    def save(self, entry_id: str, content,
+             expected_revision: Optional[str] = None) -> Dict:
+        self._require_writable_entry(entry_id)
+        return super().save(entry_id, content,
+                            expected_revision=expected_revision)
+
+    def delete(self, entry_id: str,
+               expected_revision: Optional[str] = None) -> Dict:
+        self._require_writable_entry(entry_id)
+        return super().delete(entry_id, expected_revision=expected_revision)
 
     # ------------------------------------------------------------------
     # list — paginated file metadata

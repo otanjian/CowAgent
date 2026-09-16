@@ -265,7 +265,7 @@ code, pre { font-family: var(--font-mono); }
   background: var(--demo-bg);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
 }
-.demo-video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; background: var(--demo-bg); }
+.demo-image { display: block; width: 100%; height: auto; background: var(--demo-bg); }
 
 /* ===== 区块 ===== */
 .section { padding: 80px 24px; }
@@ -1550,112 +1550,80 @@ code, pre { font-family: var(--font-mono); }
   color: var(--color-text-secondary);
 }
 
-/* 主题内的视频条目 */
-.manual-videos { display: flex; flex-direction: column; gap: 34px; }
+/* 主题内的编号步骤 */
+.manual-steps { display: flex; flex-direction: column; gap: 38px; }
 
-/* 视频位：固定 16:9，未提供视频源时是明确的占位而非空白 */
-.manual-video { margin: 0; }
-.manual-video-frame {
-  position: relative;
-  aspect-ratio: 16 / 9;
+/* 页头提示：截图可点开原图（选择器带 .page-hero 才压得住 .page-hero p 的排版） */
+.page-hero .manual-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 18px 0 0;
+  padding: 6px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-card);
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+.manual-hint svg { width: 14px; height: 14px; }
+
+/* 一步：序号 + 标题 + 操作要点，下面跟着这一步的真实界面截图 */
+.manual-step { margin: 0; }
+.manual-step-head { display: flex; align-items: flex-start; gap: 14px; }
+.manual-step-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  margin-top: 1px;
+  border-radius: 50%;
+  border: 1px solid var(--color-primary-border);
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.manual-step-copy { display: block; min-width: 0; }
+.manual-step-title {
+  display: block;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--color-text);
+}
+.manual-step-body {
+  display: block;
+  margin-top: 6px;
+  font-size: 14.5px;
+  line-height: 1.8;
+  color: var(--color-text-secondary);
+}
+
+/* 截图：整张图是打开原图的链接，窄屏下按容器等比缩放、不横向溢出 */
+.manual-shot {
+  display: block;
+  margin-top: 14px;
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: var(--color-bg-secondary);
   overflow: hidden;
+  cursor: zoom-in;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.manual-video-player {
+.manual-shot:hover {
+  border-color: var(--color-primary-border);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 8%);
+}
+.manual-shot-img {
   display: block;
   width: 100%;
-  height: 100%;
-  object-fit: contain;
-  background: #000;
+  height: auto;
 }
-.manual-video-placeholder {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(160deg, var(--color-bg-secondary), var(--color-bg-card));
-}
-.manual-video-play {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 58px;
-  height: 58px;
-  border-radius: 50%;
-  border: 1px dashed var(--color-primary-border);
-  background: var(--color-primary-bg);
-  color: var(--color-primary);
-}
-.manual-video-play svg { width: 24px; height: 24px; }
-.manual-video-pending {
-  font-size: 12.5px;
-  letter-spacing: 0.06em;
-  color: var(--color-text-muted);
-}
-
-.manual-video-body { display: block; margin-top: 14px; }
-.manual-video-title {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin: 0;
-  font-size: 16px;
-  color: var(--color-text);
-}
-.manual-video-duration {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--color-border);
-  background: var(--color-bg-card);
-  font-size: 12px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  color: var(--color-text-muted);
-}
-.manual-video-duration svg { width: 13px; height: 13px; }
-
-.manual-video-covers-label {
-  margin: 14px 0 8px;
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-}
-.manual-video-covers {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.manual-video-covers li {
-  position: relative;
-  padding-left: 20px;
-  margin-bottom: 7px;
-  font-size: 14px;
-  line-height: 1.75;
-  color: var(--color-text-secondary);
-}
-.manual-video-covers li::before {
-  content: '';
-  position: absolute;
-  left: 4px;
-  top: 11px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--color-primary);
-  opacity: 0.55;
-}
-.manual-video-covers li:last-child { margin-bottom: 0; }
 
 .manual-subtitle {
   margin: 28px 0 14px;
@@ -1727,9 +1695,10 @@ code, pre { font-family: var(--font-mono); }
   .manual-title-num { min-width: 26px; height: 26px; font-size: 12.5px; }
   .manual-title-icon { width: 32px; height: 32px; }
   .manual-title-icon svg { width: 17px; height: 17px; }
-  .manual-videos { gap: 28px; }
-  .manual-video-play { width: 48px; height: 48px; }
-  .manual-video-play svg { width: 20px; height: 20px; }
-  .manual-video-title { font-size: 15px; }
-  .manual-video-covers li { font-size: 13.5px; }
+  .manual-steps { gap: 30px; }
+  .manual-step-head { gap: 11px; }
+  .manual-step-no { width: 24px; height: 24px; font-size: 12px; }
+  .manual-step-title { font-size: 15px; }
+  .manual-step-body { font-size: 13.5px; }
+  .manual-lead { margin-bottom: 22px; }
 }

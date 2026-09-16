@@ -47,6 +47,7 @@ function boot({ scope = 'platform', elements = {} } = {}) {
                 channels_title: '消息渠道',
                 channels_desc: '管理已接入的消息通道',
                 tenant_channel_desc: '配置本租户的消息渠道，凭据加密存储且不会回显',
+                tenant_channel_self_desc: '管理你本人的渠道连接；凭据加密存储且不会回显',
             },
             en: {},
         },
@@ -59,8 +60,8 @@ function boot({ scope = 'platform', elements = {} } = {}) {
     };
     sandbox.t = (key) => (sandbox.I18N[sandbox.currentLang] || {})[key] || key;
     vm.runInNewContext(
-        ['channelScope', 'syncChannelsHeader', 'openChannelsAddEntry']
-            .map(fnSource).join('\n'),
+        ['channelPageScope', 'channelScope', 'syncChannelsHeader',
+         'openChannelsAddEntry'].map(fnSource).join('\n'),
         sandbox);
     return { sandbox, calls, elements };
 }
@@ -105,6 +106,14 @@ test('the page description follows the console scope', () => {
     sandbox.syncChannelsHeader('platform');
     assert.equal(elements['channels-subtitle'].textContent, '管理已接入的消息通道');
     assert.equal(elements['channels-subtitle'].dataset.i18n, 'channels_desc');
+
+    // A member's own range reads as *their* connections (task 6.1): same page,
+    // same header, and the copy says whose list this is.
+    sandbox.syncChannelsHeader('self');
+    assert.equal(elements['channels-subtitle'].textContent,
+        '管理你本人的渠道连接；凭据加密存储且不会回显');
+    assert.equal(elements['channels-subtitle'].dataset.i18n,
+        'tenant_channel_self_desc');
 });
 
 test('the scope is synced by the one entry point every nav path uses', () => {
@@ -115,7 +124,7 @@ test('the scope is synced by the one entry point every nav path uses', () => {
     // the header from the resolved scope before dispatching to either list.
     assert.match(body, /syncChannelsHeader\(/,
         'loadChannelsView must settle the header before dispatching');
-    assert.match(body, /channelScope\(\)/,
+    assert.match(body, /channelPageScope\(\)/,
         'the header must follow the resolved scope');
     const syncAt = body.indexOf('syncChannelsHeader(');
     const dispatchAt = body.indexOf('loadTenantChannelsView()');

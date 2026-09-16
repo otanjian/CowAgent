@@ -1,5 +1,22 @@
 # CowAgent 与 OneAgent 用户、角色权限对比及实现方案
 
+## 2026-09-15 方案变更（已复核，2026-09-16）
+
+本文保留首次对比与阶段计划。控制台准入、本人资源维护、用户默认和菜单结构按新方案调整：两类用户共用现有功能，仅数据范围不同；组织与权限及公共配置保留管理员边界，删除“我的资源”及五项入口。本次不重新审计 OneAgent，不将旧测试计数解释为新方案验收。
+
+最新方案：[统一控制台与数据范围方案](unified-console-access-plan.md)；实施契约：[unify-console-by-data-scope](../../openspec/changes/unify-console-by-data-scope/proposal.md)。
+
+**实际状态**：本文 §3 的身份安全与授权收口（A/B）已实现并有既有证据；§3.3 的资源授权与模型策略中，
+grants/平台 all 已实现，**成员模型目录已在 2026-09-16 快照内实现（未验收）**——`admin.models` 页 scope 由
+`platform` 改为 `tenant`（`auth/service.py:103`）、新增 `model_catalog_open()`（`:3393`），用例 29 项 + 前端 7 项通过；
+**高级模型策略（`model_policies`）仍为规划**；§5.2 SSO、Desktop 企业适配、
+新增 CLI 账号操作仍是规划。本 change 补上的是「控制台准入 + 对象范围 + 用户默认 + 菜单迁移」四件事，
+不改变本文对身份底座的结论。逐项判定见
+[`evidence/8-5-doc-closure.md`](../../openspec/changes/unify-console-by-data-scope/evidence/8-5-doc-closure.md) §2。
+
+---
+
+
 日期：2026-09-08。范围：两个本地项目的当前工作区源码，包括未提交文件；不代表已部署版本。OneAgent 以静态代码审计为主，CowAgent 另做临时数据库验证和精选测试。本次产出设计方案，未实施下文产品改造。
 
 > 后续复核：本报告保留首次源码快照与 A～D 长期方向。对应 change 已收口为 A/B 身份安全和管理闭环，资源授权、模型策略、运行消费者、SSO、Desktop 企业适配及新增 CLI 账号操作明确延期。聊天 handler 已有后续归属校验，原 63/6 测试结果不代表当前状态；最新复核的 92 项选定测试通过，但不证明完整运行时可用。执行范围、取舍与证据见[change 复核记录](/Users/jiantan/ai_assistant/cowagent/openspec/changes/complete-enterprise-identity-access-control/review.md)。
@@ -229,3 +246,23 @@ OneAgent：
 - [租户上下文/目录](/Users/jiantan/ai_assistant/oneagent/auth/tenant_context.py:95)、[业务审计](/Users/jiantan/ai_assistant/oneagent/agent/audit/recorder.py:60)、[审计查询 API](/Users/jiantan/ai_assistant/oneagent/channel/web/web_channel.py:5164)。
 
 OneAgent 可借鉴的是集中权限目录、用户/角色管理交互、技能/场景授权、模型策略和企业登录流程。其单轮 SHA-256 密码、全局 admin 绕过、全局角色/单租户 User、昵称绑定 SSO、缺上下文目录回退和 JSON 身份读改写不纳入 CowAgent 目标设计。
+
+## 9. 按实际结果的分类（2026-09-16）
+
+判定口径与完整清单见
+[`evidence/8-5-doc-closure.md`](../../openspec/changes/unify-console-by-data-scope/evidence/8-5-doc-closure.md) §2。
+本次**不**重新审计 OneAgent，也不改本文的对比结论；下表只回答「哪些已经做到」。
+
+| 本文范围 | 实际状态 | 依据 |
+| --- | --- | --- |
+| 身份底座（User → Membership → 租户角色、SQLite 会话、组织关系） | ✅ 已实现（既有） | 本文 §3；本 change 未改动模型 |
+| §3.1 HTTP 鉴权收口、§3.2 功能权限目录 | ✅ 已实现（既有） | `auth/policy.py`、`tests/test_http_policy.py` |
+| §3.3 资源授权（五类资源的 grant 与平台 all） | ✅ 已实现（由 `add-role-resource-authorization` 交付） | `auth/store.py:681`、`auth/service.py:2020`、`:2443` |
+| §3.3 成员模型目录（按授权读模型） | 🟡 已实现（未验收） | `auth/service.py:103`（scope `tenant`）、`:3393`（`model_catalog_open()`）；`tests/test_member_model_catalog.py` 等 29 项 + 前端 7 项通过（2026-09-16 重跑）。属主证据尚未回填 |
+| §3.3 模型策略（固定/优先级、跨角色合并预览） | ⬜ 规划 | 只有 `roles.model_defaults_json`；`model_policies` 全仓 0 命中 |
+| 控制台准入与本人资源维护（本 change 的核心） | ✅ 已验收 | `console.js:18356`；`auth/object_scope.py`；`evidence/3-1-*`、`2-1-*` |
+| 用户默认 / 租户默认分离 | ✅ 已验收 | `auth/service.py:861`、`:1603`；`evidence/4-4-*`、`4-6-*` |
+| 菜单结构（删「我的资源」五项、改名、区域拆分） | ✅ 已验收 | `evidence/3-3-*`；`i18n/navigation.js`；`console.js:18317` |
+| §5.1 聊天/文件/任务/Desktop 运行消费者 | 🟡 部分 | Web 侧按切片开放；**真实渠道运行与 Desktop 真实客户端演练未覆盖**（`evidence/7-1-runtime-preflight.md`、`docs/design/database-capability-parity-delivery.md` §2） |
+| §5.2 SSO（钉钉等） | ⬜ 规划 | 未实现，本文已列为延期 |
+| 新增 CLI 账号操作 | ⬜ 规划 | 未实现，本文已列为延期 |

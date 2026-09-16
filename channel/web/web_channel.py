@@ -15,7 +15,7 @@ import threading
 import time
 import uuid
 from queue import Queue, Empty
-from typing import Dict, List, Tuple, Optional, Iterator, NoReturn
+from typing import Any, Dict, List, Tuple, Optional, Iterator, NoReturn
 from urllib.parse import quote
 from collections import OrderedDict, deque
 from contextlib import contextmanager
@@ -28,6 +28,10 @@ from bridge.reply import Reply, ReplyType
 from channel.chat_channel import ChatChannel, check_prefix
 from channel.chat_message import ChatMessage
 from channel.web.route_registry import derive_web_urls as _derive_web_urls
+from channel.web.help_site import (
+    DEFAULT_HELP_SITE_URL as _DEFAULT_HELP_SITE_URL,
+    resolve_help_site_url as _resolve_help_site_url,
+)
 from channel.web.auth_handlers import (
     DbAuthCheckHandler,
     DbAuthLoginHandler,
@@ -83,6 +87,11 @@ from common.singleton import singleton
 # module level so every handler that needs to publish a target uses one name; it
 # holds no state itself, so importing it cannot pull in the identity service.
 from auth.runtime import authorized_target, authorized_target_scope
+# The single authority on an object's data scope (change
+# ``unify-console-by-data-scope``, task 2.1). List, detail and write paths all
+# consume the same predicates so a page can never offer a row the request then
+# refuses; the owner check always precedes the administrator exception.
+from auth.object_scope import MANAGE as SCOPE_MANAGE, USE as SCOPE_USE, ObjectScope
 from config import (
     conf,
     get_data_root,
@@ -484,6 +493,27 @@ def _raise_forbidden() -> NoReturn:
                                     "code": "forbidden"}))
 
 
+def _raise_if_skill_name_ambiguous(exc: Exception) -> None:
+    """Answer 400 when a bare skill ``name`` resolves to more than one skill.
+
+    The spec (``tenant-skills-tools-console``, 同名技能要求明确来源) refuses such a
+    request rather than letting override order pick the definition: the grant
+    recorded for the builtin must not be spent on the tenant's skill of the same
+    name, or the reverse. The console always addresses a skill as
+    ``{source}:{name}``; this is the compatible-name path, so the answer names
+    ``resource_id`` as the fix. A no-op for every other error, which keeps the
+    existing not-found / validation reports unchanged.
+    """
+    from agent.skills.manager import SkillNameAmbiguous
+
+    if not isinstance(exc, SkillNameAmbiguous):
+        return
+    raise web.HTTPError(
+        "400 Bad Request", {"Content-Type": "application/json; charset=utf-8"},
+        json.dumps({"status": "error", "message": str(exc),
+                    "code": "skill_name_ambiguous"}, ensure_ascii=False))
+
+
 def _tenant_admin_owns_agent(ctx: "Optional[RequestContext]", agent_id: str) -> bool:
     """True when ``ctx`` administers the tenant that owns ``agent_id``.
 
@@ -582,6 +612,39 @@ def _require_deletable_provenance(ctx: "Optional[RequestContext]",
                     "code": "forbidden"}))
 
 
+def _require_agent_deletable(ctx: "Optional[RequestContext]", agent_id: str) -> None:
+    """Refuse erasing an Agent something still depends on (task 4.3).
+
+    Provenance (:func:`_require_deletable_provenance`) answers "may this object be
+    erased at all"; this answers "may it be erased *now*". They are separate
+    questions and both have to pass: a self-created Agent that a channel still
+    routes to is deletable in principle and destructive today.
+
+    The refusal is a 409 with its own ``code`` so the console can name the
+    dependency instead of showing a generic failure, and it is deliberately
+    *not* resolved for the caller: the spec forbids auto-stopping the task,
+    rebinding the channel or falling back to another Agent, so the operator
+    unlinks first and deletes after.
+
+    The tenant is the caller's current one — the business console's reach — while
+    :class:`agent.admin.AgentAdminService` re-checks across tenants as a
+    backstop, since an object's binding may not be the operator's tenant.
+    """
+    if not agent_id:
+        return
+    from agent.deletion_guard import conflict_message, deletion_conflicts
+
+    tenant_id = getattr(ctx, "tenant_id", None) if ctx is not None else None
+    conflicts = deletion_conflicts(agent_id, tenant_id=tenant_id)
+    if not conflicts:
+        return
+    raise web.HTTPError(
+        "409 Conflict", {"Content-Type": "application/json"},
+        json.dumps({"status": "error", "code": "conflict",
+                    "message": conflict_message(conflicts),
+                    "conflicts": conflicts}, ensure_ascii=False))
+
+
 def _require_agent_action(ctx: "Optional[RequestContext]", agent_id: str, action: str,
                           permission: str) -> None:
     """Enforce fine-grained agent authorization for a single agent resource.
@@ -606,6 +669,87 @@ def _require_agent_action(ctx: "Optional[RequestContext]", agent_id: str, action
     if action in ("read", "use") and _tenant_shared_default_agent(ctx, agent_id, permission):
         return
     _require_resource_action(ctx, "agent", f"agent:{agent_id}", action, permission)
+
+
+def _require_skill_write_scope(ctx: "Optional[RequestContext]", agent_id: str) -> None:
+    """Refuse a skills write that lands outside the caller's own Agent root.
+
+    ``_require_agent_management_scope`` above is right about a *named* Agent, but
+    it returns early when the body names none, on the assumption that the
+    unnamed case is "anchored to the caller's own identity, so there is nothing
+    for the body to widen". That assumption is wrong for skills: the console
+    never sends an ``agent_id``, and ``_skill_service('')`` resolves the state
+    root of the Agent-less anchor — the tenant's **shared** root — so the write
+    lands in shared state with no Agent to check.
+
+    Measured before this gate existed: a member holding only the functional
+    ``skill.enable`` permission plus a grant on that skill turned a shared skill
+    off for the whole tenant (``POST /api/skills {action:"close", resource_id}``
+    → 200, and the administrator's subsequent catalog read reported
+    ``enabled: false``). The same shape reaches the body write for a
+    tenant-authored (non-builtin) skill, because the installation-shipped
+    read-only provenance only protects the builtins.
+
+    So the two authorities are applied where each already lives: a named Agent
+    goes through the object scope (owner-first, so a private Agent stays its
+    owner's and a shared one needs administration), and an unnamed one is a
+    write to the tenant's shared surface, which is
+    :meth:`ObjectScope.allows_public_configuration` — administration on its own,
+    never a functional grant (task 2.2). Legacy mode answers ``ctx is None`` and
+    stays unrestricted, as everywhere else in this module.
+    """
+    if ctx is None:
+        return
+    if agent_id:
+        _require_agent_management_scope(ctx, agent_id)
+        return
+    if ObjectScope.from_context(ctx).allows_public_configuration():
+        return
+    _raise_forbidden()
+
+
+def _resolved_skill(service, name: str, resource_id: str):
+    """``(entry, rid)`` for a skill write, with the id normalised to its source.
+
+    The catalog addresses a skill as ``{source}:{name}`` and the resource grants
+    are recorded in that form, so a bare ``name`` is not a comparable id: the
+    toggle path used to pass ``resource_id or name`` straight to the grant check,
+    which refused a member the very toggle their grant allowed (measured: the
+    console's own ``{action, name}`` payload returned 403 while the identical
+    call with ``resource_id`` returned 200). Resolution happens once, here, and
+    the normalised id is what both the gate and the service are given — the
+    ambiguity and not-found errors are the resolver's to raise.
+    """
+    entry = service.resolve(resource_id=resource_id or None, name=name or None)
+    return entry, resource_id or f"{entry.skill.source}:{entry.skill.name}"
+
+
+def _require_agent_management_scope(ctx: "Optional[RequestContext]", agent_id: str) -> None:
+    """Refuse a write that would land in an Agent outside the management range.
+
+    A configuration request *names* the Agent it edits (``agent_id``), and a
+    skill/tool/model edit writes into that Agent's state root. Naming the
+    tenant's **shared** Agent would otherwise let a member who merely holds a
+    per-resource ``skill.edit`` (or ``tool``/``model``) grant rewrite the
+    tenant's shared definition: the grant authorizes *the resource*, not the
+    decision to maintain the tenant's shared surface (task 2.2 — a functional
+    ``edit`` grant never substitutes for the management qualification).
+
+    :mod:`auth.object_scope` answers the question once, owner-first, so this
+    gate and the roster read (:func:`_iter_tenant_agents`) cannot disagree: a
+    private Agent is writable by its owner, a shared one by the tenant's
+    administration, and another member's private one by nobody.
+
+    A caller that names no Agent is left alone: the Agent it is anchored to is
+    resolved from its own identity (``resolved_default_agent_id``), never from
+    the request, so there is nothing for the body to widen.
+    """
+    if ctx is None or not agent_id:
+        return
+    scope = ObjectScope.from_context(ctx)
+    if scope.allows_agent(_agent_binding_for(ctx, agent_id), action=SCOPE_MANAGE):
+        return
+    _raise_forbidden()
 
 
 def _capability_name_list(value) -> list:
@@ -735,28 +879,132 @@ def _tenant_agent_workspace(ctx: "RequestContext", agent_id: str) -> Optional[st
     return os.path.join(root, "agents", agent_id)
 
 
-def _adopt_created_agent_for_tenant(ctx: "RequestContext", agent_id: str) -> None:
+def _creation_scope(ctx: "Optional[RequestContext]", body: Dict[str, Any]) -> str:
+    """``'private'`` or ``'shared'`` — the ownership a create must land in.
+
+    Server-derived, from the caller's role (task 4.1, spec ``agent-chat-launch``:
+    新建普通用户对象 SHALL 自动归本人私有). The form may *ask*, but only for what
+    the role is allowed to make:
+
+    * a **member** gets ``private``, always. Asking for ``shared`` is refused
+      rather than silently downgraded: a request that means "make this visible to
+      every colleague" must not come back as a success with an object nobody else
+      can see. Naming it plainly is also what keeps a member from ever reaching
+      the tenant-default rule below.
+    * an **administrator** gets what it asks for, defaulting to ``shared`` —
+      today's behaviour, preserved so existing admin flows and their tests do not
+      change meaning.
+
+    No value here can name an *owner*: the owner of a private object is the
+    caller and nobody else, and there is no field in the protocol that could say
+    otherwise.
+    """
+    requested = str(body.get("scope") or "").strip().lower()
+    if requested not in ("", "private", "shared"):
+        raise web.HTTPError(
+            "400 Bad Request", {"Content-Type": "application/json"},
+            json.dumps({"status": "error", "code": "invalid_scope",
+                        "message": "scope must be 'private' or 'shared'"}))
+    if ctx is None or getattr(ctx, "legacy_mode", False):
+        return requested or "shared"
+    if getattr(ctx, "is_platform_admin", False) or getattr(ctx, "is_tenant_admin", False):
+        return requested or "shared"
+    if requested == "shared":
+        raise web.HTTPError(
+            "403 Forbidden", {"Content-Type": "application/json"},
+            json.dumps({"status": "error", "code": "forbidden",
+                        "message": "only an administrator may create a"
+                                   " tenant-shared agent"}))
+    return "private"
+
+
+def _adopt_created_agent_for_tenant(ctx: "RequestContext", agent_id: str, *,
+                                    scope: str = "shared") -> str:
     """Bind a freshly created Agent to the tenant that created it.
 
     The read path filters the roster by the tenant binding
     (``_tenant_agents_projection`` -> ``tenant_agent_ids``), so a write path that
-    skips the binding produces an Agent the creating tenant can never see. The
-    tenant's first Agent also becomes its default, so a tenant that starts empty
-    ends up with something to chat with.
+    skips the binding produces an Agent the creating tenant can never see.
+
+    ``scope`` decides *how* it is bound, and the two branches are deliberately
+    different (task 4.1):
+
+    * ``private`` — the object is bound **to the caller as its owner**, through
+      :meth:`IdentityService.bind_private_agent_with_quota`. That call is the one
+      place that answers "may this person still make a private Agent" (the
+      deployment capability and the tenant policy) and it answers it *inside* the
+      insert's transaction, so a create racing the quota cannot slip through. The
+      tenant-default rule below is not consulted at all: the spec is explicit
+      that a member's first object stays theirs and does not become the entry
+      every colleague shares.
+    * ``shared`` — the historical behaviour: bound ownerless and recorded as
+      ``admin_created``. The tenant's first Agent also becomes its default, so a
+      tenant that starts empty ends up with something to chat with; the
+      appointment is admin-gated by the service, and the branch is only reachable
+      by an administrator anyway.
+    """
+    if not agent_id:
+        return scope
+    from auth.service import ADMIN_CREATED, get_identity_service
+    svc = get_identity_service()
+    if scope == "private":
+        svc.bind_private_agent_with_quota(
+            tenant_id=ctx.tenant_id, agent_id=agent_id,
+            user_id=ctx.user_id, origin="user_created",
+            actor_user_id=ctx.user_id)
+        return "private"
+    had_agents = bool(svc.tenant_agent_ids(ctx.tenant_id))
+    svc.bind_agent(tenant_id=ctx.tenant_id, agent_id=agent_id,
+                   origin=ADMIN_CREATED, actor_user_id=ctx.user_id)
+    if not had_agents and not svc.tenant_default_agent_id(ctx.tenant_id):
+        svc.appoint_tenant_default_agent(
+            tenant_id=ctx.tenant_id, agent_id=agent_id, actor_user_id=ctx.user_id)
+    return "shared"
+
+
+def _rollback_created_agent(ctx: "Optional[RequestContext]", agent_id: str) -> None:
+    """Undo a create that failed *after* the roster entry was written (task 4.1).
+
+    Creating an Agent is two commits that cannot be made one: the roster
+    (``team.json``) and the tenant binding (``identity.db``). Without this, a
+    refused or failed adoption left a roster entry that no tenant could see and
+    no member could remove — the create reported failure while leaving the
+    object behind, and the next attempt on the same id got "already exists".
+
+    Best effort on purpose, and in the reverse order of the writes. A rollback
+    that itself fails must not replace the original error, which is the one the
+    caller needs to see; the compensating primitives are each idempotent, so a
+    retry is safe.
     """
     if not agent_id:
         return
     from auth.service import get_identity_service
-    svc = get_identity_service()
-    had_agents = bool(svc.tenant_agent_ids(ctx.tenant_id))
-    # Bound tenant-shared: private ownership is an explicit act. Inferring it
-    # from the creator would mark the tenant's first Agent — which the next line
-    # makes the tenant *default* — as that one user's private asset, and
-    # ``private_owner_user_id`` is an exclusive read gate on the chat path.
-    svc.bind_agent(tenant_id=ctx.tenant_id, agent_id=agent_id)
-    if not had_agents and not svc.tenant_default_agent_id(ctx.tenant_id):
-        svc.appoint_tenant_default_agent(
-            tenant_id=ctx.tenant_id, agent_id=agent_id, actor_user_id=ctx.user_id)
+    from pathlib import Path
+    try:
+        get_identity_service().release_deleted_agent(agent_id=agent_id,
+                                                     actor_user_id=None)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("[WebChannel] could not release %s: %s", agent_id, exc)
+    try:
+        # ``require_unreferenced=False``: this object was never reachable, so
+        # nothing can reference it — and a rollback that refuses to undo the
+        # very commit it is compensating would leave exactly the orphan it
+        # exists to remove (task 4.1).
+        _agent_admin_service().delete_agent(agent_id=agent_id,
+                                            require_unreferenced=False)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("[WebChannel] could not roll back %s: %s", agent_id, exc)
+    if ctx is None or not ctx.tenant_id:
+        return
+    workspace = Path(_tenant_agent_workspace(ctx, agent_id))
+    try:
+        # Only the layout this route creates is ours to erase — the same
+        # restraint ``PrivateAgentService._compensate`` applies.
+        if workspace.is_dir() and workspace.name == agent_id \
+                and workspace.parent.name == "agents":
+            shutil.rmtree(workspace, ignore_errors=True)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("[WebChannel] could not clear %s: %s", workspace, exc)
 
 
 def _require_chat_use(ctx: "Optional[RequestContext]") -> None:
@@ -4643,6 +4891,21 @@ def _branding_error_response(err: BrandingError) -> str:
     }, ensure_ascii=False)
 
 
+def _help_site_url() -> str:
+    """The project site address carried by the public projection.
+
+    Instance-level and brand-independent, but it travels in this projection
+    because the console already reads it on boot and on visibility change. The
+    resolver never raises and never answers an empty string; the extra guard
+    keeps a broken site config from ever taking down the public read.
+    """
+    try:
+        return _resolve_help_site_url()
+    except Exception as e:  # pragma: no cover - resolver already fails closed
+        logger.exception(f"[BrandingPublicHandler] help site resolution failed: {e}")
+        return _DEFAULT_HELP_SITE_URL
+
+
 class BrandingPublicHandler:
     """GET /api/branding/public - unauthenticated minimal brand read."""
 
@@ -4662,6 +4925,9 @@ class BrandingPublicHandler:
                 "logo_url": "/assets/rongda-ai-mark.svg",
                 "favicon_url": "/assets/favicon.ico",
             }
+        # The 「帮助与关于」 target: the site declares its own address, so a read
+        # failure lands on the local-development default instead of a dead link.
+        payload["help_url"] = _help_site_url()
         return json.dumps(payload, ensure_ascii=False)
 
 
@@ -7672,21 +7938,22 @@ class WeixinQrHandler:
 
     @staticmethod
     def _manages_tenant_channels(ctx) -> bool:
-        """*ctx* 是否可以管理本租户的渠道实例。
+        """*ctx* 是否可以管理本租户的**公共**渠道实例。
 
-        问已交付的服务（列表接口要求的正是这个权限），而不是在扫码侧复制一份规则，
-        否则扫码可能给出一个随后必然被拒的作用域。
+        问的是「管理资格」，不是「能不能列举」。这两件事在任务 6.1 之前恰好一致——
+        那时列举接口对普通成员直接 403——所以拿列举当代理曾经是对的。共用之后不再
+        成立：普通成员现在**也能**列举，只是列举到的是本人的连接。继续用列举做代理
+        会把成员判成管理者，于是扫码给本次接入派一个 `tenant` 作用域，而这个作用域
+        在写入时必然被拒（`channel instance manage denied`）——正是「先给人一个随后
+        必被拒的位置」这种形状。
+
+        因此这里直接问治理资格本身（身份投影里的租户/平台管理员标记），它是租户业务
+        接口写入路径真正使用的那个事实。
         """
-        tenant = str(getattr(ctx, "tenant_id", "") or "")
-        if not tenant:
+        if not str(getattr(ctx, "tenant_id", "") or ""):
             return False
-        try:
-            from auth.service import get_identity_service
-            get_identity_service().list_tenant_channel_instances(
-                actor_user_id=ctx.user_id, tenant_id=tenant)
-            return True
-        except Exception:  # noqa: BLE001 - 无权限就是 False，不是错误
-            return False
+        return bool(getattr(ctx, "is_tenant_admin", False)
+                    or getattr(ctx, "is_platform_admin", False))
 
     @classmethod
     def _scope_for(cls, ctx, body) -> str:
@@ -7894,9 +8161,15 @@ class WeixinQrHandler:
                        status=409, code="not_confirmed")
         credentials = so.provider_result(session.handle, actor=actor)
         # 授权在提交前才"开启"，且同一会话只开启一次：重试与响应丢失回读用的因此
-        # 是同一个授权句柄、同一个幂等键，而不是第二次创建。
+        # 是同一个授权句柄、同一个幂等键，而不是第二次创建。私有创建要在授权里写明
+        # 这一次买的是哪个 Agent（task 4.1）：授权因此不能跨对象复用。目标一旦定下就
+        # 成为会话状态，只带句柄的轮询（响应丢失后的回读）仍然呈现同一个目标，而不是
+        # 被当成"另一次内容不同的创建"。
+        wanted_agent = (str((body or {}).get("agent_id") or "").strip()
+                        or session.grant_agent_id)
         ticket = so.open_grant(session.handle, actor=actor,
-                               channel_type=self.CHANNEL_TYPE)
+                               channel_type=self.CHANNEL_TYPE,
+                               agent_id=wanted_agent)
         # 开户动作让会话多了"已授权"这个事实，重读一次视图，别拿开启前的旧快照回答。
         session = so.get_session(session.handle, actor=actor)
         service = get_identity_service()
@@ -7909,7 +8182,7 @@ class WeixinQrHandler:
             # 两者都随会话固定，重试提交的内容不会漂移。
             display_name=(str((body or {}).get("display_name") or "").strip()
                           or session.default_display_name),
-            agent_id=str((body or {}).get("agent_id") or ""),
+            agent_id=wanted_agent,
             credentials=credentials,
             provider=self.PROVIDER, scope=session.scope, purpose=self.PURPOSE,
             target=session.target,
@@ -8045,6 +8318,25 @@ def _register_owner_scope() -> Tuple[str, str]:
     return (ctx.user_id, ctx.tenant_id or "")
 
 
+def _verified_auth_session_id() -> str:
+    """本次请求背后**已验证**登录会话的 id。
+
+    扫码授权绑定到登录会话：同一账号换一次登录就不再承认上一张票，
+    句柄被别的会话拾取也无法兑换。id 非秘密（聊天委派快照里本来就带它），
+    这里取的是服务端验证后的值，不是客户端字段。取不到时返回空串并按
+    「未绑定」处理：无法读到会话时不把一次无关的写入变成 401，而是让绑定
+    校验自行拒绝（对绑定到会话的授权即失败关闭）。
+
+    实现放在 ``auth_handlers``：公开创建路径（``admin_handlers``）与个人创建
+    路径都取同一个事实，两处不能各写一份。
+    """
+    if not _is_database_identity():
+        return ""
+    from channel.web.auth_handlers import verified_auth_session_id
+
+    return verified_auth_session_id()
+
+
 class FeishuRegisterHandler:
     """飞书智能体应用一键创建（OAuth 设备授权流，基于 lark.register_app SDK）。
 
@@ -8105,18 +8397,26 @@ class FeishuRegisterHandler:
                 cls._sessions.pop(handle, None)
 
     @classmethod
-    def _create_session(cls, owner_user_id: str, owner_tenant_id: str) -> str:
+    def _create_session(cls, owner_user_id: str, owner_tenant_id: str, *,
+                        scope: str = "tenant", agent_id: str = "",
+                        auth_session_id: str = "") -> str:
         """为某一身份开启新会话并返回其不透明句柄。
 
         同一身份已有的会话会被取代（取消并移除），以保证同一次注册只有一个 SDK
         线程在轮询；其他身份的会话不受影响。
+
+        取代的粒度是 ``(user, tenant, scope, agent_id)`` 而不是整个身份：公共页
+        与「我的渠道」是两次独立的扫码，同一用户先后打开两边不应该互相取消
+        对方的二维码。同一侧重复发起仍然只保留一次注册。
         """
         handle = secrets.token_urlsafe(32)
-        owner = (owner_user_id or "", owner_tenant_id or "")
+        owner = (owner_user_id or "", owner_tenant_id or "",
+                 scope or "tenant", agent_id or "")
         with cls._lock:
             cls._purge_expired_locked()
             for existing, session in list(cls._sessions.items()):
-                if (session.get("owner_user_id"), session.get("owner_tenant_id")) == owner:
+                if (session.get("owner_user_id"), session.get("owner_tenant_id"),
+                        session.get("scope"), session.get("agent_id")) == owner:
                     previous = session.get("cancel_event")
                     if previous is not None:
                         previous.set()
@@ -8125,6 +8425,9 @@ class FeishuRegisterHandler:
                 "handle": handle,
                 "owner_user_id": owner[0],
                 "owner_tenant_id": owner[1],
+                "scope": owner[2],
+                "agent_id": owner[3],
+                "auth_session_id": auth_session_id or "",
                 "status": "starting",
                 "created_at": time.time(),
                 "cancel_event": threading.Event(),
@@ -8132,7 +8435,8 @@ class FeishuRegisterHandler:
         return handle
 
     @classmethod
-    def _session_for(cls, handle: str, owner_user_id: str, owner_tenant_id: str):
+    def _session_for(cls, handle: str, owner_user_id: str, owner_tenant_id: str,
+                     auth_session_id: str = ""):
         """仅当调用者拥有该句柄时返回会话记录，否则返回 None。
 
         他人的句柄与不存在的句柄给出同一答案：调用者不得探测其他身份的会话。
@@ -8146,19 +8450,34 @@ class FeishuRegisterHandler:
                 return None
             if (session.get("owner_user_id"), session.get("owner_tenant_id")) != owner:
                 return None
+            # The login session is part of the binding too: a handle lifted from
+            # a background tab cannot be polled after a re-login, and switching
+            # accounts mid-scan costs a rescan rather than handing over a session
+            # that was started by someone else.
+            if str(session.get("auth_session_id") or "") != (auth_session_id or ""):
+                return None
             return session
 
     @classmethod
-    def _mint_scan_grant(cls, owner_user_id: str, owner_tenant_id: str) -> str:
+    def _mint_scan_grant(cls, session: dict) -> str:
         """The one-time grant that lets this scan's create skip the password.
 
         Kept here, next to the session that justifies it, so the two cannot
-        drift: the grant is bound to the same owner the session is bound to.
+        drift: the grant carries the *same* binding the session does — owner,
+        tenant, login session, surface and target — so a ticket minted by the
+        personal workbench can never be spent on the public console, and a
+        public ticket can never create a private instance (task 4.1).
         """
         from auth.scan_authorization import mint
 
-        return mint(actor_user_id=owner_user_id, tenant_id=owner_tenant_id,
-                    channel_type="feishu")
+        return mint(
+            actor_user_id=str(session.get("owner_user_id") or ""),
+            tenant_id=str(session.get("owner_tenant_id") or ""),
+            channel_type="feishu",
+            scope=str(session.get("scope") or "tenant"),
+            agent_id=str(session.get("agent_id") or ""),
+            auth_session_id=str(session.get("auth_session_id") or ""),
+        )
 
     @classmethod
     def _set_status(cls, handle: str, status: str, **fields) -> bool:
@@ -8176,10 +8495,12 @@ class FeishuRegisterHandler:
             return True
 
     @classmethod
-    def _poll_payload(cls, handle: str, owner_user_id: str, owner_tenant_id: str) -> dict:
+    def _poll_payload(cls, handle: str, owner_user_id: str, owner_tenant_id: str,
+                      auth_session_id: str = "") -> dict:
         """某一身份的轮询应答；成功时消费凭据。
 
-        未知句柄、他人句柄与已消费的会话一律读作 ``expired``，三者不可区分。
+        未知句柄、他人句柄、别的登录会话的句柄与已消费的会话一律读作
+        ``expired``，四者不可区分。
         """
         owner = (owner_user_id or "", owner_tenant_id or "")
         with cls._lock:
@@ -8187,19 +8508,28 @@ class FeishuRegisterHandler:
             if session is not None and (
                     session.get("owner_user_id"), session.get("owner_tenant_id")) != owner:
                 session = None
+            if session is not None and str(session.get("auth_session_id") or "") != (
+                    auth_session_id or ""):
+                session = None
             if session is None:
                 return {"status": "success", "register_status": "expired"}
+            # 作用域与目标随会话回传：个人扫码的授权只在发起时给定的
+            # scope/target 上下文中有效，前端必须原样带回创建请求。
+            scope = str(session.get("scope") or "tenant")
+            agent_id = str(session.get("agent_id") or "")
             status = session.get("status") or "idle"
             if status == "done":
                 payload = {
                     "status": "success",
                     "register_status": "done",
+                    "scope": scope,
+                    "agent_id": agent_id,
                     "app_id": session.get("app_id", ""),
                     "app_secret": session.get("app_secret", ""),
                     # The console redeems this to create the instance with no
                     # password prompt, so the successful scan does not become a
                     # "configured in the UI but never stored" channel.
-                    "scan_ticket": cls._mint_scan_grant(owner_user_id, owner_tenant_id),
+                    "scan_ticket": cls._mint_scan_grant(session),
                 }
                 # 一次性交付：凭据随即从服务端状态中移除。
                 cls._sessions.pop(handle, None)
@@ -8210,7 +8540,8 @@ class FeishuRegisterHandler:
             if status in ("starting", "idle"):
                 # 与旧行为一致：启动阶段对外表现为 pending，二维码由后续轮询补发。
                 status = "pending"
-            payload = {"status": "success", "register_status": status}
+            payload = {"status": "success", "register_status": status,
+                       "scope": scope, "agent_id": agent_id}
             if session.get("url"):
                 payload["qrcode_url"] = session["url"]
                 payload["qr_image"] = session.get("qr_image", "")
@@ -8292,24 +8623,68 @@ class FeishuRegisterHandler:
 
         threading.Thread(target=_worker, daemon=True, name="feishu-register").start()
 
+    @staticmethod
+    def _start_scope() -> Tuple[str, str]:
+        """``(scope, agent_id)`` for the scan this request starts.
+
+        公共页（无参数）走 ``tenant``；「我的渠道」必须显式声明个人作用域并给出
+        本次接入的目标。个人作用域下目标不合法时**在打开飞书对话框之前**就拒绝，
+        而不是先让用户扫完码再要求选目标。
+        """
+        params = web.input(scope='', agent_id='')
+        scope = str(getattr(params, "scope", "") or "").strip() or "tenant"
+        agent_id = str(getattr(params, "agent_id", "") or "").strip()
+        if scope not in ("tenant", "personal"):
+            raise ValueError(f"unknown scan scope: {scope}")
+        if scope == "tenant":
+            if agent_id:
+                raise ValueError("a shared scan must not name a personal target")
+            return scope, ""
+        owner_user_id, owner_tenant_id = _register_owner_scope()
+        from auth.service import get_identity_service
+
+        get_identity_service().check_personal_channel_target(
+            actor_user_id=owner_user_id, tenant_id=owner_tenant_id,
+            agent_id=agent_id)
+        return scope, agent_id
+
     def GET(self):
         """为当前发起者启动一次注册会话，返回句柄与二维码。"""
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
+            from auth.service import IdentityServiceError
+
             owner_user_id, owner_tenant_id = _register_owner_scope()
-            handle = self._create_session(owner_user_id, owner_tenant_id)
+            auth_session_id = _verified_auth_session_id()
+            try:
+                scope, agent_id = self._start_scope()
+            except (IdentityServiceError, ValueError) as e:
+                # Refused *before* any provider registration starts: a personal
+                # scan without a valid private target is a bad request, not a
+                # QR code the member scans only to be told to pick a target.
+                logger.info(f"[FeishuRegister] scan refused: {e}")
+                return json.dumps({
+                    "status": "error",
+                    "code": getattr(e, "code", "") or "bad_request",
+                    "message": str(e),
+                }, ensure_ascii=False)
+            handle = self._create_session(
+                owner_user_id, owner_tenant_id, scope=scope, agent_id=agent_id,
+                auth_session_id=auth_session_id)
             self._start_register_thread(handle)
             # 等待 SDK 拿到二维码 URL（最多 10s）。SDK 内部会马上回调 _on_qr。
             import time as _t
             deadline = time.time() + self._QR_WAIT_SECONDS
             while time.time() < deadline:
-                session = self._session_for(handle, owner_user_id, owner_tenant_id)
+                session = self._session_for(handle, owner_user_id, owner_tenant_id,
+                                            auth_session_id)
                 if session is None or session.get("url") or session.get("status") in (
                     "downloading", "error", "expired", "denied"
                 ):
                     break
                 _t.sleep(0.1)
-            session = self._session_for(handle, owner_user_id, owner_tenant_id)
+            session = self._session_for(handle, owner_user_id, owner_tenant_id,
+                                        auth_session_id)
             if session is None:
                 return json.dumps({
                     "status": "error",
@@ -8364,7 +8739,8 @@ class FeishuRegisterHandler:
                 })
             owner_user_id, owner_tenant_id = _register_owner_scope()
             return json.dumps(
-                self._poll_payload(handle, owner_user_id, owner_tenant_id))
+                self._poll_payload(handle, owner_user_id, owner_tenant_id,
+                                   _verified_auth_session_id()))
         except Exception as e:
             logger.error(f"[WebChannel] FeishuRegister POST error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -8426,12 +8802,53 @@ class ToolsHandler:
                         "description": mcp_tool.description or "",
                     })
                 tools = _filter_tool_catalog(ctx, tools, "read")
+                _attach_personal_states(ctx, tools, "tool")
             return json.dumps({"status": "success", "tools": tools}, ensure_ascii=False)
         except web.HTTPError:
             raise
         except Exception as e:
             logger.error(f"[WebChannel] Tools API error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
+
+    def POST(self):
+        """工具的个人参数：保存 / 清除本人已获授权工具的参数（任务 5.5）.
+
+        The parameters live in the resource's detail component on this page, so
+        the write belongs to the page's own endpoint instead of a second personal
+        surface (and a second authority) to keep in step. Nothing here touches a
+        tool definition, an MCP connection, the tenant's grants, or another
+        member's configuration: ``actor_user_id`` is the session's, there is no
+        ``user_id`` parameter, and the service re-checks the caller's own ``tool``
+        ``execute`` grant on every save.
+        """
+        web.header('Content-Type', 'application/json; charset=utf-8')
+        try:
+            body = json.loads(web.data() or b'{}')
+            action = str(body.get("action") or "").strip()
+            if action not in ("save-personal", "clear-personal"):
+                return json.dumps({"status": "error", "code": "bad_request",
+                                   "message": f"unknown action: {action}"},
+                                  ensure_ascii=False)
+            with _db_scope() as ctx:
+                _require_catalog_read(ctx, "tool.read")
+                service = _personal_channel_service()
+                target = dict(actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id,
+                              resource_kind="tool",
+                              resource_id=str(body.get("resource_id") or "").strip())
+                if action == "save-personal":
+                    saved = service.save_personal_resource_config(
+                        **target, params=body.get("params") or {},
+                        secret=body.get("secret"))
+                    return json.dumps({"status": "success", "config": saved},
+                                      ensure_ascii=False)
+                service.clear_personal_resource_config(**target)
+                return json.dumps({"status": "success", "config": None},
+                                  ensure_ascii=False)
+        except web.HTTPError:
+            raise
+        except Exception as e:
+            logger.error(f"[WebChannel] Tool personal config error: {e}")
+            return _personal_channel_error(e)
 
 
 def _skill_service(agent_id: str = ''):
@@ -8475,6 +8892,39 @@ def _filter_skill_catalog(ctx: "Optional[RequestContext]", skills: List[dict], a
     return out
 
 
+def _annotate_skill_actions(ctx: "Optional[RequestContext]",
+                            skills: List[dict]) -> List[dict]:
+    """Report, per skill, whether the page may offer the global toggle.
+
+    The switch used to be rendered unconditionally, so a member was shown a
+    control whose request is refused: the global enable/disable writes the state
+    every member and Agent reads, which needs the management qualification
+    (``_require_skill_write_scope``) on top of the per-resource ``enable`` grant.
+
+    The rule is the write path's, asked here instead of raised — same scope
+    authority, same grant check, once per row — so the page cannot advertise a
+    verb the write would refuse. Legacy mode (``ctx is None``) annotates every
+    row as available, matching the unrestricted behaviour of every other gate in
+    this module.
+    """
+    if ctx is None:
+        for skill in skills:
+            skill["actions"] = {"enable": True}
+        return skills
+    from auth.service import get_identity_service
+
+    manage = ObjectScope.from_context(ctx).allows_public_configuration()
+    service = get_identity_service()
+    for skill in skills:
+        rid = skill.get("resource_id") or (
+            f"{skill.get('source', 'builtin')}:{skill.get('name', '')}")
+        skill["actions"] = {"enable": bool(
+            manage and service.check_resource_action(
+                ctx.user_id, ctx.tenant_id, "skill", rid, "enable",
+                permission="skill.enable"))}
+    return skills
+
+
 def _filter_tool_catalog(ctx: "Optional[RequestContext]", tools: List[dict], action: str) -> List[dict]:
     """Narrow a tool list to entries the caller may act on (``read``/``execute``/...).
 
@@ -8495,6 +8945,32 @@ def _filter_tool_catalog(ctx: "Optional[RequestContext]", tools: List[dict], act
     return out
 
 
+def _attach_personal_states(ctx: "Optional[RequestContext]", rows: List[dict],
+                            kind: str) -> List[dict]:
+    """Attach the caller's own parameters to each row of a shared catalog page.
+
+    The 工具与技能 detail component carries 个人参数 in the same panel as the
+    resource's own description (task 5.5). There is no 我的资源 page any more, so
+    the rows this page already returns are where the values have to arrive: one
+    request, one authority, and no second surface to keep in step with the first.
+
+    A row the caller holds no use grant for keeps its key with ``None`` rather
+    than a synthesized default, so "nothing personal here" is distinguishable
+    from "granted, nothing saved yet" — the console shows an editor only for the
+    latter (and a saved configuration read-only for a row whose grant was since
+    withdrawn, which is what ``clear`` stays available for).
+    """
+    if ctx is None:  # legacy mode: no per-member configuration exists
+        return rows
+    from auth.service import get_identity_service
+
+    states = get_identity_service().personal_resource_states(
+        actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id, resource_kind=kind)
+    for row in rows:
+        row["personal"] = states.get(str(row.get("resource_id") or ""))
+    return rows
+
+
 class SkillsHandler:
     def GET(self):
         web.header('Content-Type', 'application/json; charset=utf-8')
@@ -8509,6 +8985,8 @@ class SkillsHandler:
                 service = _skill_service(_request_agent_id(params))
                 skills = service.query()
                 skills = _filter_skill_catalog(ctx, skills, "read")
+                skills = _annotate_skill_actions(ctx, skills)
+                _attach_personal_states(ctx, skills, "skill")
                 if i18n.get_language() == i18n.ZH_HANT:
                     for skill in skills:
                         if isinstance(skill, dict):
@@ -8536,18 +9014,51 @@ class SkillsHandler:
                 if not name and not resource_id:
                     return json.dumps({"status": "error", "message": "name or resource_id is required"})
                 service = _skill_service(_request_agent_id(body))
-                target = {"name": name} if name else {"resource_id": resource_id}
-                if action == "open":
-                    _require_resource_action(ctx, "skill", resource_id or name, "enable", "skill.enable")
-                    service.open(target)
-                elif action == "close":
-                    _require_resource_action(ctx, "skill", resource_id or name, "enable", "skill.enable")
-                    service.close(target)
+                if not action:
+                    return json.dumps({"status": "error", "message": "action is required"})
+                # Resolve to the exact authorization object *before* the gates and
+                # the write: the grant is recorded as ``{source}:{name}``, so a
+                # bare name would be checked against the wrong string, and the
+                # service must be told the same object the gates approved.
+                entry, rid = _resolved_skill(service, name or "", resource_id or "")
+                target = {"resource_id": rid}
+                if action in ("save-personal", "clear-personal"):
+                    # 个人参数 (task 5.5). Deliberately *before* the public write
+                    # scope below: this is an owner-scoped write of the caller's
+                    # own parameters, not a change to the tenant's shared skill,
+                    # so it answers to the caller's ``skill`` ``use`` grant and the
+                    # use-owner rules the service enforces — asking for the
+                    # management qualification here would hide the member's own
+                    # editor behind an administrator's authority.
+                    personal = _personal_channel_service()
+                    personal_target = dict(actor_user_id=ctx.user_id,
+                                           tenant_id=ctx.tenant_id,
+                                           resource_kind="skill", resource_id=rid)
+                    if action == "save-personal":
+                        saved = personal.save_personal_resource_config(
+                            **personal_target, params=body.get("params") or {},
+                            secret=body.get("secret"))
+                        return json.dumps({"status": "success", "config": saved},
+                                          ensure_ascii=False)
+                    personal.clear_personal_resource_config(**personal_target)
+                    return json.dumps({"status": "success", "config": None},
+                                      ensure_ascii=False)
+                # Enabling a skill writes the anchor Agent's own configuration, so
+                # that Agent must be inside the caller's scope first (task 2.2): a
+                # per-resource grant must not reach the tenant's shared surface.
+                _require_skill_write_scope(ctx, _request_agent_id(body))
+                if action in ("open", "close"):
+                    _require_resource_action(ctx, "skill", rid, "enable", "skill.enable")
+                    service.open(target) if action == "open" else service.close(target)
                 else:
                     return json.dumps({"status": "error", "message": f"unknown action: {action}"})
             return json.dumps({"status": "success"}, ensure_ascii=False)
         except web.HTTPError:
             raise
+        except ValueError as e:
+            _raise_if_skill_name_ambiguous(e)
+            logger.error(f"[WebChannel] Skills POST error: {e}")
+            return json.dumps({"status": "error", "message": str(e)})
         except Exception as e:
             logger.error(f"[WebChannel] Skills POST error: {e}")
             return json.dumps({"status": "error", "message": str(e)})
@@ -8589,6 +9100,7 @@ class SkillContentHandler:
                 result = service.read_content(entry.skill.name, resource_id=rid)
             return json.dumps({"status": "success", **result}, ensure_ascii=False)
         except (ValueError, FileNotFoundError) as e:
+            _raise_if_skill_name_ambiguous(e)
             return json.dumps({"status": "error", "message": str(e)})
         except web.HTTPError:
             raise
@@ -8613,8 +9125,12 @@ class SkillContentHandler:
                     return json.dumps({"status": "error", "message": "content must be a string"})
                 service = _skill_service(_request_agent_id(body))
                 # Resolve to the exact authorization object, then enforce edit.
-                entry = service.resolve(resource_id=resource_id or None, name=name or None)
-                rid = resource_id or f"{entry.skill.source}:{entry.skill.name}"
+                entry, rid = _resolved_skill(service, name, resource_id)
+                # The edit lands in the anchor Agent's state root, so the scope
+                # gate comes first (task 2.2): a member's ``skill.edit`` must not
+                # rewrite the tenant's *shared* skill library, and a non-owner
+                # administrator must not rewrite a member's private one.
+                _require_skill_write_scope(ctx, _request_agent_id(body))
                 _require_resource_action(ctx, "skill", rid, "edit", "skill.edit")
 
                 try:
@@ -8628,6 +9144,7 @@ class SkillContentHandler:
                 logger.info(f"[WebChannel] Skill saved: {name or resource_id} ({result['size']} bytes)")
                 return json.dumps({"status": "success", **result}, ensure_ascii=False)
         except (ValueError, FileNotFoundError) as e:
+            _raise_if_skill_name_ambiguous(e)
             return json.dumps({"status": "error", "message": str(e)})
         except PermissionError:
             return json.dumps({"status": "error", "message": "permission denied"})
@@ -8687,6 +9204,76 @@ class MemoryContentHandler:
         except Exception as e:
             logger.error(f"[WebChannel] Memory content API error: {e}")
             raise memory_console.http_error(memory_console.refusal_for(e))
+
+
+class _MemoryWriteHandler:
+    """Shared shape of the Agent-domain memory writes (task 5.1, second half).
+
+    Each verb is its own route so the gate can serve them independently; they
+    differ only in the verb they pass down. Every one of them delegates to
+    ``memory_console.write_response``, which resolves and authorizes the target
+    before mutating and then runs the delivered personal-memory write flow
+    against the Agent's workspace root.
+    """
+
+    #: Overridden by each verb.
+    ACTION = ""
+
+    def POST(self):
+        web.header('Content-Type', 'application/json; charset=utf-8')
+        from channel.web import memory_console
+        try:
+            with _db_scope() as ctx:
+                _require_read_permission(ctx, "memory.read")
+                params = web.storage(_memory_write_params())
+                return memory_console.write_response(ctx, params, self.ACTION)
+        except web.HTTPError:
+            raise
+        except memory_console.MemoryScopeError as e:
+            raise memory_console.http_error(e)
+        except Exception as e:
+            logger.error(f"[WebChannel] Memory {self.ACTION} API error: {e}")
+            raise memory_console.http_error(memory_console.refusal_for(e))
+
+
+def _memory_write_params():
+    """Query string + JSON body as one attribute-readable mapping.
+
+    ``web.input()`` reads the query string and form-encoded bodies only, while
+    the console posts these writes as JSON — so the body has to be merged
+    explicitly, or every field would read as absent (which is exactly how a
+    required-parameter refusal, not a silent empty write, is what a mistake here
+    would look like). The body wins over the query, so a payload is never
+    shadowed by a leftover query parameter of the same name.
+    """
+    params = dict(web.input())
+    try:
+        body = json.loads(web.data() or b'{}')
+    except Exception:  # noqa: BLE001 - a malformed body is "no fields", below
+        body = {}
+    if isinstance(body, dict):
+        for key, value in body.items():
+            if value is not None:
+                params[key] = value
+    return params
+
+
+class MemorySaveHandler(_MemoryWriteHandler):
+    """``POST /api/memory/save``: edit one entry, version-conditioned."""
+
+    ACTION = "save"
+
+
+class MemoryDeleteHandler(_MemoryWriteHandler):
+    """``POST /api/memory/delete``: remove one entry."""
+
+    ACTION = "delete"
+
+
+class MemoryClearHandler(_MemoryWriteHandler):
+    """``POST /api/memory/clear``: remove the whole ``memory`` category."""
+
+    ACTION = "clear"
 
 
 class PersonalMemoryHandler:
@@ -8824,17 +9411,25 @@ class PersonalChannelHandler:
     """
 
     def GET(self):
-        """List my personal instances, plus the types open for onboarding."""
+        """My instances, plus everything the workbench needs to offer *more*.
+
+        One response carries the list, the candidate targets, the create verdict
+        and the per-type readiness, so the page cannot be assembled from a
+        partially-failed read (a list that loaded while the candidates did not
+        would offer a form that cannot be saved). All three projections are
+        derived from the verified context — there is no request field that could
+        widen them.
+        """
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             with _db_scope() as ctx:
                 service = _personal_channel_service()
                 listing = service.list_personal_channel_instances(
                     actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id)
+                workspace = service.personal_channel_workspace(
+                    actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id)
                 return json.dumps(
-                    {"status": "success",
-                     "channel_types": service.personal_channel_types(),
-                     **listing},
+                    {"status": "success", **listing, **workspace},
                     ensure_ascii=False)
         except web.HTTPError:
             raise
@@ -8857,6 +9452,11 @@ class PersonalChannelHandler:
                     agent_id=str(body.get("agent_id") or ""),
                     credentials=body.get("credentials"),
                     recent_password=str(body.get("recent_password") or ""),
+                    # The grant a completed vendor scan minted. It stands in for
+                    # the recent-password proof on the auto-persist path only;
+                    # an edit never accepts a create grant (task 4.2).
+                    scan_ticket=str(body.get("scan_ticket") or ""),
+                    auth_session_id=_verified_auth_session_id(),
                 )
                 return json.dumps(
                     {"status": "success", "instance": created,
@@ -8935,13 +9535,15 @@ class PersonalChannelInstanceHandler:
                     # to send it from their IM account.
                     challenge = service.start_personal_channel_binding(
                         actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id,
-                        instance_id=instance_id)
+                        instance_id=instance_id,
+                        expected_version=_int_or_zero(body.get("expected_version")))
                     return json.dumps({"status": "success", "challenge": challenge},
                                       ensure_ascii=False)
                 elif action == "unlink":
                     result = service.unlink_personal_channel_instance(
                         actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id,
-                        instance_id=instance_id)
+                        instance_id=instance_id,
+                        expected_version=_int_or_zero(body.get("expected_version")))
                 else:
                     return json.dumps(
                         {"status": "error", "code": "bad_request",
@@ -8957,76 +9559,6 @@ class PersonalChannelInstanceHandler:
             raise
         except Exception as e:
             logger.error(f"[WebChannel] Personal channel write error: {e}")
-            return _personal_channel_error(e)
-
-
-class PersonalResourceHandler:
-    """「我的工具 / 我的技能」：本人已获授权资源的个人参数（任务 2.4 / 8.3）.
-
-    A *personal configuration* surface, not a public maintenance one. The list is
-    the intersection of the caller's current per-resource grants and what they
-    saved; saving writes only the caller's own row (``actor_user_id`` is the
-    owner, there is no ``user_id`` parameter), and never touches a tool
-    definition, an MCP connection, a skill body, install/enable state, or the
-    tenant's grants. Those keep their own administrator gates.
-    """
-
-    def GET(self):
-        web.header('Content-Type', 'application/json; charset=utf-8')
-        try:
-            params = web.input(kind='')
-            with _db_scope() as ctx:
-                service = _personal_channel_service()
-                kind = str(params.kind or "").strip()
-                if kind and kind not in ("tool", "skill"):
-                    return json.dumps(
-                        {"status": "error", "code": "bad_request",
-                         "message": f"unsupported resource kind: {kind}"},
-                        ensure_ascii=False)
-                return json.dumps(
-                    {"status": "success", "scope": "personal",
-                     "resources": service.list_personal_resource_configs(
-                         actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id,
-                         resource_kind=kind)},
-                    ensure_ascii=False)
-        except web.HTTPError:
-            raise
-        except Exception as e:
-            logger.error(f"[WebChannel] Personal resource list error: {e}")
-            return _personal_channel_error(e)
-
-    def POST(self):
-        """Save or clear the caller's own parameters for one granted resource."""
-        web.header('Content-Type', 'application/json; charset=utf-8')
-        try:
-            body = json.loads(web.data() or b'{}')
-            action = str(body.get("action") or "save").strip()
-            with _db_scope() as ctx:
-                service = _personal_channel_service()
-                if action == "save":
-                    saved = service.save_personal_resource_config(
-                        actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id,
-                        resource_kind=str(body.get("resource_kind") or ""),
-                        resource_id=str(body.get("resource_id") or ""),
-                        params=body.get("params") or {},
-                        secret=body.get("secret"))
-                    return json.dumps({"status": "success", "config": saved},
-                                      ensure_ascii=False)
-                if action == "clear":
-                    service.clear_personal_resource_config(
-                        actor_user_id=ctx.user_id, tenant_id=ctx.tenant_id,
-                        resource_kind=str(body.get("resource_kind") or ""),
-                        resource_id=str(body.get("resource_id") or ""))
-                    return json.dumps({"status": "success", "config": None},
-                                      ensure_ascii=False)
-                return json.dumps(
-                    {"status": "error", "code": "bad_request",
-                     "message": f"unknown action: {action}"},
-                    ensure_ascii=False)
-        except web.HTTPError:
-            raise
-        except Exception as e:
-            logger.error(f"[WebChannel] Personal resource write error: {e}")
             return _personal_channel_error(e)
 
 
@@ -9500,16 +10032,40 @@ def _tenant_ids_for_context(ctx: "Optional[RequestContext]") -> Optional[list]:
     return get_identity_service().tenant_agent_ids(ctx.tenant_id)
 
 
+def _resolve_default_agent(ctx: "Optional[RequestContext]") -> Dict[str, Any]:
+    """The Agent a new session would anchor to for ``ctx``, **and why**.
+
+    The one-value view is :func:`_resolve_tenant_default_agent`; this is the
+    task 4.6 addition, because a console has to be able to say *why* it anchored
+    where it did. ``{"agent_id": ..., "source": ...}`` with ``source`` one of
+    ``user`` / ``tenant`` / ``shared`` / ``any`` / ``None`` — see
+    :meth:`IdentityService.resolve_default_agent` for what each means. In
+    particular ``shared`` and ``any`` are *fallbacks* nobody chose, and a badge
+    that presented a fallback as the tenant's decision would be a lie.
+
+    ``user`` and ``None`` cannot happen for an exempt administrator, which is
+    deliberate: an administrator keeps the tenant-wide answer rather than their
+    own copy of it.
+    """
+    if ctx is None or not ctx.tenant_id:
+        return {"agent_id": None, "source": None}
+    from auth.service import get_identity_service
+    is_admin = bool(getattr(ctx, "is_platform_admin", False)
+                    or getattr(ctx, "is_tenant_admin", False))
+    subject = None if is_admin else getattr(ctx, "user_id", None)
+    return get_identity_service().resolve_default_agent(ctx.tenant_id, subject)
+
+
 def _resolve_tenant_default_agent(ctx: "Optional[RequestContext]") -> Optional[str]:
     """The Agent an Agent-less request from ``ctx`` should be anchored to.
 
     A session must still belong to one Agent, but the user must not have to pick
     it. The rule itself lives on the identity service
-    (:meth:`IdentityService.resolved_default_agent_id`) so every read path
-    agrees: the member's own registered default (when reachable), then the
-    tenant's configured default, then the tenant-shared Agents by smallest
-    stable id, then any. Read-only — it never writes a default, so a GET cannot
-    mutate and the answer never flips with binding insert order. The global
+    (:meth:`IdentityService.resolve_default_agent`) so every read path agrees:
+    the member's own registered default (when reachable), then the tenant's
+    configured default, then the tenant-shared Agents by smallest stable id,
+    then any. Read-only — it never writes a default, so a GET cannot mutate and
+    the answer never flips with binding insert order. The global
     ``registry.default_agent_id`` is never borrowed — it may belong to another
     tenant. Returns None only when the tenant has no Agent at all.
 
@@ -9522,13 +10078,7 @@ def _resolve_tenant_default_agent(ctx: "Optional[RequestContext]") -> Optional[s
     response) reads this same function, so the badge, the ordering and the
     anchoring can never disagree.
     """
-    if ctx is None or not ctx.tenant_id:
-        return None
-    from auth.service import get_identity_service
-    is_admin = bool(getattr(ctx, "is_platform_admin", False)
-                    or getattr(ctx, "is_tenant_admin", False))
-    subject = None if is_admin else getattr(ctx, "user_id", None)
-    return get_identity_service().resolved_default_agent_id(ctx.tenant_id, subject)
+    return _resolve_default_agent(ctx)["agent_id"]
 
 
 def _tenant_default_agent_id(ctx: "Optional[RequestContext]") -> Optional[str]:
@@ -9542,13 +10092,53 @@ def _tenant_default_agent_id(ctx: "Optional[RequestContext]") -> Optional[str]:
     return _resolve_tenant_default_agent(ctx)
 
 
-def _tenant_agent_candidates(ctx: "RequestContext"):
-    """Yield ``(profile, tenant_default)`` for the tenant's bound, enabled Agents.
+def _user_default_pointer(ctx: "Optional[RequestContext]") -> Dict:
+    """The caller's **own** default Agent, with the lock the write needs (4.4).
+
+    Two different things are called "the default Agent" on the console's Agent
+    page and they must not be conflated: ``default_agent_id`` in a projection is
+    the *tenant* default (the entry every member shares, an administrator's
+    decision), while this is the single member's registered preference. The
+    revision is the optimistic lock the "设为默认" request round-trips, and
+    ``origin`` says whether a human chose it (``user``) or system provisioning
+    registered it (``provisioned``) — the same vocabulary the migration
+    documents, and what lets the UI offer "此项由系统供应" without guessing.
+
+    Read-only and per-caller, so a member can never learn another member's
+    pointer.
+    """
+    empty = {"agent_id": None, "revision": None, "origin": None}
+    if ctx is None or not getattr(ctx, "tenant_id", None):
+        return empty
+    if not getattr(ctx, "user_id", None):
+        return empty
+    from auth.service import get_identity_service
+    return get_identity_service().user_default_agent(ctx.tenant_id, ctx.user_id)
+
+
+def _agent_binding_for(ctx: "RequestContext", agent_id: str) -> Optional[Dict]:
+    """The ``agent_bindings`` row for ``agent_id``, or ``None`` when unbound.
+
+    The object-scope predicates need the binding (``tenant_id`` +
+    ``private_owner_user_id``) rather than a pre-computed id set, because the
+    answer differs per action: a shared Agent is manageable by an administrator
+    but usable by every member.
+    """
+    from auth.service import get_identity_service
+    return get_identity_service().get_agent_binding(agent_id)
+
+
+def _tenant_agent_candidates(ctx: "RequestContext", *, include_disabled: bool = False):
+    """Yield ``(profile, tenant_default)`` for the tenant's bound Agents.
 
     Authorization is deliberately *not* applied here: this is the denominator the
     empty-state diagnosis needs, so "this tenant has no Agent" and "this tenant
     has nothing this caller may reach" stay distinguishable. Nothing about the
     withheld Agents is exposed — only the count of candidates is observed.
+
+    ``include_disabled`` keeps disabled Agents in the denominator for the
+    *management* read, which must be able to find and re-enable a stopped object
+    (spec ``agent-workbench``); the chat/use read keeps them out.
 
     ``is_default`` is the caller's *tenant-bound* default agent (task 3.8) —
     never the global default — so the same global Agent bound to two tenants is
@@ -9561,28 +10151,48 @@ def _tenant_agent_candidates(ctx: "RequestContext"):
     for profile in sorted(registry.list(), key=lambda item: (item.id != tenant_default, item.id)):
         if visible is not None and profile.id not in visible:
             continue
-        if not profile.enabled:
+        if not profile.enabled and not include_disabled:
             continue
         yield profile, tenant_default
 
 
-def _iter_tenant_agents(ctx: "RequestContext"):
+def _iter_tenant_agents(ctx: "RequestContext", *, action: str = SCOPE_USE,
+                        include_disabled: bool = False):
     """Yield the Agents a database-mode caller may read, default-first.
 
     Each item is ``(profile, tenant_default, can_chat, unavailable_reason)``.
     Visibility and chat readiness live here so the workbench projection (a
     minimal whitelist) and the management projection (the editable fields) can
-    never drift apart: both read the same roster through the same gates.
+    never drift apart: both read the same roster through the **same object
+    scope** (:mod:`auth.object_scope`).
+
+    ``action`` selects the question being asked:
+
+    * ``USE`` — the chat/use range: a tenant-shared Agent plus the caller's own
+      private ones. The functional ``agent.read`` grant still applies to shared
+      Agents (a tenant admin and the resolved shared default are exempt), which is
+      what the previous single implementation did for this read.
+    * ``MANAGE`` — the management range: a tenant administrator sees the tenant's
+      shared Agents plus **their own** private ones; an ordinary member sees only
+      their own private ones. Ownership already is the grant for a private
+      object, so no per-resource grant is consulted here — and, crucially, a
+      non-owner administrator is excluded by ``allows_agent`` before any
+      administrator shortcut could admit them.
     """
-    # Fine-grained resource grant: only show agents the caller may read. A tenant
-    # admin administers its own tenant's Agents, and ``visible`` already holds it
-    # to that tenant's bindings, so per-resource grants must not additionally
-    # hide an Agent the tenant itself owns.
-    if ctx.is_tenant_admin:
+    scope = ObjectScope.from_context(ctx)
+    if action == SCOPE_MANAGE:
+        # Ownership / tenant qualification decides the range; a private object's
+        # owner needs no hand-written grant, and an administrator's shared reach
+        # is the qualification itself.
+        allowed_agent_ids = None
+    elif getattr(ctx, "is_tenant_admin", False):
         allowed_agent_ids = None
     else:
         allowed_agent_ids = _resource_ids(ctx, "agent", "read", permission="agent.read")
-    for profile, tenant_default in _tenant_agent_candidates(ctx):
+    for profile, tenant_default in _tenant_agent_candidates(
+            ctx, include_disabled=include_disabled):
+        if not scope.allows_agent(_agent_binding_for(ctx, profile.id), action=action):
+            continue
         if (allowed_agent_ids is not None
                 and f"agent:{profile.id}" not in allowed_agent_ids
                 and not _tenant_shared_default_agent(
@@ -9590,7 +10200,52 @@ def _iter_tenant_agents(ctx: "RequestContext"):
             continue
         can_chat, unavailable_reason = _workbench_chat_readiness(
             ctx, profile.id, tenant_default=tenant_default)
+        if not profile.enabled:
+            # The management read keeps a stopped object so its owner can find
+            # and re-enable it, but a stopped object accepts nothing new
+            # (spec ``user-private-agent-management``: 该对象不再接受新任务).
+            # ``can_chat`` is what the card's button reads, so a disabled Agent
+            # must not be advertized as runnable — and the send path refuses it
+            # anyway, which is the "卡片可点但发送被拒" shape this avoids.
+            can_chat, unavailable_reason = False, "agent_disabled"
         yield profile, tenant_default, can_chat, unavailable_reason
+
+
+def _channel_target_candidates(ctx: "RequestContext") -> List[Dict]:
+    """The Agents this caller may name as a channel target, ownership included.
+
+    The choose-a-target component must not offer a target the create would
+    refuse (``tenant-channel-configuration``: 界面候选也不允许选择这些目标), and
+    only the server knows which those are — so the candidate list is derived here
+    from the same object scope the write path runs, never from the caller's role
+    name or from the console's own catalogue.
+
+    Each entry carries the ownership the target *produces*, because that is the
+    other half of what the operator is choosing: their own private Agent makes a
+    connection of their own, a shared Agent makes the tenant's. Naming it here is
+    what lets the form say so before saving rather than after.
+
+    Only a usable target is offered: a disabled Agent accepts nothing new, and a
+    target that cannot carry traffic is not a legal choice just because its owner
+    owns it.
+    """
+    targets: List[Dict] = []
+    for profile, tenant_default, _can_chat, unavailable_reason in _iter_tenant_agents(
+            ctx, action=SCOPE_MANAGE):
+        if unavailable_reason == "agent_disabled":
+            continue
+        binding = _agent_binding_for(ctx, profile.id) or {}
+        owns = binding.get("private_owner_user_id") == getattr(ctx, "user_id", None)
+        targets.append({
+            "id": profile.id,
+            "name": profile.name,
+            # Which connection this target produces, decided by ownership alone —
+            # the same rule ``IdentityService.channel_target_scope`` applies to
+            # the write, so the候选 and the write cannot disagree.
+            "scope": "user" if owns else "tenant",
+            "is_tenant_default": bool(profile.id == tenant_default),
+        })
+    return targets
 
 
 def _workbench_empty_reason(ctx: "RequestContext") -> str:
@@ -9699,9 +10354,18 @@ def _personal_agents_projection(ctx: "RequestContext") -> Dict:
 def _tenant_agents_admin_projection(ctx: "Optional[RequestContext]") -> Dict:
     """Tenant-scoped management projection for the console's Agent pages.
 
-    Same visibility and readiness as :func:`_tenant_agents_projection`, but keeps
-    the editable Agent fields (``model``/``bot_type``, the digital-employee
-    profile, asset selections) that the configuration pane round-trips on save.
+    Same readiness as :func:`_tenant_agents_projection`, but:
+
+    * it reads the **management** object scope (task 2.1/4.2) — an administrator
+      sees the tenant's shared Agents and their own private ones, an ordinary
+      member sees only their own private ones, and nobody sees another member's
+      private Agent or its existence;
+    * it keeps **disabled** Agents, so a stopped object can be found and
+      re-enabled from the same page;
+    * it keeps the editable Agent fields (``model``/``bot_type``, the
+      digital-employee profile, asset selections) that the configuration pane
+      round-trips on save.
+
     The console reads this projection, edits a field and writes the whole form
     back, so a read that dropped ``model`` would make the next save silently
     clear the pin back to "follow the global model".
@@ -9714,11 +10378,22 @@ def _tenant_agents_admin_projection(ctx: "Optional[RequestContext]") -> Dict:
     from agent.admin import AgentAdminService
 
     shared_base = AgentAdminService._shared_knowledge_base()
+    # The caller's *own* pointer, so the detail pane can offer 设为默认 for every
+    # user and round-trip the lock on save (task 4.4). Read once, outside the
+    # loop, so every row is compared against the same snapshot.
+    user_default = _user_default_pointer(ctx)
+    user_default_id = user_default.get("agent_id")
     agents = []
-    for profile, tenant_default, can_chat, unavailable_reason in _iter_tenant_agents(ctx):
+    for profile, tenant_default, can_chat, unavailable_reason in _iter_tenant_agents(
+            ctx, action=SCOPE_MANAGE, include_disabled=True):
         data = profile.to_dict()
         data.pop("workspace", None)
         data["is_default"] = bool(profile.id == tenant_default)
+        # Which *kind* of default this row is: ``is_default`` above is the
+        # resolved anchor (a member's own choice, else the tenant's, else the
+        # deterministic fallback), and only this one is the member's explicit,
+        # revocable preference.
+        data["is_user_default"] = bool(user_default_id and profile.id == user_default_id)
         data["can_chat"] = can_chat
         data["unavailable_reason"] = unavailable_reason
         # The console renders the shared/own knowledge toggle from this. Derived
@@ -9731,7 +10406,24 @@ def _tenant_agents_admin_projection(ctx: "Optional[RequestContext]") -> Dict:
         # offers an action the request would 403.
         data["can_write_knowledge"] = _knowledge_write_authorized(ctx, profile.id)
         agents.append(data)
-    return {"agents": agents, "default_agent_id": _tenant_default_agent_id(ctx)}
+    return {"agents": agents, "default_agent_id": _tenant_default_agent_id(ctx),
+            "user_default": user_default,
+            # The anchor a *new session* would land on for this caller, and the
+            # reason it won (task 4.6). Reported next to the badge rather than
+            # replacing it: ``default_agent_id`` is the tenant-wide entry the
+            # pane edits, while this is what actually happens when the caller
+            # enters chat without picking anything — and whether that was the
+            # caller's choice, the tenant's, or only a fallback.
+            "default_resolution": _resolve_default_agent(ctx),
+            # Whether this caller may appoint the *tenant* default (task 4.5): a
+            # management act, reported so the pane offers the button exactly when
+            # the request would accept it. A functional ``agent.edit`` grant is
+            # deliberately not enough — the tenant default is what every member
+            # shares, which is administration, not a resource grant.
+            "tenant_default_manageable": bool(
+                ctx is not None
+                and (getattr(ctx, "is_platform_admin", False)
+                     or getattr(ctx, "is_tenant_admin", False)))}
 
 
 def _agent_bound_to_tenant(ctx: "Optional[RequestContext]", agent_id: str) -> bool:
@@ -10024,6 +10716,11 @@ class AgentsHandler:
 
                 if action == "create":
                     _require_agent_create(ctx)
+                    from auth.service import IdentityServiceError
+                    # Whose object this will be, decided from the caller's role
+                    # and nothing else (task 4.1). Resolved before any write, so a
+                    # refused scope leaves no half-made Agent behind.
+                    scope = _creation_scope(ctx, body)
                     # A tenant's Agent is tenant-scoped at birth: it gets a
                     # workspace inside the tenant's own root and a binding to the
                     # tenant, or the creating tenant could never see it. An
@@ -10037,33 +10734,58 @@ class AgentsHandler:
                                 "message": f"invalid agent id: {agent_id!r}"
                             })
                         workspace = _tenant_agent_workspace(ctx, agent_id)
-                    result = service.create_agent(
-                        agent_id=agent_id,
-                        name=body.get("name", ""),
-                        # Blank means "put it where a new one goes", which is what
-                        # the console sends: it asks for a name, not a path.
-                        workspace=workspace,
-                        clone_from=body.get("clone_from") or None,
-                        avatar=body.get("avatar") or None,
-                        description=body.get("description") or None,
-                        skills=body.get("skills"),
-                        knowledge=body.get("knowledge"),
-                        knowledge_mode=body.get("knowledge_mode") or None,
-                        revision=revision,
-                        position=body.get("position"),
-                        category=body.get("category"),
-                        tags=body.get("tags"),
-                        greeting=body.get("greeting"),
-                        persona_summary=body.get("persona_summary"),
-                        scene_id=body.get("scene_id"),
-                        knowledge_ids=body.get("knowledge_ids"),
-                        sops=body.get("sops"),
-                        tools_allowlist=body.get("tools_allowlist"),
-                        tools_denylist=body.get("tools_denylist"),
-                    )
-                    if ctx is not None and ctx.tenant_id:
-                        _adopt_created_agent_for_tenant(
-                            ctx, (result or {}).get("id") or agent_id)
+                    try:
+                        result = service.create_agent(
+                            agent_id=agent_id,
+                            name=body.get("name", ""),
+                            # Blank means "put it where a new one goes", which is
+                            # what the console sends: it asks for a name, not a
+                            # path.
+                            workspace=workspace,
+                            clone_from=body.get("clone_from") or None,
+                            avatar=body.get("avatar") or None,
+                            description=body.get("description") or None,
+                            skills=body.get("skills"),
+                            knowledge=body.get("knowledge"),
+                            knowledge_mode=body.get("knowledge_mode") or None,
+                            revision=revision,
+                            position=body.get("position"),
+                            category=body.get("category"),
+                            tags=body.get("tags"),
+                            greeting=body.get("greeting"),
+                            persona_summary=body.get("persona_summary"),
+                            scene_id=body.get("scene_id"),
+                            knowledge_ids=body.get("knowledge_ids"),
+                            sops=body.get("sops"),
+                            tools_allowlist=body.get("tools_allowlist"),
+                            tools_denylist=body.get("tools_denylist"),
+                        )
+                        created_id = (result or {}).get("id") or agent_id
+                        if ctx is not None and ctx.tenant_id:
+                            _adopt_created_agent_for_tenant(
+                                ctx, created_id, scope=scope)
+                        else:
+                            scope = "shared"
+                    except IdentityServiceError as exc:
+                        # The roster entry exists; the binding did not. Roll it
+                        # back so the caller can retry the same id, and report the
+                        # refusal as a refusal (a withdrawn capability and an
+                        # exhausted quota both arrive here).
+                        _rollback_created_agent(ctx, agent_id)
+                        return json.dumps(
+                            {"status": "error", "code": exc.code or "error",
+                             "message": str(exc)}, ensure_ascii=False)
+                    except Exception as exc:
+                        _rollback_created_agent(ctx, agent_id)
+                        logger.warning("[WebChannel] agent create failed: %s", exc)
+                        return json.dumps(
+                            {"status": "error", "code": "error",
+                             "message": str(exc) or "create failed"},
+                            ensure_ascii=False)
+                    # The scope the object actually landed in, reported so the
+                    # console can say whose it is instead of assuming (task 4.1).
+                    result = dict(result or {})
+                    result["scope"] = scope
                 elif action == "update":
                     _require_agent_action(ctx, agent_id, "edit", "agent.edit")
                     # Owning an Agent does not authorise the dependencies the
@@ -10096,6 +10818,10 @@ class AgentsHandler:
                 elif action == "delete":
                     _require_agent_action(ctx, agent_id, "edit", "agent.edit")
                     _require_deletable_provenance(ctx, agent_id)
+                    # A live channel route or a running task is a conflict, not
+                    # something this route resolves on the operator's behalf
+                    # (task 4.3).
+                    _require_agent_deletable(ctx, agent_id)
                     result = service.delete_agent(agent_id, revision=revision)
                     # The roster entry is gone, but two identity-side records can
                     # still point at it: the tenant's default pointer, and the
@@ -10121,7 +10847,7 @@ class AgentsHandler:
                         _raise_forbidden()
                     if not (ctx.is_platform_admin or ctx.is_tenant_admin):
                         _raise_forbidden()
-                    from auth.service import get_identity_service
+                    from auth.service import IdentityServiceError, get_identity_service
                     identity = get_identity_service()
                     if agent_id not in identity.tenant_agent_ids(ctx.tenant_id):
                         raise web.HTTPError(
@@ -10129,9 +10855,56 @@ class AgentsHandler:
                             json.dumps({"status": "error",
                                         "message": "agent is not bound to this tenant",
                                         "code": "not_found"}))
-                    result = identity.appoint_tenant_default_agent(
-                        tenant_id=ctx.tenant_id, agent_id=agent_id,
-                        actor_user_id=ctx.user_id)
+                    try:
+                        result = identity.appoint_tenant_default_agent(
+                            tenant_id=ctx.tenant_id, agent_id=agent_id,
+                            actor_user_id=ctx.user_id)
+                    except IdentityServiceError as exc:
+                        # A private target is a business refusal with its own
+                        # machine-readable code, so it must not degrade into the
+                        # handler's opaque 200-with-status:error branch: the
+                        # console answers it from the code's own wording.
+                        from channel.web.auth_handlers import _error
+                        _error(exc.args[0], exc.status, exc.code)
+                elif action == "set_user_default":
+                    # The caller's *own* preference (task 4.4), which every user
+                    # may set — so unlike ``set_default`` this is not an
+                    # administration act. What it needs instead is the *object*
+                    # scope (the target must be one the caller may manage), which
+                    # the service asks once; the functional grant here is the
+                    # ordinary ``agent.edit`` that gates every other Agent write.
+                    from auth.service import IdentityServiceError, get_identity_service
+                    if ctx is None or not ctx.tenant_id:
+                        _raise_forbidden()
+                    # Binding first, so a foreign (or missing) Agent is "not
+                    # found" rather than "forbidden": every other path that
+                    # addresses an Agent by id says 404 for another tenant's
+                    # object (``_require_tenant_agent_binding``), and answering
+                    # 403 here would both disagree with them and confirm that the
+                    # id exists somewhere the caller cannot see.
+                    if not agent_id or not _agent_bound_to_tenant(ctx, agent_id):
+                        raise web.HTTPError(
+                            "404 Not Found", {"Content-Type": "application/json"},
+                            json.dumps({"status": "error", "message": "agent not found",
+                                        "code": "not_found"}))
+                    _require_agent_action(ctx, agent_id, "edit", "agent.edit")
+                    try:
+                        # The subject is the verified session, never the body:
+                        # ``user_id``/``tenant_id`` in the payload are unread, so
+                        # a request cannot move another member's preference.
+                        result = get_identity_service().set_user_default_agent(
+                            tenant_id=ctx.tenant_id, user_id=ctx.user_id,
+                            agent_id=agent_id,
+                            expected_revision=body.get("default_revision", None),
+                            actor_user_id=ctx.user_id)
+                    except IdentityServiceError as exc:
+                        # Same reason as ``set_default``: a business refusal with
+                        # its own code (403 forbidden / 404 not_found / 409
+                        # version_conflict / agent_not_usable) must reach the
+                        # console as-is, not degrade into an opaque
+                        # 200-with-status:error.
+                        from channel.web.auth_handlers import _error
+                        _error(exc.args[0], exc.status, exc.code)
                 elif action == "set_knowledge_mode":
                     # A filesystem toggle (symlink vs own dir), not a roster edit, so
                     # it doesn't participate in the roster revision guard.

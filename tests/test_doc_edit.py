@@ -330,7 +330,9 @@ def test_memory_content_handler_includes_the_editable_path(tmp_path):
 
     _write(tmp_path / "MEMORY.md", "# global\n")
 
-    with patch("channel.web.memory_console._agent_binding", return_value={}), \
+    with patch("channel.web.memory_console._agent_binding",
+               return_value={"tenant_id": "tnt_test",
+                             "private_owner_user_id": None}), \
          patch("channel.web.web_channel._get_workspace_root", return_value=str(tmp_path)):
         response = _get(MemoryContentHandler, {"filename": "MEMORY.md",
                                                "category": "memory",

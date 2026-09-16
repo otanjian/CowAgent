@@ -26,6 +26,22 @@ PYTHON = os.path.join(ROOT, ".venv", "bin", "python")
 def _run(test_ids):
     env = dict(os.environ)
     env["PYTHONPATH"] = ROOT
+    # The mutation is written immediately before this subprocess starts, and
+    # CPython validates a cached ``.pyc`` by the source's size *and* mtime. On a
+    # filesystem with coarse timestamps the rewritten file can carry the same
+    # stamp as the one the cache was built from, so the subprocess would import
+    # the *unmutated* bytecode and report the guard as surviving when it did not.
+    # Dropping the caches for the imported tree removes that whole class of flake
+    # (and prevents the run from writing new ones back).
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    # Only the project's own packages: walking the virtualenv as well would throw
+    # away its caches too, which is slow and unrelated to the mutation.
+    skip = {".venv", ".git", "node_modules", "__pycache__"}
+    for base, dirs, _files in os.walk(ROOT):
+        dirs[:] = [d for d in dirs if d not in skip]
+        cache = os.path.join(base, "__pycache__")
+        if os.path.isdir(cache):
+            shutil.rmtree(cache, ignore_errors=True)
     proc = subprocess.run(
         [PYTHON, "-m", "pytest", "-q", *test_ids],
         cwd=ROOT, env=env, capture_output=True, text=True)
@@ -51,12 +67,15 @@ class MutationTests(unittest.TestCase):
         ),
         # 2. Drop the tenant predicate from the list query: one tenant's instances
         #    would appear in another tenant's console.
+        #
+        #    The query now answers a *range* (task 6.1) — the tenant's public rows
+        #    plus the caller's own — so the anchor is the administrative branch's
+        #    ``WHERE``. The member branch reads ``tenant_id=? AND scope='user'``,
+        #    which is a different string, hence the anchor is still unique.
         (
             "auth/service.py",
-            [('            " WHERE tenant_id=? AND scope=\'tenant\' ORDER BY display_name",\n'
-              '            (tenant_id,))',
-              '            " WHERE scope=\'tenant\' ORDER BY display_name",\n'
-              '            ())')],
+            [('                " WHERE tenant_id=? AND (scope=\'tenant\'"',
+              '                " WHERE (scope=\'tenant\'"')],
             ["tests/test_tenant_channel_instances_service.py::"
              "ListInstanceTests::test_list_never_returns_another_tenants_instances",
              "tests/test_tenant_channel_isolation_acceptance.py::"
@@ -87,18 +106,38 @@ class MutationTests(unittest.TestCase):
              "tests/test_tenant_channel_http.py::GetTenantChannelTypesTests::"
              "test_the_form_contract_offers_feishu_and_withholds_wechatcom_app"],
         ),
-        # 4. Drop the scope predicate from the list query: a member's personal
-        #    instance would surface in the tenant's administration list, which is
-        #    not the tenant's to administer.
+        # 4. Drop the ownership half of the range: every member's personal
+        #    instance would surface in the administration list, which is not the
+        #    tenant's to administer. ``? IS NOT NULL`` keeps the binding count and
+        #    makes the clause always true for an authenticated caller — the
+        #    binding is a real user id, never NULL.
         (
             "auth/service.py",
-            [('            " WHERE tenant_id=? AND scope=\'tenant\' ORDER BY display_name",\n'
-              '            (tenant_id,))',
-              '            " WHERE tenant_id=? ORDER BY display_name",\n'
-              '            (tenant_id,))')],
+            [('                "     OR (scope=\'user\' AND owner_user_id=?))"',
+              '                "     OR (scope=\'user\' AND ? IS NOT NULL))"')],
             ["tests/test_tenant_channel_instances_service.py::"
              "InstanceScopeTests::"
              "test_the_public_list_does_not_expose_personal_instances"],
+        ),
+        # 5. Drop the ownership half of a *member's* range: a plain member would
+        #    list every colleague's personal instance in the tenant. This is the
+        #    guard task 6.1 added — before it, a member was refused the listing
+        #    outright, so there was nothing to widen. The same always-true
+        #    substitution keeps the binding count, so the mutation reaches the
+        #    assertion instead of dying on a binding error.
+        (
+            "auth/service.py",
+            [('        else:\n'
+              '            rows = self._store.execute(\n'
+              '                "SELECT * FROM tenant_channel_instances"\n'
+              '                " WHERE tenant_id=? AND scope=\'user\' AND owner_user_id=?"',
+              '        else:\n'
+              '            rows = self._store.execute(\n'
+              '                "SELECT * FROM tenant_channel_instances"\n'
+              '                " WHERE tenant_id=? AND scope=\'user\' AND ? IS NOT NULL"')],
+            ["tests/test_tenant_channel_member_access.py::"
+             "MemberListingTests::"
+             "test_a_colleagues_connection_never_appears_for_this_member"],
         ),
     ]
 

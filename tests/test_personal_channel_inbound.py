@@ -93,8 +93,21 @@ def f(tmp_path, monkeypatch):
     # 9.1: the deployment-wide master switch must also be on. The fixture raises
     # both, so the inbound paths are exercised *through* the real gate rather
     # than with the gate removed.
-    monkeypatch.setattr("config.conf",
-                        lambda: {"personal_channel_runtime": True})
+    # The Agent Registry resolves through this same config, and a personal
+    # channel's target is verified to *exist and be enabled* there as well as in
+    # the identity bindings above. Declaring the roster keeps the verdict a
+    # property of the fixture instead of the developer's own workspace.
+    roster = (f.tenant_agent, f.alice_agent, f.bob_agent)
+    monkeypatch.setattr("config.conf", lambda: {
+        "personal_channel_runtime": True,
+        "agent_workspace": str(tmp_path / "workspace"),
+        "agents": [{"id": agent_id, "name": agent_id, "enabled": True}
+                   for agent_id in roster],
+        "default_agent_id": f.tenant_agent,
+    })
+    from agent.registry import set_agent_registry
+
+    set_agent_registry(None)
     return f
 
 
@@ -994,6 +1007,139 @@ def test_the_public_default_is_the_tenants_shared_agent(f):
     # carol has no grant on the shared Agent, so the public path refuses her —
     # but it refused *the shared Agent*, never her own private one.
     assert _notice(channel) == ex.deny_notice(ex.PERMISSION_DENIED)
+
+
+# --- 4.8 E: a channel binding is an explicit choice, not a default -------
+
+
+def _declare_agents(monkeypatch, *agent_ids):
+    """Publish extra Agents in the roster the registry resolves.
+
+    A connection's target and a member's default both have to *exist and be
+    enabled* in the Agent registry before the services will accept them, so a
+    test that moves a default has to declare the Agent it moves to.
+    """
+    import config
+
+    from agent.registry import set_agent_registry
+
+    settings = dict(config.conf())
+    settings["agents"] = list(settings["agents"]) + [
+        {"id": agent_id, "name": agent_id, "enabled": True}
+        for agent_id in agent_ids
+    ]
+    monkeypatch.setattr("config.conf", lambda: settings)
+    set_agent_registry(None)
+
+
+def test_changing_a_members_default_does_not_re_route_their_personal_instance(
+        f, monkeypatch):
+    """Task 4.8 E (渠道绑定不改变): the connection keeps the Agent it was given.
+
+    ``alice`` pointed this bot at ``agent-alice-private`` by hand, through the
+    binding route. Moving her *default* to another Agent afterwards is a
+    statement about the next conversation she starts, never about the
+    connection she configured: the next inbound message on this instance must
+    still run as her through that same private Agent (design D4: 渠道显式绑定不随
+    偏好改变).
+    """
+    second = "agent-alice-second"
+    _declare_agents(monkeypatch, second)
+    f.service.bind_agent(tenant_id=f.acme, agent_id=second,
+                         private_owner_user_id=f.alice, origin="user_created")
+    instance = _personal_instance(f)
+    _link(f, instance)
+
+    f.service.set_user_default_agent(
+        tenant_id=f.acme, user_id=f.alice, agent_id=second, actor_user_id=f.alice)
+    assert f.service.resolved_default_agent_id(f.acme, f.alice) == second, (
+        "the preference really did move; otherwise this test proves nothing")
+
+    # Falsifiability, from the other side: this route must never even *ask* the
+    # preference, so a default can neither answer nor be consulted here.
+    consulted = []
+    real = type(f.service).resolve_default_agent
+    monkeypatch.setattr(f.service, "resolve_default_agent",
+                        lambda *a, **k: consulted.append(a) or real(f.service, *a, **k))
+
+    channel = _ThinChannel()
+    context = _context(instance_id=instance["id"])
+
+    consumed = channel._preflight_external_inbound(context)
+
+    assert consulted == [], (
+        "a personal route resolves from its own target, never from a default")
+    assert consumed is False
+    assert _runtime(context)["agent_id"] == f.alice_agent, (
+        "the connection's own target must answer, not the owner's new default")
+    assert f.service.get_tenant_channel_instance_row(
+        instance["id"])["agent_id"] == f.alice_agent, (
+        "and the stored target is untouched, so a restart re-binds the same one")
+
+
+def test_a_bound_instance_keeps_its_target_when_the_tenant_default_changes(
+        f, monkeypatch):
+    """Task 4.8 E for a shared connection: the instance's binding is pinned.
+
+    That instance's Agent and the tenant's default happen to be the same Agent
+    only because both were set that way. Moving the tenant default must not
+    move the connection: ``load_tenant_channel_instances`` passes the instance
+    row's ``agent_id`` in as ``bound_agent_id``, and that pin outranks the
+    tenant default it would otherwise fall back to.
+    """
+    moved_to = "agent-shared-second"
+    _declare_agents(monkeypatch, moved_to)
+    f.service.bind_agent(tenant_id=f.acme, agent_id=moved_to)
+    f.service.appoint_tenant_default_agent(
+        tenant_id=f.acme, agent_id=moved_to, actor_user_id=f.root)
+    assert f.service.resolved_public_default_agent_id(f.acme) == moved_to, (
+        "the tenant entry really did move; otherwise this test proves nothing")
+
+    shared = _shared_instance(f)          # its own target: agent-shared
+    f.service.bind_external_identity(
+        actor_user_id=f.root, user_id=f.root, provider="feishu",
+        issuer=SHARED_APP, subject="ou_visitor")
+    # Falsifiability, from the other side: with the binding present the tenant
+    # default must not even be read, so it cannot answer for this instance.
+    consulted = []
+    real = type(f.service).resolved_public_default_agent_id
+    monkeypatch.setattr(
+        f.service, "resolved_public_default_agent_id",
+        lambda *a, **k: consulted.append(a) or real(f.service, *a, **k))
+    channel = _ThinChannel()
+    channel.apply_instance(instance_id=shared["id"],
+                           bound_agent_id=f.tenant_agent)
+    context = _context(instance_id=shared["id"], issuer=SHARED_APP,
+                       subject="ou_visitor")
+    channel.stamp_instance_context(context)
+
+    consumed = channel._preflight_external_inbound(context)
+
+    assert consulted == [], (
+        "a bound instance must not read the tenant default at all")
+    assert context["bound_agent_id"] == f.tenant_agent
+    assert consumed is False
+    assert _runtime(context)["agent_id"] == f.tenant_agent, (
+        "a bound instance routes to its binding, not to the new tenant default")
+
+    # The other direction, so the assertions above cannot hold for the wrong
+    # reason: an instance with *no* binding does follow the moved default.
+    # That is exactly the fallback the binding must outrank.
+    unbound = f.service.create_tenant_channel_instance(
+        actor_user_id=f.root, tenant_id=f.acme, channel_type="feishu",
+        display_name="Unbound Bot", agent_id="", credentials=dict(SHARED_BUNDLE),
+        recent_password=ROOT_PW)
+    f.service.bind_external_identity(
+        actor_user_id=f.root, user_id=f.root, provider="feishu",
+        issuer=SHARED_APP, subject="ou_visitor_unbound")
+    plain = _ThinChannel()
+    plain_context = _context(instance_id=unbound["id"], issuer=SHARED_APP,
+                             subject="ou_visitor_unbound")
+
+    assert plain._preflight_external_inbound(plain_context) is False
+    assert _runtime(plain_context)["agent_id"] == moved_to, (
+        "without a binding the tenant default is the answer — which is why a "
+        "binding has to be preserved at all")
 
 
 if __name__ == "__main__":

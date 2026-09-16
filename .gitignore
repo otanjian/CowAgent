@@ -95,6 +95,11 @@ desktop/resources/bin/
 # channel/web/branding.py under get_data_root(); see /identity.db above.
 /branding/
 
+# Scratch debug instance (`--data-root dbg` local runs): carries its own
+# identity.db (real user rows and password hashes) and agent workspace. Runtime
+# state for reproducing a bug, never source; see /identity.db above.
+/dbg/
+
 # Transient verification scratch files (launcher scripts + their data dir).
 # `.tmp_*` is the general rule; the named entries below document the two
 # harnesses that were used before it existed (browser walk in evidence.md §10.6).

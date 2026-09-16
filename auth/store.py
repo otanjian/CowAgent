@@ -17,7 +17,9 @@ Design constraints observed here (repeated from the design.md boundary):
 
 from __future__ import annotations
 
+import json
 import os
+import secrets
 import sqlite3
 import threading
 from typing import Any, Callable, List, Sequence
@@ -33,6 +35,18 @@ _migrations: List[Callable[[sqlite3.Connection], None]] = []
 def migration_versions() -> List[int]:
     """Return the ordered list of migration version identifiers."""
     return [index + 1 for index in range(len(_migrations))]
+
+
+def _new_migration_id() -> str:
+    """A unique id for a row a migration inserts.
+
+    Migrations run before the service layer exists, so they cannot use
+    ``auth.audit`` (which imports this module). The shape is the same
+    ``audit_events.id``/``role_resource_grants.id`` text key: a random token,
+    because a migration body may legitimately need more than one row of a kind
+    and nothing outside the row's own uniqueness depends on the value.
+    """
+    return "mig-%s" % secrets.token_hex(12)
 
 
 def has_migration_signature(db_path: str) -> bool:
@@ -1214,6 +1228,253 @@ def _migration_24(con: sqlite3.Connection) -> None:
 
 
 _migrations.append(_migration_24)
+
+
+def _migration_25(con: sqlite3.Connection) -> None:
+    """An independently versioned member default, and a one-time repair of the
+    default pointers that could never have resolved (tasks 2.3, 4.4-4.6).
+
+    ``memberships.default_agent_id`` was versioned by ``memberships.version``,
+    which *every* display-name / department / position edit also bumps. A "set
+    my default" write and an unrelated profile edit therefore conflict with each
+    other for no reason, and a client holding one revision cannot tell which of
+    the two it is holding. The pointer gets its own columns — a revision and an
+    origin — leaving ``memberships.version`` to the editor draft it was meant
+    for:
+
+    * ``default_agent_revision`` — the member-default's own optimistic
+      concurrency value (``set_user_default`` writes against it);
+    * ``default_agent_origin`` — ``'user'`` when the member chose the Agent,
+      ``'provisioned'`` when system provisioning registered it. NULL means "no
+      registered preference", which is what lets provisioning initialise an
+      empty one *without* ever competing with a member's own choice (task 4.6).
+
+    The same migration repairs pointers that could never have resolved, and it
+    repairs them **without touching ownership**:
+
+    * a tenant default may not name an Agent that is unbound, bound to another
+      tenant, or **private**. ``private_owner_user_id`` is an exclusive read
+      gate, so a private tenant default locks every other member out of the
+      entry the console offers them. The pointer is cleared (new conversations
+      fall back to a tenant-shared Agent); ``private_owner_user_id`` is left
+      exactly as it was — sharing an Agent stays an explicit, audited act
+      (``make_agent_tenant_shared``), never a side effect of a default.
+    * a member default may not name an Agent that is unbound, bound to another
+      tenant, or private to a *different* member. Same repair, same rule about
+      ownership.
+
+    Every repair and every origin backfill appends an audit event in this same
+    transaction, so the correction ships with its record. Backfilled legal
+    pointers are marked ``'user'``: the pre-upgrade code could not distinguish
+    the two origins, and treating an existing preference as the member's own is
+    the only choice that cannot silently overwrite it later.
+    """
+    con.execute("ALTER TABLE memberships ADD COLUMN default_agent_revision"
+                " INTEGER NOT NULL DEFAULT 1")
+    con.execute("ALTER TABLE memberships ADD COLUMN default_agent_origin TEXT")
+
+    def _audit(action: str, tenant_id: str, target: str, changes: dict) -> None:
+        con.execute(
+            "INSERT INTO audit_events(id, actor_user_id, actor_username,"
+            " tenant_id, target_tenant_id, action, target, redacted_changes, result)"
+            " VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, 'success')",
+            (_new_migration_id(), tenant_id, tenant_id, action, target,
+             json.dumps(changes, ensure_ascii=False)),
+        )
+
+    # -- tenant defaults -----------------------------------------------------
+    for row in con.execute(
+            "SELECT t.id AS tenant_id, t.default_agent_id AS agent_id,"
+            " b.tenant_id AS bound_tenant, b.private_owner_user_id AS owner"
+            " FROM tenants t LEFT JOIN agent_bindings b"
+            " ON b.agent_id = t.default_agent_id"
+            " WHERE t.default_agent_id IS NOT NULL"
+            "  AND t.default_agent_id != ''").fetchall():
+        reason = None
+        if row["bound_tenant"] is None:
+            reason = "unbound"
+        elif row["bound_tenant"] != row["tenant_id"]:
+            reason = "foreign_tenant"
+        elif row["owner"] is not None:
+            reason = "private_agent"
+        if reason is None:
+            continue
+        con.execute(
+            "UPDATE tenants SET default_agent_id=NULL, updated_at=unixepoch(),"
+            " version=version+1 WHERE id=?", (row["tenant_id"],))
+        _audit("tenant.default_agent.repaired", row["tenant_id"],
+               "tenant:%s" % row["tenant_id"],
+               {"default_agent_id": None, "repaired_from": row["agent_id"],
+                "reason": reason, "private_owner_preserved": row["owner"]})
+
+    # -- member defaults -----------------------------------------------------
+    for row in con.execute(
+            "SELECT m.tenant_id AS tenant_id, m.user_id AS user_id,"
+            " m.default_agent_id AS agent_id, b.tenant_id AS bound_tenant,"
+            " b.private_owner_user_id AS owner, m.id AS membership_id"
+            " FROM memberships m LEFT JOIN agent_bindings b"
+            " ON b.agent_id = m.default_agent_id"
+            " WHERE m.default_agent_id IS NOT NULL"
+            "  AND m.default_agent_id != ''").fetchall():
+        reason = None
+        if row["bound_tenant"] is None:
+            reason = "unbound"
+        elif row["bound_tenant"] != row["tenant_id"]:
+            reason = "foreign_tenant"
+        elif (row["owner"] is not None and row["owner"] != row["user_id"]):
+            reason = "owned_by_another_member"
+        if reason is None:
+            # Legal: keep the pointer, and record it as the member's own so
+            # provisioning can never overwrite it.
+            con.execute(
+                "UPDATE memberships SET default_agent_origin='user'"
+                " WHERE id=? AND default_agent_origin IS NULL",
+                (row["membership_id"],))
+            continue
+        con.execute(
+            "UPDATE memberships SET default_agent_id=NULL,"
+            " default_agent_origin=NULL, updated_at=unixepoch() WHERE id=?",
+            (row["membership_id"],))
+        _audit("member.default_agent.repaired", row["tenant_id"],
+               "membership:%s" % row["membership_id"],
+               {"default_agent_id": None, "repaired_from": row["agent_id"],
+                "reason": reason, "user_id": row["user_id"],
+                "private_owner_preserved": row["owner"]})
+
+
+_migrations.append(_migration_25)
+
+
+def _migration_26(con: sqlite3.Connection) -> None:
+    """Map the legacy personal menu grants onto the formal console pages (task 2.4).
+
+    The removal of the ``我的资源`` menu is a *grant* change, not only a UI
+    change: menu gating is restrictive, so a role still carrying
+    ``nav:personal.agents`` would be left holding an id that no longer resolves
+    to a page — and, worse, one whose page the console no longer offers.
+
+    For every role that holds a legacy personal id this migration:
+
+    1. inserts the mapped formal id (see ``LEGACY_PERSONAL_MENU_MAP``), guarded so
+       a role that already has it is untouched;
+    2. deletes the legacy id from that role;
+    3. bumps ``roles.version`` and appends an audit event naming exactly what was
+       added and removed.
+
+    What it deliberately does **not** do: touch any other grant (a custom role's
+    other menu ids and every non-``menu`` grant survive verbatim), infer that a
+    missing id was *revoked* and re-add it — only ids actually present are mapped,
+    so an administrator's explicit withdrawal is not undone — or widen a role
+    beyond the mapped pages. The many-to-one case is intentional: the console has
+    one 工具与技能 page, so ``personal.tools`` and ``personal.skills`` both map to
+    ``admin.skills`` and a role holding both gains it once.
+
+    Idempotent: a re-run finds no legacy id to map. The migration runner already
+    wraps this in one transaction, so the adds, deletes, version bumps and audit
+    events commit together or not at all.
+    """
+    from auth.policy import LEGACY_PERSONAL_MENU_MAP
+
+    legacy_ids = {"nav:%s" % pid for pid in LEGACY_PERSONAL_MENU_MAP}
+    rows = con.execute(
+        "SELECT id, code, tenant_id, version FROM roles"
+        " WHERE id IN (SELECT role_id FROM role_resource_grants"
+        "              WHERE resource_kind='menu')").fetchall()
+    for role in rows:
+        held = {
+            r["resource_id"]
+            for r in con.execute(
+                "SELECT resource_id FROM role_resource_grants"
+                " WHERE role_id=? AND resource_kind='menu'", (role["id"],)).fetchall()
+        }
+        present = sorted(held & legacy_ids)
+        if not present:
+            continue
+        added = sorted({LEGACY_PERSONAL_MENU_MAP[gid[len("nav:"):]]
+                        for gid in present})
+        for page in added:
+            grant = "nav:%s" % page
+            con.execute(
+                "INSERT INTO role_resource_grants(id, tenant_id, role_id,"
+                " resource_kind, resource_id, action)"
+                " SELECT ?, ?, ?, 'menu', ?, 'view'"
+                " WHERE NOT EXISTS (SELECT 1 FROM role_resource_grants"
+                "  WHERE role_id=? AND resource_kind='menu' AND resource_id=?)",
+                ("grant-menu-%s-%s" % (role["id"], page), role["tenant_id"],
+                 role["id"], grant, role["id"], grant),
+            )
+        con.execute(
+            "DELETE FROM role_resource_grants WHERE role_id=?"
+            " AND resource_kind='menu' AND resource_id IN (%s)"
+            % ",".join("?" * len(present)),
+            (role["id"],) + tuple(present),
+        )
+        con.execute("UPDATE roles SET version=version+1, updated_at=unixepoch()"
+                    " WHERE id=?", (role["id"],))
+        con.execute(
+            "INSERT INTO audit_events(id, actor_user_id, actor_username,"
+            " tenant_id, target_tenant_id, action, target, redacted_changes, result)"
+            " VALUES (?, NULL, NULL, ?, ?, 'role.menu.legacy_personal_mapped',"
+            " ?, ?, 'success')",
+            (_new_migration_id(), role["tenant_id"], role["tenant_id"],
+             "role:%s" % role["id"],
+             json.dumps({"removed": present,
+                         "added": ["nav:%s" % p for p in added],
+                         "version": int(role["version"]) + 1},
+                        ensure_ascii=False)),
+        )
+
+
+_migrations.append(_migration_26)
+
+
+def _migration_27(con: sqlite3.Connection) -> None:
+    """Grant the newly shared 模型与接入 page to the built-in roles (task 5.4).
+
+    ``admin.models`` joins ``BUILTIN_MENU_DEFAULTS`` because the page became the
+    member's model catalog: the public vendor address and key stay platform-only,
+    while everyone else reads the models they are authorized for. A tenant
+    created from now on is seeded with it by ``_seed_tenant_defaults``; a tenant
+    that already exists was seeded (``_migration_20``) from the older table,
+    where the page was still ``platform``-scoped — menu gating is restrictive, so
+    without this backfill the page would stay hidden for exactly the roles that
+    are supposed to reach it, on every deployment that is not brand new.
+
+    Only the two built-in roles are considered, and only when they already carry
+    a ``menu`` grant: a role with none is still governed by functional
+    permissions alone (the compat rule), and adding a grant to it would *switch
+    gating on* and hide the rest of its console. The insert is guarded, so a
+    re-run adds nothing.
+
+    Like ``_migration_20``, this cannot tell "never held" from "withdrawn" — the
+    page was not in the table at all until now, so there is no withdrawal to
+    honour — and it is a *one-time* classification: the table is read once here,
+    never re-asserted per request, which is what lets an administrator take the
+    page away afterwards without it coming back.
+
+    No version bump: unlike ``_migration_26`` this only *adds* a grant, so no
+    cached decision becomes wrong — the same reasoning ``_migration_20`` follows.
+    """
+    for row in con.execute(
+            "SELECT id, code, tenant_id FROM roles WHERE builtin=1"
+            " AND code IN ('member', 'tenant_admin')").fetchall():
+        grant = "nav:admin.models"
+        if not con.execute(
+                "SELECT 1 FROM role_resource_grants WHERE role_id=?"
+                " AND resource_kind='menu'", (row["id"],)).fetchone():
+            continue
+        con.execute(
+            "INSERT INTO role_resource_grants(id, tenant_id, role_id,"
+            " resource_kind, resource_id, action)"
+            " SELECT ?, ?, ?, 'menu', ?, 'view'"
+            " WHERE NOT EXISTS (SELECT 1 FROM role_resource_grants"
+            "  WHERE role_id=? AND resource_kind='menu' AND resource_id=?)",
+            ("grant-menu-%s-admin.models" % row["id"], row["tenant_id"],
+             row["id"], grant, row["id"], grant),
+        )
+
+
+_migrations.append(_migration_27)
 
 
 class IdentityStoreError(RuntimeError):

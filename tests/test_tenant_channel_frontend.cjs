@@ -15,6 +15,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { loadWithModule } = require('./support/channel_workbench.cjs');
+
 const source = fs.readFileSync(path.join(__dirname, '../channel/web/static/js/console.js'), 'utf8');
 
 // Extract one top-level function by brace matching; the channels section is
@@ -35,9 +37,9 @@ function fnSource(name) {
 }
 
 const CORE = [
-    'channelScope', 'channelsFailureKey', 'renderChannelsUnavailable',
+    'channelScope', 'channelPageScope', 'channelsFailureKey', 'renderChannelsUnavailable',
     'tenantChannelType', 'channelTypeLabel', 'channelFieldLabel',
-    'tenantChannelTypeOptions', 'tenantChannelFieldInput',
+    'tenantChannelTypeOptions', 'tenantChannelTypeChoices', 'tenantChannelFieldInput',
     'collectTenantChannelFields', 'tenantChannelPayload',
     'tenantChannelWriteErrorKey',
     'tenantChannelRuntimeNoticeFrom', 'tenantChannelRuntimeNoticeHtml',
@@ -96,7 +98,9 @@ function boot({ pages = null, types = [], lang = 'zh', fields = {}, promptText =
     };
     sandbox.t = (key) => (sandbox.I18N[sandbox.currentLang] || {})[key] || key;
 
-    vm.runInNewContext(CORE.map(fnSource).join('\n'), sandbox);
+    // console.js's channel presentation functions are thin delegations to the
+    // shared module, so it has to be evaluated in the sandbox too.
+    vm.runInNewContext(loadWithModule(CORE.map(fnSource), sandbox), sandbox);
     return { sandbox, container };
 }
 
@@ -139,6 +143,30 @@ test('the failure mapping is total — every status yields a known key', () => {
 test('the projection scope decides which view loads', () => {
     assert.equal(boot({ pages: { 'admin.channels': { scope: 'tenant' } } }).sandbox.channelScope(), 'tenant');
     assert.equal(boot({ pages: { 'admin.channels': { scope: 'platform' } } }).sandbox.channelScope(), 'platform');
+});
+
+test("a member's own range loads the same business surface as a tenant admin's", () => {
+    // Task 6.1: `self` is a *range* on the tenant page, not a third page.
+    const { sandbox } = boot({ pages: { 'admin.channels': { scope: 'self' } } });
+    assert.equal(sandbox.channelPageScope(), 'self');
+    assert.equal(sandbox.channelScope(), 'tenant');
+});
+
+test('the own-surface type list offers only what the server reports ready', () => {
+    // Offering a type the create would refuse is the "clickable but refused"
+    // shape; on the own surface the picker is narrowed to the ready declarations.
+    const types = [
+        { channel_type: 'feishu', label: { zh: '飞书', en: 'Feishu' }, ready: true },
+        { channel_type: 'wecom_bot', label: { zh: '企微', en: 'WeCom' }, ready: false },
+    ];
+    const shared = boot({ types });
+    shared.sandbox.tenantChannelSelfScope = false;
+    assert.deepEqual(shared.sandbox.tenantChannelTypeChoices().map(t => t.channel_type),
+                     ['feishu', 'wecom_bot']);
+    const own = boot({ types });
+    own.sandbox.tenantChannelSelfScope = true;
+    assert.deepEqual(own.sandbox.tenantChannelTypeChoices().map(t => t.channel_type),
+                     ['feishu']);
 });
 
 test('a missing or unknown projection keeps the historic platform view', () => {
@@ -347,4 +375,33 @@ test('the rejection names the missing fields', () => {
     assert.match(body, /detail/,
         'the error must be able to name the missing fields');
     assert.ok(sandbox.t('tenant_channel_error_required'));
+});
+
+// --- 6.1 the empty state speaks to the scope it is showing -----------------
+
+test('the empty state is scoped, not tenant-worded on a member surface', () => {
+    // The description above the list was already scope-aware; the empty state
+    // was not, so a member was told no channel existed for "this tenant" while
+    // looking at their own connections. Both wordings must stay distinct.
+    const body = source.slice(source.indexOf('function renderTenantChannels('),
+        source.indexOf('function openTenantChannelForm('));
+    assert.match(body, /tenantChannelSelfScope\s*\?\s*'tenant_channel_empty_desc_self'\s*:\s*'tenant_channel_empty_desc'/,
+        'the empty state must pick its wording from the console scope');
+});
+
+test('both empty-state wordings exist in all three languages', () => {
+    const tenantChannelI18n = fs.readFileSync(
+        path.join(__dirname, '../channel/web/static/js/i18n/tenant-channel.js'), 'utf8');
+    for (const key of ['tenant_channel_empty_desc', 'tenant_channel_empty_desc_self']) {
+        const lines = tenantChannelI18n.split('\n').filter(l => l.includes(`"${key}":`));
+        assert.equal(lines.length, 3, `zh / zh-Hant / en must all carry ${key}`);
+    }
+    // The own-surface wording must not claim anything about the tenant: that is
+    // exactly the confusion this key was added to remove.
+    const selfLines = tenantChannelI18n.split('\n')
+        .filter(l => l.includes('"tenant_channel_empty_desc_self":'));
+    for (const line of selfLines) {
+        assert.doesNotMatch(line, /本租户|本租戶|this tenant/i,
+            `the own-surface empty state must not mention the tenant: ${line.trim()}`);
+    }
 });

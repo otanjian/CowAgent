@@ -104,8 +104,11 @@ class SkillService:
     def resolve(self, *, resource_id: Optional[str] = None, name: Optional[str] = None) -> SkillEntry:
         """Resolve a skill uniquely, returning the loaded SkillEntry.
 
-        Delegates to :meth:`SkillManager.resolve_skill`. Ambiguity on ``name``
-        raises ValueError so the console can prompt for ``resource_id``.
+        Delegates to :meth:`SkillManager.resolve_skill`. An ambiguity on ``name``
+        (same-name builtin and workspace definitions) raises
+        :class:`SkillNameAmbiguous`, which the console answers with 400 so the
+        caller passes ``resource_id`` instead of the write landing on whichever
+        definition won the name.
         """
         entry = self.manager.resolve_skill(resource_id=resource_id, name=name)
         if entry is None:
@@ -170,22 +173,14 @@ class SkillService:
         return result
 
     def _ships_with_install(self, skill) -> bool:
-        """
-        True when this skill's files come back from the installation, so an edit
-        made here would not survive.
+        """True when this skill's files come back from the installation.
 
-        Deliberately not just ``source == "builtin"``. Startup copies every
-        builtin skill directory into the workspace and deletes whatever was
-        there first (``_sync_builtin_skills`` in app.py), so the copy the loader
-        resolves is a ``custom`` one that is *still* replaced on the next start.
-        Offering an editor for it would throw the edit away at the next restart,
-        with nothing to say so.
+        Delegates to :meth:`SkillManager.ships_with_install`, which is also what
+        decides whether a shadowed name is a *second* definition: the read/write
+        refusal here and the ambiguity refusal on the wire must not answer the
+        same question differently.
         """
-        if skill.source == "builtin":
-            return True
-        shadowed = os.path.join(self.manager.builtin_dir,
-                                os.path.basename(skill.base_dir))
-        return os.path.isfile(os.path.join(shadowed, "SKILL.md"))
+        return self.manager.ships_with_install(skill)
 
     def _locate(self, name: str, resource_id: Optional[str] = None):
         """

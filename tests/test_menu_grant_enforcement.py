@@ -87,7 +87,14 @@ class MenuGrantEnforcementTests(_Fixture):
             ])
         token = self._member("orgreaderuser", ["orgreader"])
         self.assertFalse(self._page(token, "admin.members")["read_allowed"])
-        self.assertTrue(self._page(token, "admin.organization")["read_allowed"])
+        # The menu grant reaches the page, but the page is a qualification
+        # surface: holding 组织读取 does not confer management qualification, so
+        # the console refuses it too even though the functional permission is
+        # present (rbac-authorization: 组织读取权限不能打开组织与权限管理).
+        entry = self._page(token, "admin.organization")
+        self.assertFalse(entry["read_allowed"])
+        self.assertFalse(entry["available"])
+        self.assertEqual(entry["reason"], "no_permission")
 
     def test_tenant_admin_keeps_org_perm_pages_despite_menu_grants(self):
         # A tenant admin's membership may also carry a custom role whose explicit
@@ -134,6 +141,46 @@ class MenuGrantEnforcementTests(_Fixture):
     def test_platform_all_is_not_restricted_by_menu_grants(self):
         self.assertTrue(self._page(self.token_root, "workbench.history")["read_allowed"])
         self.assertTrue(self._page(self.token_root, "admin.members")["read_allowed"])
+
+    def test_the_read_permission_alone_does_not_open_the_org_pages(self):
+        """组织与权限 answers to qualification, not to the read grant.
+
+        The member here carries both ``tenant.members.read`` and
+        ``tenant.org.read`` through a role with *no* menu grants, so the
+        functional-permission path is fully open and the refusal must come from
+        the missing management qualification. The same rule covers the
+        interfaces behind these pages
+        (rbac-authorization: 组织读取权限不能打开组织与权限管理).
+        """
+        self.svc.create_role(
+            self.root["id"], self.ta, "org_read_only", "组织只读",
+            ["tenant.members.read", "tenant.org.read"])
+        token = self._member("orgreadonly", ["org_read_only"])
+        for key in ("admin.members", "admin.roles", "admin.organization"):
+            entry = self._page(token, key)
+            self.assertFalse(entry["available"], (key, entry))
+            self.assertFalse(entry["read_allowed"], (key, entry))
+            self.assertEqual(entry["reason"], "no_permission", (key, entry))
+            # A denied page must not offer an action either way; the projection
+            # reports all-false rather than dropping the map, so assert on the
+            # meaning (nothing is offered) rather than on the shape.
+            self.assertFalse(any(entry["actions"].values()), (key, entry))
+
+    def test_the_platform_accounts_page_is_not_offered_to_a_tenant_admin(self):
+        """平台账号 is the platform qualification's page, not the tenant one."""
+        self.svc.create_member(
+            actor_user_id=self.root["id"], tenant_id=self.ta,
+            operation="create-new", username="acmeadmin", display_name="Acme Admin",
+            temporary_password="MemTempPass1", roles=["tenant_admin"])
+        token = self.svc.login("acmeadmin", "MemTempPass1").token
+        self.svc.change_password(token, "MemTempPass1", "MemPassFinal1")
+        token = self.svc.login("acmeadmin", "MemPassFinal1").token
+        entry = self._page(token, "admin.tenants")
+        self.assertFalse(entry["available"], entry)
+        self.assertEqual(entry["reason"], "no_permission", entry)
+        # The tenant qualification still owns its own three pages.
+        for key in ("admin.members", "admin.roles", "admin.organization"):
+            self.assertTrue(self._page(token, key)["available"], key)
 
 
 if __name__ == "__main__":
