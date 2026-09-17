@@ -364,6 +364,54 @@ SLICES: Tuple[Slice, ...] = (
         accepted=False,
         reason="awaiting_acceptance",
     ),
+    Slice(
+        "external_connections",
+        capability="external-connection-management",
+        consumer="external_connections",
+        # No console page yet: the page/entry point is task group 8 of
+        # ``add-external-system-access``, so this slice declares the API the page
+        # will read and stays out of the page projection until then.
+        page=None,
+        scope=frozenset({"platform", "tenant", "personal"}),
+        # Read and config only. ``test`` and ``execute`` are deliberately not
+        # declared: this build has no external-environment acceptance for a real
+        # MCP/ERP/OA/mail round trip (design §7), and an undeclared action cannot
+        # be reached through a route at all. ``registry.capability_projection``
+        # reports that per type with the deployment reason, so the console shows
+        # a closed state rather than a button that always fails.
+        open={
+            "catalog": ACCESS_READ,
+            "types": ACCESS_READ,
+            "detail": ACCESS_READ,
+            "create": ACCESS_CONFIG,
+            "update": ACCESS_CONFIG,
+            "delete": ACCESS_CONFIG,
+            # The tenant's default ERP pointer and a platform connection's tenant
+            # grant list are both *configuration*: they change what a consumer
+            # resolves, they do not run anything.
+            "erp_default": ACCESS_CONFIG,
+            "tenant_access": ACCESS_CONFIG,
+        },
+        # The control plane exists and is exercised over the real WSGI app in
+        # ``tests/test_external_connections_api.py`` (session-derived ownership,
+        # the tenant/permission and platform refusals, origin guard, version
+        # conflicts, secret keep/replace/clear, platform-inheritance visibility
+        # and the reference-blocked delete). That is acceptance for the read and
+        # config classes this slice declares, and for nothing else — which is why
+        # the storage/service half is covered separately by
+        # ``tests/test_external_connection_schema.py`` and
+        # ``tests/test_external_connection_service.py``.
+        implemented=True,
+        accepted=True,
+        reason="",
+        # ``personal`` by default: the page is a member surface (a member's own
+        # mailbox) as much as an administrative one. The tenant and platform
+        # addresses override the policy per route (see ``route_registry``), so a
+        # tenant address still demands the read/manage permission and a platform
+        # address still demands a platform admin.
+        policy=DEFAULT_PERSONAL_POLICY,
+        permission="external.connections.read",
+    ),
 )
 
 _BY_ID: Dict[str, Slice] = {s.id: s for s in SLICES}

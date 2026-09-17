@@ -29,6 +29,7 @@ from channel.chat_channel import ChatChannel, check_prefix
 from channel.chat_message import ChatMessage
 from channel.web.route_registry import derive_web_urls as _derive_web_urls
 from channel.web.help_site import (
+    HelpSiteHandler,
     DEFAULT_HELP_SITE_URL as _DEFAULT_HELP_SITE_URL,
     resolve_help_site_url as _resolve_help_site_url,
 )
@@ -79,6 +80,19 @@ from channel.web.admin_handlers import (
     _int_or_zero,
 )
 from channel.web.admin_overview import AdminOverviewHandler
+from channel.web.external_connection_handlers import (
+    ExternalConnectionCatalogHandler,
+    ExternalConnectionPersonalDetailHandler,
+    ExternalConnectionPersonalWriteHandler,
+    ExternalConnectionPlatformDetailHandler,
+    ExternalConnectionPlatformWriteHandler,
+    ExternalConnectionTenantDetailHandler,
+    ExternalConnectionTenantWriteHandler,
+    ExternalConnectionTypesHandler,
+)
+# /apps 低代码构建产物与页面壳（change port-jeecg-scene-app-engine，任务 2.6）。
+# 逻辑与卫生检查留在 apps_site，handler 只做装配，便于单测不依赖请求上下文。
+from channel.web.apps_site import AppsHandler
 from common import const
 from common import i18n
 from common.log import logger
@@ -120,6 +134,9 @@ from channel.web.todo_handlers import (
 )
 from scenes.api import ScenesHandler, SceneActivateHandler
 from scenes.api_workbench import SceneWorkbenchImportHandler
+from Scene._shared.http import HANDLERS as _SCENE_HANDLERS, SceneCapabilitiesHandler
+from Scene._shared.frontend import SceneAssetHandler
+globals().update(_SCENE_HANDLERS)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"}
 VIDEO_EXTENSIONS = {".mp4", ".webm", ".avi", ".mov", ".mkv"}
@@ -4892,13 +4909,7 @@ def _branding_error_response(err: BrandingError) -> str:
 
 
 def _help_site_url() -> str:
-    """The project site address carried by the public projection.
-
-    Instance-level and brand-independent, but it travels in this projection
-    because the console already reads it on boot and on visibility change. The
-    resolver never raises and never answers an empty string; the extra guard
-    keeps a broken site config from ever taking down the public read.
-    """
+    """Integrated help address carried by the public brand projection."""
     try:
         return _resolve_help_site_url()
     except Exception as e:  # pragma: no cover - resolver already fails closed

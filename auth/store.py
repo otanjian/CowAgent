@@ -1477,6 +1477,235 @@ def _migration_27(con: sqlite3.Connection) -> None:
 _migrations.append(_migration_27)
 
 
+def _migration_28(con: sqlite3.Connection) -> None:
+    """External-system connection control store (change
+    ``add-external-system-access``, tasks 2.1/2.2).
+
+    The identity database is the *single* authority for a connection, its
+    non-secret configuration, its secret **references** and its lifecycle, so a
+    connection has one owner and every consumer (console, scene, runtime) reads
+    the same row instead of a per-surface copy. What lives here is deliberately
+    only metadata:
+
+    * ``external_connections`` — one row per connection. ``config_json`` holds
+      non-secret configuration *only*; secrets are stored in the existing
+      ``credentials``/``credential_versions`` tables (tenant and personal) or in
+      the platform-owned pair below, and referenced by ``id``, never copied.
+      ``kind``/``scope``/``tenant_id``/``owner_user_id`` are fixed at creation by
+      the service (``CHECK`` refuses a client that tries to move them).
+    * ``external_connection_catalog_versions`` — the per-scope catalog revision
+      and the ERP default pointer. The revision is the CAS token for
+      concurrent default switches; ``default_connection_id`` is a real FK so a
+      deleted connection cannot leave a dangling default.
+    * ``external_connection_tenant_access`` — the explicit list of tenants a
+      platform MCP connection is usable by. Default is *no* tenant, so granting
+      is a deliberate row rather than an implied "everyone".
+    * ``external_connection_tests`` — redacted test summaries bound to the
+      config and secret versions they were run against.
+    * ``external_connection_migrations`` — the idempotency ledger for the
+      legacy-data migration (source hash + mapping), never a copy of a secret.
+    * ``platform_connection_secrets`` + ``..._versions`` — platform-owned
+      service secrets for shared MCP connections. A separate pair on purpose:
+      reusing ``credentials`` would require a fabricated tenant (or a
+      tenant=NULL generalization that weakens the existing tenant/personal
+      isolation), and the platform secret must never be resolvable through the
+      tenant credential API.
+
+    The singletons are expressed as **partial** unique indexes over live rows,
+    so a soft-deleted connection frees its slot while its audit trail survives:
+    one OA per tenant, one email per *(tenant, owner)*, one override per
+    *(tenant, platform row)*.
+    """
+    con.execute(
+        """
+        CREATE TABLE external_connections (
+            id                 TEXT PRIMARY KEY,
+            kind               TEXT NOT NULL,
+            scope              TEXT NOT NULL,
+            tenant_id          TEXT REFERENCES tenants(id),
+            owner_user_id      TEXT REFERENCES users(id),
+            name               TEXT NOT NULL,
+            config_json        TEXT NOT NULL DEFAULT '{}',
+            enabled            INTEGER NOT NULL DEFAULT 1,
+            version            INTEGER NOT NULL DEFAULT 1,
+            base_connection_id TEXT REFERENCES external_connections(id),
+            source             TEXT NOT NULL DEFAULT 'created',
+            deleted_at         INTEGER,
+            created_by         TEXT NOT NULL,
+            created_at         INTEGER NOT NULL DEFAULT (unixepoch()),
+            updated_at         INTEGER NOT NULL DEFAULT (unixepoch()),
+            CHECK (kind IN ('mcp', 'erp', 'oa', 'email')),
+            CHECK (scope IN ('platform', 'tenant', 'personal')),
+            CHECK (
+                (scope = 'platform' AND kind = 'mcp'
+                 AND tenant_id IS NULL AND owner_user_id IS NULL)
+                OR (scope = 'tenant' AND kind IN ('mcp', 'erp', 'oa')
+                    AND tenant_id IS NOT NULL AND owner_user_id IS NULL)
+                OR (scope = 'personal' AND kind = 'email'
+                    AND tenant_id IS NOT NULL AND owner_user_id IS NOT NULL)
+            ),
+            CHECK (base_connection_id IS NULL
+                   OR (kind = 'mcp' AND scope = 'tenant')),
+            CHECK (base_connection_id IS NULL OR base_connection_id <> id)
+        )
+        """
+    )
+    con.execute(
+        "CREATE INDEX idx_ext_conn_scope"
+        " ON external_connections(scope, tenant_id, owner_user_id, kind)"
+    )
+    con.execute(
+        "CREATE INDEX idx_ext_conn_base"
+        " ON external_connections(base_connection_id)"
+    )
+    con.execute(
+        "CREATE UNIQUE INDEX idx_ext_conn_oa_singleton"
+        " ON external_connections(tenant_id)"
+        " WHERE kind='oa' AND deleted_at IS NULL"
+    )
+    con.execute(
+        "CREATE UNIQUE INDEX idx_ext_conn_email_singleton"
+        " ON external_connections(tenant_id, owner_user_id)"
+        " WHERE kind='email' AND deleted_at IS NULL"
+    )
+    con.execute(
+        "CREATE UNIQUE INDEX idx_ext_conn_override_singleton"
+        " ON external_connections(tenant_id, base_connection_id)"
+        " WHERE kind='mcp' AND scope='tenant' AND base_connection_id IS NOT NULL"
+        " AND deleted_at IS NULL"
+    )
+    con.execute(
+        """
+        CREATE TABLE platform_connection_secrets (
+            id         TEXT PRIMARY KEY,
+            name       TEXT NOT NULL UNIQUE,
+            ciphertext TEXT NOT NULL,
+            active     INTEGER NOT NULL DEFAULT 1,
+            version    INTEGER NOT NULL DEFAULT 1,
+            created_by TEXT NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+            updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+        )
+        """
+    )
+    con.execute(
+        """
+        CREATE TABLE platform_connection_secret_versions (
+            platform_secret_id TEXT NOT NULL
+                REFERENCES platform_connection_secrets(id),
+            version            INTEGER NOT NULL,
+            ciphertext         TEXT NOT NULL,
+            action             TEXT NOT NULL,
+            changed_by         TEXT NOT NULL,
+            changed_at         INTEGER NOT NULL DEFAULT (unixepoch()),
+            PRIMARY KEY (platform_secret_id, version)
+        )
+        """
+    )
+    con.execute(
+        """
+        CREATE TABLE external_connection_secret_refs (
+            connection_id      TEXT NOT NULL
+                REFERENCES external_connections(id),
+            slot               TEXT NOT NULL,
+            credential_id      TEXT REFERENCES credentials(id),
+            platform_secret_id TEXT REFERENCES platform_connection_secrets(id),
+            secret_version     INTEGER NOT NULL,
+            updated_at         INTEGER NOT NULL DEFAULT (unixepoch()),
+            PRIMARY KEY (connection_id, slot),
+            CHECK ((credential_id IS NULL) <> (platform_secret_id IS NULL))
+        )
+        """
+    )
+    con.execute(
+        """
+        CREATE TABLE external_connection_catalog_versions (
+            scope_key             TEXT NOT NULL,
+            kind                  TEXT NOT NULL,
+            revision              INTEGER NOT NULL DEFAULT 1,
+            default_connection_id TEXT REFERENCES external_connections(id),
+            updated_at            INTEGER NOT NULL DEFAULT (unixepoch()),
+            PRIMARY KEY (scope_key, kind)
+        )
+        """
+    )
+    con.execute(
+        """
+        CREATE TABLE external_connection_tenant_access (
+            platform_connection_id TEXT NOT NULL
+                REFERENCES external_connections(id),
+            tenant_id              TEXT NOT NULL REFERENCES tenants(id),
+            enabled                INTEGER NOT NULL DEFAULT 1,
+            revision               INTEGER NOT NULL DEFAULT 1,
+            updated_at             INTEGER NOT NULL DEFAULT (unixepoch()),
+            PRIMARY KEY (platform_connection_id, tenant_id)
+        )
+        """
+    )
+    con.execute(
+        """
+        CREATE TABLE external_connection_tests (
+            test_id             TEXT PRIMARY KEY,
+            connection_id       TEXT NOT NULL
+                REFERENCES external_connections(id),
+            actor_user_id       TEXT NOT NULL,
+            scope               TEXT NOT NULL,
+            tenant_id           TEXT,
+            config_version      INTEGER NOT NULL,
+            secret_versions_json TEXT NOT NULL DEFAULT '{}',
+            stage               TEXT NOT NULL DEFAULT '',
+            result              TEXT NOT NULL,
+            code                TEXT NOT NULL DEFAULT '',
+            detail_json         TEXT NOT NULL DEFAULT '{}',
+            created_at          INTEGER NOT NULL DEFAULT (unixepoch())
+        )
+        """
+    )
+    con.execute(
+        "CREATE INDEX idx_ext_conn_tests"
+        " ON external_connection_tests(connection_id, created_at)"
+    )
+    con.execute(
+        """
+        CREATE TABLE external_connection_migrations (
+            batch_id       TEXT PRIMARY KEY,
+            source_locator TEXT NOT NULL,
+            source_hash    TEXT NOT NULL,
+            scope_key      TEXT NOT NULL,
+            mapping_json   TEXT NOT NULL DEFAULT '{}',
+            result         TEXT NOT NULL,
+            detail_json    TEXT NOT NULL DEFAULT '{}',
+            created_at     INTEGER NOT NULL DEFAULT (unixepoch())
+        )
+        """
+    )
+    con.execute(
+        "CREATE UNIQUE INDEX idx_ext_conn_migrations_source"
+        " ON external_connection_migrations(source_hash, scope_key)"
+    )
+    # Short-lived create-idempotency ledger. The payload fingerprint is keyed
+    # (HMAC with the deployment's credential key), so a stored row can prove
+    # "same body" without being reversible to a password; ``result_json`` holds
+    # the *redacted* projection only.
+    con.execute(
+        """
+        CREATE TABLE external_connection_idempotency (
+            key_id              TEXT NOT NULL,
+            actor_user_id       TEXT NOT NULL,
+            scope_key           TEXT NOT NULL,
+            endpoint            TEXT NOT NULL,
+            payload_fingerprint TEXT NOT NULL,
+            result_json         TEXT NOT NULL,
+            created_at          INTEGER NOT NULL DEFAULT (unixepoch()),
+            PRIMARY KEY (actor_user_id, scope_key, endpoint, key_id)
+        )
+        """
+    )
+
+
+_migrations.append(_migration_28)
+
+
 class IdentityStoreError(RuntimeError):
     """Raised when the identity store cannot be opened or migrated."""
 

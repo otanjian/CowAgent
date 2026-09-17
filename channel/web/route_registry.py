@@ -116,6 +116,8 @@ def S(slice_id: str, action: str, **kwargs) -> dict:
 
 
 ROUTES: Tuple[RouteEntry, ...] = (
+    RouteEntry("/help", "HelpSiteHandler", "fork:help-site", {"GET": P("public", comment="redirect to help root")}),
+    RouteEntry("/help/(.*)", "HelpSiteHandler", "fork:help-site", {"GET": P("public", comment="product help pages and public assets; no tenant data")}),
     RouteEntry("/", "RootHandler", "upstream", {"GET": P("public", comment="console root")}),
     RouteEntry("/api/health", "HealthHandler", "upstream", {"GET": P("public", comment="health probe")}),
     RouteEntry("/auth/login", "AuthLoginHandler", "upstream", {"POST": P("public", comment="database account login (username+password)")}),
@@ -161,6 +163,30 @@ ROUTES: Tuple[RouteEntry, ...] = (
     RouteEntry("/api/tenant/channels/([^/]+)/active", "TenantChannelActiveHandler", "fork:tenant-console", {"POST": P("tenant", comment="enable/disable a channel in the caller's range")}),
     RouteEntry("/api/tenant/channels/([^/]+)", "TenantChannelHandler", "fork:tenant-console", {"POST": P("tenant", comment="edit a channel in the caller's range")}),
     RouteEntry("/api/admin/overview", "AdminOverviewHandler", "fork:admin-console", {"GET": P("tenant", comment="admin console KPI overview (platform/tenant_admin)")}),
+    # External-system connections (change add-external-system-access, tasks
+    # 3.2-3.4). The scope is in the path, never in the body: ``/tenant`` carries
+    # the tenant read/manage permission, ``/platform`` is a platform-admin
+    # address, and ``/personal`` is the caller's own mailbox (owner fixed from
+    # the session). ``catalog``/``types`` stay on the slice's personal policy
+    # because a member must be able to reach their own mailbox page; the service
+    # still authorizes the scope the caller actually asked for.
+    RouteEntry("/api/external-connections/types", "ExternalConnectionTypesHandler", "fork:external-connections", {"GET": S("external_connections", "types", comment="connection type catalogue + per-scope availability for the caller")}),
+    RouteEntry("/api/external-connections/catalog", "ExternalConnectionCatalogHandler", "fork:external-connections", {"GET": S("external_connections", "catalog", permission="", comment="visible connection cards for the requested scope (the service authorizes the scope)")}),
+    RouteEntry("/api/external-connections/tenant/erp-default", "ExternalConnectionTenantWriteHandler", "fork:external-connections", {"GET": S("external_connections", "erp_default", policy="tenant", comment="tenant ERP default pointer + CAS revision"), "POST": S("external_connections", "erp_default", policy="tenant", permission="external.connections.manage", comment="set/clear the tenant ERP default (CAS revision; explicit replace or clear)")}),
+    RouteEntry("/api/external-connections/tenant/([^/]+)/update", "ExternalConnectionTenantWriteHandler", "fork:external-connections", {"POST": S("external_connections", "update", policy="tenant", permission="external.connections.manage", comment="update a tenant connection (If-Match version; keep/replace/clear secrets)")}),
+    RouteEntry("/api/external-connections/tenant/([^/]+)/delete", "ExternalConnectionTenantWriteHandler", "fork:external-connections", {"POST": S("external_connections", "delete", policy="tenant", permission="external.connections.manage", comment="delete a tenant connection; a live reference is refused with its summary")}),
+    RouteEntry("/api/external-connections/tenant/([^/]+)/restore-inheritance", "ExternalConnectionTenantWriteHandler", "fork:external-connections", {"POST": S("external_connections", "delete", policy="tenant", permission="external.connections.manage", comment="drop this tenant's override of a platform connection and inherit again")}),
+    RouteEntry("/api/external-connections/tenant/([^/]+)", "ExternalConnectionTenantDetailHandler", "fork:external-connections", {"GET": S("external_connections", "detail", policy="tenant", comment="tenant connection detail (an inherited platform template is readable here when the grant is live)")}),
+    RouteEntry("/api/external-connections/tenant", "ExternalConnectionTenantWriteHandler", "fork:external-connections", {"POST": S("external_connections", "create", policy="tenant", permission="external.connections.manage", comment="create a tenant connection (ownership derived from the session; base_connection_id makes it a platform override with its own credentials)")}),
+    RouteEntry("/api/external-connections/platform/([^/]+)/tenant-access", "ExternalConnectionPlatformWriteHandler", "fork:external-connections", {"GET": S("external_connections", "tenant_access", policy="platform", comment="tenants granted a platform connection"), "POST": S("external_connections", "tenant_access", policy="platform", permission="", comment="replace the tenant grant list (atomic; revocation takes effect on the next use)")}),
+    RouteEntry("/api/external-connections/platform/([^/]+)/update", "ExternalConnectionPlatformWriteHandler", "fork:external-connections", {"POST": S("external_connections", "update", policy="platform", permission="", comment="update a platform connection (platform admin)")}),
+    RouteEntry("/api/external-connections/platform/([^/]+)/delete", "ExternalConnectionPlatformWriteHandler", "fork:external-connections", {"POST": S("external_connections", "delete", policy="platform", permission="", comment="delete a platform connection; live overrides/grants are refused, never cascade-erased")}),
+    RouteEntry("/api/external-connections/platform/([^/]+)", "ExternalConnectionPlatformDetailHandler", "fork:external-connections", {"GET": S("external_connections", "detail", policy="platform", permission="", comment="platform connection detail (platform admin; the secret is never in the projection)")}),
+    RouteEntry("/api/external-connections/platform", "ExternalConnectionPlatformWriteHandler", "fork:external-connections", {"POST": S("external_connections", "create", policy="platform", permission="", comment="create a platform MCP connection (platform admin)")}),
+    RouteEntry("/api/external-connections/personal/([^/]+)/update", "ExternalConnectionPersonalWriteHandler", "fork:external-connections", {"POST": S("external_connections", "update", permission="", comment="update my own mailbox connection (owner fixed from the session)")}),
+    RouteEntry("/api/external-connections/personal/([^/]+)/delete", "ExternalConnectionPersonalWriteHandler", "fork:external-connections", {"POST": S("external_connections", "delete", permission="", comment="delete my own mailbox connection")}),
+    RouteEntry("/api/external-connections/personal/([^/]+)", "ExternalConnectionPersonalDetailHandler", "fork:external-connections", {"GET": S("external_connections", "detail", permission="", comment="my own mailbox detail (another member's answers 404)")}),
+    RouteEntry("/api/external-connections/personal", "ExternalConnectionPersonalWriteHandler", "fork:external-connections", {"POST": S("external_connections", "create", permission="", comment="create my own mailbox connection (tenant+owner fixed from the session; one per member)")}),
     RouteEntry("/message", "MessageHandler", "upstream", {"POST": P("tenant", comment="send message")}),
     RouteEntry("/upload", "UploadHandler", "upstream", {"POST": P("tenant", comment="file upload")}),
     RouteEntry("/uploads/(.*)", "UploadsHandler", "upstream", {"GET": P("tenant", comment="serve upload (tenant derived from the addressed agent: the console reads this as an <img>/<audio> subresource, which cannot send X-Tenant-ID)", tenant_from_resource=True)}),
@@ -243,9 +269,37 @@ ROUTES: Tuple[RouteEntry, ...] = (
     RouteEntry("/api/branding", "BrandingManageHandler", "fork:branding", {"GET": P("tenant", comment="branding manage"), "POST": P("tenant", comment="branding save")}),
     RouteEntry("/api/branding/reset", "BrandingResetHandler", "fork:branding", {"POST": P("tenant", comment="branding reset")}),
     RouteEntry("/api/branding/assets/(.*)", "BrandingAssetHandler", "fork:branding", {"GET": P("public", comment="branding asset")}),
+    RouteEntry('/scene-assets/(.*)', 'SceneAssetHandler', "fork:scenes", {'GET': P('public')}),
+    RouteEntry('/api/scenes/capabilities', 'SceneCapabilitiesHandler', "fork:scenes", {'GET': P('tenant')}),
+    RouteEntry('/api/workbench/upload', 'WorkbenchUploadHandler', "fork:scenes", {'POST': P('tenant')}),
+    RouteEntry('/api/workbench/parse-excel', 'WorkbenchParseExcelHandler', "fork:scenes", {'POST': P('tenant')}),
+    RouteEntry('/api/workbench/generate-report', 'WorkbenchGenerateReportHandler', "fork:scenes", {'POST': P('tenant')}),
+    RouteEntry('/api/voucher/generate-template', 'VoucherTemplateHandler', "fork:scenes", {'POST': P('tenant')}),
+    RouteEntry('/api/procurement/import', 'ProcurementImportHandler', "fork:scenes", {'POST': P('tenant')}),
+    RouteEntry('/api/procurement/erp-sync', 'ProcurementErpSyncHandler', "fork:scenes", {'POST': P('tenant')}),
+    RouteEntry('/api/erp/connections/options', 'ErpConnectionsOptionsHandler', "fork:scenes", {'GET': P('tenant')}),
+    RouteEntry('/api/erp/connections', 'ErpConnectionsHandler', "fork:scenes", {'GET': P('tenant'), 'POST': P('tenant')}),
+    RouteEntry('/api/airbag-scheduling/(.*)', 'AirbagSchedulingHandler', "fork:scenes", {'GET': P('tenant'), 'POST': P('tenant'), 'PUT': P('tenant')}),
+    RouteEntry('/api/sap-data-analysis/analyze', 'SceneSapAnalyzeHandler', "fork:scenes", {'POST': P('tenant')}),
+    RouteEntry('/api/sap-data-analysis/(.*)/csv', 'SceneSapCsvHandler', "fork:scenes", {'GET': P('tenant')}),
+    RouteEntry('/api/scheduling/schedule', 'SchedulingScheduleHandler', "fork:scenes", {'POST': P('tenant')}),
+    RouteEntry('/api/scheduling/gantt', 'SchedulingGanttHandler', "fork:scenes", {'POST': P('tenant')}),
+    RouteEntry('/api/scheduling/material-check', 'SchedulingMaterialCheckHandler', "fork:scenes", {'POST': P('tenant')}),
+    RouteEntry('/api/scheduling/bottleneck', 'SchedulingBottleneckHandler', "fork:scenes", {'POST': P('tenant')}),
+    RouteEntry('/api/scheduling/what-if', 'SchedulingWhatIfHandler', "fork:scenes", {'POST': P('tenant')}),
+    RouteEntry('/api/scheduling/import', 'SchedulingImportHandler', "fork:scenes", {'POST': P('tenant')}),
+    RouteEntry('/api/scheduling/history', 'SchedulingHistoryHandler', "fork:scenes", {'GET': P('tenant')}),
+    RouteEntry('/api/scheduling/history/(.*)', 'SchedulingHistoryDetailHandler', "fork:scenes", {'GET': P('tenant')}),
+    RouteEntry('/api/scheduling/bom-tree', 'SchedulingBOMTreeHandler', "fork:scenes", {'POST': P('tenant')}),
     RouteEntry("/api/scenes", "ScenesHandler", "fork:scenes", {"GET": P("tenant", "chat.use", comment="scene catalog for the current tenant (chat consumer)")}),
     RouteEntry("/api/scenes/activate", "SceneActivateHandler", "fork:scenes", {"POST": P("tenant", "chat.use", comment="activate a scene in this tenant (state change; origin+CSRF in handler)")}),
     RouteEntry("/api/scenes/workbench/import", "SceneWorkbenchImportHandler", "fork:scenes", {"POST": P("tenant", "chat.use", comment="import workbench content into this tenant's shared root (state change; origin+CSRF in handler)")}),
+    # /apps （change port-jeecg-scene-app-engine，任务 2.6）：低代码构建产物的唯一入口。
+    # 壳与它的静态子资源都必须 public：两者都是**文档/子资源导航**，浏览器不会带
+    # X-Tenant-ID（与 /uploads/(.*)、/api/file、/chat 同一条推理）。壳本身不含任何租户数据，
+    # 它随后经宿主桥接发起的数据请求各自沿用原有策略，因此这里放开不会放宽任何数据访问。
+    RouteEntry("/apps", "AppsHandler", "fork:lowcode-apps", {"GET": P("public", comment="lowcode app shell (dist index.html; deep links /apps/<app>/<view> fall back to the shell)")}),
+    RouteEntry("/apps/(.*)", "AppsHandler", "fork:lowcode-apps", {"GET": P("public", comment="lowcode build artifacts under /apps (path confined to the dist root; missing assets answer 404, never the HTML shell)")}),
     RouteEntry("/mcp/oauth/callback", "McpOAuthCallbackHandler", "upstream", {"GET": P("public", comment="MCP oauth callback")}),
     RouteEntry("/assets/(.*)", "AssetsHandler", "upstream", {"GET": P("public", comment="static assets")}),
 )

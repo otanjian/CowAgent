@@ -50,6 +50,10 @@ PERMISSION_CATALOG: Tuple[str, ...] = (
     "agent.edit",  # edit agent configuration
     "agent.enable",  # enable/disable an agent
     "chat.use",  # use the chat consumer with a chosen model
+    # -- external-system access (change add-external-system-access) --------
+    "external.connections.read",  # see the connection catalogue it is scoped to
+    "external.connections.manage",  # create/edit/enable/delete connections
+    "external.connections.test",  # run a connection test (opens with G2-G4)
 )
 
 #: Stable metadata for the nine permission ids. ``group`` / ``label`` /
@@ -165,6 +169,21 @@ PERMISSION_METADATA: Dict[str, Dict[str, object]] = {
     "chat.use": {
         "group": "对话", "label": "使用对话",
         "description": "在对话中使用获准模型",
+        "scope": "tenant", "assignable": True,
+    },
+    "external.connections.read": {
+        "group": "外部系统", "label": "查看连接",
+        "description": "查看本租户的外部系统连接目录与状态",
+        "scope": "tenant", "assignable": True,
+    },
+    "external.connections.manage": {
+        "group": "外部系统", "label": "管理连接",
+        "description": "创建、编辑、启停与删除本租户的外部系统连接",
+        "scope": "tenant", "assignable": True,
+    },
+    "external.connections.test": {
+        "group": "外部系统", "label": "测试连接",
+        "description": "对本租户的外部系统连接发起连通性测试",
         "scope": "tenant", "assignable": True,
     },
 }
