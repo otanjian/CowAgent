@@ -75,3 +75,42 @@ def test_scheduler_tool_does_not_expose_manual_execution():
     actions = SchedulerTool.params["properties"]["action"]["enum"]
 
     assert "run" not in actions
+
+
+def test_manual_run_passes_manual_trigger_to_callback(tmp_path):
+    """A callback declaring a ``trigger`` slot sees ``"manual"`` for run-now."""
+    store = TaskStore(str(tmp_path / "tasks.json"))
+    store.add_task(_task())
+    seen = {}
+    completed = threading.Event()
+
+    def execute(received, trigger="scheduled"):
+        seen["trigger"] = trigger
+        completed.set()
+        return True
+
+    service = SchedulerService(store, execute)
+    service.run_task_now("task-1")
+
+    assert completed.wait(timeout=2)
+    assert seen["trigger"] == "manual"
+
+
+def test_single_arg_callback_still_supported(tmp_path):
+    """Legacy single-arg callbacks must not be broken by trigger forwarding."""
+    store = TaskStore(str(tmp_path / "tasks.json"))
+    store.add_task(_task())
+    calls = []
+    completed = threading.Event()
+
+    def execute(received):
+        calls.append(received["id"])
+        completed.set()
+        return True
+
+    service = SchedulerService(store, execute)
+    service.run_task_now("task-1")
+
+    assert completed.wait(timeout=2)
+    # Exactly one execution — no accidental re-run from arity misdetection.
+    assert calls == ["task-1"]

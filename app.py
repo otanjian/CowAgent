@@ -15,16 +15,17 @@ from plugins import *
 import threading
 
 
-_channel_mgr = None
+# The manager lives in common.channel_registry, not here: app.py runs as
+# ``__main__`` (``python app.py``), so a module-level global here would be
+# invisible to any code that does ``from app import ...`` (that import builds a
+# second, separate ``app`` module). The registry is a single shared cell every
+# caller sees — see common/channel_registry.py and issue #3120.
+from common.channel_registry import get_channel_manager, set_channel_manager
 
 # Desktop mode: a lighter runtime for the packaged Electron client. Plugins are
 # loaded in a background thread (so command plugins like cow_cli/godcmd work
 # without slowing startup), while MCP warmup is still skipped to keep it fast.
 DESKTOP_MODE = os.environ.get("COW_DESKTOP") == "1"
-
-
-def get_channel_manager():
-    return _channel_mgr
 
 
 def _parse_channel_type(raw) -> list:
@@ -159,6 +160,27 @@ class ChannelManager:
 
     def get_channel(self, channel_name: str):
         return self._channels.get(channel_name)
+
+    def find_channels_by_type(self, channel_type: str) -> list:
+        """Every running channel whose type matches, keyed by registry name.
+
+        Instances register under their ``instance_id`` (e.g. ``weixin-c696...``),
+        so a caller that only knows the bare ``channel_type`` (an old scheduled
+        task whose action never stored an instance_id) can't hit ``get_channel``
+        directly. This lets it recover the live instance(s) of that type instead
+        of falling back to a never-started bare singleton. Returns ``[(name,
+        channel), ...]`` in registry order.
+        """
+        ctype = (channel_type or "").strip()
+        with self._lock:
+            items = list(self._channels.items())
+        out = []
+        for name, ch in items:
+            if ch is None:
+                continue
+            if getattr(ch, "channel_type", "") == ctype:
+                out.append((name, ch))
+        return out
 
     @staticmethod
     def _normalize_entry(entry):
@@ -594,6 +616,23 @@ def _migrate_team_roster():
         logger.warning(f"[App] Could not move the roster into its own file: {e}")
 
 
+def _migrate_conversations():
+    """Fold every Agent's conversations into the one global file at startup.
+
+    Level 1 (add agent_id column / composite key) runs synchronously so the
+    default Agent's file is ready before channels accept traffic; the actual
+    copy of other Agents' rows is kicked off on a background thread and resumes
+    next start if interrupted. Never fatal: a failure leaves each Agent on its
+    own file and is logged.
+    """
+    try:
+        from agent.memory import migrate_conversations_to_global
+
+        migrate_conversations_to_global(kickoff_async=True)
+    except Exception as e:
+        logger.warning(f"[App] Conversation global migration skipped: {e}")
+
+
 def _verify_required_seams():
     """Refuse the boot when a required fork authorization seam is absent (R5).
 
@@ -801,7 +840,6 @@ def _scaffold_subagent_assets():
 
 
 def run():
-    global _channel_mgr
     try:
         # Before any TLS connection: a packaged build has no OpenSSL CA store.
         bundle = ensure_ca_bundle()
@@ -813,6 +851,7 @@ def run():
         _guard_identity_mode_consistency()
         _ensure_database_bootstrap()
         _migrate_team_roster()
+        _migrate_conversations()
         _migrate_conversation_tenancy()
         _migrate_scheduled_tasks()
         _guard_external_store_version()
@@ -863,8 +902,9 @@ def run():
 
         logger.info(f"[App] Starting channels: {channel_names}")
 
-        _channel_mgr = ChannelManager()
-        _channel_mgr.start(channel_names, first_start=True)
+        channel_mgr = ChannelManager()
+        set_channel_manager(channel_mgr)
+        channel_mgr.start(channel_names, first_start=True)
 
         while True:
             time.sleep(1)

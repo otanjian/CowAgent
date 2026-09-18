@@ -12,9 +12,24 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent.registry import AgentRegistry
+from agent.registry import AgentRegistry, get_agent_registry, set_agent_registry
 from bridge.agent_bridge import AgentBridge
 from bridge.agent_initializer import AgentInitializer
+
+
+@pytest.fixture(autouse=True)
+def registry_restored():
+    """Never let a pinned registry outlive the test that pinned it.
+
+    Two of the classes below pin a registry so the roster they build is what
+    resolves a workspace. ``set_agent_registry`` pins process-wide and keeps
+    answering from that instance even after configuration moves on, so without
+    this teardown the registry stays pinned for the rest of the run and every
+    later test -- here, and in whichever module pytest reaches next -- resolves
+    its workspace through this file's ``tmp_path``.
+    """
+    yield
+    set_agent_registry(None)
 
 
 class _FakeInitializer:
@@ -179,7 +194,9 @@ class TestSeedTeamMembersFromChannelInstance:
         )
         assert calls.get("members") == ["ops"]
 
-    def test_leaves_an_existing_session_roster_untouched(self, tmp_path, monkeypatch):
+    def test_channel_roster_is_authoritative_and_reconciles(self, tmp_path, monkeypatch):
+        # The channel instance's roster is the source of truth: when the session
+        # roster differs, it is reconciled to match the instance (not left stale).
         from agent.workspace import session_prefs
 
         seeded = []
@@ -188,11 +205,82 @@ class TestSeedTeamMembersFromChannelInstance:
         )
         monkeypatch.setattr(
             session_prefs, "set_prefs",
-            lambda *a, **kw: seeded.append(kw),
+            lambda sid, aid, **kw: seeded.append(kw),
         )
         bridge = _bridge(tmp_path)
         bridge._seed_team_members("chat", "primary", self._ctx(members=["ops"]))
-        assert seeded == []  # a per-session edit must never be clobbered
+        assert seeded == [{"members": ["ops"]}]
+
+    def test_already_in_sync_is_a_noop(self, tmp_path, monkeypatch):
+        from agent.workspace import session_prefs
+
+        seeded = []
+        monkeypatch.setattr(
+            session_prefs, "get_prefs", lambda sid, aid: {"members": ["ops"]}
+        )
+        monkeypatch.setattr(
+            session_prefs, "set_prefs", lambda *a, **kw: seeded.append(kw)
+        )
+        bridge = _bridge(tmp_path)
+        bridge._seed_team_members("chat", "primary", self._ctx(members=["ops"]))
+        assert seeded == []  # no redundant write when nothing changed
+
+    def test_single_agent_instance_clears_stale_session_roster(self, tmp_path, monkeypatch):
+        # Switching an instance back to a single Agent (empty members) must drop
+        # the session's stale team roster, or the team prompt keeps injecting.
+        from agent.workspace import session_prefs
+
+        calls = []
+        monkeypatch.setattr(
+            session_prefs, "get_prefs", lambda sid, aid: {"members": ["ops"]}
+        )
+        monkeypatch.setattr(
+            session_prefs, "set_prefs",
+            lambda sid, aid, **kw: calls.append(kw),
+        )
+        bridge = _bridge(tmp_path)
+        # A channel message that now carries an empty roster (members=[]).
+        bridge._seed_team_members("chat", "primary", self._ctx(members=[]))
+        assert calls == [{"members": None}]  # roster cleared
+
+    def test_empty_members_with_no_existing_roster_is_a_noop(self, tmp_path, monkeypatch):
+        from agent.workspace import session_prefs
+
+        calls = []
+        monkeypatch.setattr(session_prefs, "get_prefs", lambda sid, aid: {})
+        monkeypatch.setattr(
+            session_prefs, "set_prefs", lambda *a, **kw: calls.append(kw)
+        )
+        bridge = _bridge(tmp_path)
+        bridge._seed_team_members("chat", "primary", self._ctx(members=[]))
+        assert calls == []  # nothing to clear, nothing to write
+
+    def test_delegation_members_seed_once_and_never_clobber(self, tmp_path, monkeypatch):
+        # A delegated turn (private session) seeds once from delegation_members
+        # and must not overwrite an existing roster.
+        from agent.workspace import session_prefs
+
+        seeded = []
+        monkeypatch.setattr(session_prefs, "get_prefs", lambda sid, aid: {})
+        monkeypatch.setattr(
+            session_prefs, "set_prefs",
+            lambda sid, aid, **kw: seeded.append(kw),
+        )
+        bridge = _bridge(tmp_path)
+        bridge._seed_team_members(
+            "chat", "primary", self._ctx(delegation_members=["ops"])
+        )
+        assert seeded == [{"members": ["ops"]}]
+
+        # Now with an existing roster, delegation must not clobber it.
+        seeded.clear()
+        monkeypatch.setattr(
+            session_prefs, "get_prefs", lambda sid, aid: {"members": ["research"]}
+        )
+        bridge._seed_team_members(
+            "chat", "primary", self._ctx(delegation_members=["ops"])
+        )
+        assert seeded == []
 
     def test_disabled_or_unknown_teammates_are_dropped(self, tmp_path, monkeypatch):
         from agent.workspace import session_prefs
@@ -329,27 +417,35 @@ class TestKnowingWhoWroteWhat:
     ]
 
     def _attributed(self, tmp_path, reader):
-        _bridge(tmp_path)  # registry has to be resolvable for the name lookup
+        from agent.registry import set_agent_registry
         from bridge.agent_initializer import AgentInitializer
 
+        bridge = _bridge(tmp_path)
+        set_agent_registry(bridge.agent_registry)
         return AgentInitializer._attribute_history(self.HISTORY, reader)
 
-    def test_a_colleagues_reply_is_named(self, tmp_path):
-        text = self._attributed(tmp_path, "default")[1]["content"][0]["text"]
-        assert text.startswith("[")
-        assert "shipped" in text
+    def test_a_colleagues_reply_is_replayed_as_the_user(self, tmp_path):
+        """assistant+[Name] is what the model copies into its own mouth."""
+        message = self._attributed(tmp_path, "default")[1]
+        assert message["role"] == "user"
+        assert message["content"][0]["text"].startswith("运营助手(@ops)：")
+        assert "shipped" in message["content"][0]["text"]
 
-    def test_your_own_reply_is_left_bare(self, tmp_path):
-        """Unmarked has to mean "mine", or the convention says nothing."""
-        assert self._attributed(tmp_path, "default")[3]["content"][0]["text"] == "on it"
+    def test_your_own_reply_stays_assistant(self, tmp_path):
+        message = self._attributed(tmp_path, "default")[3]
+        assert message["role"] == "assistant"
+        assert message["content"][0]["text"] == "on it"
 
     def test_the_same_reply_is_bare_for_the_one_who_wrote_it(self, tmp_path):
-        assert self._attributed(tmp_path, "ops")[1]["content"][0]["text"] == "shipped"
+        message = self._attributed(tmp_path, "ops")[1]
+        assert message["role"] == "assistant"
+        assert message["content"][0]["text"] == "shipped"
 
     def test_the_users_own_turns_are_never_labelled(self, tmp_path):
         attributed = self._attributed(tmp_path, "default")
         assert [m["content"][0]["text"] for m in attributed if m["role"] == "user"] == [
             "ship it",
+            "运营助手(@ops)：shipped",
             "and now?",
         ]
 
@@ -504,3 +600,117 @@ class TestMentionParsing:
         ]
         assert self._resolve("@运营助手 你好", roster) == "b"
         assert self._resolve("@运营 你好", roster) == "a"
+
+
+class TestSharedTranscriptStaysCurrent:
+    """History is restored once on init. Without a reload, a teammate that
+    already joined misses later turns spoken by someone else."""
+
+    def test_a_later_host_turn_is_visible_to_the_guest(self, tmp_path, monkeypatch):
+        from agent.memory import clear_conversation_store_cache, get_conversation_store
+        from agent.registry import set_agent_registry
+        from agent.workspace import session_prefs
+        from config import conf
+
+        bridge = _bridge(tmp_path)
+        set_agent_registry(bridge.agent_registry)
+        monkeypatch.setitem(conf(), "conversation_persistence", True)
+        monkeypatch.setattr(
+            session_prefs,
+            "get_prefs",
+            lambda sid, aid: {"members": ["ops"]} if sid == "chat" else {},
+        )
+        clear_conversation_store_cache()
+
+        store = get_conversation_store(str(tmp_path / "primary"))
+        store.append_messages(
+            "chat",
+            [
+                {"role": "user", "content": [{"type": "text", "text": "team roster"}]},
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "ops is here"}],
+                    "extras": {"agent_id": "primary"},
+                },
+            ],
+        )
+
+        guest = SimpleNamespace(
+            agent_id="ops",
+            workspace_dir=str(tmp_path / "ops"),
+            messages=[{"role": "assistant", "content": [{"type": "text", "text": "stale"}]}],
+            messages_lock=threading.RLock(),
+        )
+        initializer = AgentInitializer(bridge=None, agent_bridge=bridge)
+        bridge.initializer = initializer
+        initializer._restore_conversation_history(
+            guest, "chat", str(tmp_path / "primary"), "primary"
+        )
+        assert any("ops is here" in str(m.get("content")) for m in guest.messages)
+
+        store.append_messages(
+            "chat",
+            [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "CowAgent repo is here"}],
+                },
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "located the repo"}],
+                    "extras": {"agent_id": "primary"},
+                },
+            ],
+        )
+        # The cached guest still has only what it restored the first time.
+        assert not any("located the repo" in str(m.get("content")) for m in guest.messages)
+
+        bridge._sync_shared_transcript(guest, "chat", "primary")
+        texts = [m["content"][0]["text"] for m in guest.messages]
+        assert any(
+            t.startswith("Primary(@primary)：") and "located the repo" in t for t in texts
+        )
+
+    def test_solo_conversation_does_not_reload(self, tmp_path, monkeypatch):
+        from agent.workspace import session_prefs
+
+        monkeypatch.setattr(session_prefs, "get_prefs", lambda sid, aid: {})
+        bridge = _bridge(tmp_path)
+        guest = SimpleNamespace(
+            agent_id="ops",
+            messages=[{"keep": True}],
+            messages_lock=threading.RLock(),
+        )
+        bridge._sync_shared_transcript(guest, "chat", "primary")
+        assert guest.messages == [{"keep": True}]
+
+
+class TestStripCopiedSpeakerPrefix:
+    def test_bracket_and_colon_prefixes_are_removed(self, tmp_path):
+        bridge = _bridge(tmp_path)
+        labels = ["团队负责人", "开发", "default", "developer"]
+        assert (
+            bridge._strip_speaker_prefix("[团队负责人] 浓缩一版", labels)
+            == "浓缩一版"
+        )
+        assert bridge._strip_speaker_prefix("开发：仓库在这", labels) == "仓库在这"
+        assert (
+            bridge._strip_speaker_prefix("团队负责人(@default)：浓缩一版", labels)
+            == "浓缩一版"
+        )
+        assert bridge._strip_speaker_prefix("正常回复", labels) == "正常回复"
+
+
+def test_a_pinned_registry_does_not_outlive_its_test(tmp_path, monkeypatch):
+    """The classes above pin one, so the registry must follow configuration again.
+
+    ``_bridge`` builds a two-Agent roster under the test's ``tmp_path``. A
+    registry still pinned to a previous test's roster ignores every later
+    ``agent_workspace`` -- so this check moves the configured workspace and
+    insists the registry moves with it.
+    """
+    from config import conf
+
+    before = get_agent_registry().get(require_enabled=False).workspace
+    monkeypatch.setitem(conf(), "agent_workspace", str(tmp_path / "solo"))
+    assert get_agent_registry().get(require_enabled=False).workspace != before

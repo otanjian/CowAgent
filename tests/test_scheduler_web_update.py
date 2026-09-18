@@ -244,7 +244,9 @@ def test_manual_run_is_exposed_by_explicit_web_and_desktop_controls():
     assert "async runTask(taskId: string, agentId = ''): Promise<ApiResult>" in desktop_client
     assert "'/api/scheduler/run'" in desktop_client
     assert "const runNow = async ()" in desktop_page
-    assert "window.confirm(t('task_run_confirm'))" in desktop_page
+    # The desktop confirms through the shared in-app dialog now (upstream
+    # replaced window.confirm app-wide), but it must still ask before firing.
+    assert "msgKey: 'task_run_confirm'" in desktop_page
 
 
 def _seed_agent_task(app, agent_id, task_id, owner_id):
@@ -346,15 +348,24 @@ def test_a_forged_owner_in_the_body_is_refused(web_app):
     assert _body(response)["code"] == "forged_field"
 
 
-def test_the_store_layout_is_per_agent_not_per_tenant(web_app):
-    """Two Agents of one tenant must not share a ``tasks.json``.
+def test_the_store_is_shared_and_the_agent_is_stamped_on_the_task(web_app):
+    """One schedule file serves every Agent; the Agent lives on the task.
 
-    In database mode the request's working root is the *tenant's* shared root, so
-    resolving the schedule from it would collapse every Agent onto one file.
+    Upstream folded the per-Agent ``tasks.json`` files into a single store whose
+    tasks each carry the Agent they run as, so the console and the scheduler loop
+    can never disagree about where a task lives. A per-Agent view is therefore a
+    *filter* over that one file, not a separate path.
     """
     app = web_app("app")
     app.add_agent("primary", "research")
 
-    assert app.scheduler_store("primary").store_path != \
-        app.scheduler_store("research").store_path
-    assert TaskStore(app.scheduler_store("primary").store_path).store_path
+    primary = app.scheduler_store("primary")
+    research = app.scheduler_store("research")
+    assert primary.store_path == research.store_path  # one file, not per Agent
+    assert TaskStore(primary.store_path).store_path
+
+    app.personal_task("primary", "u1", id="p-primary", name="p-primary")
+
+    # The task is visible through its own Agent's view only.
+    assert [t["id"] for t in primary.list_tasks()] == ["p-primary"]
+    assert research.list_tasks() == []

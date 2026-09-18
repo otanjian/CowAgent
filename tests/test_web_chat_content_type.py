@@ -63,6 +63,8 @@ class TestChatHandlerContentType(unittest.TestCase):
 
         patcher, sent = _capture_headers()
         with patcher:
+            # No auth to stub out: the shell page is public, the API routes
+            # behind it are what _require_auth guards.
             with patch("builtins.open", mock_open(read_data="<!doctype html><html></html>")):
                 ChatHandler().GET()
 

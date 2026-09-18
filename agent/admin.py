@@ -122,7 +122,10 @@ class AgentAdminService:
             return team.resolve(self._settings)
         if not self.config_path.exists():
             return {}
-        with self.config_path.open("r", encoding="utf-8") as handle:
+        # utf-8-sig tolerates a UTF-8 BOM (e.g. config.json edited with Windows
+        # Notepad / PowerShell). Plain utf-8 raises "Unexpected UTF-8 BOM" here,
+        # which surfaces as a failed /api/agents snapshot and an empty team page.
+        with self.config_path.open("r", encoding="utf-8-sig") as handle:
             data = json.load(handle)
         if not isinstance(data, dict):
             raise AgentAdminError("config root must be an object")
@@ -368,6 +371,20 @@ class AgentAdminService:
             logger.warning(f"[AgentAdmin] Could not create own knowledge for {destination}: {e}")
 
     @staticmethod
+    def _make_own_skills(destination: Path) -> None:
+        """Give a brand-new Agent its own skill set (opt out of shared).
+
+        Presence of the directory is what opts an Agent out of the shared copy,
+        so an empty ``skills/`` is enough: the Agent then starts with no shared
+        skills and installs its own.
+        """
+        sdir = destination / "skills"
+        try:
+            sdir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            logger.warning(f"[AgentAdmin] Could not create own skills for {destination}: {e}")
+
+    @staticmethod
     def _clone_persona(source: Path, destination: Path) -> None:
         """Copy how an Agent behaves, and nothing else.
 
@@ -496,13 +513,16 @@ class AgentAdminService:
         source: Optional[Path] = None,
         name: str = "",
         knowledge_mode: str = None,
+        skill_mode: str = None,
     ) -> None:
         """Scaffold a new Agent's workspace, optionally from a persona source.
 
         The single definition of "what a brand-new Agent's directory contains":
         the workspace scaffold, the persona core files when a source is given,
         the operator profile, the seeded name and — only for an Agent that opts
-        out of the shared knowledge base — its own empty knowledge directory.
+        out of the shared base — its own empty knowledge/skills directory.
+        Keeping the steps here is what stops the next upstream seeding step from
+        landing beside this call site as an unmerged fragment.
         """
         self._bootstrap_workspace(workspace)
         if source is not None:
@@ -516,6 +536,8 @@ class AgentAdminService:
             self._seed_name(workspace, name)
         if knowledge_mode == "own":
             self._make_own_knowledge(destination)
+        if skill_mode == "own":
+            self._make_own_skills(destination)
 
     def create_agent(
         self,
@@ -528,6 +550,7 @@ class AgentAdminService:
         skills: Optional[Iterable[str]] = None,
         knowledge: Optional[Iterable[str]] = None,
         knowledge_mode: str = None,
+        skill_mode: str = None,
         revision: str = None,
         position: str = None,
         category: str = None,
@@ -544,6 +567,8 @@ class AgentAdminService:
             raise AgentAdminError("knowledge mode must be 'shared' or 'own'")
         if scene_id and not _scene_exists(scene_id):
             raise AgentAdminError(f"scene '{scene_id}' does not exist")
+        if skill_mode not in (None, "shared", "own"):
+            raise AgentAdminError("skill mode must be 'shared' or 'own'")
         with self._lock:
             settings = self._load()
             registry = self._registry(settings)
@@ -582,7 +607,8 @@ class AgentAdminService:
             try:
                 self._materialise_workspace(
                     registry, workspace, destination,
-                    source=source, name=name, knowledge_mode=knowledge_mode)
+                    source=source, name=name, knowledge_mode=knowledge_mode,
+                    skill_mode=skill_mode)
                 profile = self._build_profile(
                     agent_id,
                     name,

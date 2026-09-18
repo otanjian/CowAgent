@@ -49,7 +49,7 @@ def _migration_service(app, agents):
     from agent.tools.scheduler.authorization import TaskAccessService, TaskActor
 
     service = TaskAccessService(
-        store_resolver=lambda _actor, agent_id: app.scheduler_store(agent_id),
+        store_resolver=lambda _actor, agent_id: app.legacy_scheduler_store(agent_id),
         agent_ids=lambda _actor: list(agents),
         coordinator="migration",
     )
@@ -61,7 +61,7 @@ def test_a_task_with_an_owner_is_stamped_without_touching_its_schedule(web_app):
     app.add_agent(AGENT)
     seeded = _task(owner={"user_id": "usr-1", "tenant_id": app.tenant_id,
                           "agent_id": AGENT, "session_id": "s-1"})
-    store = app.scheduler_store(AGENT)
+    store = app.legacy_scheduler_store(AGENT)
     store.add_task(dict(seeded))
     service, actor = _migration_service(app, [AGENT])
 
@@ -80,7 +80,7 @@ def test_a_task_with_an_owner_is_stamped_without_touching_its_schedule(web_app):
 def test_a_task_without_an_owner_is_quarantined_and_disabled(web_app):
     app = web_app("app")
     app.add_agent(AGENT)
-    store = app.scheduler_store(AGENT)
+    store = app.legacy_scheduler_store(AGENT)
     store.add_task(_task())
     service, actor = _migration_service(app, [AGENT])
 
@@ -100,7 +100,7 @@ def test_the_migration_never_attributes_a_task_to_the_running_admin(web_app):
     """The admin who runs the boot is not the owner of anybody's task."""
     app = web_app("app")
     app.add_agent(AGENT)
-    store = app.scheduler_store(AGENT)
+    store = app.legacy_scheduler_store(AGENT)
     store.add_task(_task())
     service, actor = _migration_service(app, [AGENT])
 
@@ -121,7 +121,7 @@ def test_an_interrupted_migration_can_be_re_run(web_app):
     """
     app = web_app("app")
     app.add_agent("primary", "research")
-    first, second = app.scheduler_store("primary"), app.scheduler_store("research")
+    first, second = app.legacy_scheduler_store("primary"), app.legacy_scheduler_store("research")
     first.add_task(_task("p1", owner={"user_id": "u1", "tenant_id": app.tenant_id,
                                      "agent_id": "primary"}))
     second.add_task(_task("r1"))
@@ -145,7 +145,7 @@ def test_an_interrupted_migration_can_be_re_run(web_app):
 def test_a_second_pass_reports_everything_unchanged(web_app):
     app = web_app("app")
     app.add_agent(AGENT)
-    store = app.scheduler_store(AGENT)
+    store = app.legacy_scheduler_store(AGENT)
     store.add_task(_task("t1", owner={"user_id": "u1",
                                      "tenant_id": app.tenant_id, "agent_id": AGENT}))
     store.add_task(_task("t2"))
@@ -172,7 +172,7 @@ def test_the_boot_hook_runs_the_migration_and_is_idempotent(web_app):
 
     app = web_app("app")
     app.add_agent(AGENT)
-    store = app.scheduler_store(AGENT)
+    store = app.legacy_scheduler_store(AGENT)
     store.add_task(_task("t1", owner={"user_id": "u1",
                                      "tenant_id": app.tenant_id, "agent_id": AGENT}))
     store.add_task(_task("t2"))
@@ -198,7 +198,7 @@ def test_the_migration_tolerates_unreadable_stores(web_app):
 
     app = web_app("app")
     app.add_agent(AGENT)
-    path = app.scheduler_store(AGENT).store_path
+    path = app.legacy_scheduler_store(AGENT).store_path
     with open(path, "w", encoding="utf-8") as handle:
         handle.write("{not json")
 
@@ -217,7 +217,7 @@ def test_a_quarantined_task_never_delivers(web_app):
 
     app = web_app("app")
     app.add_agent(AGENT)
-    store = app.scheduler_store(AGENT)
+    store = app.legacy_scheduler_store(AGENT)
     store.add_task(_task("t1"))
     service, actor = _migration_service(app, [AGENT])
     service.migrate_tasks(actor, agent_ids=[AGENT], apply=True)
@@ -255,7 +255,7 @@ def test_the_migration_writes_through_the_shared_store_lease(web_app):
     """The write path is the store's, not a private JSON writer (task 3.3)."""
     app = web_app("app")
     app.add_agent(AGENT)
-    store = app.scheduler_store(AGENT)
+    store = app.legacy_scheduler_store(AGENT)
     store.add_task(_task("t1"))
     service, actor = _migration_service(app, [AGENT])
 
@@ -272,7 +272,7 @@ def test_the_boot_hook_backs_up_the_store_before_it_writes(web_app):
 
     app = web_app("app")
     app.add_agent(AGENT)
-    store = app.scheduler_store(AGENT)
+    store = app.legacy_scheduler_store(AGENT)
     store.add_task(_task("t1", owner={"user_id": "u1",
                                      "tenant_id": app.tenant_id, "agent_id": AGENT}))
     store.add_task(_task("t2"))

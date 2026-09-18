@@ -85,12 +85,22 @@ def test_legacy_rows_are_unreadable_to_a_tenant_scope():
 
 
 def test_the_agent_dimension_also_scopes_a_read():
-    store = _store()
-    _write(store, "s1", "agent a", agent="agent-a")
-    _write(store, "s1", "agent b", agent="agent-b")
+    """Two handles on one file: the Agent dimension keeps their rows apart.
 
-    assert _read_texts(store, "s1", agent="agent-a") == ["agent a"]
-    assert _read_texts(store, "s1", agent="agent-b") == ["agent b"]
+    Upstream's global store binds a handle to one Agent, so the dimension is
+    exercised by two handles over the same database rather than by switching the
+    ambient identity under a single handle. Both use ``s1`` on purpose -- the
+    composite key is what lets one Agent's transcript of that session coexist
+    with another's.
+    """
+    db = Path(tempfile.mkdtemp()) / "index.db"
+    store_a = ConversationStore(db, agent_id="agent-a")
+    store_b = ConversationStore(db, agent_id="agent-b")
+    _write(store_a, "s1", "agent a")
+    _write(store_b, "s1", "agent b")
+
+    assert _read_texts(store_a, "s1") == ["agent a"]
+    assert _read_texts(store_b, "s1") == ["agent b"]
 
 
 # --- backfill (6.8) ------------------------------------------------------

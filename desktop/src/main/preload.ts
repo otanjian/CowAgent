@@ -1,4 +1,3 @@
-import { contextBridge, ipcRenderer } from 'electron'
 import type {
   BrokerAssetReply,
   BrokerLogoutReply,
@@ -8,12 +7,30 @@ import type {
   BrokerStatusReply,
   BrokerVoidReply,
 } from './broker-protocol'
+import * as electron from 'electron'
+
+const { contextBridge, ipcRenderer } = electron
+
+// webUtils.getPathForFile was added in Electron 32. The Win7 legacy build pins
+// Electron to 22, whose typings don't declare webUtils, so we look it up off
+// the runtime module instead of a static named import to keep tsc happy there.
+const webUtils = (electron as { webUtils?: { getPathForFile(file: File): string } }).webUtils
 
 contextBridge.exposeInMainWorld('electronAPI', {
   getBackendPort: () => ipcRenderer.invoke('get-backend-port'),
   getBackendStatus: () => ipcRenderer.invoke('get-backend-status'),
   getBackendError: () => ipcRenderer.invoke('get-backend-error'),
   getDataDir: () => ipcRenderer.invoke('get-data-dir') as Promise<string>,
+  // Real on-disk path of a File picked or dropped by the user, so the local
+  // backend can read it directly instead of receiving the bytes over HTTP.
+  // '' for files with no path (e.g. a pasted clipboard image).
+  getPathForFile: (file: File): string => {
+    try {
+      return webUtils?.getPathForFile(file) || ''
+    } catch {
+      return ''
+    }
+  },
   restartBackend: () => ipcRenderer.invoke('restart-backend'),
   selectDirectory: () => ipcRenderer.invoke('select-directory'),
   selectFile: (filters?: Electron.FileFilter[]) => ipcRenderer.invoke('select-file', filters),
@@ -144,7 +161,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Show a native OS notification; clicking it focuses the window and asks the
   // renderer (via onOpenSession) to open the given session.
-  notify: (payload: { title?: string; body?: string; sessionId?: string; silent?: boolean }) =>
+  notify: (payload: { title?: string; body?: string; sessionId?: string; silent?: boolean; force?: boolean }) =>
     ipcRenderer.invoke('notify', payload) as Promise<boolean>,
   onOpenSession: (callback: (sessionId: string) => void) => {
     const handler = (_event: unknown, sessionId: string) => callback(sessionId)

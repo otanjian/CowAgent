@@ -6,7 +6,6 @@ import {
   X,
   File as FileIcon,
   Loader2,
-  Trash2,
   AtSign,
   Folder,
   Mic
@@ -24,6 +23,7 @@ import ModelSelector from './ModelSelector'
 import AgentSelector from './AgentSelector'
 import { useAgentStore, selectMultiAgent } from '../store/agentStore'
 import Tooltip from './Tooltip'
+import ContextUsagePopover from './ContextUsagePopover'
 import { useSessionSettingsStore, selectSharedConversation } from '../store/sessionSettingsStore'
 
 export type ChatInputHandle = (text: string, attachments: Attachment[]) => void
@@ -49,10 +49,14 @@ interface ChatInputProps {
   onClearContext: () => void
   isStreaming: boolean
   sessionId: string
+  // Navigate to the Agent config (used by the context pie's "Config" action).
+  onAdjustContext: () => void
+  // Transient toast surface owned by the page.
+  onToast?: (msg: string) => void
 }
 
 const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput(
-  { onSend, onNewChat, onStop, onClearContext, isStreaming, sessionId },
+  { onSend, onNewChat, onStop, onClearContext, isStreaming, sessionId, onAdjustContext, onToast },
   ref
 ) {
   // Restore the draft saved in `chatDraft` on mount (lazy init: the very first
@@ -70,6 +74,11 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
   )
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
+  // Locks the composer while a synchronous context compaction runs.
+  const [compacting, setCompacting] = useState(false)
+  // Bumped when a turn finishes so the context pie refetches fresh usage.
+  const [ctxRefreshKey, setCtxRefreshKey] = useState(0)
+  const wasStreamingRef = useRef(isStreaming)
   const [dragOver, setDragOver] = useState(false)
   const [slashOpen, setSlashOpen] = useState(false)
   const [slashIndex, setSlashIndex] = useState(0)
@@ -233,6 +242,18 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
   useEffect(() => {
     useSessionSettingsStore.getState().refresh(sessionId)
     useSessionSettingsStore.getState().setOpenMenu(null)
+  }, [sessionId])
+
+  // Refresh the context pie when a turn finishes (streaming true -> false) so
+  // the indicator tracks usage in real time, matching the web console.
+  useEffect(() => {
+    if (wasStreamingRef.current && !isStreaming) setCtxRefreshKey((k) => k + 1)
+    wasStreamingRef.current = isStreaming
+  }, [isStreaming])
+
+  // Also refresh when switching conversations.
+  useEffect(() => {
+    setCtxRefreshKey((k) => k + 1)
   }, [sessionId])
 
   // Local actions ('new'/'clear') plus completion commands handled by backend
@@ -646,7 +667,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
     }
   }, [])
 
-  const canSend = !isStreaming && (!!text.trim() || attachments.length > 0)
+  const canSend = !isStreaming && !compacting && (!!text.trim() || attachments.length > 0)
 
   return (
     <div className="flex-shrink-0 border-t border-default bg-surface px-4 py-3">
@@ -823,9 +844,14 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
             onPaste={handlePaste}
             onCompositionStart={() => (composingRef.current = true)}
             onCompositionEnd={() => (composingRef.current = false)}
-            placeholder={t('input_placeholder')}
+            placeholder={
+              compacting
+                ? t('ctx_compacting')
+                : t(sharedConversation ? 'input_placeholder_team' : 'input_placeholder')
+            }
             rows={1}
-            className="w-full px-4 pt-3 pb-0 bg-transparent text-content placeholder:text-content-tertiary focus:outline-none text-sm leading-relaxed resize-none overflow-y-hidden"
+            disabled={compacting}
+            className="w-full px-4 pt-3 pb-0 bg-transparent text-content placeholder:text-content-tertiary focus:outline-none text-sm leading-relaxed resize-none overflow-y-hidden disabled:opacity-60 disabled:cursor-not-allowed"
           />
           {micError && (
             // Transient error tip above the input, mirroring the web console.
@@ -850,24 +876,27 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
               onClick={onNewChat}
               className="shrink-0 w-8 h-8 flex items-center justify-center rounded-btn cursor-pointer transition-colors text-content-secondary hover:text-accent hover:bg-accent-soft"
             >
-              <Plus size={17} />
-            </button>
-          </Tooltip>
+              <Plus size={18} />
+          </button>
+        </Tooltip>
+          {/* Context pie sits second (mirrors the web console), always visible
+              as a mini donut; hover/click opens the usage card with actions. */}
+          <ContextUsagePopover
+            sessionId={sessionId}
+            isStreaming={isStreaming}
+            refreshKey={ctxRefreshKey}
+            onClearContext={onClearContext}
+            onAdjust={onAdjustContext}
+            onCompactingChange={setCompacting}
+            onToast={onToast}
+          />
           <Tooltip label={t('chat_attach')}>
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={uploading}
               className="shrink-0 w-8 h-8 flex items-center justify-center rounded-btn text-content-secondary hover:text-accent hover:bg-accent-soft cursor-pointer transition-colors disabled:opacity-50"
             >
-              {uploading ? <Loader2 size={17} className="animate-spin" /> : <Paperclip size={17} />}
-            </button>
-          </Tooltip>
-          <Tooltip label={t('chat_clear_context')}>
-            <button
-              onClick={onClearContext}
-              className="shrink-0 w-8 h-8 flex items-center justify-center rounded-btn text-content-secondary hover:text-danger hover:bg-danger-soft cursor-pointer transition-colors"
-            >
-              <Trash2 size={17} />
+              {uploading ? <Loader2 size={16} className="animate-spin" /> : <Paperclip size={16} />}
             </button>
           </Tooltip>
 
@@ -922,7 +951,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
               <Tooltip label={t('msg_stop')}>
                 <button
                   onClick={onStop}
-                  className="flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-btn bg-surface-2 text-content hover:bg-inset-2 cursor-pointer transition-colors"
+                  className="flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-btn bg-surface-2 text-content hover:bg-inset-2 cursor-pointer transition-colors relative -top-px"
                 >
                   <Square size={14} className="fill-current" />
                 </button>
@@ -932,7 +961,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
                 <button
                   onClick={handleSubmit}
                   disabled={!canSend}
-                  className="flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-btn bg-accent text-white hover:bg-accent-hover disabled:bg-surface-2 disabled:text-content-disabled disabled:cursor-not-allowed cursor-pointer transition-none [&_*]:transition-none"
+                  className="flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-btn bg-accent text-white hover:bg-accent-hover disabled:bg-surface-2 disabled:text-content-disabled disabled:cursor-not-allowed cursor-pointer transition-none [&_*]:transition-none relative -top-px"
                 >
                   <PaperPlaneIcon size={14} />
                 </button>

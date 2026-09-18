@@ -109,7 +109,11 @@ class TextChunker:
                 end_line=len(lines)
             ))
         
-        return chunks
+        # A blank line sitting next to an over-long line is flushed as its own
+        # chunk whose text is empty. Such chunks carry nothing, and embedding
+        # APIs reject an empty string inside a batch by failing the whole
+        # request, so they must not reach the index.
+        return [c for c in chunks if c.text.strip()]
     
     def _split_long_line(self, line: str, max_chars: int) -> List[str]:
         """Split a single long line into multiple chunks"""

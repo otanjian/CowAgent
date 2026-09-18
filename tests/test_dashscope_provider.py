@@ -24,15 +24,12 @@ class TestDashscopeConst(unittest.TestCase):
             len(qwen_models),
             1,
         )
-        # The invariant is the ordering of the two 3.7 models -- plus is the
-        # recommended default, so it is listed before max. Asserting *position 0*
-        # instead tied the test to "no newer qwen model exists", so adding a
-        # later generation above it broke the case without anything regressing.
-        self.assertIn("qwen3.7-plus", qwen_models)
-        self.assertIn("qwen3.7-max", qwen_models)
+        # The list is ordered by release, so a newer model (e.g. qwen3.8-flash)
+        # can legitimately sit ahead of qwen3.7-plus; what must hold is that
+        # plus is offered before max.
         self.assertLess(
-            qwen_models.index("qwen3.7-plus"),
-            qwen_models.index("qwen3.7-max"),
+            qwen_models.index(const.QWEN37_PLUS),
+            qwen_models.index(const.QWEN37_MAX),
         )
 
 

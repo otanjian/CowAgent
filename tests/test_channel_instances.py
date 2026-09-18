@@ -162,6 +162,60 @@ def test_upsert_honors_provided_id(tmp_path):
     assert inst.instance_id == "from-remote-123"
 
 
+# ---------------------------------------------------------------------------
+# instance name: a user-editable friendly label, seeded with a default and
+# fully optional so legacy records without one keep working.
+# ---------------------------------------------------------------------------
+
+def test_new_instance_gets_default_name(tmp_path):
+    settings = {"agent_workspace": str(tmp_path)}
+    first = ci.upsert_instance(settings, channel_type="weixin", credentials={})
+    second = ci.upsert_instance(settings, channel_type="weixin", credentials={})
+    # First of a type is unnumbered; the second is suffixed so they read apart.
+    assert first.name == "微信"
+    assert second.name == "微信 2"
+
+
+def test_upsert_can_set_and_clear_name(tmp_path):
+    settings = {"agent_workspace": str(tmp_path)}
+    inst = ci.upsert_instance(settings, channel_type="feishu",
+                              credentials={"feishu_app_id": "A"})
+    renamed = ci.upsert_instance(settings, channel_type="feishu",
+                                 instance_id=inst.instance_id, name="运营飞书")
+    assert renamed.name == "运营飞书"
+    # Renaming must not disturb credentials or duplicate the record.
+    assert renamed.credentials["feishu_app_id"] == "A"
+    assert len(ci.read_raw_instances(settings)) == 1
+    # Empty name clears the label back to unset.
+    cleared = ci.upsert_instance(settings, channel_type="feishu",
+                                 instance_id=inst.instance_id, name="")
+    assert cleared.name == ""
+
+
+def test_upsert_partial_update_keeps_name(tmp_path):
+    settings = {"agent_workspace": str(tmp_path)}
+    inst = ci.upsert_instance(settings, channel_type="feishu", name="客服飞书",
+                              credentials={"feishu_app_id": "A"})
+    # A credentials-only update (name=None) must preserve the existing label.
+    updated = ci.upsert_instance(settings, channel_type="feishu",
+                                 instance_id=inst.instance_id,
+                                 credentials={"feishu_app_secret": "S"})
+    assert updated.name == "客服飞书"
+
+
+def test_legacy_record_without_name_resolves(tmp_path):
+    # A record written before the name field existed must still load, with an
+    # empty name (the UI falls back to the id) and no error.
+    settings = _write_instances(
+        tmp_path,
+        [{"instance_id": "feishu-old", "channel_type": "feishu",
+          "credentials": {"feishu_app_id": "A"}}],
+    )
+    inst = ci.resolve_channel_instances(settings)[0]
+    assert inst.name == ""
+    assert inst.instance_id == "feishu-old"
+
+
 def test_remove_instance(tmp_path):
     settings = {"agent_workspace": str(tmp_path)}
     inst = ci.upsert_instance(settings, channel_type="feishu",

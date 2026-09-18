@@ -16,6 +16,7 @@ from agent.memory.conversation_store import (
     ConversationStore,
     clear_conversation_store_cache,
     get_conversation_store,
+    migrate_conversations_to_global,
 )
 from agent.memory.embedding import (
     create_default_embedding_provider,
@@ -46,5 +47,6 @@ __all__ = [
     'ConversationStore',
     'clear_conversation_store_cache',
     'get_conversation_store',
+    'migrate_conversations_to_global',
     'ensure_daily_memory_file',
 ]

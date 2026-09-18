@@ -43,26 +43,42 @@ def normalize_session_search_query(q: Optional[str]) -> str:
 #: (``agent/memory/conversation_schema.py``); this is how a query applies them.
 DIMENSION_COLUMNS: tuple = ("agent_id", "owner", "tenant_id")
 
-#: Dimensions whose empty value is a *value*, not "unknown". Upstream's
-#: migration adds ``agent_id TEXT NOT NULL DEFAULT ''`` precisely so a
-#: single-Agent install keeps behaving as before, which makes ``''`` the
-#: pre-multi-Agent / default domain rather than an unattributed row. A scoped
-#: read therefore also sees the empty-agent rows in its own tenant.
+#: Dimensions a bound store always filters on, even when the value is empty.
 #:
-#: ``tenant_id``/``owner`` are deliberately *not* in this set: their empty
-#: value means the row could not be attributed, and task 6.8 requires such a
-#: row to stay unreadable to a tenant scope instead of defaulting into one.
-LEGACY_EMPTY_DIMENSIONS: frozenset = frozenset({"agent_id"})
+#: ``agent_id`` is upstream's multi-agent dimension, and its empty value is the
+#: **default Agent** -- ``''`` is not "unattributed", it is who owns the row
+#: (upstream's migration adds ``agent_id TEXT NOT NULL DEFAULT ''`` so a
+#: single-Agent install keeps its data). A ``ConversationStore`` handle is bound
+#: to exactly one Agent, so it must scope to that id *including when it is
+#: empty*: skipping the predicate on ``''`` would let the default Agent read
+#: every other Agent's transcripts out of the shared global file -- the exact
+#: collision the composite key exists to prevent.
+ALWAYS_SCOPED_DIMENSIONS: frozenset = frozenset({"agent_id"})
+
+#: Retired rule: dimensions whose empty value used to be *widened* to also match
+#: ``''`` rows. It held while the fork was the only model in play ("a scoped read
+#: also sees the empty-agent rows"). Upstream's global store makes that widening
+#: a cross-Agent leak instead -- a secondary Agent reading its own scope must not
+#: see the default Agent's untagged rows -- and upstream's
+#: ``tests/test_conversation_global_migration.py`` pins the strict behaviour.
+#: Kept as an (empty) extension point so the mechanism and its reasoning stay
+#: visible rather than being rediscovered by the next sync.
+LEGACY_EMPTY_DIMENSIONS: frozenset = frozenset()
 
 
 def ambient_dimensions() -> Dict[str, str]:
     """The dimension values carried by the ambient runtime identity.
 
-    Empty string means "this dimension is not in scope": legacy callers and
-    machine-initiated work carry no user/tenant, and a conversation's own Agent
-    is not exercised as a filter until multi-Agent transcripts share a session.
-    An empty value therefore skips that predicate instead of matching only the
+    Empty string means "this dimension is not in scope" for ``owner`` and
+    ``tenant_id``: legacy callers and machine-initiated work carry no user or
+    tenant, and an empty value skips that predicate instead of matching only the
     empty column, which is what keeps pre-dimension rows readable.
+
+    ``agent_id`` does not follow that rule -- see
+    ``ALWAYS_SCOPED_DIMENSIONS``. A store also overrides it with its own
+    binding (:meth:`ConversationStore._dimensions`), because upstream's global
+    model makes the handle, not the ambient identity, decide which Agent's rows
+    it may touch.
     """
     from common.runtime_identity import current_identity
 
@@ -82,14 +98,21 @@ def dimension_clause(
     """Build ``(sql_fragment, params)`` restricting a query to set dimensions.
 
     Returns ``("", ())`` when no dimension is in scope, so an unscoped read
-    keeps the historical "see everything" semantics.
+    keeps the historical "see everything" semantics. A dimension in
+    ``ALWAYS_SCOPED_DIMENSIONS`` is emitted even when its value is empty.
     """
     values = ambient_dimensions() if values is None else values
     clauses: List[str] = []
     params: List[str] = []
     for key in keys:
+        if key not in values:
+            # Absent is not the same as empty: a caller that does not carry a
+            # dimension has no opinion about it (no filter), while ``''`` is a
+            # value in its own right -- for ``agent_id`` that is the default
+            # Agent's scope, which is exactly why it is always scoped below.
+            continue
         value = values.get(key) or ""
-        if not value:
+        if not value and key not in ALWAYS_SCOPED_DIMENSIONS:
             continue
         if key in LEGACY_EMPTY_DIMENSIONS:
             # ``''`` is the pre-multi-Agent/default domain (see
@@ -167,6 +190,17 @@ CREATE INDEX IF NOT EXISTS idx_runs_task
     ON runs (task_source, task_id);
 """
 
+# Bookkeeping for the one-time, idempotent global migration. Lives in the
+# global file itself so "have we already absorbed source X?" survives restarts
+# without a side-car file. Mirrors the scheduler's ``_migrate_legacy_task_stores``
+# marker discipline.
+_META_DDL = """
+CREATE TABLE IF NOT EXISTS _migration_meta (
+    key     TEXT PRIMARY KEY,
+    value   TEXT NOT NULL DEFAULT '',
+    done_at INTEGER NOT NULL DEFAULT 0
+);
+"""
 DEFAULT_MAX_AGE_DAYS: int = 30
 
 
@@ -219,6 +253,25 @@ def _is_internal_user_marker(text: str) -> bool:
 def _is_evolution_text(text: str) -> bool:
     """True if assistant text is a self-evolution summary (before cleaning)."""
     return (text or "").lstrip().startswith(_EVOLUTION_DISPLAY_MARKER)
+
+
+def _message_plain_text(raw_content: Any) -> str:
+    """Human-readable text of a stored message, whose content is a JSON string.
+
+    Decodes the DB-stored JSON (a string or a list of content blocks) and reuses
+    :func:`_extract_display_text`. Returns '' for tool-only messages.
+    """
+    try:
+        content = json.loads(raw_content) if isinstance(raw_content, str) else raw_content
+    except Exception:
+        content = raw_content
+    return _extract_display_text(content)
+
+
+def _message_is_scheduled_marker(raw_content: Any) -> bool:
+    """True when a stored user message is the ``[SCHEDULED]`` injection marker
+    that precedes a scheduled task's delivered assistant reply."""
+    return _is_internal_user_marker(_message_plain_text(raw_content))
 
 
 def _clean_display_text(text: str) -> str:
@@ -456,8 +509,22 @@ class ConversationStore:
         msgs = store.load_messages("user_123", max_turns=30)
     """
 
-    def __init__(self, db_path: Path):
+    def __init__(self, db_path: Path, agent_id: Optional[str] = None):
         self._db_path = db_path
+        # The Agent every row read/written through this handle belongs to. The
+        # default Agent keeps ``""`` so a single-Agent install never backfills a
+        # value and its historical rows stay valid; every other Agent scopes to
+        # its own id. All queries are scoped by this so one global file can hold
+        # every Agent's transcripts without one Agent seeing another's.
+        #
+        # ``agent_id=None`` means *unbound*: a handle built directly (tests, or
+        # a caller that does not go through ``get_conversation_store``) has no
+        # opinion and follows the ambient identity. ``""`` is a binding like any
+        # other -- the default Agent -- and must win over the ambient Agent, or
+        # a handle for the default Agent would read another Agent's rows the
+        # moment one is in scope.
+        self._agent_id = agent_id or ""
+        self._agent_bound = agent_id is not None
         self._lock = threading.RLock()  # Use RLock to allow reentrant locking
         self._schema_identity: tuple = ()
         # True once the runs table is confirmed present. When it is not, run
@@ -465,6 +532,35 @@ class ConversationStore:
         # history query -- runs are auxiliary to conversation storage.
         self._runs_ready = False
         self._init_db()
+
+    def _dimensions(self) -> Dict[str, str]:
+        """Ambient identity dimensions with this handle's Agent binding applied.
+
+        Upstream's global model binds one store handle to one Agent: every
+        Agent's transcripts share a file and are told apart by ``agent_id``, so
+        a *bound* handle -- not the ambient identity -- decides whose rows it
+        reads and writes. ``''`` is the default Agent, not "unset", which is why
+        a bound value is applied even when empty (``ALWAYS_SCOPED_DIMENSIONS``).
+
+        A handle with no binding at all keeps the fork's ambient rule: it serves
+        whichever Agent the runtime identity names (and the default Agent when
+        nothing names one). Overwriting that with ``''`` would silently point
+        every unbound store -- the fixtures, the migration tools, a single-Agent
+        deployment -- at the default Agent's rows only.
+
+        ``owner`` and ``tenant_id`` stay ambient either way: they are per-turn
+        filters on the caller's identity rather than properties of the handle.
+        """
+        dimensions = ambient_dimensions()
+        if self._agent_bound:
+            dimensions["agent_id"] = self._agent_id
+        elif not dimensions.get("agent_id"):
+            # No binding and no Agent in scope: drop the key rather than let the
+            # always-scoped rule narrow the query to the default Agent's rows.
+            # An unbound handle is what migrations and fixtures use to sweep
+            # every Agent's rows, and ``''`` there would silently hide them.
+            dimensions.pop("agent_id", None)
+        return dimensions
 
     # ------------------------------------------------------------------
     # Public API
@@ -504,14 +600,15 @@ class ConversationStore:
         # another tenant's or user's turns. A dimension that is not in scope
         # (legacy, machine work) is not filtered, preserving the historical
         # behaviour.
-        values = ambient_dimensions()
+        values = self._dimensions()
         with self._lock:
             conn = self._connect()
             try:
+                aid = self._agent_id
                 # Respect context_start_seq: only load messages at or after the boundary
                 ctx_row = conn.execute(
-                    "SELECT context_start_seq FROM sessions WHERE session_id = ?",
-                    (session_id,),
+                    "SELECT context_start_seq FROM sessions WHERE agent_id = ? AND session_id = ?",
+                    (aid, session_id),
                 ).fetchone()
                 ctx_start = ctx_row[0] if ctx_row else 0
 
@@ -628,15 +725,21 @@ class ConversationStore:
         # ambient identity carries, so the composed schema's columns are filled
         # at the write and the read can filter on them. Empty values keep the
         # legacy rows readable (see ``ambient_dimensions``).
-        dimensions = ambient_dimensions()
-        owner = dimensions["owner"]
+        dimensions = self._dimensions()
+        owner = dimensions.get("owner", "")
         scope_sql, scope_params = dimension_clause(values=dimensions)
+        # The columns are NOT NULL with a ``''`` default, and an unbound handle
+        # may carry no ``agent_id`` at all (see ``_dimensions``), so normalize
+        # for the INSERTs without widening ``scope_sql`` built above.
+        agent_dim = dimensions.get("agent_id", "")
+        tenant_dim = dimensions.get("tenant_id", "")
 
         now = int(time.time())
         with self._lock:
             conn = self._connect()
             try:
                 with conn:
+                    aid = self._agent_id
                     if not create_if_missing:
                         exists = conn.execute(
                             f"SELECT 1 FROM sessions WHERE session_id = ?{scope_sql}",
@@ -644,7 +747,6 @@ class ConversationStore:
                         ).fetchone()
                         if not exists:
                             return False
-
                     # INSERT OR IGNORE creates the row on first visit;
                     # the UPDATE always refreshes last_active.
                     # Avoids ON CONFLICT...DO UPDATE (requires SQLite >= 3.24).
@@ -655,8 +757,8 @@ class ConversationStore:
                              created_at, last_active, msg_count)
                         VALUES (?, ?, ?, ?, ?, ?, ?, 0)
                         """,
-                        (dimensions["agent_id"], session_id, channel_type, owner,
-                         dimensions["tenant_id"], now, now),
+                        (agent_dim, session_id, channel_type, owner,
+                         tenant_dim, now, now),
                     )
                     conn.execute(
                         "UPDATE sessions SET last_active = ?"
@@ -687,9 +789,9 @@ class ConversationStore:
                                  extras, run_id, owner, tenant_id)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
-                            (dimensions["agent_id"], session_id, next_seq, role,
+                            (agent_dim, session_id, next_seq, role,
                              content, now, extras, msg_run_id, owner,
-                             dimensions["tenant_id"]),
+                             tenant_dim),
                         )
                         next_seq += 1
 
@@ -739,14 +841,15 @@ class ConversationStore:
             conn = self._connect()
             try:
                 with conn:
+                    aid = self._agent_id
                     row = conn.execute(
-                        "SELECT COALESCE(MAX(seq), -1) FROM messages WHERE session_id = ?",
-                        (session_id,),
+                        "SELECT COALESCE(MAX(seq), -1) FROM messages WHERE agent_id = ? AND session_id = ?",
+                        (aid, session_id),
                     ).fetchone()
                     new_start = row[0] + 1
                     conn.execute(
-                        "UPDATE sessions SET context_start_seq = ? WHERE session_id = ?",
-                        (new_start, session_id),
+                        "UPDATE sessions SET context_start_seq = ? WHERE agent_id = ? AND session_id = ?",
+                        (new_start, aid, session_id),
                     )
                     return new_start
             finally:
@@ -758,8 +861,8 @@ class ConversationStore:
             conn = self._connect()
             try:
                 row = conn.execute(
-                    "SELECT context_start_seq FROM sessions WHERE session_id = ?",
-                    (session_id,),
+                    "SELECT context_start_seq FROM sessions WHERE agent_id = ? AND session_id = ?",
+                    (self._agent_id, session_id),
                 ).fetchone()
                 return row[0] if row else 0
             finally:
@@ -781,12 +884,13 @@ class ConversationStore:
         with self._lock:
             conn = self._connect()
             try:
+                aid = self._agent_id
                 # Latest assistant message (cheap: single row by seq DESC).
                 row = conn.execute(
                     "SELECT seq FROM messages "
-                    "WHERE session_id = ? AND role = 'assistant' "
+                    "WHERE agent_id = ? AND session_id = ? AND role = 'assistant' "
                     "ORDER BY seq DESC LIMIT 1",
-                    (session_id,),
+                    (aid, session_id),
                 ).fetchone()
                 if row:
                     result["bot_seq"] = int(row[0])
@@ -795,9 +899,9 @@ class ConversationStore:
                 # skip pure tool_result entries.
                 rows = conn.execute(
                     "SELECT seq, content FROM messages "
-                    "WHERE session_id = ? AND role = 'user' "
+                    "WHERE agent_id = ? AND session_id = ? AND role = 'user' "
                     "ORDER BY seq DESC LIMIT 20",
-                    (session_id,),
+                    (aid, session_id),
                 ).fetchall()
                 for seq, content_raw in rows:
                     try:
@@ -830,11 +934,14 @@ class ConversationStore:
             conn = self._connect()
             try:
                 with conn:
+                    aid = self._agent_id
                     conn.execute(
-                        "DELETE FROM messages WHERE session_id = ?", (session_id,)
+                        "DELETE FROM messages WHERE agent_id = ? AND session_id = ?",
+                        (aid, session_id),
                     )
                     conn.execute(
-                        "DELETE FROM sessions WHERE session_id = ?", (session_id,)
+                        "DELETE FROM sessions WHERE agent_id = ? AND session_id = ?",
+                        (aid, session_id),
                     )
             finally:
                 conn.close()
@@ -860,10 +967,11 @@ class ConversationStore:
             conn = self._connect()
             try:
                 with conn:
+                    aid = self._agent_id
                     # Verify this is a user message
                     row = conn.execute(
-                        "SELECT role FROM messages WHERE session_id = ? AND seq = ?",
-                        (session_id, user_seq),
+                        "SELECT role FROM messages WHERE agent_id = ? AND session_id = ? AND seq = ?",
+                        (aid, session_id, user_seq),
                     ).fetchone()
                     if not row or row[0] != "user":
                         return 0
@@ -872,8 +980,8 @@ class ConversationStore:
                         # Delete from this message to end of session
                         start_seq = user_seq if delete_user else user_seq + 1
                         end_seq_row = conn.execute(
-                            "SELECT MAX(seq) FROM messages WHERE session_id = ?",
-                            (session_id,),
+                            "SELECT MAX(seq) FROM messages WHERE agent_id = ? AND session_id = ?",
+                            (aid, session_id),
                         ).fetchone()
                         end_seq = (end_seq_row[0] or user_seq) + 1
                     else:
@@ -886,11 +994,11 @@ class ConversationStore:
                             batch = conn.execute(
                                 """
                                 SELECT seq, content FROM messages
-                                WHERE session_id = ? AND seq > ? AND role = 'user'
+                                WHERE agent_id = ? AND session_id = ? AND seq > ? AND role = 'user'
                                 ORDER BY seq ASC
                                 LIMIT ? OFFSET ?
                                 """,
-                                (session_id, user_seq, batch_size, offset),
+                                (aid, session_id, user_seq, batch_size, offset),
                             ).fetchall()
                             if not batch:
                                 break
@@ -911,8 +1019,8 @@ class ConversationStore:
                             end_seq = next_user_seq
                         else:
                             end_seq_row = conn.execute(
-                                "SELECT MAX(seq) FROM messages WHERE session_id = ?",
-                                (session_id,),
+                                "SELECT MAX(seq) FROM messages WHERE agent_id = ? AND session_id = ?",
+                                (aid, session_id),
                             ).fetchone()
                             end_seq = (end_seq_row[0] or user_seq) + 1
 
@@ -921,8 +1029,8 @@ class ConversationStore:
 
                     # Delete messages from start_seq to end_seq (exclusive)
                     cur = conn.execute(
-                        "DELETE FROM messages WHERE session_id = ? AND seq >= ? AND seq < ?",
-                        (session_id, start_seq, end_seq),
+                        "DELETE FROM messages WHERE agent_id = ? AND session_id = ? AND seq >= ? AND seq < ?",
+                        (aid, session_id, start_seq, end_seq),
                     )
                     deleted = cur.rowcount
 
@@ -931,11 +1039,12 @@ class ConversationStore:
                         """
                         UPDATE sessions
                         SET msg_count = (
-                            SELECT COUNT(*) FROM messages WHERE session_id = ?
+                            SELECT COUNT(*) FROM messages
+                            WHERE agent_id = ? AND session_id = ?
                         )
-                        WHERE session_id = ?
+                        WHERE agent_id = ? AND session_id = ?
                         """,
-                        (session_id, session_id),
+                        (aid, session_id, aid, session_id),
                     )
 
                     return deleted
@@ -987,14 +1096,15 @@ class ConversationStore:
         with self._lock:
             conn = self._connect()
             try:
+                aid = self._agent_id
                 rows = conn.execute(
                     """
                     SELECT seq, role, content
                     FROM messages
-                    WHERE session_id = ?
+                    WHERE agent_id = ? AND session_id = ?
                     ORDER BY seq ASC
                     """,
-                    (session_id,),
+                    (aid, session_id),
                 ).fetchall()
 
                 # Find scheduler pairs: each is (user_seq, assistant_seq?)
@@ -1026,18 +1136,19 @@ class ConversationStore:
                 placeholders = ",".join("?" * len(seqs_to_delete))
                 with conn:
                     conn.execute(
-                        f"DELETE FROM messages WHERE session_id = ? AND seq IN ({placeholders})",
-                        (session_id, *seqs_to_delete),
+                        f"DELETE FROM messages WHERE agent_id = ? AND session_id = ? AND seq IN ({placeholders})",
+                        (aid, session_id, *seqs_to_delete),
                     )
                     conn.execute(
                         """
                         UPDATE sessions
                         SET msg_count = (
-                            SELECT COUNT(*) FROM messages WHERE session_id = ?
+                            SELECT COUNT(*) FROM messages
+                            WHERE agent_id = ? AND session_id = ?
                         )
-                        WHERE session_id = ?
+                        WHERE agent_id = ? AND session_id = ?
                         """,
-                        (session_id, session_id),
+                        (aid, session_id, aid, session_id),
                     )
                 return len(seqs_to_delete)
             finally:
@@ -1069,17 +1180,20 @@ class ConversationStore:
             conn = self._connect()
             try:
                 with conn:
+                    aid = self._agent_id
                     stale = conn.execute(
                         "SELECT session_id FROM sessions "
-                        "WHERE last_active < ? AND channel_type != 'web'",
-                        (cutoff,),
+                        "WHERE agent_id = ? AND last_active < ? AND channel_type != 'web'",
+                        (aid, cutoff),
                     ).fetchall()
                     for (sid,) in stale:
                         conn.execute(
-                            "DELETE FROM messages WHERE session_id = ?", (sid,)
+                            "DELETE FROM messages WHERE agent_id = ? AND session_id = ?",
+                            (aid, sid),
                         )
                         conn.execute(
-                            "DELETE FROM sessions WHERE session_id = ?", (sid,)
+                            "DELETE FROM sessions WHERE agent_id = ? AND session_id = ?",
+                            (aid, sid),
                         )
                         deleted += 1
             finally:
@@ -1108,13 +1222,14 @@ class ConversationStore:
         with self._lock:
             conn = self._connect()
             try:
+                aid = self._agent_id
                 row = conn.execute(
                     """
                     SELECT seq, extras FROM messages
-                    WHERE session_id = ? AND role = 'assistant'
+                    WHERE agent_id = ? AND session_id = ? AND role = 'assistant'
                     ORDER BY seq DESC LIMIT 1
                     """,
-                    (session_id,),
+                    (aid, session_id),
                 ).fetchone()
                 if not row:
                     return None
@@ -1127,8 +1242,8 @@ class ConversationStore:
                     cur = {}
                 cur.update(extras)
                 conn.execute(
-                    "UPDATE messages SET extras = ? WHERE session_id = ? AND seq = ?",
-                    (json.dumps(cur, ensure_ascii=False), session_id, seq),
+                    "UPDATE messages SET extras = ? WHERE agent_id = ? AND session_id = ? AND seq = ?",
+                    (json.dumps(cur, ensure_ascii=False), aid, session_id, seq),
                 )
                 conn.commit()
                 return seq
@@ -1329,15 +1444,35 @@ class ConversationStore:
         task_source: Optional[str] = None,
         task_id: Optional[str] = None,
         status: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        since: Optional[int] = None,
         limit: int = 100,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         """List runs, newest first, filtered by any combination of the given
         dimensions. ``parent_run_id=''`` selects top-level runs only.
+
+        ``since`` keeps only runs that *started strictly after* the given epoch
+        seconds; it powers the client's cross-session scheduler poll, which asks
+        "any new executions since I last checked?" without re-fetching history.
+
+        ``offset`` skips the first N rows for paging the history list ("load
+        more"). Combined with the stable ``started_at DESC, run_id DESC`` order
+        it gives deterministic pages.
+
+        Unlike the conversation methods this is intentionally *not* scoped to the
+        store's bound ``self._agent_id``: the runs table is one global ledger and
+        the console shows the whole team's activity by default. Pass an explicit
+        ``agent_id`` to scope to a single Agent (``''`` selects the default
+        Agent's own rows).
         """
         if not self._runs_ready:
             return []
         clauses: List[str] = []
         params: List[Any] = []
+        if agent_id is not None:
+            clauses.append("agent_id = ?")
+            params.append(agent_id)
         if session_id is not None:
             clauses.append("session_id = ?")
             params.append(session_id)
@@ -1353,19 +1488,125 @@ class ConversationStore:
         if status is not None:
             clauses.append("status = ?")
             params.append(status)
+        if since is not None:
+            clauses.append("started_at > ?")
+            params.append(since)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         params.append(max(1, limit))
+        params.append(max(0, offset))
         with self._lock:
             conn = self._connect()
             try:
                 rows = conn.execute(
                     f"SELECT {self._RUN_COLUMNS} FROM runs {where} "
-                    "ORDER BY started_at DESC, run_id DESC LIMIT ?",
+                    "ORDER BY started_at DESC, run_id DESC LIMIT ? OFFSET ?",
                     tuple(params),
                 ).fetchall()
             finally:
                 conn.close()
         return [self._run_row_to_dict(r) for r in rows]
+
+    def delete_run(self, run_id: str, agent_id: Optional[str] = None) -> bool:
+        """Delete a single run row. Returns True if a row was removed.
+
+        Only touches the ``runs`` ledger entry (the history-list item); the
+        delivered message persisted in the session history is left intact. When
+        ``agent_id`` is given the delete is scoped to that Agent so one Agent
+        cannot remove another's run by id alone.
+        """
+        if not self._runs_ready or not run_id:
+            return False
+        clauses = ["run_id = ?"]
+        params: List[Any] = [run_id]
+        if agent_id is not None:
+            clauses.append("agent_id = ?")
+            params.append(agent_id)
+        where = " AND ".join(clauses)
+        with self._lock:
+            conn = self._connect()
+            try:
+                cur = conn.execute(f"DELETE FROM runs WHERE {where}", tuple(params))
+                conn.commit()
+                return cur.rowcount > 0
+            finally:
+                conn.close()
+
+    def get_run_detail(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """A run plus the full text it delivered, for a history detail view.
+
+        The runs row only keeps a short ``output_preview`` (a list-view index).
+        The complete delivered message lives in the *receiver's session*, which
+        the scheduler threads the push into (``_remember_delivered_output``), so
+        this joins back to that session to recover the full body.
+
+        Correlation is by ``(session_id, agent_id)`` from the run, then the
+        scheduler-injected assistant message whose ``created_at`` is closest at
+        or after the run's ``started_at`` (the pair this run wrote). It is
+        best-effort: the session copy is itself capped (~2000 chars) and old
+        scheduler pairs are pruned, so ``full_output`` may be ``None`` — the
+        caller falls back to the preview. Messages are scoped to the *run's*
+        ``agent_id``, not this store's bound id, since a run may belong to any
+        Agent in the global ledger.
+        """
+        run = self.get_run(run_id)
+        if run is None:
+            return None
+
+        detail = dict(run)
+        extras = detail.pop("extras", {}) or {}
+        detail["task_name"] = extras.get("task_name", "")
+        detail["action_type"] = extras.get("action_type", "")
+        detail["channel_type"] = extras.get("channel_type", "")
+        detail["instance_id"] = extras.get("instance_id", "")
+        detail["trigger"] = extras.get("trigger", "")
+        detail["output_preview"] = extras.get("output_preview", "")
+        detail["full_output"] = None
+
+        session_id = run.get("session_id") or ""
+        if not session_id:
+            return detail
+
+        run_agent_id = run.get("agent_id") or ""
+        started_at = run.get("started_at") or 0
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT seq, role, content, created_at
+                    FROM messages
+                    WHERE agent_id = ? AND session_id = ?
+                    ORDER BY seq ASC
+                    """,
+                    (run_agent_id, session_id),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                rows = []
+            finally:
+                conn.close()
+
+        # Assistant messages that answer a [SCHEDULED] user turn are the delivered
+        # bodies. Pick the one written closest at/after this run started; fall
+        # back to the newest scheduler body if none lands after the timestamp
+        # (clock skew, or the pair persisted a hair before the run row).
+        candidates: List[tuple] = []  # (created_at, text)
+        for i, (seq, role, raw, created_at) in enumerate(rows):
+            if role != "user":
+                continue
+            if not _message_is_scheduled_marker(raw):
+                continue
+            if i + 1 < len(rows) and rows[i + 1][1] == "assistant":
+                text = _message_plain_text(rows[i + 1][2])
+                if text:
+                    candidates.append((rows[i + 1][3] or 0, text))
+
+        if candidates:
+            after = [c for c in candidates if c[0] >= started_at]
+            chosen = min(after, key=lambda c: c[0]) if after else max(
+                candidates, key=lambda c: c[0]
+            )
+            detail["full_output"] = chosen[1]
+        return detail
 
     def load_history_page(
         self,
@@ -1409,20 +1650,22 @@ class ConversationStore:
         with self._lock:
             conn = self._connect()
             try:
+                aid = self._agent_id
                 ctx_row = conn.execute(
-                    "SELECT context_start_seq FROM sessions WHERE session_id = ?",
-                    (session_id,),
+                    "SELECT context_start_seq FROM sessions WHERE agent_id = ? AND session_id = ?",
+                    (aid, session_id),
                 ).fetchone()
                 ctx_start = ctx_row[0] if ctx_row else 0
 
                 # extras column is added by migration; tolerate older DBs that
                 # might miss it by falling back to a NULL literal.
-                # Agent/tenant are ambient (the request scope); the explicit
-                # ``user_id`` keeps its historical meaning of "this is the owner
-                # filter the UI asked for", so an unscoped internal read is not
-                # silently narrowed to the empty owner.
+                # The Agent comes from this handle's binding and the tenant
+                # from the ambient request scope; the explicit ``user_id`` keeps
+                # its historical meaning of "this is the owner filter the UI
+                # asked for", so an unscoped internal read is not silently
+                # narrowed to the empty owner.
                 scope_sql, scope_params = dimension_clause(
-                    values=ambient_dimensions(), keys=("agent_id", "tenant_id"))
+                    values=self._dimensions(), keys=("agent_id", "tenant_id"))
                 if user_id:
                     msg_where = f"WHERE session_id = ? AND owner = ?{scope_sql}"
                     msg_args = (session_id, user_id) + scope_params
@@ -1490,8 +1733,17 @@ class ConversationStore:
         with self._lock:
             conn = self._connect()
             try:
+                # Scoped to this handle's Agent: every Agent's conversations now
+                # share one file, so the same session_id can exist for more than
+                # one of them and an unscoped read would answer for the wrong
+                # one. ``owner`` is deliberately *not* a filter here -- this
+                # method is what callers use to establish ownership, so scoping
+                # by it would be circular.
+                clause, params = dimension_clause(
+                    values=self._dimensions(), keys=("agent_id",))
                 row = conn.execute(
-                    "SELECT owner FROM sessions WHERE session_id=?", (session_id,)
+                    f"SELECT owner FROM sessions WHERE session_id=?{clause}",
+                    (session_id, *params),
                 ).fetchone()
             finally:
                 conn.close()
@@ -1539,7 +1791,7 @@ class ConversationStore:
         clauses = ["owner = ?"]
         params: List[Any] = [user_id or ""]
         scope_sql, scope_params = dimension_clause(
-            values=ambient_dimensions(), keys=("agent_id", "tenant_id"))
+            values=self._dimensions(), keys=("agent_id", "tenant_id"))
         if scope_sql:
             # strip the leading " AND " so it joins the clause list
             clauses.append(scope_sql[len(" AND "):])
@@ -1598,8 +1850,8 @@ class ConversationStore:
             try:
                 with conn:
                     cur = conn.execute(
-                        "UPDATE sessions SET title = ? WHERE session_id = ?",
-                        (title, session_id),
+                        "UPDATE sessions SET title = ? WHERE agent_id = ? AND session_id = ?",
+                        (title, self._agent_id, session_id),
                     )
                     return cur.rowcount > 0
             finally:
@@ -1690,7 +1942,7 @@ class ConversationStore:
     def set_pinned(self, session_id: str, pinned: bool) -> bool:
         """Pin or unpin a session. Returns True if the session existed."""
         scope_sql, scope_params = dimension_clause(
-            values=ambient_dimensions(), keys=("agent_id", "tenant_id"))
+            values=self._dimensions(), keys=("agent_id", "tenant_id"))
         with self._lock:
             conn = self._connect()
             try:
@@ -1713,7 +1965,7 @@ class ConversationStore:
         a caller cannot address another tenant's session.
         """
         scope_sql, scope_params = dimension_clause(
-            values=ambient_dimensions(), keys=("agent_id", "tenant_id"))
+            values=self._dimensions(), keys=("agent_id", "tenant_id"))
         with self._lock:
             conn = self._connect()
             try:
@@ -1738,7 +1990,7 @@ class ConversationStore:
         not keep inflating the space count that decides how the list groups.
         """
         scope_sql, scope_params = dimension_clause(
-            values=ambient_dimensions(), keys=("agent_id", "tenant_id"))
+            values=self._dimensions(), keys=("agent_id", "tenant_id"))
         archived_param = 1 if archived else 0
         with self._lock:
             conn = self._connect()
@@ -1763,19 +2015,22 @@ class ConversationStore:
         with self._lock:
             conn = self._connect()
             try:
+                aid = self._agent_id
                 total_sessions = conn.execute(
-                    "SELECT COUNT(*) FROM sessions"
+                    "SELECT COUNT(*) FROM sessions WHERE agent_id = ?", (aid,)
                 ).fetchone()[0]
                 total_messages = conn.execute(
-                    "SELECT COUNT(*) FROM messages"
+                    "SELECT COUNT(*) FROM messages WHERE agent_id = ?", (aid,)
                 ).fetchone()[0]
                 by_channel = conn.execute(
                     """
                     SELECT channel_type, COUNT(*) as cnt
                     FROM sessions
+                    WHERE agent_id = ?
                     GROUP BY channel_type
                     ORDER BY cnt DESC
-                    """
+                    """,
+                    (aid,),
                 ).fetchall()
                 return {
                     "total_sessions": total_sessions,
@@ -1926,6 +2181,12 @@ class ConversationStore:
         ``conversation_schema`` is what stops an upstream merge from silently
         re-creating the single-column key: the comparison is on the live schema,
         not on which literal is in the file.
+        Upstream's own migration tail (an ``agent_id`` ALTER plus an
+        ``agent_id``-scoped index script) is intentionally absent: this
+        method already adds every composed column and rebuilds every
+        composed key from the seam, so re-running upstream's literal would
+        be a second, unreviewed source of schema truth. ``_ensure_composite_key``
+        below is upstream's and is kept, because its caller needs it.
         """
         schema = _core_schema()
         for table_name, statement in schema_seam.plan_column_migrations(conn, schema):
@@ -1983,6 +2244,85 @@ class ConversationStore:
         self._schema_identity = self._db_identity()
         return restored
 
+    def _ensure_composite_key(self, conn: sqlite3.Connection) -> None:
+        """Rebuild sessions/messages under composite ``(agent_id, session_id)`` keys.
+
+        A pre-global database keyed ``sessions`` by ``session_id`` alone and
+        ``messages`` by ``(session_id, seq)``. Those keys cannot hold two Agents
+        that share a ``session_id`` (the same IM user in both), so before any
+        second Agent's rows can join this file the tables must be rebuilt under
+        the composite keys the current ``_DDL`` declares.
+
+        Detected by inspecting the primary key of ``sessions``: a single-column
+        PK means the old shape. The rebuild is the classic SQLite
+        create-new / copy / drop / rename, wrapped in one transaction so an
+        interruption rolls back to the old shape rather than a half-migrated one.
+        Restricted by the caller to installs that actually need it (more than
+        one Agent), so the vast single-Agent majority never rebuilds.
+        """
+        pk_cols = [
+            row[1]
+            for row in conn.execute("PRAGMA table_info(sessions)").fetchall()
+            if row[5]  # pk position, 0 when not part of the primary key
+        ]
+        if pk_cols == ["agent_id", "session_id"]:
+            return  # already composite
+        logger.info(
+            "[ConversationStore] Rebuilding sessions/messages under composite "
+            "(agent_id, session_id) keys for multi-Agent merge"
+        )
+        with conn:
+            conn.execute("DROP INDEX IF EXISTS idx_messages_session")
+            conn.execute("DROP INDEX IF EXISTS idx_sessions_last_active")
+            conn.executescript(
+                """
+                CREATE TABLE sessions_new (
+                    agent_id          TEXT    NOT NULL DEFAULT '',
+                    session_id        TEXT    NOT NULL,
+                    channel_type      TEXT    NOT NULL DEFAULT '',
+                    title             TEXT    NOT NULL DEFAULT '',
+                    context_start_seq INTEGER NOT NULL DEFAULT 0,
+                    created_at        INTEGER NOT NULL,
+                    last_active       INTEGER NOT NULL,
+                    msg_count         INTEGER NOT NULL DEFAULT 0,
+                    pinned            INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (agent_id, session_id)
+                );
+                INSERT INTO sessions_new
+                    (agent_id, session_id, channel_type, title, context_start_seq,
+                     created_at, last_active, msg_count, pinned)
+                SELECT agent_id, session_id, channel_type, title, context_start_seq,
+                       created_at, last_active, msg_count, pinned
+                FROM sessions;
+                DROP TABLE sessions;
+                ALTER TABLE sessions_new RENAME TO sessions;
+
+                CREATE TABLE messages_new (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_id     TEXT    NOT NULL DEFAULT '',
+                    session_id   TEXT    NOT NULL,
+                    seq          INTEGER NOT NULL,
+                    role         TEXT    NOT NULL,
+                    content      TEXT    NOT NULL,
+                    created_at   INTEGER NOT NULL,
+                    extras       TEXT    NOT NULL DEFAULT '',
+                    run_id       TEXT    NOT NULL DEFAULT '',
+                    UNIQUE (agent_id, session_id, seq)
+                );
+                INSERT INTO messages_new
+                    (id, agent_id, session_id, seq, role, content, created_at, extras, run_id)
+                SELECT id, agent_id, session_id, seq, role, content, created_at, extras, run_id
+                FROM messages;
+                DROP TABLE messages;
+                ALTER TABLE messages_new RENAME TO messages;
+
+                CREATE INDEX IF NOT EXISTS idx_messages_session
+                    ON messages (agent_id, session_id, seq);
+                CREATE INDEX IF NOT EXISTS idx_sessions_last_active
+                    ON sessions (agent_id, last_active);
+                """
+            )
+
     def _connect(self) -> sqlite3.Connection:
         with self._lock:
             self._ensure_schema()
@@ -2004,20 +2344,106 @@ _store_instances: Dict[str, ConversationStore] = {}
 _store_lock = threading.RLock()
 
 
+def _default_db_path() -> Path:
+    """The one global conversation file: the DEFAULT Agent's ``index.db``.
+
+    Resolved explicitly from the registry's default Agent workspace, never via
+    the routing-aware ``get_default_memory_config()`` — that one follows the
+    ambient identity, so under ``identity_scope(agent_id=X)`` it would hand back
+    Agent X's own file and split X's writes off into its (soon-archived) source
+    DB instead of the shared global file. This must be identity-independent.
+    """
+    from common.utils import expand_path
+
+    try:
+        from agent.registry import get_agent_registry
+        registry = get_agent_registry()
+        default_ws = registry.get(require_enabled=False).workspace
+        from agent.memory.config import MemoryConfig
+        return MemoryConfig(workspace_root=str(default_ws)).get_db_path().resolve()
+    except Exception:
+        return (
+            Path(expand_path("~/cow")) / "memory" / "long-term" / "index.db"
+        ).resolve()
+
+
 def _resolve_store_path(workspace_root=None) -> Path:
+    """Legacy per-workspace file path (kept for the registry-less fallback)."""
     if workspace_root is None:
-        try:
-            from agent.memory.config import get_default_memory_config
-            return get_default_memory_config().get_db_path().resolve()
-        except Exception:
-            from common.utils import expand_path
-            return (
-                Path(expand_path("~/cow")) / "memory" / "long-term" / "index.db"
-            ).resolve()
+        return _default_db_path()
     from agent.memory.config import MemoryConfig
     from common.utils import expand_path
     workspace = Path(expand_path(str(workspace_root))).resolve()
     return MemoryConfig(workspace_root=str(workspace)).get_db_path().resolve()
+
+
+def _resolve_global_binding(workspace_root) -> tuple:
+    """Map a caller's ``workspace_root`` to ``(db_path, agent_id)`` on the
+    global model.
+
+    Every Agent's conversations live in one file — the default Agent's
+    ``index.db`` — and are told apart by an ``agent_id`` column. The default
+    Agent binds to ``""`` so its historical, un-tagged rows read back
+    unchanged (zero migration for the single-Agent majority); every other
+    Agent binds to its own id.
+
+    Falls back to the legacy per-workspace file (and ``""`` id) when the
+    registry is unavailable — early startup or a test that never built one —
+    so nothing depends on registry readiness just to open a store.
+    """
+    try:
+        from agent.registry import get_agent_registry
+        from common.utils import expand_path
+
+        registry = get_agent_registry()
+        default_id = registry.default_agent_id
+        global_path = _default_db_path()
+
+        # No explicit workspace: follow the ambient RuntimeIdentity so the
+        # no-arg call is routing-aware (a scheduler tick or channel turn scoped
+        # to Agent X sees X's conversations), exactly as it did when the file
+        # itself was routed. Absent an identity this resolves to the default.
+        if workspace_root is None:
+            try:
+                from common.runtime_identity import current_identity
+                current_agent_id = current_identity().agent_id or ""
+            except Exception:
+                current_agent_id = ""
+            agent_id = "" if (not current_agent_id or current_agent_id == default_id) else current_agent_id
+            return global_path, agent_id
+
+        want = str(Path(expand_path(str(workspace_root))).resolve())
+        agents = registry.list(include_disabled=True)
+        for profile in agents:
+            if str(Path(expand_path(str(profile.workspace))).resolve()) == want:
+                agent_id = "" if profile.id == default_id else profile.id
+                return global_path, agent_id
+
+        # A workspace that no registered Agent claims. On a multi-Agent install
+        # we must NOT fall back to that workspace's own file: once the global
+        # migration renames its conversation tables aside, a handle still bound
+        # to that file would silently recreate empty tables and split new writes
+        # off into the archived source (the pm-agent split bug). Bind to the
+        # global file instead, deriving the id from the ``agents/<id>/`` layout
+        # so the rows still land under the right Agent; unknown -> default ("").
+        if len(agents) > 1:
+            derived_id = ""
+            try:
+                parts = Path(want).parts
+                if "agents" in parts:
+                    idx = parts.index("agents")
+                    if idx + 1 < len(parts):
+                        candidate = parts[idx + 1]
+                        derived_id = "" if candidate == default_id else candidate
+            except Exception:
+                derived_id = ""
+            return global_path, derived_id
+
+        # Genuinely single-Agent and unmatched (e.g. a bespoke test workspace):
+        # its own file is safe, nothing will ever archive it.
+        return _resolve_store_path(workspace_root), ""
+    except Exception:
+        return _resolve_store_path(workspace_root), ""
 
 
 def conversation_store_path(workspace_root=None) -> Path:
@@ -2032,17 +2458,22 @@ def conversation_store_path(workspace_root=None) -> Path:
 
 def get_conversation_store(workspace_root=None) -> ConversationStore:
     """
-    Return the ConversationStore for one complete agent workspace.
+    Return the ConversationStore for one Agent, backed by the one global file.
 
-    Reuses that workspace's long-term memory database, keeping one SQLite file
-    per agent at ``<workspace>/memory/long-term/index.db``.
-    The conversation tables (sessions / messages) are separate from the
-    memory tables (memory_chunks / file_metadata). Omitting ``workspace_root``
-    preserves the original single-agent behaviour.
+    All Agents share a single SQLite file (the default Agent's
+    ``memory/long-term/index.db``); each returned handle is scoped to its
+    Agent by an ``agent_id`` column, so callers keep passing a workspace and
+    still see only that Agent's conversations. The default Agent scopes to the
+    empty string, so a single-Agent install behaves exactly as before.
+
+    The conversation tables (sessions / messages) share the file with the
+    memory tables (memory_chunks / file_metadata) as before.
     """
     global _store_instance
-    db_path = _resolve_store_path(workspace_root)
-    key = str(db_path)
+    db_path, agent_id = _resolve_global_binding(workspace_root)
+    # Key by (file, agent_id): one handle per Agent even though several share
+    # the same physical file.
+    key = f"{db_path}::{agent_id}"
     store = _store_instances.get(key)
     if store is not None:
         if workspace_root is None:
@@ -2052,9 +2483,11 @@ def get_conversation_store(workspace_root=None) -> ConversationStore:
     with _store_lock:
         store = _store_instances.get(key)
         if store is None:
-            store = ConversationStore(db_path)
+            store = ConversationStore(db_path, agent_id=agent_id)
             _store_instances[key] = store
-            logger.debug(f"[ConversationStore] Using workspace DB at: {db_path}")
+            logger.debug(
+                f"[ConversationStore] Using global DB at: {db_path} (agent_id={agent_id or 'default'})"
+            )
         if workspace_root is None:
             _store_instance = store
         return store
@@ -2066,3 +2499,242 @@ def clear_conversation_store_cache() -> None:
     with _store_lock:
         _store_instances.clear()
         _store_instance = None
+
+
+# ---------------------------------------------------------------------------
+# Global migration: fold every Agent's conversations into the one global file
+# ---------------------------------------------------------------------------
+
+_CONV_TABLES = ("sessions", "messages", "runs")
+
+
+def _mark_migration_done(conn: sqlite3.Connection, key: str, value: str = "") -> None:
+    conn.execute(_META_DDL)
+    conn.execute(
+        "INSERT OR REPLACE INTO _migration_meta (key, value, done_at) VALUES (?, ?, ?)",
+        (key, value, int(time.time())),
+    )
+
+
+def _migration_done(conn: sqlite3.Connection, key: str) -> bool:
+    try:
+        conn.execute(_META_DDL)
+        row = conn.execute(
+            "SELECT 1 FROM _migration_meta WHERE key = ?", (key,)
+        ).fetchone()
+        return row is not None
+    except Exception:
+        return False
+
+
+def migrate_conversations_to_global(kickoff_async: bool = True) -> None:
+    """Bring every Agent's conversations into the one global file.
+
+    Two levels, matching what each user actually needs:
+
+    * **Level 1 (all users, synchronous, here):** ensure the global file's
+      ``sessions``/``messages`` carry an ``agent_id`` column (done by
+      ``_init_db``'s ``_migrate``) and — only when more than one Agent exists —
+      that both tables use the composite ``(agent_id, session_id)`` key. These
+      touch the file the default Agent is about to read/write, so they must be
+      finished before traffic flows. They are cheap (metadata add + at most one
+      rebuild) and idempotent.
+
+    * **Level 2 (multi-Agent only, asynchronous):** copy each *non-default*
+      Agent's conversation rows into the global file, tagged with that Agent's
+      id, then rename the source tables aside (never drop). This reads other
+      Agents' files and only affects when their history becomes visible in the
+      aggregate view, so it runs on a background thread and resumes on the next
+      start if interrupted.
+
+    Safe to call any number of times; both levels are guarded by their own
+    idempotency checks.
+    """
+    try:
+        from agent.registry import get_agent_registry
+        registry = get_agent_registry()
+    except Exception as e:  # pragma: no cover - registry always present in prod
+        logger.debug(f"[ConvMigrate] registry unavailable, skipping: {e}")
+        return
+
+    default_store = get_conversation_store()  # binds default file + agent_id=""
+
+    agents = registry.list(include_disabled=True)
+    multi_agent = len(agents) > 1
+
+    # Level 1: composite key, only where a second Agent could ever collide.
+    if multi_agent:
+        with default_store._lock:
+            conn = default_store._raw_connect()
+            try:
+                default_store._ensure_composite_key(conn)
+            except Exception as e:
+                logger.warning(f"[ConvMigrate] composite-key upgrade failed: {e}")
+            finally:
+                conn.close()
+        # The rebuild swapped the physical tables; drop the cached schema
+        # identity so the next query re-validates against the new shape.
+        default_store._schema_identity = ()
+
+    if not multi_agent:
+        return
+
+    # Drop every cached handle before the merge renames any source tables.
+    # A handle that a warmup/first-request opened against a secondary Agent's
+    # own file (e.g. a workspace the registry hadn't matched yet) would, once
+    # its tables are archived, silently recreate empty tables and split new
+    # writes off into the source — the pm-agent split we just diagnosed.
+    # Clearing forces every subsequent open to re-resolve to the global file.
+    clear_conversation_store_cache()
+
+    if kickoff_async:
+        threading.Thread(
+            target=_merge_secondary_agents,
+            args=(),
+            name="conv-merge",
+            daemon=True,
+        ).start()
+    else:
+        _merge_secondary_agents()
+
+
+def _merge_secondary_agents() -> None:
+    """Copy each non-default Agent's conversation tables into the global file.
+
+    Per Agent: one transaction, ``INSERT OR IGNORE`` for idempotency, a
+    ``_migration_meta`` marker so a restart never repeats it, and a rename of
+    the source tables to ``*_migrated_<ts>`` so the rows stay recoverable and a
+    lost marker still cannot double-import (the source table is simply gone).
+    A failure is logged and isolated to that Agent; the source file keeps
+    serving until the next attempt.
+    """
+    try:
+        from agent.registry import get_agent_registry
+        from common.utils import expand_path
+        registry = get_agent_registry()
+    except Exception:
+        return
+
+    default_id = registry.default_agent_id
+    global_store = get_conversation_store()
+    global_path = str(global_store._db_path)
+
+    for profile in registry.list(include_disabled=True):
+        if profile.id == default_id:
+            continue
+        agent_id = profile.id
+        try:
+            src_path = str(
+                Path(expand_path(str(profile.workspace))).resolve()
+                / "memory" / "long-term" / "index.db"
+            )
+        except Exception:
+            continue
+        if src_path == global_path or not Path(src_path).exists():
+            continue
+
+        marker = f"merged_agent:{agent_id}"
+        with global_store._lock:
+            conn = global_store._raw_connect()
+            try:
+                if _migration_done(conn, marker):
+                    continue
+                _merge_one_agent(conn, src_path, agent_id)
+                _mark_migration_done(conn, marker, src_path)
+                conn.commit()
+                logger.info(
+                    f"[ConvMigrate] merged conversations for agent '{agent_id}' "
+                    f"from {src_path}"
+                )
+            except Exception as e:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                logger.warning(
+                    f"[ConvMigrate] merge for agent '{agent_id}' failed "
+                    f"({e}); source left intact, will retry next start"
+                )
+            finally:
+                conn.close()
+
+
+def _merge_one_agent(conn: sqlite3.Connection, src_path: str, agent_id: str) -> None:
+    """Attach a source Agent DB and copy its conversation rows in, tagged."""
+    conn.execute("ATTACH DATABASE ? AS src", (src_path,))
+    try:
+        src_tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM src.sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        with conn:
+            if "sessions" in src_tables:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO sessions
+                        (agent_id, session_id, channel_type, title, context_start_seq,
+                         created_at, last_active, msg_count, pinned)
+                    SELECT ?, session_id, channel_type, title, context_start_seq,
+                           created_at, last_active, msg_count, pinned
+                    FROM src.sessions
+                    """,
+                    (agent_id,),
+                )
+            if "messages" in src_tables:
+                # id -> NULL so the global file re-issues AUTOINCREMENT ids and
+                # cross-file ids never collide; dedupe is on (agent_id, session_id, seq).
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO messages
+                        (agent_id, session_id, seq, role, content, created_at, extras, run_id)
+                    SELECT ?, session_id, seq, role, content, created_at,
+                           COALESCE(extras, ''), COALESCE(run_id, '')
+                    FROM src.messages
+                    """,
+                    (agent_id,),
+                )
+            if "runs" in src_tables:
+                # runs already carry agent_id (uuid run_id never collides);
+                # backfill only the empties to this source's owner.
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO runs
+                        (run_id, agent_id, user_id, session_id, parent_run_id,
+                         task_id, task_source, status, started_at, ended_at, error, extras)
+                    SELECT run_id,
+                           CASE WHEN COALESCE(agent_id, '') = '' THEN ? ELSE agent_id END,
+                           user_id, session_id, parent_run_id,
+                           task_id, task_source, status, started_at, ended_at,
+                           COALESCE(error, ''), COALESCE(extras, '')
+                    FROM src.runs
+                    """,
+                    (agent_id,),
+                )
+    finally:
+        conn.execute("DETACH DATABASE src")
+
+    # Rename the source tables aside so the rows survive but can never be
+    # re-imported. Best-effort and outside the copy transaction.
+    ts = int(time.time())
+    src_conn = sqlite3.connect(src_path, timeout=10)
+    try:
+        existing = {
+            row[0]
+            for row in src_conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        with src_conn:
+            for table in _CONV_TABLES:
+                if table in existing:
+                    src_conn.execute(
+                        f"ALTER TABLE {table} RENAME TO {table}_migrated_{ts}"
+                    )
+    except Exception as e:
+        logger.warning(
+            f"[ConvMigrate] could not archive source tables in {src_path}: {e}"
+        )
+    finally:
+        src_conn.close()

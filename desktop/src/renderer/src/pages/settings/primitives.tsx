@@ -88,15 +88,20 @@ export const Field: React.FC<{
   // Help shown in an info icon next to the label (hover), instead of a
   // permanent line under the field. Supports \n for multi-line hints.
   labelTip?: string
+  // Draw a red asterisk after the label to mark the field as required.
+  required?: boolean
   // Optional trailing element on the label row (right-aligned), e.g. a helper
   // link. Kept generic so any build can attach an action next to a field.
   labelAction?: React.ReactNode
   children: React.ReactNode
-}> = ({ label, hint, labelTip, labelAction, children }) => (
+}> = ({ label, hint, labelTip, required, labelAction, children }) => (
   <div>
     <div className="mb-1.5 flex items-center justify-between gap-2">
       <div className="flex items-center gap-1.5 min-w-0">
-        <label className="block text-sm font-medium text-content-secondary">{label}</label>
+        <label className="block text-sm font-medium text-content-secondary">
+          {label}
+          {required && <span className="text-danger ml-0.5">*</span>}
+        </label>
         {labelTip && <FieldTip tip={labelTip} />}
       </div>
       {labelAction}
@@ -118,8 +123,12 @@ export const Dropdown: React.FC<{
   placeholder?: string
   options: DropdownOption[]
   disabled?: boolean
+  // 'stack' (default) renders the hint on a dim second line; 'inline' renders it
+  // as a dim label pushed to the right of the row, on the same line as the label
+  // (e.g. an instance name on the left, its channel type on the right).
+  hintAlign?: 'stack' | 'inline'
   onChange: (val: string) => void
-}> = ({ value, display, placeholder, options, disabled, onChange }) => {
+}> = ({ value, display, placeholder, options, disabled, hintAlign = 'stack', onChange }) => {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -232,8 +241,19 @@ export const Dropdown: React.FC<{
                   o.value === value ? 'bg-accent-soft text-accent' : 'text-content-secondary hover:bg-surface-2'
                 }`}
               >
-                <div className="truncate">{o.label}</div>
-                {o.hint && <div className="text-xs text-content-tertiary mt-0.5 truncate">{o.hint}</div>}
+                {hintAlign === 'inline' ? (
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="truncate">{o.label}</span>
+                    {o.hint && (
+                      <span className="ml-auto flex-shrink-0 text-xs text-content-tertiary">{o.hint}</span>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <div className="truncate">{o.label}</div>
+                    {o.hint && <div className="text-xs text-content-tertiary mt-0.5 truncate">{o.hint}</div>}
+                  </>
+                )}
               </div>
             ))}
           </div>,
@@ -264,7 +284,10 @@ export const Toggle: React.FC<{ checked: boolean; onChange: (v: boolean) => void
 export const TextInput: React.FC<React.InputHTMLAttributes<HTMLInputElement>> = (props) => (
   <input
     {...props}
-    className={`w-full px-3 py-2 rounded-btn border border-strong bg-inset text-sm text-content placeholder:text-content-tertiary focus:outline-none focus:border-accent transition-colors ${
+    // Typed text is primary; the placeholder is the dim tertiary color at
+    // reduced opacity so it never reads as a real value while filling in fields
+    // like a cron expression.
+    className={`w-full px-3 py-2 rounded-btn border border-strong bg-inset text-sm text-content placeholder:text-content-tertiary placeholder:opacity-60 focus:outline-none focus:border-accent transition-colors ${
       props.className || ''
     }`}
   />
@@ -294,24 +317,39 @@ export const Modal: React.FC<{
   onClose: () => void
   children: React.ReactNode
   footer?: React.ReactNode
-}> = ({ open, title, onClose, children, footer }) => {
+  // Optional content shown in the header, right-aligned before the close button
+  // (e.g. an owner chip), so it doesn't consume a full body row.
+  headerRight?: React.ReactNode
+  // Dialog width. 'md' (default) keeps the compact settings dialog; 'lg' gives
+  // form-heavy dialogs (e.g. the task editor) more breathing room.
+  size?: 'md' | 'lg'
+  // Stack above another open modal. A confirm dialog spawned from inside a modal
+  // (e.g. "delete this task?" over the task editor) must sit on top; both share
+  // the base z-50 otherwise and the later-painted one wins, hiding the confirm.
+  elevated?: boolean
+}> = ({ open, title, onClose, children, footer, headerRight, size = 'md', elevated = false }) => {
   if (!open) return null
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className={`fixed inset-0 ${elevated ? 'z-[60]' : 'z-50'} flex items-center justify-center bg-black/40 p-4`}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}
     >
-      <div className="w-full max-w-md rounded-card border border-default bg-elevated shadow-xl">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-default">
-          <h3 className="font-semibold text-content">{title}</h3>
-          <button
-            onClick={onClose}
-            className="text-content-tertiary hover:text-content cursor-pointer text-lg leading-none px-1"
-          >
-            ×
-          </button>
+      <div
+        className={`w-full ${size === 'lg' ? 'max-w-2xl' : 'max-w-md'} rounded-card border border-default bg-elevated shadow-xl`}
+      >
+        <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-default">
+          <h3 className="font-semibold text-content flex-shrink-0">{title}</h3>
+          <div className="flex items-center gap-3 min-w-0">
+            {headerRight}
+            <button
+              onClick={onClose}
+              className="text-content-tertiary hover:text-content cursor-pointer text-lg leading-none px-1 flex-shrink-0"
+            >
+              ×
+            </button>
+          </div>
         </div>
         <div className="px-5 py-4 space-y-4 max-h-[60vh] overflow-y-auto">{children}</div>
         {footer && <div className="flex items-center justify-end gap-2 px-5 py-3.5 border-t border-default">{footer}</div>}

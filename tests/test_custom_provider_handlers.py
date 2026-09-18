@@ -38,6 +38,7 @@ def set_conf(d):
     config_module.config = Config(d)
 
 
+
 class _HandlerHarness:
     """Test double around ModelsHandler that captures persisted config in
     memory instead of touching config.json, and no-ops the Bridge reset."""

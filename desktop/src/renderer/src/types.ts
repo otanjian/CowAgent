@@ -9,6 +9,8 @@ export interface ElectronAPI {
   getBackendError: () => Promise<BackendFailure | null>
   /** Data dir holding config.json and run.log (~/.cow in packaged builds). */
   getDataDir: () => Promise<string>
+  /** On-disk path of a picked/dropped File; '' when it has none (pasted image). */
+  getPathForFile?: (file: File) => string
   restartBackend: () => Promise<boolean>
   selectDirectory: () => Promise<string | null>
   selectFile: (filters?: { name: string; extensions: string[] }[]) => Promise<string | null>
@@ -92,7 +94,7 @@ export interface ElectronAPI {
   setAppTitle?: (title: string) => Promise<boolean>
   // Show a native OS notification; clicking it focuses the window and fires
   // onOpenSession with the session id.
-  notify?: (payload: { title?: string; body?: string; sessionId?: string; silent?: boolean }) => Promise<boolean>
+  notify?: (payload: { title?: string; body?: string; sessionId?: string; silent?: boolean; force?: boolean }) => Promise<boolean>
   onOpenSession?: (callback: (sessionId: string) => void) => () => void
   platform: string
   // OS UI language (e.g. "zh-CN"); used to default the language on first run.
@@ -210,10 +212,23 @@ export interface SubStep {
   error?: string
 }
 
+export interface ToolRetrievalMetadata {
+  mode: 'retrieved' | 'fallback'
+  total_mcp_tools: number
+  selected_mcp_tools: number
+  builtin_tools: number
+  top_k: number
+  candidate_count: number
+  selected_tools: string[]
+  ranked_tools: Array<{ name: string; score: number }>
+  fallback_reason?: string | null
+}
+
 /** A single ordered step inside an assistant turn (matches backend history). */
 export interface MessageStep {
-  type: 'thinking' | 'content' | 'tool'
+  type: 'thinking' | 'content' | 'tool' | 'retrieval'
   content?: string
+  retrieval?: ToolRetrievalMetadata
   // tool step fields
   id?: string
   name?: string
@@ -391,6 +406,7 @@ export interface ToolCall {
 export type StreamEventType =
   | 'delta'
   | 'reasoning'
+  | 'tool_retrieval'
   | 'tool_start'
   | 'tool_progress'
   | 'tool_end'
@@ -420,6 +436,16 @@ export interface StreamEvent {
   display?: string
   execution_time?: number
   has_tool_calls?: boolean
+  /** `tool_retrieval`: sanitized MCP retrieval decision metadata. */
+  mode?: 'retrieved' | 'fallback'
+  total_mcp_tools?: number
+  selected_mcp_tools?: number
+  builtin_tools?: number
+  top_k?: number
+  candidate_count?: number
+  selected_tools?: string[]
+  ranked_tools?: Array<{ name: string; score: number }>
+  fallback_reason?: string | null
   /** `tool_end`: true when the call was refused by the permission gate. */
   permission_denied?: boolean
   /** `tool_end`: the mode that refused the call (legacy installs only). */
@@ -559,6 +585,28 @@ export interface HistoryPage {
   context_start_seq?: number
 }
 
+/** Heuristic breakdown of what is occupying the session's context window.
+ *  `available` is false when the session has no live agent yet (fresh session,
+ *  or one just cleared) — the other fields are then absent. */
+export interface ContextUsage {
+  available: boolean
+  estimated?: boolean
+  model?: string | null
+  /** Model's total context window (input + output). */
+  window?: number
+  /** Input budget the trimmer targets — the denominator for the chart. */
+  limit?: number
+  /** system + tools + history. May exceed `limit`: tool schemas are not budgeted. */
+  used?: number
+  messages?: number
+  breakdown?: {
+    system: number
+    tools: number
+    history: number
+    free: number
+  }
+}
+
 // ============================================================
 // Config
 // ============================================================
@@ -598,6 +646,7 @@ export interface ConfigData {
   bot_type: string
   use_linkai: boolean
   channel_type: string
+  /** Optional manual override for the input budget; 0 = derive from the model. */
   agent_max_context_tokens: number
   agent_max_context_turns: number
   agent_max_steps: number
@@ -627,6 +676,18 @@ export interface ModelOption {
 }
 export type ModelEntry = string | ModelOption
 
+// Capability tags a catalog model carries: which tool positions it appears
+// in. "text" marks a conversational model (main-model / switcher candidate).
+export type ModelCapability = 'text' | 'vision' | 'video' | 'image' | 'embedding' | 'asr' | 'tts'
+
+// One user-managed entry in a provider's model catalog.
+export interface ModelCatalogEntry {
+  name: string
+  capabilities: ModelCapability[]
+  context_window?: number
+  max_output_tokens?: number
+}
+
 export interface ModelProvider {
   id: string
   label: LocalizedLabel
@@ -641,6 +702,20 @@ export interface ModelProvider {
   api_base?: string
   api_base_default?: string
   api_base_placeholder?: string
+  // The model catalog is an OVERLAY on the presets, not a replacement:
+  // - `catalog` is the user's raw overrides (edited/added entries),
+  // - `hidden` is the preset names the user removed (tombstones),
+  // - `seed` is the preset base (typed with real capabilities),
+  // - `effective` is the merged list (presets − hidden + overrides) the editor
+  //   loads and the chat switcher offers.
+  // A custom provider has no presets, so `catalog` is simply its whole list and
+  // `effective` equals it.
+  catalog?: ModelCatalogEntry[]
+  hidden?: string[]
+  /** Preset models pre-typed with their real capabilities (built-in vendors). */
+  seed?: ModelCatalogEntry[]
+  /** The merged list the editor prefills (presets − hidden + overrides). */
+  effective?: ModelCatalogEntry[]
   models: ModelEntry[]
 }
 
@@ -654,6 +729,14 @@ export interface SearchProviderMeta {
   configured: boolean
   needs_dedicated_key: boolean
   api_key_masked?: string
+  // AnySearch can be "configured" via anonymous mode (no key). The backend
+  // sets this flag so the UI can badge it and offer the anonymous opt-in.
+  anonymous?: boolean
+  // SearXNG holds a self-hosted instance URL instead of an API key. When
+  // needs_url is set the editor shows a URL field; url_masked echoes the saved
+  // URL (not a secret, so returned verbatim) for prefill/edit.
+  needs_url?: boolean
+  url_masked?: string
 }
 
 export interface CapabilityState {
@@ -686,17 +769,23 @@ export interface CapabilityState {
   [k: string]: unknown
 }
 
-/** Backup chat model, tried only after the primary one fails a turn. */
+/** One link in the fallback chain: tried after the one before it fails. */
+export interface ChatFallbackLink {
+  provider: string
+  model: string
+}
+
+/** Backup chat models, tried in order after the primary one fails a turn. */
 export interface ChatFallbackCapabilityState {
   editable?: boolean
   /** Opt-in: when false the fallback never engages. */
   enabled?: boolean
+  /** Ordered links; index 0 is tried first. Unbounded by design. */
+  chain?: ChatFallbackLink[]
   current_provider?: string
   current_model?: string
   providers?: string[]
   provider_models?: Record<string, ModelEntry[]>
-  /** How many times a single turn may switch; guards against ping-pong. */
-  max_switches?: number
   /** The primary model, shown so the user sees what is being backed up. */
   primary_provider?: string
   primary_model?: string
@@ -734,12 +823,20 @@ export type ModelsAction =
   | { action: 'set_custom_provider'; name: string; id?: string; api_base: string; api_key?: string; model?: string; make_active?: boolean }
   | { action: 'delete_custom_provider'; id: string }
   | { action: 'set_active_custom_provider'; id: string }
+  // Persist a provider's model catalog overlay. `models` are the overrides
+  // (edited/added entries) and `hidden` the removed preset names; the backend
+  // drops the provider's overlay entirely when both are empty (back to presets).
+  | { action: 'save_catalog'; provider_id: string; models: ModelCatalogEntry[]; hidden: string[] }
   // `chat_fallback` is not a first-class CapabilityKey (it has no top-level
   // card), but it is persisted through the same set_capability action, so it
   // is accepted here alongside its opt-in fields.
-  | { action: 'set_capability'; capability: CapabilityKey | 'chat_fallback'; provider_id?: string; model?: string; voice?: string; strategy?: string; provider?: string; enabled?: boolean; max_switches?: number }
+  | { action: 'set_capability'; capability: CapabilityKey | 'chat_fallback'; provider_id?: string; model?: string; voice?: string; strategy?: string; provider?: string; enabled?: boolean; chain?: ChatFallbackLink[] }
   | { action: 'set_voice_reply_mode'; mode: 'off' | 'voice_if_voice' | 'always' }
-  | { action: 'set_search_credential'; api_key: string }
+  // Dedicated search-provider credentials (bocha / anysearch / serply / tavily
+  // use api_key; searxng uses url). The provider field defaults to bocha
+  // server-side when omitted; anonymous is AnySearch-only (save with an empty
+  // key to enable the anonymous tier).
+  | { action: 'set_search_credential'; provider?: string; api_key?: string; url?: string; anonymous?: boolean }
 
 // ============================================================
 // Channels
@@ -768,6 +865,9 @@ export interface ChannelInfo {
   channel_type?: string
   agent_id?: string
   members?: string[]
+  // User-editable display name for this instance (e.g. "微信2"); empty falls back
+  // to the instance id. Present only on per-instance cards (multi-Agent mode).
+  instance_name?: string
 }
 
 // The full /api/channels response. Legacy single-Agent installs only populate
@@ -780,7 +880,7 @@ export interface ChannelsResponse {
   instances?: ChannelInfo[]
 }
 
-export type ChannelAction = 'save' | 'connect' | 'disconnect'
+export type ChannelAction = 'save' | 'connect' | 'disconnect' | 'rename'
 
 // ============================================================
 // Agents / team roster (multi-Agent mode)
@@ -796,6 +896,9 @@ export interface AgentProfile {
   model?: string
   bot_type?: string
   avatar?: string
+  // Cache-busting token from the avatar file's mtime; changes on every upload
+  // so the <img> refetches even when the roster revision hasn't moved.
+  avatar_rev?: string
   skills?: string[]
   knowledge?: string[]
   // "shared" (reads the default Agent's knowledge base) or "own" (private dir).
@@ -978,6 +1081,15 @@ export interface TaskAction {
   receiver_name?: string
   is_group?: boolean
   channel_type?: string
+  // The exact channel login this task delivers through. For a legacy
+  // single-instance channel it equals channel_type. Ownership derives from this.
+  instance_id?: string
+  // Session the push/notification is threaded into; preserved across edits.
+  notify_session_id?: string
+  // Channel-specific delivery hints preserved across edits when the target is
+  // unchanged (e.g. DingTalk needs the sender staff id to reply).
+  dingtalk_sender_staff_id?: string
+  silent?: boolean
 }
 
 export interface SchedulerTask {
@@ -991,7 +1103,74 @@ export interface SchedulerTask {
   next_run_at?: string
   // The Agent that owns this task. Present only in multi-Agent installs; used to
   // route mutations to the right store and to show the owner badge on the card.
+  // For an IM task this is the *effective* owner the backend derives from the
+  // delivery instance's current binding, so it stays honest after a re-bind.
   agent_id?: string
+}
+
+// One recorded execution of a scheduled task, read from the global runs ledger
+// (task_source='scheduler'). Mirrors GET /api/scheduler/runs.
+export interface SchedulerRun {
+  run_id: string
+  // The Agent that ran it. Present in multi-Agent installs; '' is the default.
+  agent_id?: string
+  session_id: string
+  task_id: string
+  // 'running' | 'done' | 'error'. Open runs (still executing) show 'running'.
+  status: string
+  // Unix seconds. ended_at is null while a run is still in flight.
+  started_at: number
+  ended_at?: number | null
+  error?: string
+  // Snapshot fields lifted from the run's extras index at record time, so
+  // history stays readable even after the task is renamed or deleted.
+  task_name?: string
+  action_type?: string
+  channel_type?: string
+  // The delivery channel instance that ran it; resolved to a friendly name
+  // client-side against the instance directory.
+  instance_id?: string
+  // How the tick fired: 'scheduled' (timer) or 'manual' (run-now).
+  trigger?: string
+  // Short, length-capped peek at what was delivered.
+  output_preview?: string
+}
+
+// One run plus the full delivered body, for the history detail dialog. Mirrors
+// GET /api/scheduler/runs/detail. full_output is the complete message recovered
+// from the receiver's session; null when it was pruned or never injected, in
+// which case the UI falls back to output_preview.
+export interface SchedulerRunDetail extends SchedulerRun {
+  full_output?: string | null
+}
+
+// A channel instance the console can deliver a scheduled task through. The
+// task-create flow picks one of these first, then a recipient within it.
+// Mirrors GET /api/scheduler/instances.
+export interface SchedulerInstance {
+  instance_id: string
+  channel_type: string
+  // User-friendly instance name (falls back to a bot name / type label / id).
+  name: string
+  // Friendly channel-type label (e.g. "微信"), shown on the right of the picker.
+  channel_label: string
+  // The Agent this instance is bound to (""/absent -> default Agent).
+  agent_id?: string
+  recipient_count: number
+}
+
+// A trusted recipient learned from an inbound message on some instance. Mirrors
+// GET /api/scheduler/recipients.
+export interface TaskRecipient {
+  channel_type: string
+  instance_id: string
+  receiver: string
+  name: string
+  is_group: boolean
+  session_id: string
+  // Friendly name of the instance that saw this recipient.
+  instance_name?: string
+  last_seen_at?: string
 }
 
 // ============================================================

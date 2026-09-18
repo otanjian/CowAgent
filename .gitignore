@@ -69,7 +69,6 @@ desktop/build/*
 !desktop/build/build-backend.sh
 !desktop/build/build-feishu-vendor.py
 !desktop/build/entitlements.mac.plist
-!desktop/build/notarize-dmg.sh
 !desktop/build/installer.nsh
 
 # Icon authoring scratch dir: intermediate assets used to produce the final
@@ -81,6 +80,9 @@ desktop/resources/.icon-work/
 desktop/resources/bin/
 
 .wrangler/
+
+# Obsidian editor workspace (accidental commit vector; never part of the app)
+.obsidian/
 
 # Local runtime data written into the workspace on source deployments
 # (config.py: get_data_root() falls back to the workspace root). These are
@@ -110,6 +112,10 @@ desktop/resources/bin/
 
 # README files are not synced to the remote repository.
 README*.md
+# ...but a sub-Agent's guide is a *shipped asset*, not repository
+# documentation: the feature hands it to the user to copy, and upstream's
+# test_subagent asserts it is in the tree. Un-ignore that one file.
+!agent/subagent/assets/README.md
 
 # Local brainstorm / visual companion sessions
 .superpowers/

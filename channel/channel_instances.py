@@ -93,6 +93,19 @@ CREDENTIAL_KEYS: Dict[str, tuple] = {
     ),
 }
 
+# Short human labels used only to seed a new instance's default name (e.g.
+# "微信 2"). Purely cosmetic and easily overridden by the user, so an unknown
+# type simply falls back to its raw channel_type string.
+_CHANNEL_TYPE_LABELS: Dict[str, str] = {
+    const.FEISHU: "飞书",
+    const.DINGTALK: "钉钉",
+    const.WECOM_BOT: "企微机器人",
+    const.WEIXIN: "微信",
+    const.QQ: "QQ",
+    const.TELEGRAM: "Telegram",
+    const.SLACK: "Slack",
+    const.DISCORD: "Discord",
+}
 
 # Channel types that actually support running more than one instance today.
 # Others may appear in channel_instances but will run as a single instance
@@ -150,6 +163,10 @@ class ChannelInstance:
     instance_id: str
     channel_type: str
     agent_id: str = ""
+    #: Human-friendly label the user can edit (e.g. "运营微信"). Optional: when
+    #: empty the UI falls back to a credential-derived name or the instance id, so
+    #: an install that never sets one is unaffected.
+    name: str = ""
     credentials: Dict[str, Any] = field(default_factory=dict)
     #: Other Agents sharing this channel's conversations. ``agent_id`` is the
     #: owner/leader that receives every inbound message; ``members`` are the
@@ -216,6 +233,7 @@ def _explicit_instances(raw_list: list) -> List[ChannelInstance]:
         seen_ids.add(instance_id)
 
         agent_id = str(raw.get("agent_id") or "").strip()
+        name = str(raw.get("name") or "").strip()
 
         raw_members = raw.get("members")
         members: List[str] = []
@@ -247,6 +265,7 @@ def _explicit_instances(raw_list: list) -> List[ChannelInstance]:
                 instance_id=instance_id,
                 channel_type=channel_type,
                 agent_id=agent_id,
+                name=name,
                 credentials=creds,
                 members=members,
                 legacy=False,
@@ -391,6 +410,23 @@ def _clean_members(members, owner_id: str) -> list:
     return out
 
 
+def default_instance_name(channel_type: str, records: Iterable[Mapping[str, Any]]) -> str:
+    """A friendly default label for a freshly created instance of *channel_type*.
+
+    Shape is "<type label>" for the first instance of a type and "<type label> N"
+    for later ones, so a second WeChat bot reads as "微信 2" rather than a random
+    id. Only used to seed the field; the user can rename it afterwards.
+    """
+    ctype = _normalize_type((channel_type or "").strip())
+    label = _CHANNEL_TYPE_LABELS.get(ctype, ctype)
+    same_type = sum(
+        1
+        for r in records
+        if _normalize_type(str(r.get("channel_type") or "").strip()) == ctype
+    )
+    return label if same_type == 0 else f"{label} {same_type + 1}"
+
+
 def upsert_instance(
     settings: Mapping[str, Any],
     channel_type: str,
@@ -398,14 +434,17 @@ def upsert_instance(
     agent_id: Optional[str] = None,
     credentials: Optional[Mapping[str, Any]] = None,
     members: Optional[list] = None,
+    name: Optional[str] = None,
 ) -> ChannelInstance:
     """Create or update one channel instance record and persist it.
 
     Matching is by ``instance_id``. When it is empty a new stable id is
-    generated. ``agent_id``, ``credentials`` and ``members`` are merged onto any
-    existing record so a partial update (e.g. credentials only) does not drop
-    the binding or the team. Pass ``members=None`` to leave the team untouched,
-    or ``members=[]`` to clear it. Returns the resulting :class:`ChannelInstance`.
+    generated. ``agent_id``, ``credentials``, ``members`` and ``name`` are merged
+    onto any existing record so a partial update (e.g. credentials only) does not
+    drop the binding, the team or the label. Pass ``members=None`` to leave the
+    team untouched, or ``members=[]`` to clear it. Pass ``name=None`` to leave the
+    label untouched; a brand-new record with no name is seeded with a friendly
+    default. Returns the resulting :class:`ChannelInstance`.
     """
     from agent import team
 
@@ -426,6 +465,12 @@ def upsert_instance(
         record["channel_type"] = ctype
         if agent_id is not None:
             record["agent_id"] = str(agent_id).strip()
+        if name is not None:
+            new_name = str(name).strip()
+            if new_name:
+                record["name"] = new_name
+            else:
+                record.pop("name", None)
         if incoming_creds:
             merged = dict(record.get("credentials") or {})
             merged.update(incoming_creds)
@@ -441,10 +486,17 @@ def upsert_instance(
         break
 
     if not updated:
+        # Seed a friendly default label for a new instance so the console has
+        # something readable to show before the user renames it. Computed against
+        # the records *before* this one is appended, so the first is unnumbered.
+        seeded_name = str(name).strip() if name is not None else ""
+        if not seeded_name:
+            seeded_name = default_instance_name(ctype, records)
         result_record = {
             "instance_id": target_id,
             "channel_type": ctype,
             "agent_id": str(agent_id).strip() if agent_id is not None else "",
+            "name": seeded_name,
             "credentials": incoming_creds,
         }
         cleaned = _clean_members(members, result_record["agent_id"])
@@ -460,6 +512,7 @@ def upsert_instance(
         instance_id=target_id,
         channel_type=ctype,
         agent_id=str(result_record.get("agent_id") or ""),
+        name=str(result_record.get("name") or ""),
         credentials=dict(result_record.get("credentials") or {}),
         members=list(result_record.get("members") or []),
         legacy=False,

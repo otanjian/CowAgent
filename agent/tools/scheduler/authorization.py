@@ -587,7 +587,17 @@ class TaskAccessService:
         # ``scope`` is the only field a caller may set here: the owner, tenant,
         # Agent and revision are derived from the verified actor, so accepting
         # them would let a caller forge ownership (task 3.2).
-        for field in FORBIDDEN_PATCH_FIELDS - {"scope"}:
+        #
+        # ``agent_id`` is the one exception, and only when it agrees with the
+        # address the actor was resolved against. The tool stamps the resolved
+        # owner Agent so execution can be scoped to it later (the store may back
+        # several Agents); dropping it would lose that. A *different* value is
+        # still a forgery and is refused.
+        supplied_agent_id = (task_data.get("agent_id") or "").strip() \
+            if isinstance(task_data.get("agent_id"), str) else task_data.get("agent_id")
+        if supplied_agent_id not in (None, "", agent_id):
+            raise TaskAuthorizationError(FORGED_FIELD, status=400)
+        for field in FORBIDDEN_PATCH_FIELDS - {"scope", "agent_id"}:
             if field in task_data:
                 raise TaskAuthorizationError(FORGED_FIELD, status=400)
 

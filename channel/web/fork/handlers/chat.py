@@ -96,8 +96,18 @@ def _authorize_chat_session(ctx, session_id, agent_id, *, create=False) -> str:
                 # masking its existence keeps one member from probing another
                 # member's conversation ids. Only after the session is confirmed
                 # to be the caller's (or brand new) do the execution gates run.
+                #
+                # Every Agent's conversations share one file now, so both the
+                # read and the write below are scoped to the handle's Agent. An
+                # unscoped SELECT would treat another Agent's same-id session as
+                # this caller's, and an INSERT without ``agent_id`` would file
+                # the row under the default Agent (``''``), leaving the session
+                # invisible to the Agent that actually owns it.
+                scope_agent = store._agent_id
                 row = con.execute(
-                    "SELECT owner, channel_type FROM sessions WHERE session_id=?", (session_id,),
+                    "SELECT owner, channel_type FROM sessions "
+                    "WHERE session_id=? AND agent_id=?",
+                    (session_id, scope_agent),
                 ).fetchone()
                 if row is not None and (row[0] != ctx.user_id or row[1] != "web"):
                     _chat_error("session not found", "404 Not Found", "not_found")
@@ -111,14 +121,17 @@ def _authorize_chat_session(ctx, session_id, agent_id, *, create=False) -> str:
                         now = int(time.time())
                         con.execute(
                             "INSERT OR IGNORE INTO sessions "
-                            "(session_id, channel_type, owner, created_at, last_active, msg_count) "
-                            "VALUES (?, 'web', ?, ?, ?, 0)",
-                            (session_id, ctx.user_id, now, now),
+                            "(agent_id, session_id, channel_type, owner, created_at, "
+                            " last_active, msg_count) "
+                            "VALUES (?, ?, 'web', ?, ?, ?, 0)",
+                            (scope_agent, session_id, ctx.user_id, now, now),
                         )
                         # Two callers may race to claim the same new key; only
                         # the winner's owner survives the IGNORE above.
                         claimed = con.execute(
-                            "SELECT owner FROM sessions WHERE session_id=?", (session_id,),
+                            "SELECT owner FROM sessions "
+                            "WHERE session_id=? AND agent_id=?",
+                            (session_id, scope_agent),
                         ).fetchone()
                         if not claimed or claimed[0] != ctx.user_id:
                             _chat_error("session not found", "404 Not Found", "not_found")

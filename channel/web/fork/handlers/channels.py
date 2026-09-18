@@ -56,6 +56,19 @@ import time
 import web
 
 
+def _live_channel_manager():
+    """Return the running ChannelManager, or None before the app is up.
+
+    Resolved through ``common.channel_registry`` (upstream's contract, issue
+    #3120): the entry module's private global is not a reliable cell because
+    ``python app.py`` makes ``__main__`` a different module object from a later
+    ``import app``, so that lookup always yielded None and the console silently
+    refused to start a newly configured channel.
+    """
+    from channel.web.core._common import _live_channel_manager as resolve
+    return resolve()
+
+
 class ChannelsHandler:
     """API for managing external channel configurations (feishu, dingtalk, etc).
 
@@ -201,7 +214,7 @@ class ChannelsHandler:
         try:
             import sys
             app_module = sys.modules.get('__main__') or sys.modules.get('app')
-            mgr = getattr(app_module, '_channel_mgr', None) if app_module else None
+            mgr = _live_channel_manager()
             if mgr:
                 ch = mgr.get_channel("weixin")
                 if ch and hasattr(ch, 'login_status'):
@@ -481,7 +494,7 @@ class ChannelsHandler:
             try:
                 import sys
                 app_module = sys.modules.get('__main__') or sys.modules.get('app')
-                mgr = getattr(app_module, '_channel_mgr', None) if app_module else None
+                mgr = _live_channel_manager()
                 if mgr:
                     threading.Thread(
                         target=mgr.restart,
@@ -559,7 +572,7 @@ class ChannelsHandler:
                 import sys
                 app_module = sys.modules.get('__main__') or sys.modules.get('app')
                 clear_fn = getattr(app_module, '_clear_singleton_cache', None) if app_module else None
-                mgr = getattr(app_module, '_channel_mgr', None) if app_module else None
+                mgr = _live_channel_manager()
                 if mgr is None:
                     logger.warning(f"[WebChannel] ChannelManager not available, cannot start '{channel_name}'")
                     return
@@ -610,7 +623,7 @@ class ChannelsHandler:
             try:
                 import sys
                 app_module = sys.modules.get('__main__') or sys.modules.get('app')
-                mgr = getattr(app_module, '_channel_mgr', None) if app_module else None
+                mgr = _live_channel_manager()
                 clear_fn = getattr(app_module, '_clear_singleton_cache', None) if app_module else None
                 if mgr:
                     mgr.stop(channel_name)
@@ -636,9 +649,7 @@ class ChannelsHandler:
     # ------------------------------------------------------------------
     @staticmethod
     def _channel_mgr():
-        import sys
-        app_module = sys.modules.get('__main__') or sys.modules.get('app')
-        return getattr(app_module, '_channel_mgr', None) if app_module else None
+        return _live_channel_manager()
 
     def _clean_credentials(self, channel_name: str, updates: dict) -> dict:
         """Keep only real, unmasked credential values for this channel type."""
@@ -835,7 +846,7 @@ class WeixinQrHandler:
         try:
             import sys
             app_module = sys.modules.get('__main__') or sys.modules.get('app')
-            mgr = getattr(app_module, '_channel_mgr', None) if app_module else None
+            mgr = _live_channel_manager()
             if mgr:
                 return mgr.get_channel("weixin")
         except Exception:

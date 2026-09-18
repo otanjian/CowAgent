@@ -31,6 +31,164 @@ def _message_run_ids(db_path, session_id):
         conn.close()
 
 
+def test_list_runs_agent_id_filter_scopes_or_aggregates():
+    """list_runs is a global ledger view: no agent_id lists the whole team,
+    an explicit agent_id scopes to one Agent (''=default)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _store(tmp)
+        store.create_run("r-default", agent_id="", task_source="scheduler", task_id="t1")
+        store.create_run("r-sales", agent_id="sales", task_source="scheduler", task_id="t2")
+        store.create_run("r-pm", agent_id="pm", task_source="scheduler", task_id="t3")
+
+        # No agent_id -> whole team.
+        all_ids = {r["run_id"] for r in store.list_runs(task_source="scheduler")}
+        assert all_ids == {"r-default", "r-sales", "r-pm"}
+
+        # Explicit agent scopes to that Agent.
+        assert {r["run_id"] for r in store.list_runs(agent_id="sales")} == {"r-sales"}
+        # Empty string selects the default Agent's own rows.
+        assert {r["run_id"] for r in store.list_runs(agent_id="")} == {"r-default"}
+
+
+def test_list_runs_offset_pages_history():
+    """offset skips the first N rows so the history list can "load more"."""
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _store(tmp)
+        for i in range(5):
+            store.create_run(f"r-{i}", task_source="scheduler", task_id="t")
+
+        page1 = store.list_runs(task_source="scheduler", limit=2, offset=0)
+        page2 = store.list_runs(task_source="scheduler", limit=2, offset=2)
+        page3 = store.list_runs(task_source="scheduler", limit=2, offset=4)
+
+        assert len(page1) == 2 and len(page2) == 2 and len(page3) == 1
+        # Pages are disjoint and together cover every run exactly once.
+        seen = [r["run_id"] for r in page1 + page2 + page3]
+        assert sorted(seen) == [f"r-{i}" for i in range(5)]
+
+
+def test_delete_run_removes_only_that_row():
+    """delete_run drops one ledger row; others survive and it's a no-op twice."""
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _store(tmp)
+        store.create_run("keep", task_source="scheduler", task_id="t")
+        store.create_run("drop", task_source="scheduler", task_id="t")
+
+        assert store.delete_run("drop") is True
+        remaining = {r["run_id"] for r in store.list_runs(task_source="scheduler")}
+        assert remaining == {"keep"}
+
+        # Deleting an already-gone / unknown id is a harmless no-op.
+        assert store.delete_run("drop") is False
+        assert store.delete_run("nope") is False
+
+
+def test_delete_run_agent_scope_guards_cross_agent():
+    """An explicit agent_id scopes the delete so one Agent can't remove
+    another's run by id alone."""
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _store(tmp)
+        store.create_run("r-sales", agent_id="sales", task_source="scheduler", task_id="t")
+
+        # Wrong agent scope: nothing removed.
+        assert store.delete_run("r-sales", agent_id="pm") is False
+        assert {r["run_id"] for r in store.list_runs(task_source="scheduler")} == {"r-sales"}
+
+        # Correct scope removes it.
+        assert store.delete_run("r-sales", agent_id="sales") is True
+        assert store.list_runs(task_source="scheduler") == []
+
+
+def test_list_runs_since_returns_only_newer_runs():
+    """``since`` (epoch seconds) keeps only runs started strictly after it,
+    powering the client's cross-session scheduler poll ("anything new since I
+    last checked?")."""
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _store(tmp)
+        store.create_run("old", task_source="scheduler", task_id="t1")
+        store.finish_run("old", status="done")
+        # Force distinct start times so the boundary is unambiguous.
+        conn = sqlite3.connect(str(Path(tmp) / "index.db"))
+        try:
+            conn.execute("UPDATE runs SET started_at = 100 WHERE run_id = 'old'")
+            conn.commit()
+        finally:
+            conn.close()
+        store.create_run("new", task_source="scheduler", task_id="t2")
+        conn = sqlite3.connect(str(Path(tmp) / "index.db"))
+        try:
+            conn.execute("UPDATE runs SET started_at = 200 WHERE run_id = 'new'")
+            conn.commit()
+        finally:
+            conn.close()
+
+        # since at the old run's time excludes it (strictly-after) and keeps new.
+        ids = {r["run_id"] for r in store.list_runs(task_source="scheduler", since=100)}
+        assert ids == {"new"}
+        # since past everything returns nothing.
+        assert store.list_runs(task_source="scheduler", since=200) == []
+        # No since returns both.
+        both = {r["run_id"] for r in store.list_runs(task_source="scheduler")}
+        assert both == {"old", "new"}
+
+
+def test_get_run_detail_recovers_full_output_from_session():
+    """The run keeps a short preview; detail joins back to the receiver's
+    session to recover the full delivered body."""
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _store(tmp)
+        session_id = "sess-detail"
+        long_body = "L" * 1200  # longer than the 200-char run preview
+
+        store.create_run(
+            "r-detail",
+            agent_id="",
+            session_id=session_id,
+            task_source="scheduler",
+            task_id="t-1",
+            extras={"task_name": "Digest", "output_preview": long_body[:200]},
+        )
+        # Mimic remember_scheduled_output: a [SCHEDULED] user turn + assistant body.
+        store.append_messages(
+            session_id,
+            [
+                {"role": "user", "content": [{"type": "text", "text": "[SCHEDULED] run it"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": long_body}]},
+            ],
+        )
+
+        detail = store.get_run_detail("r-detail")
+        assert detail is not None
+        assert detail["task_name"] == "Digest"
+        assert detail["full_output"] == long_body  # full body, not the 200 preview
+        assert len(detail["output_preview"]) == 200
+
+
+def test_get_run_detail_falls_back_when_session_pruned():
+    """No session copy (pruned or never injected) -> full_output is None and the
+    caller falls back to the stored preview."""
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _store(tmp)
+        store.create_run(
+            "r-nopreview",
+            agent_id="",
+            session_id="sess-gone",
+            task_source="scheduler",
+            task_id="t-2",
+            extras={"output_preview": "short peek"},
+        )
+        detail = store.get_run_detail("r-nopreview")
+        assert detail is not None
+        assert detail["full_output"] is None
+        assert detail["output_preview"] == "short peek"
+
+
+def test_get_run_detail_unknown_run_is_none():
+    with tempfile.TemporaryDirectory() as tmp:
+        store = _store(tmp)
+        assert store.get_run_detail("does-not-exist") is None
+
+
 def test_runs_table_and_message_column_exist():
     with tempfile.TemporaryDirectory() as tmp:
         db = Path(tmp) / "index.db"

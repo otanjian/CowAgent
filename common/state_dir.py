@@ -15,8 +15,10 @@ State falls into three kinds, and which kind a path is decided here:
   drift; what actually differs between Agents is which ones are switched on,
   not which ones exist. An Agent that genuinely needs its own copy creates the
   directory and wins by presence.
-- **Per Agent** (``state_root``): persona, sessions, scheduled tasks, scratch.
-  What makes this Agent a different one from that Agent.
+- **Per Agent** (``state_root``): persona, sessions, scratch.
+  What makes this Agent a different one from that Agent. Scheduled tasks are
+  shared (each task carries its own ``agent_id``) so re-binding a channel
+  instance never has to move a file.
 - **Per end user** (``user_root``): profile, preferences, memory, task records.
   "Wang likes email over phone calls" is a fact about Wang, not about one
   Agent, so it sits beside the Agents rather than under one of them.
@@ -397,6 +399,55 @@ def env_file(identity=None, base=None) -> Path:
     """Credentials and model keys. Shared, because they belong to the person who
     runs the instance rather than to one of their Agents."""
     return _shared_or_own(identity, base, ".env")
+
+
+def system_dir(base=None, ensure: bool = False) -> Path:
+    """Instance-wide system state that isn't user config.
+
+    Shared, not per Agent: things like the per-provider model catalog are a
+    property of the instance (same as the global model keys), not of whichever
+    Agent happens to be talking. Kept out of ``config.json`` so derived/managed
+    documents don't bloat the hand-editable config.
+    """
+    root = Path(base) if base is not None else shared_root()
+    return _ensure(root / "system", ensure)
+
+
+def models_catalog_file(base=None) -> Path:
+    """The per-provider model catalog overlay (overrides + hidden)."""
+    return system_dir(base) / "models.json"
+
+
+def scheduler_recipients_file(base=None) -> Path:
+    """The one directory of people/groups observed on inbound IM channels.
+
+    Shared, not per Agent: a contact is a fact about the person, not about which
+    Agent happened to talk to them, so one copy lets any Agent's console build a
+    scheduled task for anyone the instance has ever met. It lives beside the
+    global ``tasks.json`` under ``scheduler`` — the recipients a scheduled push
+    can target — rather than in a separate directory.
+    """
+    if base is not None:
+        return Path(base) / "scheduler" / "recipients.json"
+    return shared_root() / "scheduler" / "recipients.json"
+
+
+def scheduler_file_global(base=None) -> Path:
+    """The one task store every Agent's scheduled tasks live in.
+
+    Shared, not per Agent, and each task carries its own ``agent_id`` (the Agent
+    it runs as) plus ``instance_id`` (the channel login it delivers through).
+    Keeping ownership *on the task* rather than *in the file path* is what lets a
+    channel instance be re-bound to a different Agent without moving any task
+    data: delivery resolves by ``instance_id`` and execution sets identity from
+    the task's ``agent_id``, neither of which depends on where the file sits.
+
+    Superseded the per-Agent ``scheduler_file`` (``<agent>/scheduler/tasks.json``);
+    a one-time boot migration folds those into this single store.
+    """
+    if base is not None:
+        return Path(base) / "scheduler" / "tasks.json"
+    return shared_root() / "scheduler" / "tasks.json"
 
 
 # --- Per Agent: what makes this Agent a different one -----------------------

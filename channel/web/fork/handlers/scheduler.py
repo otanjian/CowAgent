@@ -17,21 +17,18 @@ import web
 
 
 def _scheduler_task_store(agent_id: str):
-    """The ``TaskStore`` for one Agent, resolved through the per-Agent layout.
+    """The one global task store, scoped to ``agent_id``.
 
-    ``common/state_dir.scheduler_file`` is the one definition of "where an Agent's
-    schedule lives" (``<agent workspace>/scheduler/tasks.json``), and it is keyed
-    on ``agent_id`` rather than on the request's working root: in database mode
-    the working root is the *tenant's* shared root, so resolving the store from it
-    would make every Agent of a tenant share one file. The identity is derived
-    with the Agent under test pinned, which is also what the tool path does.
+    Upstream folded the per-Agent schedules into a single file whose tasks each
+    carry the Agent they run as, so the console and the scheduler loop must read
+    the same store: resolving a per-Agent path here would file console-created
+    tasks where the loop never looks (and leave the console blind to tasks the
+    loop created). ``AgentScopedTaskStore`` keeps the per-Agent call shape while
+    the rows keep living in the one file.
     """
-    from agent.tools.scheduler.task_store import TaskStore
-    from common import state_dir
-    from common.runtime_identity import current_identity
+    from agent.tools.scheduler.integration import get_scoped_task_store
 
-    identity = current_identity().derive(agent_id=agent_id)
-    return TaskStore(str(state_dir.scheduler_file(identity)))
+    return get_scoped_task_store(agent_id)
 
 
 def _scheduler_agent_ids(actor) -> List[str]:

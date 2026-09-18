@@ -10,6 +10,7 @@ import LoginGate, { BlockedGate, PasswordChangeGate, TenantSelectGate } from './
 import { useBackend } from './hooks/useBackend'
 import { usePlatform } from './hooks/usePlatform'
 import { usePushPoll } from './hooks/usePushPoll'
+import { useSchedulerNotifyPoll } from './hooks/useSchedulerNotifyPoll'
 import { useUIStore } from './store/uiStore'
 import { useSessionStore } from './store/sessionStore'
 import { useWorkspaceStore } from './store/workspaceStore'
@@ -133,6 +134,9 @@ const App: React.FC = () => {
 
   // Poll for scheduler/push messages once the backend and auth are settled.
   usePushPoll(backend.status === 'ready' && authState === 'ok')
+  // Independently watch the global runs ledger so a scheduled task firing into a
+  // non-active session still notifies (usePushPoll only sees the open session).
+  useSchedulerNotifyPoll(backend.status === 'ready' && authState === 'ok')
 
   // A clicked OS notification asks us to open its session.
   useEffect(() => {

@@ -24,19 +24,21 @@ from channel.web import web_channel
 
 
 def _seed(store, rows):
-    """Seed like the runtime does: rows carry the owner *and* tenant dimension.
+    """Seed like the runtime does: rows carry the agent *and* tenant dimension.
 
-    The ambient identity publishes a tenant, so a row without one is invisible
-    to every scoped query (``dimension_clause`` matches ``tenant_id`` exactly).
+    Under the global store every handle stamps its own ``agent_id`` (the default
+    Agent's is ``""``), and the ambient identity publishes a tenant, so a row
+    without a tenant is invisible to every scoped query (``dimension_clause``
+    matches ``tenant_id`` exactly).
     """
     conn = store._connect()
     try:
         conn.executemany(
             """INSERT INTO sessions
-               (session_id, title, owner, tenant_id, channel_type, created_at,
-                last_active, msg_count, pinned)
-               VALUES (?, ?, ?, 'tenant-1', 'web', 1, ?, 1, 0)""",
-            rows,
+               (agent_id, session_id, title, owner, tenant_id, channel_type,
+                created_at, last_active, msg_count, pinned)
+               VALUES (?, ?, ?, ?, 'tenant-1', 'web', 1, ?, 1, 0)""",
+            [(store._agent_id,) + tuple(row) for row in rows],
         )
         conn.commit()
     finally:
@@ -62,7 +64,12 @@ def agent_environment(tmp_path, monkeypatch):
 
     registry = SimpleNamespace(
         list=lambda include_disabled=False: list(profiles.values()),
-        get=lambda agent_id, **kwargs: profiles[agent_id or "a"],
+        # ``get`` must answer the no-argument call too: resolving the global file
+        # asks for the *default* Agent (``get(require_enabled=False)``). A stub
+        # that required ``agent_id`` raised TypeError, which ``_default_db_path``
+        # swallows by falling back to ``~/cow`` -- seeding the developer's real
+        # database instead of ``tmp_path``.
+        get=lambda agent_id=None, **kwargs: profiles[agent_id or "a"],
         default_agent_id="a",
     )
     monkeypatch.setattr(agent.registry, "get_agent_registry", lambda: registry)

@@ -49,6 +49,18 @@ import time
 import uuid
 import web
 
+def _live_channel_manager():
+    """Return the running ChannelManager, or None before the app is up.
+
+    Resolved through ``common.channel_registry`` (upstream's contract, issue
+    #3120): the entry module's private global is not a reliable cell because
+    ``python app.py`` makes ``__main__`` a different module object from a later
+    ``import app``, so that lookup always yielded None and the console silently
+    refused to start a newly configured channel.
+    """
+    from channel.web.core._common import _live_channel_manager as resolve
+    return resolve()
+
 
 # Adapted on move (not verbatim, see the emitter): ``__file__``
 # now points at the fork package, so asset paths anchor at the web
@@ -958,6 +970,20 @@ class WebChannel(ChatChannel):
                 delta = data.get("delta", "")
                 if delta:
                     publish({"type": "delta", "content": delta})
+
+            elif event_type == "tool_retrieval":
+                # Additive MCP retrieval diagnostics. Forward only the
+                # allowlisted, already-sanitized fields (query text/vectors are
+                # never included by the emitter and must never reach the client).
+                payload = {"type": "tool_retrieval"}
+                for key in (
+                    "mode", "total_mcp_tools", "selected_mcp_tools",
+                    "builtin_tools", "top_k", "candidate_count",
+                    "selected_tools", "ranked_tools", "fallback_reason",
+                ):
+                    if key in data:
+                        payload[key] = data[key]
+                publish(payload)
 
             elif event_type == "tool_execution_start":
                 tool_name = data.get("tool_name", "tool")
@@ -2289,7 +2315,7 @@ def _bind_channel_instance(channel_type: str, instance_id: str = "", agent_id: s
     try:
         import sys
         app_module = sys.modules.get("__main__") or sys.modules.get("app")
-        mgr = getattr(app_module, "_channel_mgr", None) if app_module else None
+        mgr = _live_channel_manager()
         channel = mgr.get_channel(target_id) if mgr else None
         if channel is not None:
             # Live-update owner + team on the running instance. Empty owner means

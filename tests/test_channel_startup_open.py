@@ -47,6 +47,7 @@ class RunWarmupTests(unittest.TestCase):
                 patch("app._warmup_mcp_tools") as warmup_mcp, \
                 patch("app._warmup_scheduler") as warmup_sched, \
                 patch("app.ChannelManager"), \
+                patch("app.set_channel_manager"), \
                 patch("app.DESKTOP_MODE", False), \
                 patch("app.time.sleep", side_effect=KeyboardInterrupt):
             app.run()

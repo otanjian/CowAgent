@@ -135,21 +135,31 @@ class AgentInitializer:
             runtime_info=runtime_info,
         )
         
-        # Get cost control parameters
+        # Get cost control parameters. The context budget is normally derived
+        # from the effective model's context window (see
+        # Agent._get_model_context_window). agent_max_context_tokens is an
+        # optional manual override: 0/unset means "derive from the model", a
+        # positive value forces that input ceiling (still clamped below the
+        # model window in _trim_messages) for gateways / self-hosted models
+        # whose real window we can't infer.
         from config import conf
         max_steps = conf().get("agent_max_steps", 20)
-        max_context_tokens = conf().get("agent_max_context_tokens", 50000)
-        
+        try:
+            max_context_tokens = int(conf().get("agent_max_context_tokens", 0) or 0)
+        except (TypeError, ValueError):
+            max_context_tokens = 0
+        max_context_tokens = max_context_tokens if max_context_tokens > 0 else None
+
         # Create agent
         agent = self.agent_bridge.create_agent(
             system_prompt=system_prompt,
             tools=tools,
             max_steps=max_steps,
+            max_context_tokens=max_context_tokens,
             output_mode="logger",
             workspace_dir=workspace_root,
             skill_manager=skill_manager,
             enable_skills=True,
-            max_context_tokens=max_context_tokens,
             runtime_info=runtime_info  # Pass runtime_info for dynamic time updates
         )
         
@@ -273,36 +283,46 @@ class AgentInitializer:
     def _attribute_history(messages: list, reader_agent_id: str) -> list:
         """Name the author of replies this Agent did not write.
 
-        Without this a shared transcript reads as a monologue: every earlier
-        reply arrives in the same ``assistant`` role, so an Agent takes a
-        colleague's work — and its promises — for its own. Its own turns are
-        left bare, so "unlabelled" reads as "mine"; the team prompt says so.
+        A shared transcript replays every earlier reply in the same
+        ``assistant`` role. Prefixing that role with ``[Name]`` teaches the
+        model to open its own answer the same way. Replay a colleague's turn
+        as a user message instead (``Name(@id)：…``): ``assistant`` stays
+        "mine", so the model has nothing to copy into the reply.
         """
         from agent.registry import get_agent_registry
 
         registry = get_agent_registry()
-        names: Dict[str, str] = {}
+        prefixes: Dict[str, str] = {}
 
-        def name_of(agent_id: str) -> str:
-            if agent_id not in names:
+        def prefix_of(agent_id: str) -> str:
+            if agent_id not in prefixes:
                 try:
-                    names[agent_id] = registry.get(agent_id, require_enabled=False).name
+                    name = registry.get(agent_id, require_enabled=False).name
                 except Exception:
-                    names[agent_id] = agent_id
-            return names[agent_id]
+                    name = agent_id
+                prefixes[agent_id] = f"{name}(@{agent_id})："
+            return prefixes[agent_id]
 
         attributed = []
         for message in messages:
             author = message.get("agent_id") or ""
             plain = {"role": message["role"], "content": message["content"]}
             if author and author != reader_agent_id and plain["role"] == "assistant":
+                prefix = prefix_of(author)
                 blocks = plain["content"]
                 if isinstance(blocks, list) and blocks and blocks[0].get("type") == "text":
-                    label = f"[{name_of(author)}] "
-                    plain["content"] = [
-                        {**blocks[0], "text": label + blocks[0].get("text", "")},
-                        *blocks[1:],
-                    ]
+                    text = blocks[0].get("text", "")
+                    if not text.startswith(prefix):
+                        text = prefix + text
+                    plain = {
+                        "role": "user",
+                        "content": [{**blocks[0], "text": text}, *blocks[1:]],
+                    }
+                elif isinstance(blocks, str):
+                    plain = {
+                        "role": "user",
+                        "content": blocks if blocks.startswith(prefix) else prefix + blocks,
+                    }
             attributed.append(plain)
         return attributed
 

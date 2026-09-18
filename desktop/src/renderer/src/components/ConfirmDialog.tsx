@@ -29,7 +29,7 @@ const ConfirmDialog: React.FC = () => {
   if (!pending) return null
 
   return (
-    <Modal open title={t(pending.titleKey)} onClose={() => answer(false)}>
+    <Modal open elevated title={t(pending.titleKey)} onClose={() => answer(false)}>
       <p className="text-sm text-content-secondary leading-relaxed">{t(pending.msgKey)}</p>
       <div className="flex items-center justify-end gap-2 pt-1">
         <Btn onClick={() => answer(false)}>{t('config_cancel')}</Btn>

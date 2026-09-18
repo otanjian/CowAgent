@@ -111,6 +111,27 @@ class TaskWriteLease:
             pass
 
 
+class _DescStr:
+    """Sort a string descending inside an otherwise-ascending sort key tuple.
+
+    Lets ``sort_key`` mix an ascending rank (enabled-first) with a descending
+    field (newest ``created_at`` on top) in one ``sort`` call, without a second
+    pass or reversing the whole list.
+    """
+
+    __slots__ = ("value",)
+
+    def __init__(self, value: str):
+        self.value = value or ""
+
+    def __lt__(self, other: "_DescStr") -> bool:
+        # Reversed comparison => larger (later) strings sort first.
+        return self.value > other.value
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _DescStr) and self.value == other.value
+
+
 class TaskStore:
     """
     Manages persistent storage of scheduled tasks
@@ -297,32 +318,55 @@ class TaskStore:
         tasks = self.load_tasks()
         return tasks.get(task_id)
     
-    def list_tasks(self, enabled_only: bool = False) -> List[dict]:
+    def list_tasks(self, enabled_only: bool = False, agent_id: str = None) -> List[dict]:
         """
         List all tasks
-        
+
         Args:
             enabled_only: If True, only return enabled tasks
-            
+            agent_id: If given, only return tasks owned by this Agent. Ownership
+                is the task's *effective* owner: for an IM task that is the
+                delivery instance's current binding (so re-binding a channel
+                re-buckets its tasks with no data change), else the stored
+                ``agent_id``, else the default Agent. This keeps the per-Agent
+                list identical to what actually runs.
+
         Returns:
             List of task dictionaries
         """
         tasks = self.load_tasks()
         task_list = list(tasks.values())
-        
+
         if enabled_only:
             task_list = [t for t in task_list if t.get("enabled", True)]
+
+        if agent_id:
+            from agent.tools.scheduler.integration import effective_task_agent_id
+            default_id = ""
+            try:
+                from agent.registry import get_agent_registry
+                default_id = get_agent_registry().default_agent_id
+            except Exception:
+                pass
+            task_list = [
+                t for t in task_list
+                if (effective_task_agent_id(t) or default_id) == agent_id
+            ]
         
-        # Sort by enabled status (enabled first), then by next_run_at
+        # Enabled tasks first, then newest-created on top (a task the user just
+        # created should sit at the head of the list rather than wherever its
+        # next_run_at happens to fall). created_at is an ISO string so a plain
+        # string compare orders it chronologically; a legacy task missing it
+        # sorts last within its group.
         def sort_key(t):
             enabled = t.get("enabled", True)
-            next_run = t.get("next_run_at", "")
-            # Enabled tasks first (0), disabled tasks second (1)
-            # Then sort by next_run_at (empty string sorts last)
-            return (0 if enabled else 1, next_run if next_run else "9999-12-31")
-        
+            created = t.get("created_at") or ""
+            # Negate the created_at ordering for descending: pair the enabled
+            # rank (ascending) with the created string reversed via a wrapper.
+            return (0 if enabled else 1, _DescStr(created))
+
         task_list.sort(key=sort_key)
-        
+
         return task_list
     
     def enable_task(self, task_id: str, enabled: bool = True) -> bool:

@@ -98,6 +98,9 @@ def test_both_consoles_render_what_the_backend_sends():
     """The web console and the desktop app read the same stream. A field only
     one of them understands is a feature that exists on one client."""
     root = Path(__file__).parents[1]
+    # The fork still ships one console script, so read it directly. Once the
+    # console is split (upstream's tree) this becomes upstream's ``console_js()``
+    # helper, which reads the page's own script tags.
     web = (root / "channel/web/static/js/console.js").read_text(encoding="utf-8")
     desktop_store = (root / "desktop/src/renderer/src/store/chatStore.ts").read_text(encoding="utf-8")
     desktop_steps = (root / "desktop/src/renderer/src/components/MessageSteps.tsx").read_text(encoding="utf-8")

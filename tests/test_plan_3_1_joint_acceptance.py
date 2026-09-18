@@ -407,7 +407,14 @@ class MemberOwnedObjectTests(_JointFixture):
         init_scheduler(SimpleNamespace(agent_registry=get_agent_registry()),
                        agent_id=SHARED)
         self.assertIsNotNone(get_scheduler_service(agent_id=SHARED))
-        self.assertIsNone(get_scheduler_service(agent_id=ASSISTANT))
+        # The scheduler is one global service for every Agent now (upstream
+        # folded the per-Agent stores into one file and one loop), so the guard
+        # cannot be "no service exists for the disabled Agent" -- the same
+        # service answers for all of them. What must hold is that the disabled
+        # Agent's task was never *serviced*: the run above was refused and the
+        # task below still has no last_run_at.
+        self.assertIs(get_scheduler_service(agent_id=ASSISTANT),
+                      get_scheduler_service(agent_id=SHARED))
         off = self._task(ASSISTANT, "t-off")
         self.assertTrue(off["enabled"])
         self.assertFalse(off.get("last_run_at"))

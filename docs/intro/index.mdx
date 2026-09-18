@@ -10,7 +10,7 @@ description: 容大AI - Open-source super AI assistant and Agent Harness
 
 **容大AI** is an open-source super AI assistant and Agent Harness. It proactively plans tasks, runs tools and skills, and autonomously grows with memory and knowledge.
 
-容大AI is lightweight, easy to deploy, and built to extend. Plug in any major LLM provider, run it across Web and major IM platforms, 24/7 on a personal computer or server.
+容大AI is lightweight, easy to deploy, and built to extend. Plug in any major LLM provider, quickly assemble a multi-agent team, run it across Web and major IM platforms, 24/7 on a personal computer or server.
 
 <Frame>
   <video controls preload="metadata" playsInline className="w-full rounded-xl" src="https://www.rsm.global/china/zh-hans" />
@@ -43,9 +43,6 @@ description: 容大AI - Open-source super AI assistant and Agent Harness
   <Card title="Skills System" icon="puzzle-piece" href="/skills/index">
     A complete skill creation and execution engine. Install from Skill Hub or generate custom skills via natural-language conversation.
   </Card>
-  <Card title="Multimodal Messaging" icon="image" href="/channels/web">
-    First-class support for text, images, voice, and files — recognition, generation, and delivery.
-  </Card>
   <Card title="Tool System" icon="wrench" href="/tools/index">
     Built-in file I/O, terminal, browser, scheduler, memory retrieval, web search, and more — with native MCP integration.
   </Card>
@@ -57,6 +54,9 @@ description: 容大AI - Open-source super AI assistant and Agent Harness
   </Card>
   <Card title="Multi-channel Integration" icon="server" href="/channels/index">
     A single Agent simultaneously serves Web, WeChat, Feishu, DingTalk, WeCom, QQ, and Official Accounts.
+  </Card>
+  <Card title="Multi-Agent Teams" icon="users" href="/multi-agent/team">
+    Create multiple Agents with distinct roles to form a team, with group-chat collaboration, task delegation, and sub-Agents — usable in the Web console, desktop client, and channel integrations.
   </Card>
 </CardGroup>
 
@@ -73,6 +73,12 @@ The commands below install, configure, and start the upstream project. To use �
   <Tab title="Windows (PowerShell)">
     ```powershell
     irm https://cdn.link-ai.tech/code/cow/run.ps1 | iex
+    ```
+  </Tab>
+  <Tab title="Docker">
+    ```bash
+    curl -O https://cdn.link-ai.tech/code/cow/docker-compose.yml
+    docker compose up -d
     ```
   </Tab>
 </Tabs>

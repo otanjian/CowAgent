@@ -367,8 +367,10 @@ class TestQianfanSurfaces(unittest.TestCase):
             return f.read()
 
     def test_web_console_registers_qianfan_provider(self):
-        # Assert against the registry itself rather than the source text, so
+        # Assert against the fork's registry rather than the source text, so
         # reformatting or switching the label to an i18n dict cannot break this.
+        # It must be the fork's ``ConfigHandler``, not upstream's
+        # ``core/providers.py``, which is what the fork's console reads.
         from channel.web.web_channel import ConfigHandler
         from common import const
 

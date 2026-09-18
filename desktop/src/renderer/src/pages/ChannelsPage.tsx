@@ -16,6 +16,7 @@ import {
   RadioTower,
   QrCode,
   KeyRound,
+  Pencil,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { t, localizedLabel, getLang } from '../i18n'
@@ -26,6 +27,7 @@ import QrScanPanel from '../components/QrScanPanel'
 import { PaperPlaneIcon } from '../components/icons'
 import ChannelTeamSelect from '../components/ChannelTeamSelect'
 import { useAgentStore } from '../store/agentStore'
+import { askConfirm } from '../store/confirmStore'
 
 // Channels that connect via QR scanning rather than credential fields.
 const QR_PROVIDERS: Record<string, 'weixin' | 'feishu'> = { weixin: 'weixin', feishu: 'feishu' }
@@ -140,9 +142,13 @@ const ChannelsPage: React.FC<ChannelsPageProps> = ({ baseUrl }) => {
     const legacyConnected = channels.filter(
       (c) => c.active && !(multiAgent && isMultiInstanceType(c.name))
     )
-    const connected: ChannelInfo[] = multiAgent
-      ? [...legacyConnected, ...instances]
-      : legacyConnected
+    const connected: ChannelInfo[] = (
+      multiAgent ? [...legacyConnected, ...instances] : legacyConnected
+    )
+      // Show WeChat cards first; keep every other card in its existing relative
+      // order (stable sort: weixin -> 0, everything else -> 1).
+      .slice()
+      .sort((a, b) => (a.name === 'weixin' ? 0 : 1) - (b.name === 'weixin' ? 0 : 1))
     // A multi-instance-ready type stays "available" even once it has instances,
     // so the user can add a second bot of the same type.
     const available = channels.filter(
@@ -421,15 +427,118 @@ const ModeTab: React.FC<{ icon: LucideIcon; label: string; active: boolean; onCl
   </button>
 )
 
+// The connection status dot + label (waiting-to-scan / starting / connected),
+// shared by the instance and non-instance title rows.
+const StatusBadge: React.FC<{ channel: ChannelInfo; pending: Pending }> = ({ channel, pending }) => (
+  <>
+    <span
+      className={`w-2 h-2 rounded-full flex-shrink-0 ${
+        pending !== 'none'
+          ? 'bg-warning animate-pulse'
+          : channel.active
+            ? 'bg-accent'
+            : 'bg-content-tertiary'
+      }`}
+    />
+    {pending === 'scanning' ? (
+      <span className={`text-xs ${channel.login_status === 'scanned' ? 'text-accent' : 'text-warning'}`}>
+        {channel.login_status === 'scanned' ? t('weixin_scan_scanned') : t('weixin_scan_waiting')}
+      </span>
+    ) : pending === 'starting' ? (
+      <span className="text-xs text-warning">{t('channels_starting')}</span>
+    ) : channel.active ? (
+      <span className="text-xs text-accent">{t('channels_connected')}</span>
+    ) : null}
+  </>
+)
+
+// The title row for an instance card: the friendly instance name as the heading,
+// with an inline pencil-rename (mirroring the web console), followed by whatever
+// status badge the caller passes as children. Saving only sets a display label;
+// it never touches credentials or the live connection. Enter commits unless an
+// IME composition is active (so typing English via a Chinese IME isn't cut short).
+const InstanceNameEditor: React.FC<{
+  channel: ChannelInfo
+  onRenamed: () => void
+  children?: React.ReactNode
+}> = ({ channel, onRenamed, children }) => {
+  // Title falls back to the type label when no friendly name is set yet, so the
+  // heading never reads as a bare id (matches the web console).
+  const current = channel.instance_name || localizedLabel(channel.label)
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(current)
+  const [saving, setSaving] = useState(false)
+  const composingRef = useRef(false)
+
+  const commit = async () => {
+    const name = value.trim()
+    setEditing(false)
+    if (!name || name === (channel.instance_name || '')) return
+    setSaving(true)
+    try {
+      await apiClient.renameChannelInstance(channel.channel_type || channel.name, channel.instance_id || '', name)
+      onRenamed()
+    } catch (err) {
+      console.error('Failed to rename instance:', err)
+      setValue(current)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={value}
+        disabled={saving}
+        onChange={(e) => setValue(e.target.value)}
+        onCompositionStart={() => (composingRef.current = true)}
+        onCompositionEnd={() => (composingRef.current = false)}
+        onBlur={() => void commit()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !composingRef.current) void commit()
+          else if (e.key === 'Escape') setEditing(false)
+        }}
+        placeholder={t('channels_instance_name_placeholder')}
+        className="w-44 px-2 py-0.5 rounded-btn border border-strong bg-inset text-sm text-content focus:outline-none focus:border-accent"
+      />
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-2 group/name min-w-0">
+      <span className="font-medium text-sm text-content truncate">{current}</span>
+      <button
+        onClick={() => {
+          setValue(channel.instance_name || '')
+          setEditing(true)
+        }}
+        className="text-content-tertiary hover:text-content-secondary cursor-pointer opacity-0 group-hover/name:opacity-100 transition-opacity flex-shrink-0"
+        title={t('channels_rename_instance')}
+      >
+        <Pencil size={12} />
+      </button>
+      {children}
+    </div>
+  )
+}
+
 const ChannelCard: React.FC<{
   channel: ChannelInfo
-  onChanged: () => void
+  // `silent` keeps the current list on screen instead of flashing the spinner
+  // (and resetting scroll to the top) — used after a disconnect so the removed
+  // card just disappears in place.
+  onChanged: (silent?: boolean) => void
   defaultExpanded?: boolean
   multiAgent?: boolean
   // The add panel sets this so connect always mints a new instance rather than
   // editing the existing one of the same type.
   forceNewInstance?: boolean
 }> = ({ channel, onChanged, defaultExpanded = false, multiAgent = false, forceNewInstance = false }) => {
+  // A per-instance card (multi-Agent mode, with a concrete instance_id) is the
+  // one whose title is the friendly instance name and which can be renamed.
+  const isInstance = multiAgent && !!channel.instance_id
   // Channels with no fields connect purely via QR (e.g. weixin).
   const isQrLogin = channel.fields.length === 0
   // QR provider supported by the desktop scan panel (weixin / feishu).
@@ -486,6 +595,16 @@ const ChannelCard: React.FC<{
   }
 
   const run = async (action: 'save' | 'connect' | 'disconnect') => {
+    // Disconnect throws away a live channel, so confirm first — matching the web
+    // console, which has always asked before disconnecting.
+    if (action === 'disconnect') {
+      const ok = await askConfirm({
+        titleKey: 'channels_disconnect',
+        msgKey: 'channels_disconnect_confirm',
+        okKey: 'channels_disconnect',
+      })
+      if (!ok) return
+    }
     setBusy(true)
     setStatus('')
     try {
@@ -500,12 +619,14 @@ const ChannelCard: React.FC<{
           setStatus(t('feishu_sdk_downloading_hint'))
           setTimeout(() => setStatus(''), 8000)
         }
-        onChanged()
+        // A disconnect removes the card; refresh silently so the list stays put
+        // instead of jumping back to the top behind a spinner.
+        onChanged(action === 'disconnect')
       } else {
-        setStatus((res.message as string) || t(action === 'connect' ? 'channels_connect_error' : 'channels_save_error'))
+        setStatus((res.message as string) || t(action === 'connect' ? 'channels_connect_error' : action === 'disconnect' ? 'channels_disconnect_error' : 'channels_save_error'))
       }
     } catch {
-      setStatus(t(action === 'connect' ? 'channels_connect_error' : 'channels_save_error'))
+      setStatus(t(action === 'connect' ? 'channels_connect_error' : action === 'disconnect' ? 'channels_disconnect_error' : 'channels_save_error'))
     } finally {
       setBusy(false)
     }
@@ -549,28 +670,25 @@ const ChannelCard: React.FC<{
       <div className="flex items-center gap-3">
         <ChannelIcon name={channel.name} size={40} />
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-sm text-content">{localizedLabel(channel.label)}</span>
-            <span
-              className={`w-2 h-2 rounded-full ${
-                pending !== 'none'
-                  ? 'bg-warning animate-pulse'
-                  : channel.active
-                    ? 'bg-accent'
-                    : 'bg-content-tertiary'
-              }`}
-            />
-            {pending === 'scanning' ? (
-              <span className={`text-xs ${channel.login_status === 'scanned' ? 'text-accent' : 'text-warning'}`}>
-                {channel.login_status === 'scanned' ? t('weixin_scan_scanned') : t('weixin_scan_waiting')}
-              </span>
-            ) : pending === 'starting' ? (
-              <span className="text-xs text-warning">{t('channels_starting')}</span>
-            ) : channel.active ? (
-              <span className="text-xs text-accent">{t('channels_connected')}</span>
-            ) : null}
-          </div>
-          <p className="text-xs text-content-tertiary font-mono mt-0.5">{channel.instance_id || channel.name}</p>
+          {/* Title row. For a multi-Agent instance the friendly instance name is
+              the title (with an inline rename), matching the web console; the
+              subtitle below then carries "type · id". A non-instance card keeps
+              the channel-type label as its title. */}
+          {isInstance ? (
+            <InstanceNameEditor channel={channel} onRenamed={onChanged}>
+              <StatusBadge channel={channel} pending={pending} />
+            </InstanceNameEditor>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-sm text-content truncate">{localizedLabel(channel.label)}</span>
+              <StatusBadge channel={channel} pending={pending} />
+            </div>
+          )}
+          <p className="text-xs text-content-tertiary font-mono mt-0.5 truncate">
+            {isInstance
+              ? `${localizedLabel(channel.label)} · ${channel.instance_id}`
+              : channel.instance_id || channel.name}
+          </p>
         </div>
 
         {channel.active ? (

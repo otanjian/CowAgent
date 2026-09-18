@@ -10,10 +10,17 @@ import type {
   MemoryPage,
   MemoryDoc,
   SchedulerTask,
+  SchedulerRun,
+  SchedulerRunDetail,
+  TaskSchedule,
+  TaskAction,
+  SchedulerInstance,
+  TaskRecipient,
   Attachment,
   SessionsPage,
   SessionSettingsState,
   HistoryPage,
+  ContextUsage,
   ModelsData,
   ModelsAction,
   KnowledgeList,
@@ -28,7 +35,7 @@ import type {
   ChannelsResponse,
   RosterSnapshot,
 } from '../types'
-import { getLang } from '../i18n'
+import { getLang, t } from '../i18n'
 import desktopContext, { ContextError } from './context'
 
 export interface ApiResult {
@@ -36,8 +43,15 @@ export interface ApiResult {
   message?: string
 }
 
-//: Best-effort document types the pasted-image helper accepts, mirroring the
-//: backend's upload allow-list.
+export interface UploadResult {
+  status: string
+  file_path: string
+  file_name: string
+  file_type: string
+  preview_url: string
+  message?: string
+}
+
 
 class ApiClient {
   private baseUrl = 'http://127.0.0.1:9876'
@@ -144,17 +158,30 @@ class ApiClient {
     // into a list, which breaks handlers expecting a string. So scope via the
     // query only, and only when the form doesn't already name an Agent.
     const scopedPath = formData.has('agent_id') ? path : this.carryAgent(path).path
-    try {
-      return await desktopContext.sendForm<T>(scopedPath, formData, (reply) => JSON.parse(reply.body || '{}') as T)
-    } catch (e) {
-      // A plain failure to reach the backend is useless in a bug report. Name the
-      // target so a "backend still booting" report is actionable.
-      if (e instanceof ContextError && e.kind === 'network') {
-        console.error(`[api] upload network failure to ${scopedPath}:`, e.message)
-        throw new Error(`无法连接到本地服务 (${scopedPath})，请确认客户端后台正在运行后重试`)
+    // A network-level failure here is almost never "the backend is down": the
+    // backend is a local child process that either answers with a JSON error or
+    // a real HTTP status. It's a transient connection reset — the WSGI thread
+    // pool is momentarily busy (an SSE stream holding threads, a concurrent
+    // request), or the socket got dropped mid-body. It is intermittent and
+    // unrelated to the file's type, which is why some uploads go through and
+    // others don't. So retry a few times with backoff before giving up.
+    const maxAttempts = 4
+    let lastErr: unknown
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 400 * attempt))
+      try {
+        return await desktopContext.sendForm<T>(scopedPath, formData, (reply) => JSON.parse(reply.body || '{}') as T)
+      } catch (e) {
+        lastErr = e
+        // Only the network-level failure is worth retrying; a real error from
+        // the backend (bad type, too large) is final.
+        if (!(e instanceof ContextError && e.kind === 'network')) throw e
       }
-      throw e
     }
+    // Keep the technical detail (the target and raw error) in the console for
+    // bug reports, but hand the user a plain, non-alarming message.
+    console.error(`[api] upload network failure to ${scopedPath}:`, lastErr)
+    throw new Error(t('upload_network_error'))
   }
 
   // ---------------------------------------------------------
@@ -253,14 +280,7 @@ class ApiClient {
   // Upload / files
   // ---------------------------------------------------------
 
-  async uploadFile(file: File, sessionId?: string): Promise<{
-    status: string
-    file_path: string
-    file_name: string
-    file_type: string
-    preview_url: string
-    message?: string
-  }> {
+  async uploadFile(file: File, sessionId?: string): Promise<UploadResult> {
     const formData = new FormData()
     // Read the file into memory (a Blob) instead of appending the File directly.
     // In Electron, `fetch` streaming a File straight from disk intermittently
@@ -479,6 +499,30 @@ class ApiClient {
 
   async clearContext(sessionId: string, agentId?: string): Promise<{ status: string; context_start_seq: number }> {
     return this.request(this.scoped(`/api/sessions/${encodeURIComponent(sessionId)}/clear_context`, agentId), {
+      method: 'POST',
+      body: JSON.stringify(agentId ? { agent_id: agentId } : {}),
+    })
+  }
+
+  async getContextUsage(sessionId: string, agentId?: string): Promise<{ status: string } & ContextUsage> {
+    return this.request(this.scoped(`/api/sessions/${encodeURIComponent(sessionId)}/context_usage`, agentId))
+  }
+
+  // Synchronous manual compaction (same logic as the /compact command). Returns
+  // the refreshed usage so the caller can redraw the chart without a refetch.
+  async compactContext(
+    sessionId: string,
+    agentId?: string,
+  ): Promise<{
+    status: string
+    ok?: boolean
+    available?: boolean
+    compacted_turns?: number
+    before?: number
+    after?: number
+    usage?: ContextUsage | null
+  }> {
+    return this.request(this.scoped(`/api/sessions/${encodeURIComponent(sessionId)}/compact_context`, agentId), {
       method: 'POST',
       body: JSON.stringify(agentId ? { agent_id: agentId } : {}),
     })
@@ -798,6 +842,55 @@ class ApiClient {
     return data.tasks
   }
 
+  // Execution history for scheduled tasks, newest first. In multi-Agent mode we
+  // send an explicit empty agent_id so the backend returns the whole team's
+  // history (mirroring the task list); single-Agent mode omits the param.
+  // Pass a taskId to narrow to one task's runs.
+  async getSchedulerRuns(taskId = '', limit = 100, offset = 0): Promise<SchedulerRun[]> {
+    const qs = new URLSearchParams()
+    if (this.activeAgentId) qs.set('agent_id', '')
+    if (taskId) qs.set('task_id', taskId)
+    if (limit) qs.set('limit', String(limit))
+    if (offset) qs.set('offset', String(offset))
+    const query = qs.toString()
+    const path = query ? `/api/scheduler/runs?${query}` : '/api/scheduler/runs'
+    const data = await this.request<{ status: string; runs: SchedulerRun[] }>(path)
+    return data.runs || []
+  }
+
+  // Delete a single execution-history record from the runs ledger. Removes only
+  // the list item; the delivered message in the session history is untouched.
+  async deleteSchedulerRun(runId: string): Promise<void> {
+    await this.request<{ status: string }>('/api/scheduler/runs/delete', {
+      method: 'POST',
+      body: JSON.stringify({ run_id: runId }),
+    })
+  }
+
+  // Runs across ALL Agents that started after `since` (epoch seconds). Powers
+  // the cross-session scheduler notification poll: a scheduled task can fire
+  // into a session (any Agent) the user isn't viewing, so this is deliberately
+  // NOT scoped to the active Agent — the notifier decides what to surface.
+  async getSchedulerRunsSince(since: number, limit = 20): Promise<SchedulerRun[]> {
+    const qs = new URLSearchParams()
+    qs.set('since', String(Math.floor(since)))
+    if (limit) qs.set('limit', String(limit))
+    const data = await this.request<{ status: string; runs: SchedulerRun[] }>(
+      `/api/scheduler/runs?${qs.toString()}`
+    )
+    return data.runs || []
+  }
+
+  // Full detail for one run: the complete delivered body recovered from the
+  // receiver's session, or null (fall back to preview). Opened on demand when a
+  // history record is clicked, so the list stays a light index.
+  async getSchedulerRunDetail(runId: string): Promise<SchedulerRunDetail | null> {
+    const data = await this.request<{ status: string; run?: SchedulerRunDetail }>(
+      `/api/scheduler/runs/detail?run_id=${encodeURIComponent(runId)}`
+    )
+    return data.run || null
+  }
+
   // Task mutations route to the owning Agent's store via its agent_id. Passing
   // an empty string (or omitting in single-Agent mode) keeps the legacy path.
   async runTask(taskId: string, agentId = ''): Promise<ApiResult> {
@@ -829,6 +922,54 @@ class ApiClient {
     return this.request('/api/scheduler/delete', {
       method: 'POST',
       body: JSON.stringify({ task_id: taskId, agent_id: agentId }),
+    })
+  }
+
+  // Create a cross-channel task for a trusted recipient. The backend derives the
+  // owning Agent from the recipient's channel instance and rejects any receiver
+  // not already in the trusted directory, so the client only names the target.
+  async createTask(payload: {
+    name: string
+    enabled: boolean
+    schedule: TaskSchedule
+    action: TaskAction
+  }): Promise<{ status: string; task?: SchedulerTask; message?: string }> {
+    return this.request('/api/scheduler/create', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  // Step 1 of the create/edit picker: channel instances a task can deliver
+  // through (web/unknown excluded). Each carries a friendly name, its bound
+  // Agent, and how many trusted recipients it has.
+  async getSchedulerInstances(): Promise<SchedulerInstance[]> {
+    const data = await this.request<{ status: string; instances: SchedulerInstance[] }>(
+      '/api/scheduler/instances'
+    )
+    return data.instances || []
+  }
+
+  // Step 2 of the picker: every trusted recipient learned from inbound messages,
+  // shared across Agents. The UI scopes them to the chosen instance client-side.
+  async getSchedulerRecipients(): Promise<TaskRecipient[]> {
+    const data = await this.request<{ status: string; recipients: TaskRecipient[] }>(
+      '/api/scheduler/recipients'
+    )
+    return data.recipients || []
+  }
+
+  // Set a channel instance's friendly display name. Goes through the shared
+  // /api/channels endpoint with the 'rename' action; does not touch credentials
+  // or the live connection, so renaming never interrupts a running channel.
+  async renameChannelInstance(
+    channel: string,
+    instanceId: string,
+    name: string
+  ): Promise<{ status: string; instance_id?: string; name?: string; message?: string }> {
+    return this.request('/api/channels', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'rename', channel, instance_id: instanceId, name }),
     })
   }
 

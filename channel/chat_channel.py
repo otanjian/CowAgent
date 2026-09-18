@@ -819,13 +819,13 @@ class ChatChannel(Channel):
                     # Determine whether it is a remote URL or a local file.
                     if url.startswith(('http://', 'https://')):
                         if media_type == 'video':
-                            media_reply = Reply(ReplyType.FILE, url)
+                            media_reply = Reply(ReplyType.VIDEO_URL, url)
                             media_reply.file_name = os.path.basename(url)
                         else:
                             media_reply = Reply(ReplyType.IMAGE_URL, url)
                     elif os.path.exists(url):
                         if media_type == 'video':
-                            media_reply = Reply(ReplyType.FILE, f"file://{url}")
+                            media_reply = Reply(ReplyType.VIDEO, f"file://{url}")
                             media_reply.file_name = os.path.basename(url)
                         else:
                             media_reply = Reply(ReplyType.IMAGE_URL, f"file://{url}")

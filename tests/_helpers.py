@@ -344,6 +344,12 @@ class WebAppHarness:
         base.update(settings or {})
         self._settings = base
 
+        # The scheduler caches one global task store (and service) resolved from
+        # whatever root was current when it was first touched. Drop them before
+        # building this harness's app, or a store pinned to an earlier test's
+        # temp root answers every task query here -- an empty list that looks
+        # like a policy failure rather than a stale cache.
+        self._reset_scheduler_globals()
         for target in (config_module, __import__("channel.web.web_channel",
                                                  fromlist=["conf"])):
             patcher = patch.object(target, "conf", self._conf)
@@ -367,6 +373,16 @@ class WebAppHarness:
         try:
             from agent.registry import set_agent_registry
             set_agent_registry(None)
+        except Exception:  # noqa: BLE001 - best-effort teardown
+            pass
+        self._reset_scheduler_globals()
+
+    @staticmethod
+    def _reset_scheduler_globals():
+        """Unpin the process-global scheduler store/service (see ``close``)."""
+        try:
+            from agent.tools.scheduler.integration import reset_scheduler_services
+            reset_scheduler_services(stop=False)
         except Exception:  # noqa: BLE001 - best-effort teardown
             pass
 
@@ -530,13 +546,57 @@ class WebAppHarness:
         return get_agent_registry().get(agent_id, require_enabled=False).workspace
 
     def scheduler_store(self, agent_id):
-        """The one ``TaskStore`` for an Agent's schedule (same path as runtime)."""
+        """An Agent-scoped view of the one global ``TaskStore``.
+
+        Scheduled tasks no longer live in per-Agent files: one store holds every
+        Agent's tasks and the owning Agent is stamped on each task, so a
+        per-Agent view is a filter (``list_tasks(agent_id=...)``) rather than a
+        separate path. Returning a bound view keeps the tests' per-Agent
+        assertions meaningful without every call site repeating the filter.
+        Use ``legacy_scheduler_store`` when the *pre-migration* per-Agent layout
+        is what is under test.
+        """
+        return self.global_scheduler_store(agent_id)
+
+    def legacy_scheduler_store(self, agent_id):
+        """The pre-migration per-Agent ``TaskStore`` (``<agent>/scheduler/tasks.json``).
+
+        The input side of the tenancy migration and of the boot-time fold into
+        the global store; runtime scheduling does not read this path any more.
+        """
         from agent.tools.scheduler.task_store import TaskStore
         from common import state_dir
         from common.runtime_identity import RuntimeIdentity
 
         identity = RuntimeIdentity(agent_id=agent_id, tenant_id=self.tenant_id)
         return TaskStore(str(state_dir.scheduler_file(identity)))
+
+    def global_scheduler_store(self, agent_id=None):
+        """The one global ``TaskStore``, optionally scoped to one Agent.
+
+        With ``agent_id`` the returned view filters ``list_tasks`` to that
+        Agent's tasks (ownership lives on the task now, not in the file path);
+        without it, the raw store sees every Agent's tasks. Built fresh from
+        ``state_dir`` rather than through ``get_task_store()`` so a store cached
+        for an earlier test's root can never leak into this one.
+        """
+        from agent.tools.scheduler.task_store import TaskStore
+        from common import state_dir
+        from common.runtime_identity import RuntimeIdentity
+
+        # Pin the tenant: in database mode ``shared_root()`` resolves through the
+        # *ambient* identity, and a test helper runs outside a request (no tenant
+        # in scope) where it would resolve the instance root instead -- a
+        # different file from the one the request-side handler reads.
+        identity = RuntimeIdentity(agent_id=agent_id, tenant_id=self.tenant_id)
+        store = TaskStore(
+            str(state_dir.shared_root(identity) / "scheduler" / "tasks.json")
+        )
+        if agent_id is None:
+            return store
+        from agent.tools.scheduler.integration import AgentScopedTaskStore
+
+        return AgentScopedTaskStore(store, agent_id)
 
     def seed_task(self, agent_id, **overrides):
         """Put a task in an Agent's schedule, with owner and scope explicit."""
@@ -547,6 +607,10 @@ class WebAppHarness:
             "id": "task-1",
             "name": "task-1",
             "enabled": True,
+            # The owning Agent is stamped on the task itself now that one store
+            # holds every Agent's schedule; ownership-by-path is gone, so a seed
+            # without this would be bucketed under the default Agent.
+            "agent_id": agent_id,
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
             "next_run_at": (now + timedelta(hours=1)).isoformat(),
