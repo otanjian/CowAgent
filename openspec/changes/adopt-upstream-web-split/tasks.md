@@ -64,6 +64,7 @@
 - [ ] 3.8 逐路径 `git add`，检查暂存内容无无关文件；运行 `git diff --check` / `git diff --cached --check`
 - [ ] 3.9 运行阶段 2 门槛：规范 §6.2 全量基础回归（含 `tests/test_sync_report.py`、`test_conversation_schema_seam`、`test_scheduler_identity_seam`、`test_startup_hook_seam`、`test_channel_signature_seam`、`test_scheduler_web_update`、`test_upstream_drift_guards`、`test_recovered_entry_acceptance`、`test_desktop_auth_flow`）与路由覆盖校验
 - [x] 3.10 处理 web 测试漂移：9 个 fork 测试文件被合并静默改指上游 `channel.web.api/core`，已逐文件改回 fork 栈（`web_channel`/`ConfigHandler`/`ChatHandler` 等）；3 个**上游新增**的前端测试模块（`test_web_console_assets.py` 11 项、`test_web_console_routing.py` 3 项、`test_web_console_update.py::test_frontend_contract`）断言的是上游拆分后的控制台，而 fork 仍服务单体 → 以显式 skip 登记为**已交代的分歧**（标注本 change 与 Phase 3 任务 4.4–4.9），理由与清单见 `evidence/17-frontend-phase3-pending.md`；未删除测试、未放宽断言
+- [x] 3.10a 处置桌面端令牌接缝（`evidence/19-desktop-token-seam.md`）：上游把每次启动的 `COW_DESKTOP_TOKEN` 经 `python-manager` → `index.ts` IPC → `preload` → 渲染进程 `client.ts`（`X-Cow-Desktop-Token`）一路暴露给渲染进程，与 fork D8「凭据只留在主进程」相反，且 fork 自有回归 `test_desktop_context_frontend.cjs` 明文禁止 → 该接缝判 `keep-fork`（5 个文件 83 行纯删除）；同文件内的上游增量（`webUtils` 运行时查找、`notify(force)`、`UploadResult` 接口、上传重试、`types.ts` 的 `tool_retrieval` 字段）保留；`getPathForFile` 作为无凭据的使能项保留，其与 fork `project_import.py`（loopback + 自有 `local_import.token`）的接线属特性移植，登记在 `evidence/18` 的增量缺口内
 - [ ] 3.11 生成候选并记录暂存树哈希（`git write-tree`），提交 merge commit `merge: sync master into rdai`，校验第一父为 `$MERGE_TARGET_SHA`、第二父为 `$MERGE_SOURCE_SHA`、树哈希一致
 
 ## 4. 前端模块化迁移（阶段 3）与基线重生成（阶段 4）
