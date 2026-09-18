@@ -23,6 +23,8 @@
 
 `/help` 会跳转到 `/help/`；`/help/index.php`、`/help/doc.php?p=...` 等迁移前页面名会重定向到对应的新地址。原独立 PHP 域名若仍有访问者，需要由部署方将其重定向到主服务的 `/help/`。
 
+迁移前的 PHP 站点源码（`*.php`、`includes/`、`lang/*.php`、`docs/manifest.php`、`tools/*.php`）**已从仓库删除**：页面结构、配置、文案与文档清单现在分别由 `templates/`、`config.json` / `content.json` / `icons.json`、`lang/*.json` 与 `docs/manifest.json` 承载，仓库不再需要 PHP 运行时。旧地址重定向由 `webhelp/site.py` 与 `channel/web/help_site.py` 处理，不依赖这些文件。反向回退到 PHP 站点需要从版本历史取回（本目录相关文件在删除前的那一次提交）。
+
 主控制台“帮助与关于”固定打开同源 `/help/`，不会受到品牌官网链接或旧独立站地址影响。帮助页及其公共资源允许匿名读取，页面不读取租户数据。
 
 ## 目录与维护
