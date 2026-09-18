@@ -29,6 +29,7 @@
 - [x] 2.9a 修正读源码文本的结构性护栏：9 处因代码迁出而失败的断言，改为读「整个 web 层」而非单个入口文件（`tests/_helpers.py::web_layer_source`、`tests/_web_layer.cjs`），避免日后模块再拆分时护栏静默失效
 - [x] 2.9b 加固两处**迁移后静默变空**的护栏：`tests/test_channel_signature_seam.py`（原读 `web_channel.__file__`，现为不含方法体的入口模块）与 `tests/test_no_resurrection_legacy_identity.py::test_legacy_auth_helpers_are_absent`（原只在入口模块内搜已退役 helper）；并扩展 `tests/test_route_registry.py` 的「无手写路由字面量」检查覆盖 fork 模块
 - [x] 2.10 提交阶段 1 迁移提交（fork 自有提交，非 merge），确认可独立回退；迁移前后对照证据见 `evidence/04-phase1-backend-migration.md` 与 `evidence/05-verification.md`
+- [x] 2.11 迁移后重跑排练（`scripts/sync-from-master.sh origin master`），与迁移前冲突清单逐项比对：45 → 46 个冲突文件，仅新增 `tests/test_qianfan_provider.py`（测试重定向的必然结果，`web_channel.py` 本身仍冲突但已从 8409 行单体内战变为 627 行 vs 177 行的可复核组合），fork 实现 686 KB / 22 个模块完全退出冲突面（见 `evidence/06-rehearsal-after-phase1.md`）
 
 ## 3. 吸收上游（阶段 2，merge commit）
 
