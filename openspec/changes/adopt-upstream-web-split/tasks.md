@@ -67,7 +67,13 @@
   - fork 专有模块（`todos.js`、`identity-admin.js`、`scenes/` 等）顺序不变，仍在上游模块之后
   - 判据：上游模块零 fork 改动
 - [ ] 4.4a 编写确定性移植器 `scripts/migration/port_frontend.py`：归一化 diff → hunk 归属 → 按上/下文再锚定并拼接 fork 原文 → 生成 `static/js/fork/**`、`static/css/fork/**`；重复运行须逐字节一致
+  - 已写出并实测（`e5e2a52d`..`HEAD` → `origin/master`）：`console.js` 362 个变更簇移植 275、待人工 87；`console.css` 79 移植 71、待人工 8；25 个产出 JS 模块 `node --check` 全部通过
+  - 定位方式为**推导而非搜索**：按 base 切片与上游模块的对齐求出落点，并要求两侧有可验证的未改动上下文。早期版本用 3 行上下文搜索，25 个模块中 9 个 `node --check` 失败（重复 `let`、括号不平衡）——静默错位，故弃用
+  - 跨模块边界的 fork 编辑**不切分**：fork 的替换文本是一次编辑，按边界切分会切断语句（实测产出 `function f() { } }`）。此类编辑登记为人工移植项
+  - 每个 splice 应用后校验模块仍可解析，破坏解析的 splice 回退并登记，绝不产出坏模块
 - [ ] 4.4b 输出无法再锚定的 ~107 JS / ~12 CSS hunk 为人工移植工作清单（含 base 与 fork 样例），不得静默丢弃
+  - 已产出 `port_frontend_worklist.json`（含 base/fork 样例与原因分类）；待办部分：人工移植这 87 + 8 项
+  - **尚未宣称正确**：产出模块尚未接入页面装配、未提交进 `channel/web/static/`，且「可解析」不等于「行为正确」——须由 4.5 浏览器验收判定
 - [ ] 4.4c 生成 `static/js/fork/manifest.json`（`{fork_path: {upstream_path, upstream_sha256}}`）并加漂移门禁：上游模块变更后必须失败，使「上游变更需人工重新应用」可检测
 - [ ] 4.4d 以 `node --check` 校验全部产出模块，并以 `tools/check-load-order.mjs` 校验 fork 实际装载顺序
 - [ ] 4.4e 处置 `static/js/doc-editor.js`、`workspace.js` 与上游 `assets/js/doc-editor.js` 的重叠：若为上游文件的 fork 版则纳入覆盖映射，而非留在 fork 专有清单
