@@ -294,12 +294,6 @@ ROUTES: Tuple[RouteEntry, ...] = (
     RouteEntry("/api/scenes", "ScenesHandler", "fork:scenes", {"GET": P("tenant", "chat.use", comment="scene catalog for the current tenant (chat consumer)")}),
     RouteEntry("/api/scenes/activate", "SceneActivateHandler", "fork:scenes", {"POST": P("tenant", "chat.use", comment="activate a scene in this tenant (state change; origin+CSRF in handler)")}),
     RouteEntry("/api/scenes/workbench/import", "SceneWorkbenchImportHandler", "fork:scenes", {"POST": P("tenant", "chat.use", comment="import workbench content into this tenant's shared root (state change; origin+CSRF in handler)")}),
-    # /apps （change port-jeecg-scene-app-engine，任务 2.6）：低代码构建产物的唯一入口。
-    # 壳与它的静态子资源都必须 public：两者都是**文档/子资源导航**，浏览器不会带
-    # X-Tenant-ID（与 /uploads/(.*)、/api/file、/chat 同一条推理）。壳本身不含任何租户数据，
-    # 它随后经宿主桥接发起的数据请求各自沿用原有策略，因此这里放开不会放宽任何数据访问。
-    RouteEntry("/apps", "AppsHandler", "fork:lowcode-apps", {"GET": P("public", comment="lowcode app shell (dist index.html; deep links /apps/<app>/<view> fall back to the shell)")}),
-    RouteEntry("/apps/(.*)", "AppsHandler", "fork:lowcode-apps", {"GET": P("public", comment="lowcode build artifacts under /apps (path confined to the dist root; missing assets answer 404, never the HTML shell)")}),
     RouteEntry("/mcp/oauth/callback", "McpOAuthCallbackHandler", "upstream", {"GET": P("public", comment="MCP oauth callback")}),
     RouteEntry("/assets/(.*)", "AssetsHandler", "upstream", {"GET": P("public", comment="static assets")}),
 )

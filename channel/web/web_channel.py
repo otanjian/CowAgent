@@ -90,9 +90,6 @@ from channel.web.external_connection_handlers import (
     ExternalConnectionTenantWriteHandler,
     ExternalConnectionTypesHandler,
 )
-# /apps 低代码构建产物与页面壳（change port-jeecg-scene-app-engine，任务 2.6）。
-# 逻辑与卫生检查留在 apps_site，handler 只做装配，便于单测不依赖请求上下文。
-from channel.web.apps_site import AppsHandler
 from common import const
 from common import i18n
 from common.log import logger
