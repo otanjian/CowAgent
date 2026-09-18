@@ -175,6 +175,7 @@ def port_module(module_rel: str, upstream_lines: List[str],
     """
     mapping = base_to_module_map(owners, module_rel, base, upstream_lines)
     sites, skipped = [], []
+    records: List[dict] = []
     for h in merge_overlapping(hunks):
         site = plan_site(mapping, h)
         if site is None:
@@ -182,8 +183,12 @@ def port_module(module_rel: str, upstream_lines: List[str],
                       if h["i2"] == h["i1"]
                       else "no verified context: upstream rewrote the surrounding code")
             skipped.append({**h, "reason": reason})
+            records.append({"i1": h["i1"], "i2": h["i2"], "j1": h["j1"],
+                            "j2": h["j2"], "status": "skipped", "reason": reason})
         else:
             sites.append(site)
+            records.append({"i1": h["i1"], "i2": h["i2"], "j1": h["j1"],
+                            "j2": h["j2"], "status": "pending", "reason": None})
 
     # Sites must not overlap in the module: two splices cannot share a line.
     ordered: List[dict] = []
@@ -191,6 +196,10 @@ def port_module(module_rel: str, upstream_lines: List[str],
         if ordered and site["start"] < ordered[-1]["end"]:
             skipped.append({"i1": -1, "i2": -1, "j1": site["j1"], "j2": site["j2"],
                             "reason": "maps onto another ported hunk in this module"})
+            for r in records:
+                if r["status"] == "pending" and r["j1"] == site["j1"]:
+                    r["status"] = "skipped"
+                    r["reason"] = "maps onto another ported hunk in this module"
         else:
             ordered.append(site)
 
@@ -205,12 +214,19 @@ def port_module(module_rel: str, upstream_lines: List[str],
         if verify and not parses(trial):
             skipped.append({"i1": -1, "i2": -1, "j1": site["j1"], "j2": site["j2"],
                             "reason": "splice left the module unparseable"})
+            for r in records:
+                if r["status"] == "pending" and r["j1"] == site["j1"]:
+                    r["status"] = "skipped"
+                    r["reason"] = "splice left the module unparseable"
             continue
         out = trial
         offset += len(inserted) - (end - start)
         kept += 1
+        for r in records:
+            if r["status"] == "pending" and r["j1"] == site["j1"]:
+                r["status"] = "applied"
 
-    return {"lines": out, "applied": kept, "skipped": skipped}
+    return {"lines": out, "applied": kept, "skipped": skipped, "records": records}
 
 
 def build_hunks(base: List[str], fork: List[str], owners: List):
@@ -265,6 +281,7 @@ def main() -> int:
                     git_ls(UPSTREAM_REF, CSS_DIR)}
     out_root = os.path.join(WORKDIR, "fork-frontend")
     worklist = {"applied": {}, "skipped": [], "unowned": []}
+    clusters: List[dict] = []
     summary = []
 
     for name, path, upstream in (
@@ -277,6 +294,13 @@ def main() -> int:
         owners = base_owner_map(base, index)
         by_module, straddling = build_hunks(base, fork, owners)
         for h in straddling:
+            clusters.append({
+                "source": name, "module": None,
+                "base_range": [h["i1"] + 1, h["i2"]],
+                "fork_range": [h["j1"] + 1, h["j2"]],
+                "status": "skipped",
+                "reason": "fork edit crosses an upstream module boundary",
+            })
             worklist["skipped"].append({
                 "source": name, "upstream_module": None,
                 "base_range": [h["i1"] + 1, h["i2"]],
@@ -296,6 +320,13 @@ def main() -> int:
                               base, fork, owners)
             applied_total += res["applied"]
             skipped_total += len(res["skipped"])
+            for r in res["records"]:
+                clusters.append({
+                    "source": name, "module": module_rel,
+                    "base_range": [r["i1"] + 1, r["i2"]],
+                    "fork_range": [r["j1"] + 1, r["j2"]],
+                    "status": r["status"], "reason": r["reason"],
+                })
             # fork module mirrors the upstream subpath under a fork/ root
             if "/static/js/" in module_rel:
                 fork_rel = module_rel.replace("/static/js/", "/static/js/fork/", 1)
@@ -325,6 +356,8 @@ def main() -> int:
 
     wl_path = os.path.join(WORKDIR, "port_frontend_worklist.json")
     json.dump(worklist, open(wl_path, "w"), indent=2)
+    cl_path = os.path.join(WORKDIR, "port_frontend_clusters.json")
+    json.dump(clusters, open(cl_path, "w"), indent=2)
 
     for name, applied, skipped, modules, clusters, unowned in summary:
         print(f"{name}: {applied} of {clusters} change clusters applied into "

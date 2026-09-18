@@ -1,0 +1,12 @@
+console.js: 5222 fork-unique lines
+  2722 present in the emitted fork modules
+  2500 on the hand-port list
+  0 UNACCOUNTED
+console.css: 1361 fork-unique lines
+  783 present in the emitted fork modules
+  578 on the hand-port list
+  0 UNACCOUNTED
+
+node --check: all modules parse
+
+PASS: 6583/6583 fork-unique lines accounted for
