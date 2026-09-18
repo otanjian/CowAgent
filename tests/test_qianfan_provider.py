@@ -4,6 +4,7 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+from tests._helpers import web_layer_source
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
@@ -379,7 +380,7 @@ class TestQianfanSurfaces(unittest.TestCase):
         self.assertIn(const.ERNIE_5_1, provider["models"])
 
     def test_web_console_allows_qianfan_config_edits(self):
-        source = self._read("channel/web/web_channel.py")
+        source = web_layer_source()
 
         self.assertIn('"qianfan_api_base"', source)
         self.assertIn('"qianfan_api_key"', source)

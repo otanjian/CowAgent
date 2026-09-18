@@ -1,6 +1,7 @@
 from pathlib import Path
 
 
+from tests._helpers import web_layer_source
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -23,7 +24,7 @@ def test_web_backend_exposes_agent_and_core_file_routes():
         assert pattern in urls, pattern
         assert urls[urls.index(pattern) + 1] == handler, pattern
 
-    source = _read("channel/web/web_channel.py")
+    source = web_layer_source()
     assert "class AgentsHandler:" in source
     assert "class AgentCoreFileHandler:" in source
     assert "scope" in source and "_list_sessions_across_agents" in source
@@ -64,7 +65,7 @@ def test_console_carries_agent_id_through_existing_feature_requests():
 def test_workspace_scoped_web_services_resolve_selected_agent():
     import re
 
-    source = _read("channel/web/web_channel.py")
+    source = web_layer_source()
     assert "def _get_workspace_root(session_id: str = None, agent_id: str = None)" in source
     assert "project_store.get_project_dir(session_id, agent_id)" in source
     assert "get_agent_registry().get(agent_id).workspace" in source
@@ -82,7 +83,7 @@ def test_session_scoped_stores_resolve_the_addressed_agent():
     """
     import re
 
-    source = _read("channel/web/web_channel.py")
+    source = web_layer_source()
     assert "def _conversation_store_for(agent_id: Optional[str])" in source
     assert "get_agent_registry().get(agent_id or None).workspace" in source
     assert "store = _conversation_store_for(agent_id)" in source

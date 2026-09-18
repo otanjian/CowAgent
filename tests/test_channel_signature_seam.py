@@ -41,8 +41,8 @@ class SignatureTests(unittest.TestCase):
             self.assertEqual(params, ["self"], f"{name} must keep upstream's signature")
 
     def test_no_database_only_keyword_survives_on_the_channel(self):
-        import channel.web.web_channel as web_channel
-        source = open(web_channel.__file__, encoding="utf-8").read()
+        from tests._helpers import web_layer_source
+        source = web_layer_source()
         for gone in ("def upload_file(self, *", "def post_message(self, *",
                      "def cancel_request(self, *", "def poll_response(self, *"):
             self.assertNotIn(gone, source)

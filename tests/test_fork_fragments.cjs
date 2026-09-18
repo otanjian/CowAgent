@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const read = p => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+const { readWebLayer } = require('./_web_layer.cjs');
 const chatHtml = read('channel/web/chat.html');
 const loader = read('channel/web/static/js/fragments.js');
 const fragment = read('channel/web/static/fragments/appearance-dialog.html');
@@ -66,7 +67,7 @@ test('the server cache-busts the fragment loader and the fragment markup', () =>
     // the old loader / fragment, which is exactly the stale-asset bug the
     // console's existing cache_bust list prevents for the other first-party
     // assets.
-    const server = read('channel/web/web_channel.py');
+    const server = readWebLayer();
     assert.match(server, /'js\/fragments\.js'/, 'fragments.js must be cache-busted');
     assert.match(server, /fragments_dir = os\.path\.join\([^\n]*'static', 'fragments'\)/,
         'static/fragments must be discovered so its markup is cache-busted');

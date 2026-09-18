@@ -96,6 +96,13 @@ class RegistryDerivationTests(unittest.TestCase):
         self.assertIn("_WEB_URLS = _derive_web_urls()", wc_src)
         self.assertNotIn("'/api/health', 'HealthHandler'", wc_src)
 
+        # The fork's handlers are core files too now that the web layer is split
+        # (change adopt-upstream-web-split), so the same literal ban applies to
+        # them: a hand-written URL table there would bypass the registry exactly
+        # as it would have in the monolith.
+        from tests._helpers import web_layer_source
+        self.assertNotIn("'/api/health', 'HealthHandler'", web_layer_source())
+
         with open(os.path.join(_REPO_ROOT, "auth", "http_policy.py"),
                   encoding="utf-8") as fh:
             policy_src = fh.read()

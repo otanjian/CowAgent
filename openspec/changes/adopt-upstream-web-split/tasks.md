@@ -4,25 +4,31 @@
 
 ## 1. 固定版本与准备（阶段 0）
 
-- [ ] 1.1 确认目标为 `rdai`、来源为 `origin/master`，记录源/目标/共同祖先 SHA 与本地额外提交范围到 `refs.txt`
-- [ ] 1.2 建立独立克隆（`git clone --no-hardlinks`），另设真实远端，`fetch origin master rdai`，复核 `origin/rdai` 是目标 HEAD 祖先
-- [ ] 1.3 从确认的目标 SHA 创建同步分支 `codex/sync-master-to-rdai-<时间戳>`，启用 `rerere`，记录上游提交清单与 `git diff --stat/--name-status`
-- [ ] 1.4 在克隆内按候选声明安装依赖（含测试依赖），确认 `.venv` 与测试依赖可用；记录环境与命令
-- [ ] 1.5 运行一次排练（`scripts/sync-from-master.sh`）作为迁移前基线，保存日志并确认排练后工作树干净、无 `MERGE_HEAD`
-- [ ] 1.6 盘点并记录「迁移前」的 route coverage、接缝测试与权限隔离测试结果，作为阶段 1 的对照基线
+- [x] 1.1 确认目标为 `rdai`、来源为 `origin/master`，记录源/目标/共同祖先 SHA 与本地额外提交范围到 `refs.txt`
+- [x] 1.2 建立独立克隆（`git clone --no-hardlinks`），另设真实远端，`fetch origin master rdai`，复核 `origin/rdai` 是目标 HEAD 祖先
+- [x] 1.3 从确认的目标 SHA 创建同步分支 `codex/sync-master-to-rdai-<时间戳>`，启用 `rerere`，记录上游提交清单与 `git diff --stat/--name-status`
+- [x] 1.4 在克隆内按候选声明安装依赖（含测试依赖），确认 `.venv` 与测试依赖可用；记录环境与命令
+- [x] 1.5 运行一次排练（`scripts/sync-from-master.sh`）作为迁移前基线，保存日志并确认排练后工作树干净、无 `MERGE_HEAD`
+- [x] 1.6 盘点并记录「迁移前」的 route coverage、接缝测试与权限隔离测试结果，作为阶段 1 的对照基线（见 `evidence/01-phase1-baseline.md`）
 
 ## 2. 后端 fork 定制迁出（阶段 1，行为保持）
 
-- [ ] 2.1 枚举 `channel/web/web_channel.py` 中 fork 专有符号清单（15 个 fork-only handler、约 186 个私有 helper、29 个 `_require_*`/`_authorize_*`），登记为迁移清单并记录每项的目标归属
-- [ ] 2.2 建立 fork 授权模块，迁入请求上下文/作用域辅助（`_db_scope`、`_current_db_identity`、`_authorized_model_codes`、`_web_runtime_identity_snapshot` 等）
-- [ ] 2.3 按 D2 三层分工逐项归位授权判定：可由路由+方法+身份表达的并入 `route_registry.py` 策略；需被寻址资源的经 `auth/object_scope.py` 切片授权；确需 handler 局部状态的留在 fork 授权模块
-- [ ] 2.4 将 15 个 fork-only handler 迁入对应 fork 模块（branding ×4 → `branding.py`；memory/personal memory ×5 → `memory_console.py`；personal channel ×2；project import ×3 → `project_import.py`；`_MemoryWriteHandler`）
-- [ ] 2.5 为确需 handler 内部授权的上游 handler 建立 fork 子类（继承上游 handler、覆写相应方法），并在 `route_registry.py` 登记 fork 子类名
-- [ ] 2.6 更新 `route_registry.py` 的 handler 解析，使其从拆分后的模块集合解析 handler 名称（含 fork 模块与上游模块），保留 `source` 登记与表序语义
-- [ ] 2.7 补齐 `channel/web/fork_routes.py`（或等价 fork 扩展模块）以经既有 `_load_fork_extensions()` 钩子调用 `register_fork_routes()`
-- [ ] 2.8 编写/更新测试，断言迁移后的授权结果与迁移前一致（同一请求同一判定），覆盖合法成员正向、跨租户拒绝、跨 owner 拒绝、administrator 治理边界
-- [ ] 2.9 运行并记录阶段 1 门槛：`scripts/check-route-coverage.py`、`tests/test_route_registry.py`、`tests/test_upstream_core_seams.py`、`tests/test_no_resurrection_legacy_identity.py`、`tests/test_identity_resource_authorization.py`、`tests/test_http_policy.py`
-- [ ] 2.10 提交阶段 1 迁移提交（fork 自有提交，非 merge），确认可独立回退；记录迁移前后对照证据
+- [x] 2.1 枚举 `channel/web/web_channel.py` 中 fork 专有符号清单并登记目标归属：实测 290 个模块级符号（79 个 handler + 134 个私有 helper + 其余管道/常量），跨文件边界引用仅 9 处（见 `evidence/02-fork-symbol-map.md`）
+- [x] 2.2 建立 fork 授权模块 `channel/web/fork/authorization.py`，迁入请求上下文/作用域辅助（`_db_scope`、`_current_db_identity`、`_authorized_model_codes`、`_web_runtime_identity_snapshot`、29 个 `_require_*`/`_authorize_*` 等），逐字复制
+- [x] 2.3 归位授权判定：实测 56/64 个上游 handler 的方法体内**交织** fork 授权与数据作用域（证据 03），原 D2「三层分工」前提不成立 → 按修订后的 D2，fork 在 `channel/web/fork/` 中平行承载实现；路由级与对象级策略层沿用不改
+- [x] 2.4 将 79 个 handler 迁入 `channel/web/fork/handlers/<view>.py`（17 个视图模块，镜像上游 `api/` 划分；含 15 个 fork-only 与 64 个 fork 平行实现），逐字复制
+- [x] 2.5 ~~为上游 handler 建立 fork 子类~~ **已废弃**：子类覆写对 56 个 handler 等价于复制方法体，收益为零；改由 D2 的平行承载 + hub 接缝达成同一目的
+- [x] 2.6 路由权威清单跨模块解析：入口模块 `web_channel.py` 保留 `_WEB_URLS` 与全部 handler 名，`check_route_coverage(vars(web_channel))` 与 `web.application(_WEB_URLS, globals())` 两处解析点均不变；`route_registry.py` 无需改动
+- [x] 2.6a 保留入口模块的既有命名空间契约：原 49 条模块级 import 逐字保留、`globals().update(_SCENE_HANDLERS)` 复原、`WebChannel`/`SERVING`/`SSEStreamState`/`WebMessage` 可经 `web_channel` 解析
+- [x] 2.6b hub 接缝：fork 模块对「被其它模块经 `web_channel.<name>` 解析/打桩的名字」在函数体内经入口模块惰性解析（实证见 `evidence/04`），使既有接缝语义与全部既有测试保持成立；**迁移提交内测试文件零改动**
+- [x] 2.6c 修正 hub 判定遗漏的打桩形式：首轮全量回归暴露 22 处行为失败，根因是 hub 判定只识别 `web_channel.<name>` / `from … import <name>`，未识别 `patch.object(web_channel, "<name>")` / `setattr(web_channel, "<name>")` 的字符串实参形式，导致打桩静默失效。已扩展判定并重生成（见 `evidence/05-verification.md`）
+- [x] 2.6d 迁移中唯一的非逐字改写：把 6 处 `os.path.dirname(__file__)` 相对资源路径改为锚定 `channel/web` 的 `_WEB_ROOT`；改写规则与理由记录在 `scripts/migration/emit_fork_web.py` 与 `scripts/migration/README.md`
+- [x] 2.7 ~~补齐 `channel/web/fork_routes.py`~~ **以等价方式满足**：fork 路由全部登记在权威清单 `route_registry.py` 内（`source=fork:*`，实测 108 条 / 221 个方法项），无需另设扩展模块；`_load_fork_extensions()` 钩子保留，供未来独立的 fork 路由模块使用
+- [x] 2.8 编写/更新测试，断言迁移后的授权结果与迁移前一致（同一请求同一判定），覆盖合法成员正向、跨租户拒绝、跨 owner 拒绝、administrator 治理边界。**采用更强判据：既有行为测试零改动地全部通过**，等价于同一套断言与打桩点在迁移后仍成立
+- [x] 2.9 运行并记录阶段 1 门槛：`scripts/check-route-coverage.py`（176 路由 / 221 方法项，OK）、`tests/test_route_registry.py`、`tests/test_upstream_core_seams.py`、`tests/test_no_resurrection_legacy_identity.py`、`tests/test_identity_resource_authorization.py`、`tests/test_http_policy.py`；并做迁移前后全量对照（Python: 33→27 失败、0 新增；Node: 54→46 失败、0 新增）。结果见 `evidence/05-verification.md`
+- [x] 2.9a 修正读源码文本的结构性护栏：9 处因代码迁出而失败的断言，改为读「整个 web 层」而非单个入口文件（`tests/_helpers.py::web_layer_source`、`tests/_web_layer.cjs`），避免日后模块再拆分时护栏静默失效
+- [x] 2.9b 加固两处**迁移后静默变空**的护栏：`tests/test_channel_signature_seam.py`（原读 `web_channel.__file__`，现为不含方法体的入口模块）与 `tests/test_no_resurrection_legacy_identity.py::test_legacy_auth_helpers_are_absent`（原只在入口模块内搜已退役 helper）；并扩展 `tests/test_route_registry.py` 的「无手写路由字面量」检查覆盖 fork 模块
+- [x] 2.10 提交阶段 1 迁移提交（fork 自有提交，非 merge），确认可独立回退；迁移前后对照证据见 `evidence/04-phase1-backend-migration.md` 与 `evidence/05-verification.md`
 
 ## 3. 吸收上游（阶段 2，merge commit）
 

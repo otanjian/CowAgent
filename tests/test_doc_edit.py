@@ -9,6 +9,7 @@ import pytest
 
 from agent.workspace.service import WorkspaceConflictError, WorkspaceService
 
+from tests._helpers import web_layer_source
 SKILL_MD = """---
 name: {name}
 description: {desc}
@@ -362,7 +363,7 @@ def test_document_editor_is_loaded_before_its_users():
     assert html.index("assets/js/doc-editor.js") < html.index("assets/js/console.js")
     # A cached copy of the old page would ask for a script that has since been
     # renamed, so the new file has to be in the cache-busting list too.
-    assert "js/doc-editor.js" in _read("channel/web/web_channel.py")
+    assert "js/doc-editor.js" in web_layer_source()
 
 
 def test_console_scripts_are_served_cache_busted():

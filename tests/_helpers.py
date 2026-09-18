@@ -14,6 +14,30 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
+def web_layer_source() -> str:
+    """Source of the console's whole web layer, as one string.
+
+    The fork's handler bodies used to sit in ``channel/web/web_channel.py``; the
+    web-split change (``openspec/changes/adopt-upstream-web-split``) moved the
+    fork's implementation into ``channel/web/fork/`` and left the entry module
+    with the URL table and the handler imports.
+
+    Structural assertions about the fork's console — "this logic exists in the
+    fork's web layer", "this retired symbol is nowhere in it" — must therefore
+    read the layer, not one file. Scoping them to the entry module would leave
+    them passing for the wrong reason: a resurrected helper inside
+    ``channel/web/fork/`` would go unnoticed, which is exactly what the
+    no-resurrection guardrails exist to catch.
+
+    Order is deterministic (entry module first, then the fork package by path),
+    so assertions that slice a single function body out of the text stay stable.
+    """
+    web = Path(__file__).resolve().parents[1] / "channel" / "web"
+    entry = web / "web_channel.py"
+    parts = [entry] + sorted(p for p in web.rglob("*.py") if p != entry)
+    return "\n\n".join(p.read_text(encoding="utf-8") for p in parts)
+
+
 def cookie_value(response, name):
     """Return the value of the cookie ``name`` from a response's Set-Cookie.
 

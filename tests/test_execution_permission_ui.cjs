@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadDictionaries } = require('./support/i18n_namespaces.cjs');
+const { readWebLayer } = require('./_web_layer.cjs');
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
@@ -56,7 +57,7 @@ test('desktop has no permission selector or adjust button', () => {
 });
 
 test('the global default permission reads as owned by roles in database mode', () => {
-    const handlers = read('channel/web/web_channel.py');
+    const handlers = readWebLayer();
     assert.match(handlers, /permission_mode_editable/);
     assert.match(handlers, /permission_mode_source/);
 

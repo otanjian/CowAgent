@@ -20,6 +20,7 @@ import re
 import sys
 import unittest
 
+from tests._helpers import web_layer_source
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
@@ -71,14 +72,20 @@ class SchemaSeamTests(unittest.TestCase):
 class WorkspaceTenancySeamTests(unittest.TestCase):
     """8.1/8.3: the fork's tenancy rule for the working root is not inline.
 
-    ``_get_workspace_root`` is upstream's function. The fork's third case (the
-    root comes from the caller's tenant, and an empty tenant scope is refused)
-    lives in ``channel/web/tenant_workspace.py`` so upstream's body is only
-    interrupted by a single call.
+    ``_get_workspace_root`` was upstream's function; the web-split change moved
+    the fork's implementation of it into ``channel/web/fork/`` (design D2), so
+    the file-level seam is now the fork package itself. What this guards is
+    unchanged: the root comes from the caller's tenant, and that derivation
+    lives in ``channel/web/tenant_workspace.py``, so the function body is
+    interrupted by a single call instead of re-implementing the rule.
+
+    Assertions read the whole web layer (``tests/_helpers.web_layer_source``)
+    rather than one file, so moving the function between fork modules cannot
+    quietly turn this into a no-op.
     """
 
     def test_web_channel_does_not_inline_tenant_workspace_logic(self):
-        source = _read("channel", "web", "web_channel.py")
+        source = web_layer_source()
         start = source.index("def _get_workspace_root(")
         end = source.index("\ndef ", start + 1)
         body = source[start:end]
@@ -153,8 +160,7 @@ class UpstreamFeaturePreservationTests(unittest.TestCase):
         self.assertIn("_import_local_file", source)
 
     def test_local_file_import_is_loopback_and_token_guarded_when_present(self):
-        path = os.path.join(ROOT, "channel", "web", "web_channel.py")
-        source = _read("channel", "web", "web_channel.py")
+        source = web_layer_source()
         if "_import_local_file" not in source:
             # Upstream has not landed the feature in this fork's tree yet. The
             # obligation is recorded above; nothing to assert on behaviour, and

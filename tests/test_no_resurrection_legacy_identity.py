@@ -7,6 +7,7 @@ import os
 import unittest
 
 
+from tests._helpers import web_layer_source
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -21,14 +22,14 @@ class NoResurrectionTests(unittest.TestCase):
 
         self.assertTrue(w._is_database_identity())
         # Thin wrappers only — no shared-password login body.
-        src = _read("channel/web/web_channel.py")
+        src = web_layer_source()
         self.assertIn("return DbAuthLoginHandler().POST()", src)
         self.assertNotIn("Wrong password", src)
         self.assertNotIn('web.setcookie("cow_auth_token"', src)
 
     def test_legacy_auth_helpers_are_absent(self):
         """Retired shared-password / HMAC helpers must not be redefined."""
-        src = _read("channel/web/web_channel.py")
+        src = web_layer_source()
         for name in (
             "def _require_auth",
             "def _get_web_password",
@@ -42,7 +43,7 @@ class NoResurrectionTests(unittest.TestCase):
             self.assertNotIn(name, src, "resurrected helper: %s" % name)
 
     def test_check_auth_ignores_hmac_and_query_token(self):
-        src = _read("channel/web/web_channel.py")
+        src = web_layer_source()
         # Definition may remain for upstream merge, but _check_auth must not call it.
         start = src.find("def _check_auth")
         if start < 0:
@@ -81,7 +82,7 @@ class NoResurrectionTests(unittest.TestCase):
         self.assertTrue(policy_db())
 
     def test_branding_writes_require_platform_admin_not_shared_password(self):
-        src = _read("channel/web/web_channel.py")
+        src = web_layer_source()
         start = src.find("def _branding_require_write")
         self.assertGreater(start, 0)
         end = src.find("\ndef ", start + 1)

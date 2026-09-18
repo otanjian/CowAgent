@@ -16,6 +16,7 @@ from unittest.mock import patch
 # real package is preferred when present: a stub left in sys.modules stands in
 # for it in every test that imports the web channel afterwards, and answers
 # only for the attributes it happens to declare.
+from tests._helpers import web_layer_source
 try:
     import web  # noqa: F401
 except ImportError:
@@ -141,7 +142,7 @@ def test_a_broken_availability_check_does_not_cost_the_agent_the_tool():
 
 
 def test_the_switch_is_exposed_by_both_consoles():
-    web_source = (ROOT / "channel/web/web_channel.py").read_text(encoding="utf-8")
+    web_source = web_layer_source()
     web_markup = (ROOT / "channel/web/chat.html").read_text(encoding="utf-8")
     web_console = (ROOT / "channel/web/static/js/console.js").read_text(encoding="utf-8")
     desktop_page = (ROOT / "desktop/src/renderer/src/pages/settings/BasicSettings.tsx").read_text(encoding="utf-8")
