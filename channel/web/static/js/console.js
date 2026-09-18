@@ -66,14 +66,8 @@ let _accountAppVisible = false;
 let _accountEntryRequest = null;
 let _pendingTenantPicker = false;
 let _accountMenuOpen = false;
-// Target of the account menu's 「帮助与关于」 entry. The product's own site
-// declares its address (webhelp/includes/config.php) and the public brand
-// snapshot delivers the resolved value; this constant is only the local
-// development fallback for the window before that read lands, and for a read
-// that fails or carries an unusable value, so the entry is never dead. It
-// mirrors the server-side default — the authoritative decision on "the site has
-// not declared an address" is the server's, not this file's.
-const ACCOUNT_ABOUT_FALLBACK_URL = 'http://localhost:8080/';
+// Help is hosted on the current backend alongside the console.
+const ACCOUNT_ABOUT_FALLBACK_URL = '/help/';
 let _accountAboutUrl = ACCOUNT_ABOUT_FALLBACK_URL;
 // The mobile account surface is a bottom sheet: below the sidebar breakpoint the
 // one account panel DOM is hosted at the document root (outside the off-canvas
@@ -1482,6 +1476,10 @@ const VIEW_META = {
     memory:   { group: 'nav_group_agent_dev', page: 'menu_memory', console: 'admin.memory' },
     config:   { group: 'nav_group_model_access', page: 'menu_config', console: 'admin.models' },
     channels: { group: 'nav_group_model_access', page: 'menu_channels', console: 'admin.channels' },
+    // 外部系统接入（change add-external-system-access, 任务 10.1）：与「消息渠道」同组并紧随
+    // 其后，classic/split 共用同一地址与页面。module 由 `LAZY_VIEW_MODULES` 在首次进入时才
+    // 注入，`chat.html` 不引用它，所以未进入本页不会加载连接管理代码。
+    'external_connections': { group: 'nav_group_model_access', page: 'menu_external_connections', console: 'admin.external_connections' },
     system_user: { group: 'nav_group_org_perm', page: 'menu_system_user', console: 'admin.roles' },
     roles:       { group: 'nav_group_org_perm', page: 'menu_roles', console: 'admin.roles' },
     org:         { group: 'nav_group_org_perm', page: 'menu_org', console: 'admin.organization' },
@@ -1537,7 +1535,61 @@ function _loadRegisteredView(viewId) {
         } else {
             _activateViewContainer(viewId);
         }
+        return;
     }
+    // A view whose module is not present yet is fetched on first navigation
+    // (external connections, task 10.1). The module registers itself through
+    // `registerConsoleView` when it evaluates, and this function is called again
+    // then; `typeof` keeps an upstream build (or an extracted-source contract
+    // test) that lacks the lazy table a silent no-op rather than a throw.
+    if (typeof _ensureLazyViewModule === 'function') _ensureLazyViewModule(viewId);
+}
+
+// View id -> module injected on first navigation. A view not listed here must
+// already be registered (or have no module at all), exactly as before.
+const LAZY_VIEW_MODULES = {
+    external_connections: 'assets/js/external-connections.js',
+};
+const _lazyViewModuleState = {};
+const _lazyViewModulePromises = {};
+
+function _loadViewModuleForId(viewId) {
+    const src = LAZY_VIEW_MODULES[viewId];
+    if (!src || _lazyViewModuleState[viewId]) return false;
+    _lazyViewModuleState[viewId] = 'loading';
+    _lazyViewModulePromises[viewId] = new Promise((resolve) => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.onload = () => resolve(true);
+        script.onerror = () => resolve(false);
+        document.head.appendChild(script);
+    }).then((ok) => {
+        _lazyViewModuleState[viewId] = ok ? 'loaded' : 'failed';
+        if (ok) {
+            // Re-enter dispatch through the registry now that the module has
+            // registered itself; only while this view is still the target.
+            if (currentView === viewId) _loadRegisteredView(viewId);
+        } else if (typeof _lazyViewModuleFailed === 'function') {
+            _lazyViewModuleFailed(viewId);
+        }
+        return ok;
+    });
+    return true;
+}
+
+function _ensureLazyViewModule(viewId) {
+    return _loadViewModuleForId(viewId);
+}
+
+// A module that could not be fetched must not leave the page on a silent blank
+// shell: render a terminal explanation into the view container itself.
+function _lazyViewModuleFailed(viewId) {
+    const container = document.getElementById('view-' + viewId);
+    if (!container) return;
+    const message = 'Failed to load assets/js/' + viewId + '.js';
+    container.innerHTML = '<div class="p-6 text-sm text-red-500" role="alert">' +
+        message.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])) +
+        '</div>';
 }
 
 // Lightweight re-render of a registered view after a language switch.
@@ -1559,7 +1611,7 @@ function _bootAreaDefaultView() {
     // so a bookmark or a pasted link to a personal page opens that page instead
     // of the area default (task 8.4). Unknown hashes fall through to the existing
     // pending-view behaviour, so nothing else changes.
-    const hashView = String(location.hash || '').replace(/^#view-/, '');
+    const hashView = _normalizeViewId(String(location.hash || '').replace(/^#view-/, '').split(/[?/]/)[0]);
     if (hashView && VIEW_META[hashView]) {
         navigateTo(hashView);
         return;
@@ -1828,9 +1880,19 @@ function legacyPersonalForward(viewId) {
     return (target && VIEW_META[target]) ? target : '';
 }
 
+// View-id aliases kept as addresses, like the retired personal pages above: the
+// design route writes 外部系统接入 as `external-connections` while the view id
+// (and `data-view`) uses an underscore like `system_user`. Normalising here, the
+// single dispatch and the hash bootstrap agree, so a pasted deep link
+// (`/chat#view-external-connections`) or an in-page click both reach the page.
+function _normalizeViewId(viewId) {
+    return viewId === 'external-connections' ? 'external_connections' : viewId;
+}
+
 function navigateTo(viewId) {
     // 旧「场景应用」占位 id 重定向到真实 scenes 视图（收藏/直链不失效）。
     if (viewId === 'scenarios') viewId = 'scenes';
+    viewId = _normalizeViewId(viewId);
     // Retired personal addresses forward to the shared page carrying the same
     // objects (task 8.1). The address is rewritten so the URL shows the page
     // that is actually displayed rather than the one it replaced; the retired
@@ -1975,7 +2037,6 @@ let _navApprovedTarget = null;
 function _viewLeaveApproved(viewId) {
     return _navApprovedTarget === viewId;
 }
-
 // Ask the current view whether it may be left. Returns true when the caller may
 // commit the target, false when the current view asked to stay (a cancelled
 // discard) or will re-enter navigation itself after the confirmation.
@@ -1994,6 +2055,16 @@ function _viewLeaveCheck(viewId) {
         && !window.__identityAdminDirtyGuard__()) {
         return false;
     }
+    // A registered view may own an in-page draft (external connections, task
+    // 10.6). It asks before the target is committed, so a cancelled discard keeps
+    // the page, route, scope and input untouched.
+    const registered = _registeredConsoleView(currentView);
+    if (registered && typeof registered.confirmLeave === 'function') {
+        if (registered.confirmLeave(viewId) !== true) return false;
+    }
+    // The leave is committed now: let the outgoing view release its own
+    // resources (timers, in-memory drafts) before the next one loads.
+    if (registered && typeof registered.onLeave === 'function') registered.onLeave();
     return true;
 }
 
@@ -7067,6 +7138,13 @@ function sendMessage() {
     const text = chatInput.value.trim();
     if (!text && pendingAttachments.length === 0) return;
 
+    // Continue the original SAP workbench query context through its host adapter.
+    if (text.startsWith('/sap ') && typeof window.continueSceneSapAnalysis === 'function') {
+        chatInput.value = '';
+        window.continueSceneSapAnalysis(text.slice(5).trim());
+        return;
+    }
+
     // `/场景`（或 `/scenes`）打开场景选择器，不发送给后端。
     if ((text === '/场景' || text === '/scenes') && typeof window.showScenePicker === 'function') {
         chatInput.value = '';
@@ -8709,6 +8787,7 @@ function newChat(optimistic = true, inherit = true) {
     // A fresh session resets the preview panel, discarding an open editor.
     if (typeof wsGuardUnsaved === 'function'
         && !wsGuardUnsaved(() => newChat(optimistic, inherit))) return;
+    if (window.SceneOriginal) window.SceneOriginal.resetChat();
 
     // Do NOT close active streams: other sessions keep streaming in the
     // background (each stream self-guards against the foreign view) and their
@@ -12771,6 +12850,15 @@ function closeMemoryViewer() {
 // Reloading or closing the tab drops an unsaved edit. All the browser allows
 // here is its own generic prompt, which still beats losing the text in silence.
 window.addEventListener('beforeunload', (e) => {
+    // A registered view may hold a draft of its own (external connections, task
+    // 10.6) — a tenant switch reloads the page, so this is the guard that covers
+    // it, along with the in-page editors below.
+    if (typeof CONSOLE_VIEW_REGISTRY !== 'undefined' && CONSOLE_VIEW_REGISTRY.some(
+            entry => entry && typeof entry.isDirty === 'function' && entry.isDirty())) {
+        e.preventDefault();
+        e.returnValue = '';
+        return;
+    }
     if (!memoryEditor.isDirty() && !skillEditor.isDirty() && !brandingDirty) return;
     e.preventDefault();
     e.returnValue = '';
@@ -19529,16 +19617,13 @@ function _externalUrlOrEmpty(value) {
 // value keeps the current target rather than clearing it, so a failed refresh
 // cannot leave the entry without a destination.
 function _applyAccountAboutUrl(value) {
-    const url = _externalUrlOrEmpty(value);
-    if (url) _accountAboutUrl = url;
+    // Only the integrated help path is accepted by this menu entry.
+    _accountAboutUrl = ACCOUNT_ABOUT_FALLBACK_URL;
 }
 
 function openAccountAbout() {
     closeAccountMenu();
-    // The target is the product's own site, not the brand-version row: the two
-    // entries stayed linked only while they shared the one sidebar anchor. The
-    // address arrives with the public brand snapshot; until it does (or when it
-    // is unusable) the local development default is used.
+    // Same-origin help works before and after the public brand request.
     if (_accountAboutUrl) window.open(_accountAboutUrl, '_blank', 'noopener');
     _setAccountPanel(null);
 }

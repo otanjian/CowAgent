@@ -320,6 +320,14 @@
                             <i class="fas fa-tower-broadcast item-icon text-xs w-5 text-center"></i>
                             <span data-i18n="menu_channels">消息渠道</span>
                         </a>
+                        <!-- 外部系统接入（change add-external-system-access, 任务 10.1）：
+                             紧随「消息渠道」，classic/split 共用。模块在首次进入视图时才按需注入
+                             （console.js 的 LAZY_VIEW_MODULES），chat.html 不引用它。 -->
+                        <a class="sidebar-item flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-all duration-150 hover:bg-white/5 hover:text-neutral-200 text-[14px]"
+                           data-view="external_connections">
+                            <i class="fas fa-plug item-icon text-xs w-5 text-center"></i>
+                            <span data-i18n="menu_external_connections">外部系统接入</span>
+                        </a>
                     </div>
                 </div>
 
@@ -1761,7 +1769,6 @@
                                 </div>
                                 <p id="scenes-empty-title" class="text-slate-500 dark:text-slate-400 font-medium" data-i18n="scenes_loading">加载场景中...</p>
                                 <div id="scenes-empty-guide" class="hidden mt-6 max-w-sm text-center">
-                                    <p class="text-sm text-slate-500 dark:text-slate-400 mb-4" data-i18n="scenes_empty">当前分类没有可用的场景。</p>
                                     <button onclick="navigateTo('chat')"
                                             class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary-500 hover:bg-primary-600
                                                    text-white text-sm font-medium cursor-pointer transition-colors duration-150">
@@ -1802,6 +1809,21 @@
                             </div>
                             <div id="channels-content" class="grid gap-4"></div>
                             <div id="channels-add-panel" class="hidden mt-4"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ====================================================== -->
+                <!-- VIEW: External System Access (task 10.1)                -->
+                <!-- 容器只是锚点：面板由 assets/js/external-connections.js   -->
+                <!-- 在首次进入本视图时渲染（按需注入，chat.html 不引用它）。 -->
+                <!-- ====================================================== -->
+                <div id="view-external_connections" class="view">
+                    <div class="flex-1 overflow-y-auto p-6">
+                        <div class="max-w-6xl mx-auto">
+                            <div class="ec-root" id="ec-root">
+                                <p class="text-sm text-slate-500 dark:text-slate-400" data-i18n="ec_loading">正在加载连接…</p>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -2795,6 +2817,7 @@
     <script defer src="assets/js/i18n/appearance.js"></script>
     <script defer src="assets/js/i18n/branding.js"></script>
     <script defer src="assets/js/i18n/core.js"></script>
+    <script defer src="assets/js/i18n/external-connections.js"></script>
     <script defer src="assets/js/i18n/external-identity.js"></script>
     <script defer src="assets/js/i18n/home-scenes.js"></script>
     <script defer src="assets/js/i18n/identity-admin.js"></script>

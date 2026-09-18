@@ -690,16 +690,40 @@ class StagedShutdownTests(_JointFixture):
         self._switch(member_personal_console=False, personal_channel_runtime=False)
 
         # 1. the surfaces report the withdrawal, with the switch that did it —
-        #    not a legacy fallback, and not "your menu is unauthorized"
+        #    not a legacy fallback, and not "your menu is unauthorized".
+        #    The five ``personal.*`` pages were retired with the personal console
+        #    (change unify-console-by-data-scope, tasks 8.1/8.8): the member now
+        #    reaches the *formal* page that carries the same objects, and that
+        #    page reports the member's own switches itself. So the withdrawal is
+        #    still reported by the switch that caused it — a page that no longer
+        #    exists answering "capability_disabled" would be evidence of nothing.
         pages = self.harness.service.context_for_tenant(
             self.alice_token, self.tenant)["console_pages"]
-        for page in ("personal.agents", "personal.channels", "personal.memory",
-                     "personal.tools", "personal.skills"):
-            self.assertIn(page, pages, page)
-            self.assertFalse(pages[page]["available"], page)
-            self.assertFalse(pages[page]["read_allowed"], page)
-            self.assertEqual(pages[page]["reason"], "capability_disabled", page)
-            self.assertFalse(pages[page]["switches"]["member_personal_console"], page)
+        for retired in ("personal.agents", "personal.channels", "personal.memory",
+                        "personal.tools", "personal.skills"):
+            self.assertNotIn(retired, pages, retired)
+
+        # 渠道实例：正式页带着成员自己的两个开关与三个分离状态（任务 8.1），
+        # 开关关掉后，它拒掉的"开通"不再被提供，而"关闭"类动作仍然可达——
+        # 撤权不得把成员锁在一个他自己关不掉的连接里。
+        channels = pages["admin.channels"]
+        self.assertEqual(channels["switches"]["member_personal_console"], False,
+                         channels)
+        self.assertEqual(channels["switches"]["personal_channel_onboarding"], True,
+                         channels)
+        self.assertFalse(channels["actions"]["create"], channels)
+        self.assertTrue(channels["actions"]["update"], channels)
+
+        # 记忆：撤权只拒绝**写入**，读到的既有事实不被隐藏——这正是本类的标题
+        # （"without losing stored facts"）在投影面的那一半。
+        memory = pages["admin.memory"]
+        self.assertTrue(memory["read_allowed"], memory)
+        self.assertFalse(memory.get("menu_denied", False), memory)
+
+        # 撤权不是"你的菜单没权限"：成员自己的面上没有一条以权限为由的拒绝。
+        for page in ("admin.channels", "admin.memory"):
+            self.assertNotEqual(pages[page].get("reason"), "no_permission", page)
+            self.assertFalse(pages[page].get("menu_denied", False), page)
 
         # 2. the objects already stored keep owner and scope
         for agent_id, binding in before.items():

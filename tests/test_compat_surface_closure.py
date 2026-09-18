@@ -22,6 +22,22 @@
    证据悄悄过期。``/api/personal/resources`` 已经完成这一步：它现在是「零出现」断言。
 
 只读观测：本文件不修改任何生产代码。
+
+**随退役一并退休的测试文件**：``tests/test_personal_console_frontend.py`` 与其
+``.cjs`` 契约在模块删除后仍去 ``require`` / ``readFileSync``
+``channel/web/static/js/personal-console.js``，只能靠"把模块放回去"才通过，所以
+在退役完成时一并删除（``unify-console-by-data-scope`` 任务 8.8 兑现的那一刻起，
+那 40 余条断言的对象就不存在了）。它们仍有效的判据一条也没丢，只是换了归属：
+
+* 模块的纯函数/视图注册/表单构造——对象已不存在，无判据可留。
+* i18n 命名空间三语完整性与合并一致——``tests/test_console_i18n_parity.cjs``
+  （"每个命名空间在它声明的每种语言里都完整"）。
+* 五个 ``personal.*`` 页面 id 退役并迁移到正式页 id——``tests/test_console_menu_mapping.py``。
+* 退役视图 id 无人注册、旧端点零正式调用方、组件本身已删除——本文件上面三条。
+* ``chat.html`` 不再挂 ``data-view="personal-*"``、账户面板不再有「我的资源」组——
+  ``tests/test_account_menu_no_personal_resources.cjs`` 与
+  ``tests/test_personal_console_browser.cjs``（后者已按退役改写，断言"退役地址只作为
+  地址转发，``personal-console.js`` 永不被拉取"）。
 """
 
 import os
@@ -160,11 +176,30 @@ class RetiredDataPlaneTests(unittest.TestCase):
             offenders, [],
             "正式前端模块仍在调用旧个人端点,兼容收口不算完成: %s" % offenders)
 
-    def test_the_retired_component_really_is_the_one_holding_them(self):
-        # 反向断言:端点确实在退役组件里,所以上面的「零调用方」不是搜索写错了。
-        text = _read(os.path.join(_JS_DIR, RETIRED_COMPONENT))
+    def test_the_retired_endpoints_still_exist_so_zero_callers_means_something(self):
+        """反向断言:端点仍在注册面上,所以上面的「零调用方」不是搜索写错了。
+
+        原来这条断言读的是退役组件 ``personal-console.js``,用来证明端点确实还
+        存在、只是没人正式调用。该组件已随个人控制台退役而删除
+        (``unify-console-by-data-scope``),所以「端点还在」这件事现在由**注册面**
+        证明:``route_registry.py`` 仍是它们的归属,``console.js`` 的
+        ``LEGACY_PERSONAL_FORWARD`` 仍负责旧地址转发。
+
+        换一个证据来源,判据不变:如果哪天端点被改名或删掉,扫描会因为找不到调用方
+        而「通过」,这条断言必须在那种情况下失败——否则 8.2 的调用观测就变成了一句
+        无法证伪的话。
+        """
+        routing = os.path.join(_REPO, "channel", "web", "route_registry.py")
+        registry_text = _read(routing)
         for endpoint in RETIRED_ENDPOINTS:
-            self.assertIn(endpoint, text)
+            # ``/api/agents?view=personal`` is a path plus a query parameter, not
+            # a pattern: what has to still exist is the path.
+            path = endpoint.split("?", 1)[0]
+            self.assertIn('"%s"' % path, registry_text,
+                          "退役端点已从注册面消失: %s" % endpoint)
+        # 退役组件本身已经不在了;上面的零调用方断言因此不是「文件被排除在外」。
+        self.assertFalse(
+            os.path.exists(os.path.join(_JS_DIR, RETIRED_COMPONENT)))
 
     def test_the_removed_resource_endpoint_has_no_caller_and_no_registration(self):
         """任务 5.5：资源面是**移除**，不是收敛到退役组件里。
@@ -197,11 +232,21 @@ class RetiredViewPlaneTests(unittest.TestCase):
             offenders, [],
             "正式模块注册了退役的 personal-* 视图(会重新打开独立个人页面): %s" % offenders)
 
-    def test_the_retired_component_registers_the_remaining_views(self):
-        text = _read(os.path.join(_JS_DIR, RETIRED_COMPONENT))
+    def test_the_retired_views_are_forwarded_by_the_console(self):
+        """反向断言:三个 ``personal-*`` 视图 id 仍有旧地址转发。
+
+        原来这条断言读退役组件 ``personal-console.js``,核对它注册的三个视图 id
+        与 8.2 证据一致。组件删除后,「这三个 id 还在清点面上」由 ``console.js``
+        的 ``LEGACY_PERSONAL_FORWARD`` 承担——那里保留的是旧**地址**到新页面的
+        转发键。判据不变:清点面上的 id 少一个,这条断言就失败,提醒同步 8.2 证据。
+        """
+        text = _read(os.path.join(_JS_DIR, "console.js"))
+        forward = re.search(r"LEGACY_PERSONAL_FORWARD\s*=\s*\{(.*?)\}",
+                            text, re.S)
+        self.assertIsNotNone(forward, "console.js 里找不到 LEGACY_PERSONAL_FORWARD")
         for view in RETIRED_VIEWS:
-            self.assertIn("id: '%s'" % view, text,
-                          "退役组件里的视图清点与 8.2 证据不一致: %s" % view)
+            self.assertIn(view, forward.group(1),
+                          "旧地址转发里少了退役视图: %s" % view)
 
     def test_the_removed_views_are_registered_by_nobody(self):
         """任务 5.5：这两页连同它们的资源面一起退役。

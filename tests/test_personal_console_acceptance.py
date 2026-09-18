@@ -24,9 +24,11 @@ can go wrong at a *different* layer:
   ``personal.channels``.
 * **直接 API 越权** — a member who cannot use the page cannot reach the same
   capability by calling a public maintenance endpoint or another owner's object.
-* **桌面/窄屏交互** — the layout behaviour is asserted in the frontend contract
-  (``test_personal_console_frontend.cjs``) and in a real browser pass
-  (``test_personal_console_browser.cjs``).
+* **桌面/窄屏交互** — the layout behaviour is asserted in a real browser pass
+  (``test_personal_console_browser.cjs``), which since the retirement
+  (``unify-console-by-data-scope`` task 8.8) drives the *shared production page*
+  and proves each retired ``#view-personal-*`` address forwards without ever
+  fetching ``personal-console.js``.
 """
 
 import json
