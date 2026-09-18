@@ -43,6 +43,13 @@
   - 硬约束：上游 `api/` 与 fork 的 handler 类 76/79 个中 **64 个同名**，同命名空间必然导致两套 URL 表之一解析到另一栈的 handler——静默错误授权，非崩溃
   - `build_app()` 不可删除：上游新增 `channel/web/core/channel.py:1507` 调用它
   - 待办：按 D8 改造入口模块，作为独立可评审提交，并跑路由覆盖与接缝测试
+- [x] 3.2a 按 D8 改造入口模块：加入上游 `URLS`（逐字提取自 `origin/master`，非手抄）与 `build_app()`、`_upstream_namespace()`（惰性 import 上游 `api/*`，按 `URLS` 引用的名字逐个取类，缺名显式报错而非回落到 fork 同名声）；fork 路径完全不受影响（`build_web_app()` 仍以 `_WEB_URLS`+本模块 `globals()` 构建，实测 352 项 URL 表正常）
+  - 惰性 import 是硬约束而非优化：分支上 `api/**` 尚不存在（随 merge 引入），且 fork 的线上路径不得在 import 期依赖上游栈
+  - **连带发现（重要）**：`tests/test_route_registry.py::test_core_files_no_longer_carry_route_literals` 按名禁用 `'/api/health', 'HealthHandler'` 字面量，而上游 `URLS` 逐字包含它——该护栏原把「整个 web 层」等同于「fork 的 web 层」，在吸收上游后会因上游的**合法**代码失败
+- [x] 3.2b 据此精确化护栏作用域并把断言改强（不放宽）：`tests/_helpers.py::web_layer_source()` 默认排除上游被逐字采纳的 `channel/web/api/**` 与 `channel/web/core/**`（新增 `include_upstream=True` / `upstream_web_layer_source()` 供确需全层的断言使用）——否则「fork 已退役共享口令登录」这类护栏会被上游**合法保留**的口令登录代码判失败
+  - 字面量禁令改为**逐模块正则**匹配任意 `'/…', 'XHandler'` 手写对（比只认一个已知字符串更强），作用域排除入口模块（其承载上游 `URLS`）与 `route_registry.py`（即清单本身），上游 `api/`、`core/` 不在 fork 的管辖范围
+  - 新增 `test_upstream_url_table_is_verbatim_and_separate`：以解析后 `(pattern, handler)` 对的 sha256 钉住上游表（重排字面量不受影响、改任一路由/名字/顺序即失败），并断言 `build_app()` 用 `URLS`、`build_web_app()` 用 `_WEB_URLS`（两栈 64 个同名 handler，混用即静默错栈）
+  - 非空验证：改一条路由、把 `build_app()` 换成 `_WEB_URLS`、在 fork 模块手写 URL 表，三处诱因分别精确失败于预期测试（见 `evidence/12-route-table-guardrails.md`）
 - [ ] 3.3 逐项处置 45 处冲突：`seam:` / `keep-fork` / `merge-docs` / `keep-deletion` 各按基线登记，逐路径记录双方意图、最终行为与采用的接缝
 - [ ] 3.4 复核并处置四个 README 的 `keep-deletion`、`PermissionSelector.tsx` 的 `keep-deletion`，以及新增的反方向 `DU`（见 4.3）——不得对文件内删除使用 `keep-deletion`
 - [ ] 3.5 逐项检查**无冲突文件**的上游增量：路由、HTTP 方法、任务字段、通知语义、凭据响应与请求传输，确认未被静默丢弃

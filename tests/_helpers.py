@@ -14,8 +14,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
-def web_layer_source() -> str:
-    """Source of the console's whole web layer, as one string.
+def web_layer_source(include_upstream: bool = False) -> str:
+    """Source of the fork's console web layer, as one string.
 
     The fork's handler bodies used to sit in ``channel/web/web_channel.py``; the
     web-split change (``openspec/changes/adopt-upstream-web-split``) moved the
@@ -29,13 +29,39 @@ def web_layer_source() -> str:
     ``channel/web/fork/`` would go unnoticed, which is exactly what the
     no-resurrection guardrails exist to catch.
 
-    Order is deterministic (entry module first, then the fork package by path),
-    so assertions that slice a single function body out of the text stay stable.
+    ``channel/web/api/**`` and ``channel/web/core/**`` are **excluded** by
+    default because they are not the fork's code: the same change adopts them
+    verbatim from upstream, which keeps its own handlers under the same names
+    (64 collide with the fork's) and its own password login. A fork guardrail
+    that read them would fail on upstream's legitimate code — "the fork retired
+    shared-password login" is true of the fork's layer and false of upstream's.
+    Pass ``include_upstream=True`` for the whole layer when that is what the
+    assertion actually means.
+
+    Order is deterministic (entry module first, then the rest by path), so
+    assertions that slice a single function body out of the text stay stable.
     """
     web = Path(__file__).resolve().parents[1] / "channel" / "web"
     entry = web / "web_channel.py"
-    parts = [entry] + sorted(p for p in web.rglob("*.py") if p != entry)
+    upstream = ("api", "core")
+    parts = [entry]
+    for path in sorted(web.rglob("*.py")):
+        if path == entry:
+            continue
+        rel = path.relative_to(web)
+        if not include_upstream and rel.parts and rel.parts[0] in upstream:
+            continue
+        parts.append(path)
     return "\n\n".join(p.read_text(encoding="utf-8") for p in parts)
+
+
+def upstream_web_layer_source() -> str:
+    """Source of the upstream modules the change adopts (``api/``, ``core/``)."""
+    web = Path(__file__).resolve().parents[1] / "channel" / "web"
+    return "\n\n".join(p.read_text(encoding="utf-8")
+                       for p in sorted(web.rglob("*.py"))
+                       if p.relative_to(web).parts
+                       and p.relative_to(web).parts[0] in ("api", "core"))
 
 
 def cookie_value(response, name):

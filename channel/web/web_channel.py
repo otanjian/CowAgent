@@ -611,6 +611,166 @@ globals().update(_SCENE_HANDLERS)
 _WEB_URLS = _derive_web_urls()
 
 
+# =============================================================================
+# Upstream's application
+# =============================================================================
+#
+# The merge (openspec/changes/adopt-upstream-web-split) brings upstream's own
+# web stack into the tree: ``channel/web/api/**`` handlers plus
+# ``channel/web/core/**`` plumbing. Upstream's ``core/channel.py`` and
+# ``app.py`` still expect a ``build_app()`` in this module, so it is provided
+# here -- that is what keeps the standalone-upstream assembly working once the
+# fork modules are absent.
+#
+# The two stacks must NOT share a namespace. Both define handlers under the same
+# names (64 of them collide: ``ChatHandler``, ``AuthLoginHandler``,
+# ``ConfigHandler``, ...) and ``web.py`` resolves the handler strings in a URL
+# table by looking them up in a mapping. Importing upstream's classes into this
+# module's ``globals()`` would let whichever import ran last win, so one of the
+# two tables would resolve to the other stack's handler -- silently serving the
+# wrong authorization path, which is far worse than failing. Upstream's classes
+# are therefore reached through a namespace built for it alone, and its modules
+# are imported lazily so the fork's live path never loads them.
+
+
+# Upstream's URL table, verbatim from its ``channel/web/web_channel.py``.
+URLS = (
+    '/', 'ChatHandler',
+    '/chat', 'RootHandler',
+    '/api/health', 'HealthHandler',
+    '/auth/login', 'AuthLoginHandler',
+    '/auth/check', 'AuthCheckHandler',
+    '/auth/logout', 'AuthLogoutHandler',
+    '/message', 'MessageHandler',
+    '/upload', 'UploadHandler',
+    '/uploads/(.*)', 'UploadsHandler',
+    '/api/file', 'FileServeHandler',
+    '/preview/(.+)', 'PreviewHandler',
+    '/api/workspace/tree', 'WorkspaceTreeHandler',
+    '/api/workspace/search', 'WorkspaceSearchHandler',
+    '/api/workspace/resolve', 'WorkspaceResolveHandler',
+    '/api/workspace/meta', 'WorkspaceMetaHandler',
+    '/api/workspace/read', 'WorkspaceReadHandler',
+    '/api/workspace/write', 'WorkspaceWriteHandler',
+    '/api/projects', 'ProjectsHandler',
+    '/api/projects/select', 'ProjectSelectHandler',
+    '/api/projects/create', 'ProjectCreateHandler',
+    '/api/projects/browse', 'ProjectBrowseHandler',
+    '/api/projects/order', 'ProjectOrderHandler',
+    '/api/projects/manage', 'ProjectManageHandler',
+    '/api/voice/asr', 'VoiceAsrHandler',
+    '/api/voice/tts', 'VoiceTtsHandler',
+    '/poll', 'PollHandler',
+    '/stream', 'StreamHandler',
+    '/cancel', 'CancelHandler',
+    '/v1/chat/completions', 'OpenAIChatCompletionsHandler',
+    '/config', 'ConfigHandler',
+    '/api/models', 'ModelsHandler',
+    '/api/channels', 'ChannelsHandler',
+    '/api/weixin/qrlogin', 'WeixinQrHandler',
+    '/api/feishu/register', 'FeishuRegisterHandler',
+    '/api/tools', 'ToolsHandler',
+    '/api/skills', 'SkillsHandler',
+    '/api/skills/content', 'SkillContentHandler',
+    '/api/memory', 'MemoryHandler',
+    '/api/memory/content', 'MemoryContentHandler',
+    '/api/knowledge/list', 'KnowledgeListHandler',
+    '/api/knowledge/read', 'KnowledgeReadHandler',
+    '/api/knowledge/graph', 'KnowledgeGraphHandler',
+    '/api/knowledge/action', 'KnowledgeActionHandler',
+    '/api/knowledge/import', 'KnowledgeImportHandler',
+    '/api/scheduler', 'SchedulerHandler',
+    '/api/scheduler/runs/detail', 'SchedulerRunDetailHandler',
+    '/api/scheduler/runs/delete', 'SchedulerRunDeleteHandler',
+    '/api/scheduler/runs', 'SchedulerRunsHandler',
+    '/api/scheduler/run', 'SchedulerRunHandler',
+    '/api/scheduler/toggle', 'SchedulerToggleHandler',
+    '/api/scheduler/update', 'SchedulerUpdateHandler',
+    '/api/scheduler/delete', 'SchedulerDeleteHandler',
+    '/api/scheduler/create', 'SchedulerCreateHandler',
+    '/api/scheduler/recipients', 'SchedulerRecipientsHandler',
+    '/api/scheduler/instances', 'SchedulerInstancesHandler',
+    '/api/agents', 'AgentsHandler',
+    '/api/agents/([^/]+)/avatar', 'AgentAvatarHandler',
+    '/api/agents/([^/]+)/files/([^/]+)', 'AgentCoreFileHandler',
+    '/api/sessions', 'SessionsHandler',
+    '/api/sessions/(.*)/generate_title', 'SessionTitleHandler',
+    '/api/prompt/optimize', 'PromptOptimizeHandler',
+    '/api/sessions/(.*)/clear_context', 'SessionClearContextHandler',
+    '/api/sessions/(.*)/context_usage', 'SessionContextUsageHandler',
+    '/api/sessions/(.*)/compact_context', 'SessionCompactContextHandler',
+    '/api/sessions/(.*)/settings', 'SessionSettingsHandler',
+    '/api/sessions/(.*)', 'SessionDetailHandler',
+    '/api/history', 'HistoryHandler',
+    '/api/messages/delete', 'MessageDeleteHandler',
+    '/api/logs/download', 'LogsDownloadHandler',
+    '/api/logs', 'LogsHandler',
+    '/api/version', 'VersionHandler',
+    '/api/update/check', 'UpdateCheckHandler',
+    '/api/update/start', 'UpdateStartHandler',
+    '/api/update/status', 'UpdateStatusHandler',
+    '/mcp/oauth/callback', 'McpOAuthCallbackHandler',
+    '/assets/(.*)', 'AssetsHandler',
+    # Views inside the single-page console. Each serves the same shell;
+    # the frontend router reads the path and opens the view it names,
+    # so a reload or a shared link lands where it says. Last in the
+    # table on purpose: web.py takes the first match, so no view name
+    # can ever shadow an API route above -- which is also why the
+    # settings view is /settings and not /config, a path the config
+    # API already owns.
+    '/(?:agents|settings|skills|memory|knowledge|channels|scheduler|logs)'
+    '(?:/[a-z]+)?/?', 'ChatHandler',
+)
+
+
+def _upstream_namespace():
+    """``{handler name: class}`` for ``URLS``, from upstream's ``api`` modules.
+
+    Built on demand rather than at import: the fork's console never runs
+    upstream's application, and importing upstream's stack eagerly would make
+    its modules a load-time dependency of the fork's.
+
+    A name in ``URLS`` that no api module provides raises here rather than
+    reaching ``web.application``: a missing handler must fail loudly, not
+    resolve to a same-named class from the other stack.
+    """
+    import importlib
+
+    modules = (
+        "agents", "auth", "channels", "chat", "config", "files", "knowledge",
+        "logs", "memory", "models", "openai_compat", "pages", "scheduler",
+        "sessions", "skills", "update", "workspace",
+    )
+    available = {}
+    for name in modules:
+        module = importlib.import_module("channel.web.api.%s" % name)
+        for attr, value in vars(module).items():
+            if attr.endswith("Handler") and isinstance(value, type):
+                available.setdefault(attr, value)
+
+    # Only the names this table uses, so an extra class in an api module cannot
+    # silently enter the namespace.
+    wanted = [entry for entry in URLS if isinstance(entry, str)
+              and entry.endswith("Handler")]
+    missing = sorted({name for name in wanted if name not in available})
+    if missing:
+        raise RuntimeError(
+            "upstream URL table names handlers no api module provides: %s"
+            % ", ".join(missing))
+    return {name: available[name] for name in set(wanted)}
+
+
+def build_app():
+    """Upstream's web.py application, over upstream's own namespace.
+
+    Kept because upstream's ``channel/web/core/channel.py`` builds it
+    (``from channel.web.web_channel import build_app``) and ``app.py`` expects a
+    ``build_app`` here. It is not the fork's live application: that is
+    ``build_web_app()`` below.
+    """
+    return web.application(URLS, _upstream_namespace(), autoreload=False)
+
+
 def build_web_app():
     """Build the real web.py console application (used by dev server/testing).
 

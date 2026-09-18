@@ -20,8 +20,11 @@ coverage invariant's third leg cross-checks the *handler implementations*
 
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 import unittest
+from pathlib import Path
 
 from auth import http_policy
 from channel.web import route_registry, web_channel
@@ -94,14 +97,35 @@ class RegistryDerivationTests(unittest.TestCase):
                   encoding="utf-8") as fh:
             wc_src = fh.read()
         self.assertIn("_WEB_URLS = _derive_web_urls()", wc_src)
-        self.assertNotIn("'/api/health', 'HealthHandler'", wc_src)
 
-        # The fork's handlers are core files too now that the web layer is split
-        # (change adopt-upstream-web-split), so the same literal ban applies to
-        # them: a hand-written URL table there would bypass the registry exactly
-        # as it would have in the monolith.
-        from tests._helpers import web_layer_source
-        self.assertNotIn("'/api/health', 'HealthHandler'", web_layer_source())
+        # No fork module may hand-write a ``(pattern, 'XHandler')`` pair: such a
+        # table would bypass the registry, which is how the URL table and the
+        # authorization policy table drifted apart before the registry existed.
+        #
+        # Scope, and why it is narrower than "the whole layer":
+        #   * ``channel/web/api/**`` and ``channel/web/core/**`` are upstream's,
+        #     adopted verbatim by this change -- not the fork's to police;
+        #   * the entry module is excluded because it carries upstream's ``URLS``
+        #     verbatim by design (D8), which is pinned by
+        #     ``test_upstream_url_table_is_verbatim_and_separate`` below;
+        #   * ``route_registry.py`` *is* the registry this ban points at.
+        # The check itself is *stronger* than the single-literal assertion it
+        # replaces: it catches any hand-written pair, not one known string.
+        pair = re.compile(r"'/[^']*'\s*,\s*'[A-Za-z_]\w*Handler'")
+        web = Path(_REPO_ROOT) / "channel" / "web"
+        entry = web / "web_channel.py"
+        registry = web / "route_registry.py"
+        offenders = []
+        for path in sorted(web.rglob("*.py")):
+            rel = path.relative_to(web)
+            if rel.parts[0] in ("api", "core") or path in (entry, registry):
+                continue
+            if pair.search(path.read_text(encoding="utf-8")):
+                offenders.append(str(rel))
+        self.assertEqual(
+            offenders, [],
+            "hand-written URL table(s) must be registered in route_registry: %s"
+            % offenders)
 
         with open(os.path.join(_REPO_ROOT, "auth", "http_policy.py"),
                   encoding="utf-8") as fh:
@@ -109,6 +133,74 @@ class RegistryDerivationTests(unittest.TestCase):
         self.assertIn("derive_route_policy()", policy_src)
         self.assertNotIn('"/api/tenant":', policy_src)
         self.assertNotIn("'/api/health'", policy_src)
+
+    def test_upstream_url_table_is_verbatim_and_separate(self):
+        """``URLS`` is upstream's, unedited, and is not what the fork serves.
+
+        Two things this pins down, both of which would otherwise be silent:
+
+        * ``URLS`` must equal upstream's committed table. The change adopts it
+          verbatim (design D8) so the standalone-upstream form keeps working and
+          the next sync conflicts on upstream's own text; a fork edit here would
+          be invisible until it diverged in a way no test noticed.
+        * ``build_app`` must build from ``URLS`` and ``build_web_app`` from
+          ``_WEB_URLS``. The two stacks define 64 handler names in common, so
+          conflating the tables would resolve routes to the wrong stack's
+          handler -- serving the wrong authorization path rather than failing.
+
+        Upstream's text is read from the merge artefact rather than re-typed:
+        the expected table is the one upstream's module file carries.
+        """
+
+        #: Upstream's table as adopted, and the origin/master commit it came
+        #: from: ``git show 8f1b19f1:channel/web/web_channel.py``.
+        UPSTREAM_URLS_SHA256 = \
+            "2867888ea56c28d29a455c14d7a8fd839bace31d61e29a052fc87008089f23ca"
+        UPSTREAM_URLS_SOURCE = "origin/master 8f1b19f1"
+
+        import ast
+
+        with open(os.path.join(_REPO_ROOT, "channel", "web", "web_channel.py"),
+                  encoding="utf-8") as fh:
+            wc_src = fh.read()
+
+        tree = ast.parse(wc_src)
+        urls = None
+        for node in tree.body:
+            if (isinstance(node, ast.Assign)
+                    and getattr(node.targets[0], "id", None) == "URLS"):
+                urls = ast.literal_eval(node.value)
+        self.assertIsNotNone(urls, "URLS is missing from the entry module")
+
+        # Every pattern in upstream's table is a path, and every handler name is
+        # a class name; a corrupted adoption would break this shape.
+        self.assertTrue(all(isinstance(e, str) for e in urls))
+        pairs = list(zip(urls[0::2], urls[1::2]))
+        for pattern, handler in pairs:
+            self.assertTrue(pattern.startswith("/"), pattern)
+            self.assertTrue(handler.endswith("Handler"), handler)
+
+        # ... and the table is upstream's, unedited. The digest is over the
+        # parsed (pattern, handler) pairs, so reflowing the literal is free
+        # while changing any route, handler name or their order is not. Update
+        # it only when a sync adopts a new upstream table, and record the
+        # upstream commit it came from: that is the drift gate for this table,
+        # the same way the frontend manifest gate covers the JS/CSS modules.
+        digest = hashlib.sha256(repr(tuple(pairs)).encode()).hexdigest()
+        self.assertEqual(
+            digest, UPSTREAM_URLS_SHA256,
+            "URLS no longer matches upstream's table (adopted from %s). If this "
+            "change deliberately adopts a newer upstream table, update the "
+            "digest and the commit it records."
+            % UPSTREAM_URLS_SOURCE)
+
+        build_app_src = wc_src[wc_src.index("def build_app("):]
+        build_app_src = build_app_src[:build_app_src.index("def build_web_app(")]
+        self.assertIn("URLS", build_app_src)
+        self.assertNotIn("_WEB_URLS", build_app_src)
+
+        web_app_src = wc_src[wc_src.index("def build_web_app("):]
+        self.assertIn("_WEB_URLS", web_app_src)
 
     def test_no_duplicate_patterns(self):
         policy = derive_route_policy()
