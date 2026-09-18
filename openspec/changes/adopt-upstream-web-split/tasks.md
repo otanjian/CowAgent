@@ -55,10 +55,14 @@
 - [ ] 3.5 逐项检查**无冲突文件**的上游增量：路由、HTTP 方法、任务字段、通知语义、凭据响应与请求传输，确认未被静默丢弃
 - [ ] 3.6 保留上游新增行为与安全约束，至少包含：上传预览按所选 Agent 限定、仅读 body 的路由的 Agent 解析、飞书群消息提及门控、QQ 文件接收与 Markdown 回复、钉钉收文件、知识库空状态、ASR 模型取配置值
 - [ ] 3.7 保留 fork 侧 `_import_local_file` 的 loopback 与每启动令牌校验，确认未因合并被移除或放宽
-- [ ] 3.8 逐路径 `git add`，检查暂存内容无无关文件；运行 `git diff --check` / `git diff --cached --check`
-- [ ] 3.9 运行阶段 2 门槛：规范 §6.2 全量基础回归（含 `tests/test_sync_report.py`、`test_conversation_schema_seam`、`test_scheduler_identity_seam`、`test_startup_hook_seam`、`test_channel_signature_seam`、`test_scheduler_web_update`、`test_upstream_drift_guards`、`test_recovered_entry_acceptance`、`test_desktop_auth_flow`）与路由覆盖校验
+- [x] 3.8 逐路径 `git add`，检查暂存内容无无关文件；运行 `git diff --check` / `git diff --cached --check` —— 通过：暂存集仅含合并相关的 342 个文件与本次证据/脚本，`git diff --cached --check` 无告警（曾报 `evidence/18` 文件尾空行的告警已修）；工作树无残留（临时软链 `desktop/node_modules` 仅供 `.cjs` 套件转译用，未暂存即删除）
+- [x] 3.9 运行阶段 2 门槛：规范 §6.2 全量基础回归（含 `tests/test_sync_report.py`、`test_conversation_schema_seam`、`test_scheduler_identity_seam`、`test_startup_hook_seam`、`test_channel_signature_seam`、`test_scheduler_web_update`、`test_upstream_drift_guards`、`test_recovered_entry_acceptance`、`test_desktop_auth_flow`）与路由覆盖校验 —— 门槛子集 **138 passed**；路由覆盖 `scripts/check-route-coverage.py` → `176 routes (68 upstream, 108 fork), 221 method entries, OK`；全量回归见 3.11 的验证段
 - [ ] 3.10 处理本轮 11 处 web 测试漂移：逐文件确认该测试对应的能力已进入目标版本，按新模块位置更新引用；不得删除测试或放宽断言后声称通过
-- [ ] 3.11 生成候选并记录暂存树哈希（`git write-tree`），提交 merge commit `merge: sync master into rdai`，校验第一父为 `$MERGE_TARGET_SHA`、第二父为 `$MERGE_SOURCE_SHA`、树哈希一致
+- [x] 3.11 生成候选并记录暂存树哈希（`git write-tree`），提交 merge commit `merge: sync master into rdai`，校验第一父为 `$MERGE_TARGET_SHA`、第二父为 `$MERGE_SOURCE_SHA`、树哈希一致
+  - 隔离克隆解析后的候选树：`07244685012289d58d5d541b4c6fff632ab4ad21`
+  - 工作区分支上的提交：`163951b5`，父为 `65596a99`（rdai 线 + web-split 工作 + 本次证据）与 `8f1b19f1`（`origin/master`），`git rev-parse HEAD^{tree}` 与候选树**逐字节一致**（先用 `git merge --no-commit` 开出 46 处冲突，再 `git read-tree -u --reset <候选树>` 收敛，因此提交树就是被验证过的那棵树）
+  - 验证（提交后、同一棵树）：python `30 unique failures / 5717 passed / 33 skipped`，基线（fork HEAD）为 32 failures → **零合并引入失败**，且合并修好了两项基线失败（`test_subagent` 的 shipped guide、知识库租户管理员用例）；node `.cjs` 套件 `47 unique failures`，与基线完全相同（0 merged-only / 0 base-only）；路由覆盖 OK；阶段 2 门槛 138 passed
+  - 全量回归在 `tests/` 上运行（`pytest tests`）；对仓库根直接 `pytest` 会同时收集 `Scene/**` 与 `scenes/**` 两套同名测试文件而报 collection error，这是仓库既有结构（两目录均为 fork 既有），与本次合并无关
 
 ## 4. 前端模块化迁移（阶段 3）与基线重生成（阶段 4）
 
@@ -102,8 +106,14 @@
 - [ ] 4.5 运行 `.cjs` 与浏览器验收：`node --test tests/test_fork_fragments.cjs`、`node --test tests/test_execution_permission_ui.cjs`，以及登录、上下文切换、流式请求、上传回读、下载预览
 - [ ] 4.6 为 D4 的上游模块集合与 fork 专有符号集合编写结构不变量校验，且可独立运行并在注入违规时失败
 - [ ] 4.7 校验不得以关键字（如 `tenant`）为判据；以 `route_registry.py` 的 `fork:*` handler 名与 fork 授权模块公开符号为判据，并验证对独立上游形态不误报
-- [ ] 4.8 扩展 `scripts/conflict-baseline.txt` 与 `scripts/sync_report.py` 语义以覆盖「上游删除 / fork 修改」方向，为 `console.js`、`console.css`、`desktop/build/notarize-dmg.sh` 登记「迁移后删除 → 指向替代模块」处置
-- [ ] 4.9 重新运行排练，将实际冲突集与基线比对，逐条登记 24 处漂移的处置；确认 `DELIBERATE_REMOVALS` 五项保持不变
+- [x] 4.8 扩展 `scripts/conflict-baseline.txt` 与 `scripts/sync_report.py` 语义以覆盖「上游删除 / fork 修改」方向，为 `console.js`、`console.css`、`desktop/build/notarize-dmg.sh` 登记「迁移后删除 → 指向替代模块」处置
+  - 基线新增 `UD` 状态（上游删除 / fork 修改）并写入三行：`notarize-dmg.sh` 为 `take-deletion`（上游在 `e3674f89` 退役该脚本并删除全部引用，fork 侧唯一改动是 usage 注释里的品牌字样），`console.js` / `console.css` 为 `keep-fork` + 「Phase 3 完成前不得按删除处置」
+  - `sync_report.py` 无需改代码：它从不对 `status` 分支（只解析四列并按键比对），故语义扩展落在基线的状态图例与行上；`take-deletion` 而非 `keep-deletion` 的写法使该行**不**触发 `DELIBERATE_REMOVALS` 交叉检查（该常量保持五项不变，task 4.9）
+  - `tests/test_sync_report.py` 9 passed
+- [x] 4.9 重新运行排练，将实际冲突集与基线比对，逐条登记 24 处漂移的处置；确认 `DELIBERATE_REMOVALS` 五项保持不变
+  - 重跑（rerere 关闭以取真实冲突集）：**46 处** = 基线 21 处全部命中、无消失 + 新增漂移 **25 处**（基线原文记的是 24，实测 25）
+  - 25 处漂移的处置：7 处 fork 测试被静默改指上游拆分模块 → `retarget`（3.10 同批处理，共 12 个文件）；`agent/admin.py` / `agent/protocol/agent_stream.py` / `agent/registry.py` / `agent/tools/scheduler/task_store.py` / `config.py` / `desktop/package.json` / `preload.ts` / `types.ts` 与 5 个 `docs/**` → `merge` / `merge-docs`；`channel/web/README.md`、`channel/web/static/vendor/README.md` → `keep-deletion`（沿用 9.7 的 README 决策并写明理由）；`console.css` / `console.js` → `UD` + `keep-fork`（Phase 3）；`notarize-dmg.sh` → `take-deletion`
+  - 基线已按新的一组 tip 重新冻结：`origin/master@8f1b19f1` × `codex/adopt-upstream-web-split@163951b5`，46 行；用真实冲突集回放，`sync_report.py` 报 46 个「已知冲突」、漂移段为空、`DELIBERATE_REMOVALS` 五项不变
 - [ ] 4.10 运行 `scripts/check_change_deltas.py`，确认无未被本 change 点名的冲突文件
 
 ## 5. database 能力验收与交付（阶段 5）
