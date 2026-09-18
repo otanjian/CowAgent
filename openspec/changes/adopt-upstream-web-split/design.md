@@ -122,6 +122,18 @@
 
 **理由**：既有 `DELIBERATE_REMOVALS` 五项（四个 README + `PermissionSelector.tsx`）是「fork 删、上游改」；`console.js`/`console.css` 是相反方向。规范 §5.2 的决策词表与 `fork-upstream-decoupling` 既有 requirement 只覆盖前者，需要显式扩展（对应本 change 的 MODIFIED delta）。`sync_report.py` 的 `DELIBERATE_REMOVALS` 不改（规范 §5.3 明确禁止为文件内删除改动它）。
 
+### D8 — 入口模块以两个独立命名空间承载并行 Web 栈，`build_app()` 必须保留
+
+**决定**：合并后的 `channel/web/web_channel.py` 同时提供两套应用工厂，各以自己的命名空间解析 handler：`URLS` + `build_app()`（上游栈，`channel/web/api/**` + `core/**`）与 `_WEB_URLS` + `build_web_app()`（fork 栈，`channel/web/fork/**`）。上游 handler 类经 `channel.web.api.*` 模块以私有命名空间字典取得，**不**以公开名导入入口模块的 `globals()`。入口模块对外的 `WebChannel` 与 `SERVING` 仍是 fork 的实现（`fork/runtime.py`）。
+
+**理由（实测约束）**：上游 `api/` 与 fork 各有 76 / 79 个 handler 类，其中 **64 个同名**（`ChatHandler`、`AuthLoginHandler`、`ConfigHandler` …）。`web.py` 按名在命名空间里解析 URL 表中的 handler 字符串，若两套同类导入同一 `globals()`，后导入者静默取胜，于是两套 URL 表中必有一套解析到另一栈的 handler——这不是崩溃，而是**静默的错误授权**，是本项目最不能接受的失效形态。故必须分命名空间。
+
+`build_app()` 不可删除：本次合并新引入的上游 `channel/web/core/channel.py` 在 1507 行调用它（`from channel.web.web_channel import build_app`）。删除会破坏规范 §5.4 要求的「独立上游形态」。同理 `WebChannel`/`SERVING` 必须仍是 fork 的：`channel_factory` 按名解析 `channel.web.web_channel.WebChannel`，且 `app.py` 等待它导入的那个 `SERVING` 事件，而只有 fork 的 `WebChannel` 会置位 fork 的事件。
+
+**四种装配状态由此覆盖**（对应规范 §5.4）：独立上游形态走 `build_app()`；完整 rdai 走 `build_web_app()` 并装载策略处理器；缺失强制授权扩展时须**失败关闭**，不得静默提供上游未加固的 handler；仅缺可选 UI 扩展时 `build_web_app()` 仍可组装。
+
+**证据与代价**：见 `evidence/11-entry-module-composition.md`。该解析改动运行时装配而非仅内容，故须作为独立可评审提交落地，并配套跑路由覆盖校验与 `test_route_registry.py`、`test_upstream_core_seams.py`、`test_channel_signature_seam.py`、`test_http_policy.py` 及 §6.2 全量回归。
+
 ## Risks / Trade-offs
 
 - [迁移期间行为漂移（授权判定在移动中语义改变）] → 迁移提交必须保持既有接缝测试与权限隔离测试通过（`test_identity_resource_authorization.py`、`test_http_policy.py`、`test_route_registry.py`、`test_upstream_core_seams.py`），并以「迁移前后同一请求的授权结果一致」为验收，而非仅「测试仍绿」。

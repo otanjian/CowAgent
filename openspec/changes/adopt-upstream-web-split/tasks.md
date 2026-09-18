@@ -34,7 +34,15 @@
 ## 3. 吸收上游（阶段 2，merge commit）
 
 - [ ] 3.1 检查阶段 1 证据齐备后，以固定 `$MERGE_SOURCE_SHA` 执行 `git merge --no-ff --no-commit`；记录冲突清单与 `git ls-files -u`
+  - 已执行（`evidence/10-merge-dispositions.md`）：隔离克隆 `/tmp/merge-20260919-020204/repo`，源 `8f1b19f1`、目标 `b5c5090f`（是 HEAD 祖先）、共同祖先 `e5e2a52d`、分支 `c47aa3c8`
+  - 冲突 46 处，与阶段 1 后排练一致；`conflict-baseline.txt` 的 21 行全部命中、无一消失
+  - 已解决 9 处：`.gitignore`（keep-fork，上游 `.obsidian/` 规则置于 fork 段落 banner 之上——banner 自述要求保持最后）、四个 README `keep-deletion`、`PermissionSelector.tsx` `keep-deletion`、以及前端三件（`console.js`/`console.css`/`chat.html`）作为一个整体延后（keep-fork，见 4.4h）
+  - 余 37 处已分类登记（A 文档 8、B 后端接缝 7、C 漂移 19 含 11 个测试文件）
 - [ ] 3.2 引入上游 `channel/web/api/**` 与 `channel/web/core/**`，确认 `web_channel.py` 收敛为 URL 表 + `build_app()`，且不含业务 handler 实现
+  - 已定解析方案（design D8、`evidence/11-entry-module-composition.md`）：入口模块须以**两个独立命名空间**同时提供上游 `URLS`+`build_app()` 与 fork `_WEB_URLS`+`build_web_app()`；上游 handler 类不得以公开名进入入口模块 `globals()`
+  - 硬约束：上游 `api/` 与 fork 的 handler 类 76/79 个中 **64 个同名**，同命名空间必然导致两套 URL 表之一解析到另一栈的 handler——静默错误授权，非崩溃
+  - `build_app()` 不可删除：上游新增 `channel/web/core/channel.py:1507` 调用它
+  - 待办：按 D8 改造入口模块，作为独立可评审提交，并跑路由覆盖与接缝测试
 - [ ] 3.3 逐项处置 45 处冲突：`seam:` / `keep-fork` / `merge-docs` / `keep-deletion` 各按基线登记，逐路径记录双方意图、最终行为与采用的接缝
 - [ ] 3.4 复核并处置四个 README 的 `keep-deletion`、`PermissionSelector.tsx` 的 `keep-deletion`，以及新增的反方向 `DU`（见 4.3）——不得对文件内删除使用 `keep-deletion`
 - [ ] 3.5 逐项检查**无冲突文件**的上游增量：路由、HTTP 方法、任务字段、通知语义、凭据响应与请求传输，确认未被静默丢弃
