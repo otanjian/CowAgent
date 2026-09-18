@@ -51,6 +51,12 @@
   - 新增 `test_upstream_url_table_is_verbatim_and_separate`：以解析后 `(pattern, handler)` 对的 sha256 钉住上游表（重排字面量不受影响、改任一路由/名字/顺序即失败），并断言 `build_app()` 用 `URLS`、`build_web_app()` 用 `_WEB_URLS`（两栈 64 个同名 handler，混用即静默错栈）
   - 非空验证：改一条路由、把 `build_app()` 换成 `_WEB_URLS`、在 fork 模块手写 URL 表，三处诱因分别精确失败于预期测试（见 `evidence/12-route-table-guardrails.md`）
 - [ ] 3.3 逐项处置 45 处冲突：`seam:` / `keep-fork` / `merge-docs` / `keep-deletion` 各按基线登记，逐路径记录双方意图、最终行为与采用的接缝
+  - 首轮（在当前 HEAD `e9b9714e` 上重开合并，源 `8f1b19f1`、共同祖先 `e5e2a52d`）：实测 **46** 个冲突 = 基线 21 个全部命中 + 新增漂移 25 个；已处置 **30**，剩 **16**（见 `evidence/13-phase2-merge-dispositions.md`）
+  - 已处置的要点：7 个 `DU` 全部 `keep-deletion`（含新增的 `channel/web/README.md`——它逐字描述**上游的** `web_channel.py`，本仓库入口按 D8 同时承载两套表，照抄会描述一个不存在的文件）；`notarize-dmg.sh` 取上游删除（上游已删掉**全部**引用，fork 侧仅注释里的品牌示例名，留下即孤儿脚本）；`console.js`/`console.css`/`chat.html` 按 4.4h 作**一个 keep-fork 单元**整体后置
+  - 4 个 `UU` 是「上游内容 + fork 品牌」的**并集**而非二选一：`preload.ts`（上游 `webUtils` 运行时查找 + fork 独有的 `broker-protocol` 类型导入都在）、`types.ts`、`config.py`、`agent_stream.py`
+  - `channel/channel_instances.py` 逐 hunk 处置：上游 `_CHANNEL_TYPE_LABELS` **必须采纳**（被合并带入的 `default_instance_name` 实际使用，且该文件 D4b 分区注释预先声明了它归属上游区），而上游从 `config.json` 自动播种通道的循环 **keep-fork 删除**（数据库身份模式下会启动无 roster/租户登记的通道）
+  - `app.py` 启动顺序按 fork 函数自身 docstring 定序：上游 `_migrate_conversations()`（折成一份加 `agent_id`/复合键）在前，fork `_migrate_conversation_tenancy()`（在该 composed schema 上补 `owner`/`tenant_id`）在后
+- [ ] 3.3a 处置深水区 4 处（`conversation_store.py` 16 hunk、`agent/admin.py`、`scheduler/integration.py`、`api/client.ts`）：均需读双侧实现，`client.ts` 尤须注意取上游 `fetch` 重试实现会**重新引入 `cow_auth_token`**（与基线 seam:2.11-2.12 相悖），上游的重试洞察应移植到 fork 的 `desktopContext.sendForm` 传输上，属代码移植需单独提交
 - [ ] 3.4 复核并处置四个 README 的 `keep-deletion`、`PermissionSelector.tsx` 的 `keep-deletion`，以及新增的反方向 `DU`（见 4.3）——不得对文件内删除使用 `keep-deletion`
 - [ ] 3.5 逐项检查**无冲突文件**的上游增量：路由、HTTP 方法、任务字段、通知语义、凭据响应与请求传输，确认未被静默丢弃
 - [ ] 3.6 保留上游新增行为与安全约束，至少包含：上传预览按所选 Agent 限定、仅读 body 的路由的 Agent 解析、飞书群消息提及门控、QQ 文件接收与 Markdown 回复、钉钉收文件、知识库空状态、ASR 模型取配置值
