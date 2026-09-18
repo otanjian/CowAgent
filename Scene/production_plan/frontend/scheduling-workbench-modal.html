@@ -1,0 +1,281 @@
+<div id="scheduling-workbench-modal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+        <div class="bg-white dark:bg-[#1A1A1A] rounded-2xl border border-slate-200 dark:border-white/10 shadow-2xl w-[90vw] h-[85vh] max-w-6xl flex flex-col overflow-hidden">
+            <!-- Header -->
+            <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-white/10">
+                <div class="flex items-center gap-3">
+                    <div id="scheduling-wb-icon" class="w-10 h-10 rounded-xl flex items-center justify-center" style="background:#3b82f6">
+                        <i class="fas fa-calendar-check text-white"></i>
+                    </div>
+                    <div>
+                        <h3 id="scheduling-wb-title" class="text-lg font-bold text-slate-800 dark:text-slate-100">智能排产工作台</h3>
+                        <p id="scheduling-wb-subtitle" class="text-xs text-slate-500 dark:text-slate-400">基于有限能力约束的多工序智能排产</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button id="scheduling-wb-indicators-btn" type="button" onclick="toggleWorkbenchIndicators(this)" title="功能说明 / 排产参数"
+                            class="w-8 h-8 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 flex items-center justify-center transition-colors">
+                        <i class="fas fa-book-open text-slate-400"></i>
+                    </button>
+                    <button id="scheduling-wb-history-btn" onclick="toggleSchedulingHistory()" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center gap-1.5">
+                        <i class="fas fa-clock-rotate-left"></i>历史记录
+                    </button>
+                    <button type="button" onclick="toggleWorkbenchMaximize(this)" title="最大化 / 还原" class="w-8 h-8 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 flex items-center justify-center transition-colors">
+                        <i class="fas fa-expand text-slate-400"></i>
+                    </button>
+                    <button onclick="closeSchedulingWorkbench()" class="w-8 h-8 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 flex items-center justify-center transition-colors">
+                        <i class="fas fa-xmark text-slate-400"></i>
+                    </button>
+                </div>
+            </div>
+            <!-- Body -->
+            <div class="flex-1 flex overflow-hidden">
+                <!-- Left Panel: Function Explanation -->
+                <div class="w-80 border-r border-slate-200 dark:border-white/10 overflow-y-auto p-5">
+                    <h4 class="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-4 flex items-center gap-2">
+                        <i class="fas fa-book-open text-primary-500"></i>
+                        功能说明
+                        <button id="scheduling-wb-indicators-close" type="button" onclick="toggleWorkbenchIndicators(this)" title="关闭"
+                                class="ml-auto w-7 h-7 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 flex items-center justify-center transition-colors">
+                            <i class="fas fa-xmark text-slate-400"></i>
+                        </button>
+                    </h4>
+                    <div id="scheduling-wb-indicators" class="space-y-4">
+                        <!-- Indicators injected by JS -->
+                    </div>
+                    <div id="scheduling-wb-params-panel" class="mt-6 pt-6 border-t border-slate-200 dark:border-white/10 hidden">
+                        <h4 class="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-3 flex items-center gap-2">
+                            <i class="fas fa-sliders text-primary-500"></i>
+                            排产参数
+                        </h4>
+                        <div class="space-y-3">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">排产模式</label>
+                                <select id="scheduling-param-mode" class="w-full px-2 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-200">
+                                    <option value="forward">正向排产</option>
+                                    <option value="backward">逆向排产</option>
+                                    <option value="bom_tree">BOM树排程（融合方案）</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">优化目标</label>
+                                <select id="scheduling-param-objective" class="w-full px-2 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-200">
+                                    <option value="tardiness">最小化延期</option>
+                                    <option value="makespan">最小化总工期</option>
+                                    <option value="cost">最小化成本</option>
+                                    <option value="balanced">平衡模式</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">迭代次数</label>
+                                <input id="scheduling-param-iterations" type="number" value="500" min="100" max="5000" step="100" class="w-full px-2 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-200">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">工序转移时间(小时)</label>
+                                <input id="scheduling-param-transfer" type="number" value="5" min="0" max="24" step="0.5" class="w-full px-2 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-200">
+                                <p class="text-[10px] text-slate-400 mt-1">前道生产时间小于5小时时，流转时长取生产时间</p>
+                            </div>
+                            <div class="p-2 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
+                                <p class="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                                    <i class="fas fa-clock text-primary-400 mr-1"></i>
+                                    工作时间：08:00-12:00, 13:00-17:00（8小时）<br>
+                                    <i class="fas fa-moon text-primary-400 mr-1"></i>
+                                    18:00后属加班时间<br>
+                                    <i class="fas fa-exchange-alt text-primary-400 mr-1"></i>
+                                    换模：不同模具1工作日，同模具不同产品2小时
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Right Panel -->
+                <div class="flex-1 overflow-y-auto p-6">
+                    <!-- History Panel (toggleable) -->
+                    <div id="scheduling-wb-history-panel" class="hidden mb-6">
+                        <div class="flex items-center justify-between mb-3">
+                            <h4 class="text-sm font-semibold text-slate-700 dark:text-slate-200">历史排产记录</h4>
+                            <button onclick="toggleSchedulingHistory()" class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                                <i class="fas fa-arrow-left"></i> 返回
+                            </button>
+                        </div>
+                        <div id="scheduling-wb-history-list" class="space-y-2">
+                            <!-- History items injected by JS -->
+                        </div>
+                    </div>
+                    <!-- Main Content -->
+                    <div id="scheduling-wb-main-content">
+                        <!-- Data Source Tabs -->
+                        <div class="flex items-center gap-2 mb-4">
+                            <button id="scheduling-source-manual" onclick="switchSchedulingDataSource('manual')" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-primary-500 text-white transition-colors flex items-center gap-1.5">
+                                <i class="fas fa-keyboard"></i>手动录入
+                            </button>
+                            <button id="scheduling-source-file" onclick="switchSchedulingDataSource('file')" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center gap-1.5">
+                                <i class="fas fa-file-excel"></i>文件导入
+                            </button>
+                            <button id="scheduling-source-erp" onclick="switchSchedulingDataSource('erp')" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center gap-1.5">
+                                <i class="fas fa-server"></i>ERP同步
+                            </button>
+                            <div id="scheduling-wb-demo-links" class="ml-auto flex items-center gap-2"></div>
+                        </div>
+                        <!-- Manual Entry Form -->
+                        <div id="scheduling-wb-form-area">
+                            <div id="scheduling-wb-form" class="space-y-3">
+                                <!-- Form injected by JS -->
+                            </div>
+                            <div class="mt-4 flex items-center justify-end gap-2">
+                                <button onclick="addSchedulingOrderRow()" class="px-4 py-2 rounded-lg text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/10 transition-colors flex items-center gap-2">
+                                    <i class="fas fa-plus"></i>添加工单
+                                </button>
+                                <button onclick="executeScheduling()" class="px-5 py-2 rounded-lg text-sm bg-primary-500 hover:bg-primary-600 text-white font-medium transition-colors flex items-center gap-2">
+                                    <i class="fas fa-wand-magic-sparkles"></i>执行排产
+                                </button>
+                            </div>
+                        </div>
+                        <!-- File Import Area -->
+                        <div id="scheduling-wb-file-area" class="hidden">
+                            <!-- Template Download -->
+                            <div class="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <i class="fas fa-circle-info text-blue-500"></i>
+                                    <span class="text-xs text-blue-700 dark:text-blue-300">首次使用？请先下载导入模板，了解所需字段格式</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <button onclick="downloadSchedulingTemplate()" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-500 hover:bg-blue-600 text-white transition-colors flex items-center gap-1.5 cursor-pointer">
+                                        <i class="fas fa-download"></i>下载模板
+                                    </button>
+                                    <button onclick="downloadSchedulingTestData()" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors flex items-center gap-1.5 cursor-pointer">
+                                        <i class="fas fa-vial"></i>测试数据
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl p-8 text-center hover:border-primary-400 dark:hover:border-primary-500 transition-colors cursor-pointer" id="scheduling-drop-zone">
+                                <div class="w-14 h-14 rounded-2xl bg-slate-50 dark:bg-slate-800 flex items-center justify-center mx-auto mb-3">
+                                    <i class="fas fa-cloud-arrow-up text-slate-400 text-xl"></i>
+                                </div>
+                                <p class="text-sm text-slate-600 dark:text-slate-300 mb-1">拖拽 Excel/CSV 文件到此处</p>
+                                <p class="text-xs text-slate-400 dark:text-slate-500">或 <span class="text-primary-500">点击选择文件</span></p>
+                                <input type="file" id="scheduling-file-input" accept=".xlsx,.xls,.csv" class="hidden">
+                            </div>
+                            <div id="scheduling-file-info" class="hidden mt-3 flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
+                                <i class="fas fa-file-excel text-emerald-500"></i>
+                                <div class="flex-1 min-w-0">
+                                    <p id="scheduling-file-name" class="text-sm text-slate-700 dark:text-slate-200 truncate"></p>
+                                    <p id="scheduling-file-size" class="text-xs text-slate-400"></p>
+                                </div>
+                                <button onclick="clearSchedulingFile()" class="text-slate-400 hover:text-red-500 transition-colors">
+                                    <i class="fas fa-trash-can"></i>
+                                </button>
+                            </div>
+                            <div id="scheduling-file-mapping" class="hidden mt-4">
+                                <h5 class="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-2">字段映射</h5>
+                                <div id="scheduling-file-mapping-list" class="space-y-2 max-h-48 overflow-y-auto"></div>
+                            </div>
+                            <div id="scheduling-file-preview" class="hidden mt-4">
+                                <h5 class="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-2">数据预览</h5>
+                                <div class="overflow-x-auto rounded-lg border border-slate-200 dark:border-white/10 max-h-48">
+                                    <table class="w-full text-xs">
+                                        <thead class="bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 sticky top-0">
+                                            <tr id="scheduling-preview-head"></tr>
+                                        </thead>
+                                        <tbody id="scheduling-preview-body" class="text-slate-700 dark:text-slate-200"></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div id="scheduling-file-actions" class="hidden mt-4 flex items-center justify-end gap-2">
+                                <button onclick="clearSchedulingFile()" class="px-4 py-2 rounded-lg text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/10 transition-colors">清除</button>
+                                <button onclick="executeSchedulingFromFile()" class="px-5 py-2 rounded-lg text-sm bg-primary-500 hover:bg-primary-600 text-white font-medium transition-colors flex items-center gap-2">
+                                    <i class="fas fa-wand-magic-sparkles"></i>执行排产
+                                </button>
+                            </div>
+                        </div>
+                        <!-- ERP Area -->
+                        <div id="scheduling-wb-erp-area" class="hidden">
+                            <div id="scheduling-erp-panel" class="mb-6 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-white/10">
+                                <h4 class="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-3 flex items-center gap-2">
+                                    <i class="fas fa-plug text-primary-500"></i>ERP系统配置
+                                </h4>
+                                <div class="space-y-3">
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">选择ERP系统</label>
+                                        <select id="scheduling-erp-system" onchange="onSchedulingErpSystemChange()" class="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500">
+                                            <option value="">请选择ERP系统</option>
+                                            <option value="u9">用友 U9 Cloud</option>
+                                            <option value="sap">SAP S/4HANA</option>
+                                            <option value="kingdee">金蝶云星空</option>
+                                        </select>
+                                    </div>
+                                    <div id="scheduling-erp-config-fields" class="hidden space-y-3">
+                                        <div>
+                                            <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">API Base URL</label>
+                                            <input type="text" id="scheduling-erp-base-url" placeholder="https://your-erp-server.com/api" class="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500 font-mono">
+                                        </div>
+                                        <div class="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">用户名 / Client ID</label>
+                                                <input type="text" id="scheduling-erp-username" placeholder="用户名或Client ID" class="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500">
+                                            </div>
+                                            <div>
+                                                <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">密码 / Client Secret</label>
+                                                <input type="password" id="scheduling-erp-password" placeholder="密码或Secret" class="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500">
+                                            </div>
+                                        </div>
+                                        <div id="scheduling-erp-kingdee-fields" class="hidden">
+                                            <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">账套 ID (Account ID)</label>
+                                            <input type="text" id="scheduling-erp-account-id" placeholder="如：100" class="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500">
+                                        </div>
+                                        <div class="flex items-center gap-2">
+                                            <input type="checkbox" id="scheduling-erp-save-config" class="rounded border-slate-300 dark:border-slate-600 text-primary-500 focus:ring-primary-500">
+                                            <label for="scheduling-erp-save-config" class="text-xs text-slate-600 dark:text-slate-400">保存配置到本地</label>
+                                        </div>
+                                        <button onclick="testSchedulingErpConnection()" class="w-full px-4 py-2 rounded-lg text-sm border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex items-center justify-center gap-2">
+                                            <i class="fas fa-link"></i>测试连接
+                                        </button>
+                                    </div>
+                                    <button id="scheduling-erp-sync-btn" onclick="syncSchedulingErpData()" class="hidden w-full px-4 py-2 rounded-lg text-sm bg-primary-500 hover:bg-primary-600 text-white font-medium transition-colors flex items-center justify-center gap-2">
+                                        <i class="fas fa-rotate"></i>同步数据
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="scheduling-erp-preview-area" class="hidden">
+                                <div class="flex items-center justify-between mb-2">
+                                    <h5 class="text-xs font-semibold text-slate-700 dark:text-slate-200">已同步数据</h5>
+                                    <button onclick="clearSchedulingErpData()" class="text-xs text-slate-400 hover:text-red-500 transition-colors">
+                                        <i class="fas fa-trash-can"></i> 清除
+                                    </button>
+                                </div>
+                                <div id="scheduling-erp-data-preview" class="overflow-x-auto rounded-lg border border-slate-200 dark:border-white/10 max-h-48">
+                                    <!-- Preview table injected by JS -->
+                                </div>
+                                <div class="mt-4 flex items-center justify-end">
+                                    <button onclick="executeSchedulingFromErp()" class="px-5 py-2 rounded-lg text-sm bg-primary-500 hover:bg-primary-600 text-white font-medium transition-colors flex items-center gap-2">
+                                        <i class="fas fa-wand-magic-sparkles"></i>执行排产
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Result Area -->
+                        <div id="scheduling-wb-result-area" class="hidden mt-6">
+                            <div class="flex items-center justify-between mb-3">
+                                <h4 class="text-sm font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-2">
+                                    <i class="fas fa-chart-gantt text-primary-500"></i>排产结果
+                                </h4>
+                                <div class="flex items-center gap-2">
+                                    <button onclick="saveSchedulingResult()" class="px-3 py-1.5 rounded-lg text-xs bg-emerald-500 hover:bg-emerald-600 text-white font-medium transition-colors flex items-center gap-1.5">
+                                        <i class="fas fa-save"></i>保存结果
+                                    </button>
+                                    <button onclick="closeSchedulingResult()" class="px-3 py-1.5 rounded-lg text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/10 transition-colors">
+                                        <i class="fas fa-xmark"></i>关闭
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="scheduling-result-summary" class="mb-4 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg text-xs text-slate-600 dark:text-slate-300"></div>
+
+                            <!-- View Content -->
+                            <div id="scheduling-view-gantt" class="scheduling-view-content rounded-lg border border-slate-200 dark:border-white/10 overflow-hidden" style="min-height: 600px;"></div>
+
+                            <div id="scheduling-result-alerts" class="mt-4 space-y-2"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>

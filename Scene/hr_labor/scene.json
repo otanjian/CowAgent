@@ -1,0 +1,193 @@
+{
+  "id": "hr_labor",
+  "name": "劳动关系",
+  "category": "hr",
+  "description": "劳动合同、社保合规、纠纷处理",
+  "icon": "fa-scale-balanced",
+  "skill_name": "hr-labor",
+  "system_prompt": "你是一位劳动关系与劳动法专家，熟悉《劳动合同法》《社会保险法》等法规。你能够协助处理劳动合同管理、社保合规、劳动争议调解以及用工风险防控。",
+  "has_workbench": true,
+  "workbench_title": "劳动关系工作台",
+  "sub_scenes": [
+    {
+      "id": "contract_management",
+      "name": "合同管理",
+      "icon": "fa-file-contract",
+      "color": "#3b82f6",
+      "description": "管理劳动合同，防范用工风险",
+      "system_prompt": "你是一位劳动合同管理专家。请帮助用户规范劳动合同签订、续签、变更、解除流程，防范用工风险，确保合规操作。",
+      "indicators": [
+        {
+          "name": "签订管理",
+          "formula": "及时签约",
+          "meaning": "入职及时签订合同、试用期约定、合同期限选择"
+        },
+        {
+          "name": "续签评估",
+          "formula": "到期处理",
+          "meaning": "合同到期前的续签评估、终止或续签决策"
+        },
+        {
+          "name": "变更管理",
+          "formula": "协商一致",
+          "meaning": "岗位调整、薪酬变更、工作地点变更等协商"
+        },
+        {
+          "name": "解除管理",
+          "formula": "合法合规",
+          "meaning": "协商解除、过失性解除、经济性裁员等合法操作"
+        },
+        {
+          "name": "台账管理",
+          "formula": "信息完整",
+          "meaning": "合同签订情况、到期提醒、签订率统计"
+        }
+      ],
+      "required_fields": [
+        "员工姓名",
+        "合同类型",
+        "签订日期",
+        "合同期限"
+      ],
+      "optional_fields": [
+        "试用期时长",
+        "岗位名称",
+        "薪酬标准",
+        "工作地点",
+        "备注"
+      ],
+      "field_types": {
+        "合同类型": {
+          "type": "select",
+          "options": [
+            "固定期限",
+            "无固定期限",
+            "以完成一定工作任务为期限"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.hr"
+    },
+    {
+      "id": "social_compliance",
+      "name": "社保合规",
+      "icon": "fa-shield-heart",
+      "color": "#10b981",
+      "description": "确保社保缴纳合规，规避法律风险",
+      "system_prompt": "你是一位社保合规专家。请帮助用户确保社会保险和住房公积金的合规缴纳，处理社保基数调整、异地缴纳、补缴等问题。",
+      "indicators": [
+        {
+          "name": "参保管理",
+          "formula": "及时参保",
+          "meaning": "入职及时参保、险种齐全、基数合规"
+        },
+        {
+          "name": "基数核定",
+          "formula": "标准合规",
+          "meaning": "社保公积金基数的核定、调整、上下限合规"
+        },
+        {
+          "name": "异地缴纳",
+          "formula": "多地管理",
+          "meaning": "异地工作、派遣、分公司的社保缴纳处理"
+        },
+        {
+          "name": "补缴处理",
+          "formula": "历史问题",
+          "meaning": "漏缴、少缴的补缴方案、滞纳金计算"
+        },
+        {
+          "name": "待遇申领",
+          "formula": "权益保障",
+          "meaning": "医疗、生育、工伤、失业、退休待遇申领指导"
+        }
+      ],
+      "required_fields": [
+        "员工姓名",
+        "社保基数",
+        "参保地",
+        "参保险种"
+      ],
+      "optional_fields": [
+        "公积金基数",
+        "缴纳比例",
+        "补缴金额",
+        "生效日期",
+        "备注"
+      ],
+      "required_permission": "scenes.use.hr"
+    },
+    {
+      "id": "dispute_resolution",
+      "name": "纠纷处理",
+      "icon": "fa-gavel",
+      "color": "#ef4444",
+      "description": "处理劳动争议，维护双方权益",
+      "system_prompt": "你是一位劳动争议处理专家。请帮助用户处理劳动纠纷，包括协商调解、仲裁应对、诉讼准备，维护企业和员工的合法权益。",
+      "indicators": [
+        {
+          "name": "争议类型",
+          "formula": "纠纷分类",
+          "meaning": "工资、解除、工伤、社保、竞业限制等争议类型"
+        },
+        {
+          "name": "协商调解",
+          "formula": "内部化解",
+          "meaning": "内部沟通协商、工会调解、第三方调解"
+        },
+        {
+          "name": "仲裁应对",
+          "formula": "程序处理",
+          "meaning": "仲裁申请、答辩准备、证据收集、出庭应对"
+        },
+        {
+          "name": "诉讼准备",
+          "formula": "司法程序",
+          "meaning": "一审、二审的起诉、应诉、证据、代理"
+        },
+        {
+          "name": "预防机制",
+          "formula": "风险防控",
+          "meaning": "争议案例分析、制度完善、管理改进"
+        }
+      ],
+      "required_fields": [
+        "员工姓名",
+        "争议类型",
+        "争议金额",
+        "当前阶段"
+      ],
+      "optional_fields": [
+        "争议描述",
+        "证据材料",
+        "协商方案",
+        "法律依据",
+        "备注"
+      ],
+      "field_types": {
+        "争议类型": {
+          "type": "select",
+          "options": [
+            "工资争议",
+            "解除合同",
+            "工伤赔偿",
+            "社保争议",
+            "竞业限制"
+          ]
+        },
+        "当前阶段": {
+          "type": "select",
+          "options": [
+            "协商阶段",
+            "调解阶段",
+            "仲裁阶段",
+            "诉讼阶段",
+            "已结案"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.hr"
+    }
+  ],
+  "required_permission": "scenes.use.hr"
+}

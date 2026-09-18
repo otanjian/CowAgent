@@ -1,0 +1,196 @@
+{
+  "id": "hr_performance",
+  "name": "绩效考核",
+  "category": "hr",
+  "description": "KPI设计、绩效面谈、激励方案",
+  "icon": "fa-chart-bar",
+  "skill_name": "hr-performance",
+  "system_prompt": "你是一位绩效管理专家，精通KPI/OKR/BSC等绩效管理工具。你能够协助设计考核指标体系、优化绩效面谈流程、制定差异化激励方案以及处理绩效争议。",
+  "has_workbench": true,
+  "workbench_title": "绩效考核工作台",
+  "sub_scenes": [
+    {
+      "id": "kpi_design",
+      "name": "KPI设计",
+      "icon": "fa-bullseye",
+      "color": "#3b82f6",
+      "description": "设计关键绩效指标，建立考核体系",
+      "system_prompt": "你是一位KPI设计专家。请帮助用户根据岗位职责和公司战略，设计可量化的关键绩效指标，确定权重和目标值，建立科学的考核体系。",
+      "indicators": [
+        {
+          "name": "战略对齐",
+          "formula": "目标分解",
+          "meaning": "将公司战略目标分解为部门和个人KPI"
+        },
+        {
+          "name": "指标选取",
+          "formula": "关键少数",
+          "meaning": "选取最能反映岗位价值的关键指标，避免过多过杂"
+        },
+        {
+          "name": "权重设计",
+          "formula": "重要性分配",
+          "meaning": "根据指标重要性合理分配权重，突出重点"
+        },
+        {
+          "name": "目标设定",
+          "formula": "SMART原则",
+          "meaning": "具体、可衡量、可达成、相关、有时限的目标值"
+        },
+        {
+          "name": "评分标准",
+          "formula": "量化评估",
+          "meaning": "各等级的评分标准和得分计算方法"
+        }
+      ],
+      "required_fields": [
+        "岗位名称",
+        "考核周期",
+        "KPI指标",
+        "权重比例"
+      ],
+      "optional_fields": [
+        "目标值",
+        "评分标准",
+        "数据来源",
+        "考核人",
+        "备注"
+      ],
+      "field_types": {
+        "考核周期": {
+          "type": "select",
+          "options": [
+            "月度",
+            "季度",
+            "半年度",
+            "年度"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.hr"
+    },
+    {
+      "id": "performance_review",
+      "name": "绩效面谈",
+      "icon": "fa-comments",
+      "color": "#8b5cf6",
+      "description": "开展绩效面谈，反馈评估结果",
+      "system_prompt": "你是一位绩效面谈专家。请帮助用户准备绩效面谈内容，设计面谈流程，掌握反馈技巧，处理员工异议，制定改进计划。",
+      "indicators": [
+        {
+          "name": "面谈准备",
+          "formula": "数据支撑",
+          "meaning": "绩效数据整理、事实案例收集、面谈提纲准备"
+        },
+        {
+          "name": "反馈技巧",
+          "formula": "有效沟通",
+          "meaning": "正面反馈、建设性批评、倾听技巧、情绪管理"
+        },
+        {
+          "name": "结果沟通",
+          "formula": "透明公正",
+          "meaning": "评分依据说明、优势不足分析、发展建议"
+        },
+        {
+          "name": "异议处理",
+          "formula": "冲突化解",
+          "meaning": "员工对评分不满时的沟通和处理方法"
+        },
+        {
+          "name": "改进计划",
+          "formula": "PDCA",
+          "meaning": "制定绩效改进计划，明确目标和行动措施"
+        }
+      ],
+      "required_fields": [
+        "员工姓名",
+        "考核周期",
+        "绩效等级",
+        "面谈日期"
+      ],
+      "optional_fields": [
+        "考核得分",
+        "优势评价",
+        "改进建议",
+        "培训需求",
+        "备注"
+      ],
+      "field_types": {
+        "绩效等级": {
+          "type": "select",
+          "options": [
+            "优秀",
+            "良好",
+            "合格",
+            "待改进",
+            "不合格"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.hr"
+    },
+    {
+      "id": "incentive_design",
+      "name": "激励方案",
+      "icon": "fa-gift",
+      "color": "#f59e0b",
+      "description": "设计薪酬激励方案，激发员工动力",
+      "system_prompt": "你是一位薪酬激励设计专家。请帮助用户设计差异化的薪酬激励方案，包括固定薪酬、绩效奖金、长期激励、非物质激励等，激发员工积极性。",
+      "indicators": [
+        {
+          "name": "薪酬结构",
+          "formula": "固浮比例",
+          "meaning": "固定薪酬与浮动薪酬的合理比例设计"
+        },
+        {
+          "name": "绩效奖金",
+          "formula": "激励力度",
+          "meaning": "奖金池设计、分配规则、与个人和团队绩效挂钩"
+        },
+        {
+          "name": "长期激励",
+          "formula": "股权激励",
+          "meaning": "期权、限制性股票、分红权等长期激励工具"
+        },
+        {
+          "name": "非物质激励",
+          "formula": "精神奖励",
+          "meaning": "晋升机会、荣誉表彰、培训发展、工作环境"
+        },
+        {
+          "name": "成本管控",
+          "formula": "投入产出",
+          "meaning": "激励成本与业绩增长的平衡，确保可持续性"
+        }
+      ],
+      "required_fields": [
+        "方案名称",
+        "适用对象",
+        "激励类型",
+        "激励标准"
+      ],
+      "optional_fields": [
+        "预算金额",
+        "考核条件",
+        "发放周期",
+        "退出机制",
+        "备注"
+      ],
+      "field_types": {
+        "激励类型": {
+          "type": "select",
+          "options": [
+            "绩效奖金",
+            "项目奖金",
+            "年终奖金",
+            "股权激励",
+            "提成"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.hr"
+    }
+  ],
+  "required_permission": "scenes.use.hr"
+}

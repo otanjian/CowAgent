@@ -1,0 +1,253 @@
+{
+  "id": "production_plan",
+  "name": "生产计划",
+  "category": "production",
+  "description": "排产优化、产能规划、物料需求",
+  "icon": "fa-calendar-days",
+  "skill_name": "production-plan",
+  "system_prompt": "你是一位生产计划与排程专家，精通MRP/ERP系统、产能负荷分析、物料需求计划以及精益生产理念。请帮助用户优化生产排程、降低库存、提高交付准时率。",
+  "has_workbench": true,
+  "workbench_title": "生产计划工作台",
+  "sub_scenes": [
+    {
+      "id": "production_scheduling",
+      "name": "智能排产",
+      "icon": "fa-calendar-check",
+      "color": "#3b82f6",
+      "description": "基于有限能力约束的多工序智能排产，支持物料齐套分析、瓶颈识别、甘特图可视化",
+      "system_prompt": "你是一位智能生产排程专家。请帮助用户完成生产排产任务：支持多工序路线、设备资源约束、物料齐套检查、人力班组约束、换线时间、设备维护窗口等真实工厂场景。使用启发式搜索算法（禁忌搜索/模拟退火）进行优化排程。输出包含：排产摘要、甘特图HTML、排产明细表、物料需求预警、关键建议。支持常规排产、急单插单分析、瓶颈分析三种场景。",
+      "indicators": [
+        {
+          "name": "工单管理",
+          "formula": "订单数据",
+          "meaning": "工单号、产品、数量、交期、优先级、工序路线、BOM物料清单"
+        },
+        {
+          "name": "设备资源",
+          "formula": "产能约束",
+          "meaning": "设备编号、日产能、可用时段、维护计划、换线时间"
+        },
+        {
+          "name": "物料齐套",
+          "formula": "缺料分析",
+          "meaning": "库存数量、在途数量、采购周期、安全库存、齐套时间计算"
+        },
+        {
+          "name": "人力班组",
+          "formula": "人员约束",
+          "meaning": "班组人数、技能矩阵、排班计划、人力需求"
+        },
+        {
+          "name": "排产算法",
+          "formula": "启发式搜索",
+          "meaning": "优先级排序+禁忌搜索/模拟退火，支持交期优先、产能平衡、成本最优等多目标优化"
+        },
+        {
+          "name": "结果输出",
+          "formula": "甘特图+建议",
+          "meaning": "交互式HTML甘特图、排产明细、物料预警、瓶颈分析、关键建议"
+        }
+      ],
+      "required_fields": [
+        "工单号",
+        "产品名称",
+        "数量",
+        "交期",
+        "工序路线"
+      ],
+      "optional_fields": [
+        "优先级",
+        "设备需求",
+        "换线时间",
+        "BOM物料清单",
+        "班组需求",
+        "备注"
+      ],
+      "field_types": {
+        "优先级": {
+          "type": "select",
+          "options": [
+            "紧急",
+            "高",
+            "中",
+            "低"
+          ]
+        },
+        "设备需求": {
+          "type": "select",
+          "options": [
+            "注塑机",
+            "CNC",
+            "装配线",
+            "通用"
+          ]
+        },
+        "班组需求": {
+          "type": "select",
+          "options": [
+            "白班",
+            "夜班",
+            "两班倒"
+          ]
+        }
+      },
+      "import_config": {
+        "enabled": true,
+        "accept": ".xlsx,.xls,.csv",
+        "template_headers": [
+          "工单号",
+          "产品名称",
+          "数量",
+          "交期",
+          "优先级",
+          "工序路线",
+          "设备需求",
+          "BOM物料清单",
+          "班组需求",
+          "备注"
+        ],
+        "description": "上传排产数据表，支持工单数据、物料库存、设备资源三个Sheet或单独CSV文件"
+      },
+      "erp_config": {
+        "enabled": true,
+        "systems": [
+          "u9",
+          "sap",
+          "kingdee"
+        ],
+        "u9": {
+          "endpoint": "/mfg/workorder",
+          "method": "GET",
+          "params": [
+            "pageIndex",
+            "pageSize",
+            "filter",
+            "orderby"
+          ]
+        },
+        "sap": {
+          "endpoint": "/API_PRODUCTION_ORDER_2_SRV/A_ProductionOrder_2",
+          "method": "GET",
+          "params": [
+            "$filter",
+            "$top",
+            "$skip",
+            "$orderby"
+          ]
+        },
+        "kingdee": {
+          "endpoint": "/Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.View.common.kdsvc",
+          "method": "POST",
+          "form_id": "PRD_MO",
+          "params": [
+            "FieldKeys",
+            "FilterString",
+            "Limit"
+          ]
+        }
+      },
+      "demo_html": "skill://pmc-scheduler/demo/demo_report.html",
+      "demo_url": "skill://pmc-scheduler/demo/demo_gantt.html",
+      "required_permission": "scenes.use.production"
+    },
+    {
+      "id": "capacity_planning",
+      "name": "产能规划",
+      "icon": "fa-industry",
+      "color": "#f59e0b",
+      "description": "评估产能需求，规划产能扩充或调整",
+      "system_prompt": "你是一位产能规划专家。请帮助用户分析未来产能需求，评估现有产能缺口，制定产能扩充、设备投资或外协加工等方案。",
+      "indicators": [
+        {
+          "name": "需求预测",
+          "formula": "增长趋势",
+          "meaning": "基于销售预测和订单趋势的未来产能需求"
+        },
+        {
+          "name": "产能评估",
+          "formula": "现有能力",
+          "meaning": "当前设备、人员、场地的最大产能评估"
+        },
+        {
+          "name": "产能缺口",
+          "formula": "供需差异",
+          "meaning": "未来需求与现有产能的差距分析"
+        },
+        {
+          "name": "扩充方案",
+          "formula": "投资规划",
+          "meaning": "设备购置、产线扩建、人员增加等方案"
+        },
+        {
+          "name": "外协策略",
+          "formula": "资源补充",
+          "meaning": "委外加工、产能共享等外部资源利用"
+        }
+      ],
+      "required_fields": [
+        "产品名称",
+        "当前产能",
+        "预测需求",
+        "规划周期"
+      ],
+      "optional_fields": [
+        "设备状况",
+        "人员配置",
+        "场地限制",
+        "投资预算",
+        "外协资源"
+      ],
+      "required_permission": "scenes.use.production"
+    },
+    {
+      "id": "material_requirement",
+      "name": "物料需求",
+      "icon": "fa-boxes-stacked",
+      "color": "#10b981",
+      "description": "计算物料需求，优化库存管理",
+      "system_prompt": "你是一位物料需求计划（MRP）专家。请帮助用户根据生产计划计算物料需求，制定采购计划，优化库存水平，避免缺料和积压。",
+      "indicators": [
+        {
+          "name": "BOM清单",
+          "formula": "物料构成",
+          "meaning": "产品的物料清单，包括原材料、半成品、辅料"
+        },
+        {
+          "name": "需求计算",
+          "formula": "毛净需求",
+          "meaning": "根据生产计划计算物料的毛需求和净需求"
+        },
+        {
+          "name": "库存分析",
+          "formula": "现有库存",
+          "meaning": "当前库存数量、在途数量、安全库存设置"
+        },
+        {
+          "name": "采购计划",
+          "formula": "订货策略",
+          "meaning": "采购数量、交货时间、供应商选择"
+        },
+        {
+          "name": "库存优化",
+          "formula": "周转效率",
+          "meaning": "库存周转率、呆滞料处理、VMI等优化策略"
+        }
+      ],
+      "required_fields": [
+        "产品名称",
+        "生产数量",
+        "物料名称",
+        "单位用量"
+      ],
+      "optional_fields": [
+        "现有库存",
+        "安全库存",
+        "采购周期",
+        "供应商",
+        "备注"
+      ],
+      "required_permission": "scenes.use.production"
+    }
+  ],
+  "required_permission": "scenes.use.production"
+}

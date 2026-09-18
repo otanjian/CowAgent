@@ -1,0 +1,202 @@
+{
+  "id": "sales_customer",
+  "name": "客户管理",
+  "category": "sales",
+  "description": "客户分层、关系维护、流失预警",
+  "icon": "fa-user-tie",
+  "skill_name": "sales-customer",
+  "system_prompt": "你是一位客户关系管理（CRM）专家，擅长客户分层运营、客户生命周期管理、满意度提升策略以及流失预警分析。请帮助用户建立科学的客户管理体系。",
+  "has_workbench": true,
+  "workbench_title": "客户管理工作台",
+  "sub_scenes": [
+    {
+      "id": "customer_segmentation",
+      "name": "客户分层",
+      "icon": "fa-layer-group",
+      "color": "#3b82f6",
+      "description": "根据客户价值进行ABC分层，制定差异化服务策略",
+      "system_prompt": "你是一位客户分层运营专家。请根据客户数据，从交易金额、交易频次、合作年限、利润贡献等维度进行客户价值分析，制定ABC分层标准和差异化服务策略。",
+      "indicators": [
+        {
+          "name": "交易金额",
+          "formula": "年度累计",
+          "meaning": "客户在一定周期内的采购总金额，反映客户规模"
+        },
+        {
+          "name": "交易频次",
+          "formula": "订单次数",
+          "meaning": "客户下单的频率，反映客户活跃度和粘性"
+        },
+        {
+          "name": "利润贡献",
+          "formula": "毛利率",
+          "meaning": "客户订单的利润水平，反映客户质量"
+        },
+        {
+          "name": "合作年限",
+          "formula": "关系深度",
+          "meaning": "与客户合作的时间长度，反映关系稳定性"
+        },
+        {
+          "name": "成长潜力",
+          "formula": "增长趋势",
+          "meaning": "客户业务增长情况，反映未来价值"
+        }
+      ],
+      "required_fields": [
+        "客户名称",
+        "年度交易金额",
+        "年度订单次数",
+        "合作年限"
+      ],
+      "optional_fields": [
+        "行业类型",
+        "联系人",
+        "联系电话",
+        "信用额度",
+        "备注"
+      ],
+      "required_permission": "scenes.use.sales"
+    },
+    {
+      "id": "relationship_maintenance",
+      "name": "关系维护",
+      "icon": "fa-heart",
+      "color": "#ec4899",
+      "description": "制定客户拜访计划，维护客户关系",
+      "system_prompt": "你是一位客户关系维护专家。请帮助用户制定客户拜访计划、节日关怀方案、客户满意度提升策略，建立长期稳定的客户关系。",
+      "indicators": [
+        {
+          "name": "拜访频率",
+          "formula": "触达次数",
+          "meaning": "定期与客户沟通互动的频率，保持关系热度"
+        },
+        {
+          "name": "响应速度",
+          "formula": "处理时效",
+          "meaning": "对客户问题和需求的响应及解决速度"
+        },
+        {
+          "name": "满意度",
+          "formula": "评价得分",
+          "meaning": "客户对产品、服务、合作体验的综合满意度"
+        },
+        {
+          "name": "投诉处理",
+          "formula": "闭环率",
+          "meaning": "客户投诉的及时处理和闭环解决情况"
+        },
+        {
+          "name": "增值服务",
+          "formula": "附加价值",
+          "meaning": "为客户提供超出预期的附加服务和价值"
+        }
+      ],
+      "required_fields": [
+        "客户名称",
+        "维护类型",
+        "计划时间",
+        "维护内容"
+      ],
+      "optional_fields": [
+        "负责人",
+        "预期效果",
+        "预算费用",
+        "历史记录",
+        "备注"
+      ],
+      "field_types": {
+        "维护类型": {
+          "type": "select",
+          "options": [
+            "日常拜访",
+            "节日关怀",
+            "问题解决",
+            "商务洽谈",
+            "产品推介"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.sales"
+    },
+    {
+      "id": "churn_warning",
+      "name": "流失预警",
+      "icon": "fa-triangle-exclamation",
+      "color": "#ef4444",
+      "description": "识别客户流失风险，制定挽回策略",
+      "system_prompt": "你是一位客户流失预警专家。请根据客户行为数据，识别流失风险信号，分析流失原因，制定针对性的客户挽回和留存策略。",
+      "indicators": [
+        {
+          "name": "订单下滑",
+          "formula": "环比降幅",
+          "meaning": "客户订单金额或频次明显下降，预警流失风险"
+        },
+        {
+          "name": "付款延迟",
+          "formula": "账期异常",
+          "meaning": "客户付款周期延长或出现逾期，信号异常"
+        },
+        {
+          "name": "投诉增多",
+          "formula": "不满积累",
+          "meaning": "客户投诉或不满反馈频率增加，满意度下降"
+        },
+        {
+          "name": "竞品接触",
+          "formula": "替代风险",
+          "meaning": "客户与竞争对手接触或询价，存在流失可能"
+        },
+        {
+          "name": "人员变动",
+          "formula": "关系断裂",
+          "meaning": "客户方关键决策人离职，合作关系面临考验"
+        }
+      ],
+      "required_fields": [
+        "客户名称",
+        "预警类型",
+        "风险等级",
+        "异常描述"
+      ],
+      "optional_fields": [
+        "发现时间",
+        "责任人",
+        "挽回措施",
+        "预期结果",
+        "跟踪状态"
+      ],
+      "field_types": {
+        "预警类型": {
+          "type": "select",
+          "options": [
+            "订单下滑",
+            "付款延迟",
+            "投诉增多",
+            "竞品接触",
+            "人员变动"
+          ]
+        },
+        "风险等级": {
+          "type": "select",
+          "options": [
+            "高风险",
+            "中风险",
+            "低风险"
+          ]
+        },
+        "跟踪状态": {
+          "type": "select",
+          "options": [
+            "待处理",
+            "处理中",
+            "已挽回",
+            "已流失"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.sales"
+    }
+  ],
+  "required_permission": "scenes.use.sales"
+}

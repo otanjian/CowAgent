@@ -1,0 +1,37 @@
+{
+  "id": "procurement_execution",
+  "name": "采购执行",
+  "category": "procurement",
+  "description": "请款提醒、付款跟踪",
+  "icon": "fa-bell",
+  "skill_name": "procurement-execution",
+  "system_prompt": "你是一位采购执行管理专家，擅长监控请款到期、付款跟踪、异常提醒。请帮助用户设置定时任务，扫描 SAP 应付款数据，在付款日前发出预警。",
+  "has_workbench": true,
+  "workbench_title": "采购执行工作台",
+  "sub_scenes": [
+    {
+      "id": "payment_reminder",
+      "name": "请款提醒",
+      "icon": "fa-money-bill-wave",
+      "color": "#ef4444",
+      "visible": false,
+      "description": "监控 SAP 应付账款，在预计付款日前 N 天自动提醒",
+      "skill_name": "procurement-execution",
+      "system_prompt": "你是一位请款提醒专家。请帮助用户配置 SAP 连接、公司代码和提前天数，定时扫描未清应付款，生成到期提醒列表并推送到指定通道。",
+      "indicators": [
+        {
+          "name": "到期提醒",
+          "formula": "预计付款日 - 提前天数",
+          "meaning": "在付款日前 N 天触发预警"
+        },
+        {
+          "name": "自动取消",
+          "formula": "BSAK 清账检测",
+          "meaning": "检测到已付款后自动停止提醒"
+        }
+      ],
+      "required_permission": "scenes.use.procurement"
+    }
+  ],
+  "required_permission": "scenes.use.procurement"
+}

@@ -10,6 +10,7 @@
 场景上下文为模块级共享状态，测试在 setUp/tearDown 中隔离清理。
 """
 import unittest
+from unittest.mock import patch
 
 from bridge.agent_bridge import AgentBridge
 from scenes import service as scenes_service
@@ -64,14 +65,17 @@ class SceneActivationTests(unittest.TestCase):
         self.assertEqual(agent.extra_system_suffix, "p")
         self.assertIsNone(agent.skill_manager.selection)
 
-    def test_mapped_skill_added_to_selection(self):
+    @patch("scenes.config.load_skill_mapping", return_value={
+        "test-skill": {"name": "test-skill", "mapped": True},
+    })
+    def test_mapped_skill_added_to_selection(self, _mapping):
         # 已映射技能：selection 为受限集合时，加入解析后的技能名。
         scenes_service.set_scene_context(
-            "s1", {"id": "x", "skill_name": "quality-trace"}
+            "s1", {"id": "x", "skill_name": "test-skill"}
         )
         sm = _StubSkillManager(selection={"other-skill"})
         agent = self._apply(_StubAgent(skill_manager=sm))
-        self.assertIn("quality-trace", agent.skill_manager.selection)
+        self.assertIn("test-skill", agent.skill_manager.selection)
         self.assertIn("other-skill", agent.skill_manager.selection)
 
     def test_no_skill_manager_does_not_block(self):
@@ -83,14 +87,17 @@ class SceneActivationTests(unittest.TestCase):
 
 
 class ResolveSkillNamesTests(unittest.TestCase):
-    def test_mapped_skill(self):
+    @patch("scenes.config.load_skill_mapping", return_value={
+        "test-skill": {"name": "test-skill", "mapped": True},
+    })
+    def test_mapped_skill(self, _mapping):
         self.assertEqual(
-            scenes_service.resolve_skill_names({"skill_name": "quality-trace"}),
-            ["quality-trace"],
+            scenes_service.resolve_skill_names({"skill_name": "test-skill"}),
+            ["test-skill"],
         )
 
     def test_unmapped_skill(self):
-        # chen-yiwei-perspective 标注「未映射」
+        # 空映射不会解析已移除的业务技能。
         self.assertEqual(
             scenes_service.resolve_skill_names({"skill_name": "hr-recruit"}), []
         )

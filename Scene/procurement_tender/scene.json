@@ -1,0 +1,477 @@
+{
+  "id": "procurement_tender",
+  "name": "招投标辅助",
+  "category": "procurement",
+  "description": "招标文件编制、评标分析、合规审查",
+  "icon": "fa-file-signature",
+  "skill_name": "procurement-tender",
+  "system_prompt": "你是一位招投标管理专家，熟悉《招标投标法》及相关法规。你能够协助编制招标文件、设计评标标准、分析投标方案、识别合规风险并提供专业建议。",
+  "has_workbench": true,
+  "workbench_title": "招投标辅助工作台",
+  "sub_scenes": [
+    {
+      "id": "tender_document",
+      "name": "文件编制",
+      "icon": "fa-file-text",
+      "color": "#3b82f6",
+      "visible": true,
+      "description": "编制规范的招标文件，明确技术要求",
+      "system_prompt": "你是一位招标文件编制专家。请帮助用户编制符合法律法规要求的招标文件，包括招标公告、投标人须知、技术规格、评标办法、合同条款等内容。",
+      "indicators": [
+        {
+          "name": "招标公告",
+          "formula": "信息发布",
+          "meaning": "项目名称、采购内容、投标人资格要求、报名截止时间等"
+        },
+        {
+          "name": "技术规格",
+          "formula": "需求明确",
+          "meaning": "产品技术参数、质量标准、验收标准、售后服务要求"
+        },
+        {
+          "name": "商务条款",
+          "formula": "合同条件",
+          "meaning": "交货期限、付款方式、质保期限、违约责任等"
+        },
+        {
+          "name": "评标办法",
+          "formula": "评分标准",
+          "meaning": "技术评分、商务评分、价格评分的权重和细则"
+        },
+        {
+          "name": "投标文件",
+          "formula": "格式要求",
+          "meaning": "投标函、报价表、资质证明、技术方案等文件清单"
+        }
+      ],
+      "required_fields": [
+        "项目名称",
+        "采购内容",
+        "预算金额",
+        "交货期限",
+        "投标人资质"
+      ],
+      "optional_fields": [
+        "技术参数",
+        "付款方式",
+        "质保期限",
+        "评标权重",
+        "联系方式"
+      ],
+      "import_config": {
+        "enabled": true,
+        "accept": ".xlsx,.xls,.csv",
+        "template_headers": [
+          "项目名称",
+          "采购内容",
+          "预算金额",
+          "交货期限",
+          "投标人资质",
+          "技术参数",
+          "付款方式",
+          "质保期限",
+          "评标权重",
+          "联系方式"
+        ],
+        "description": "上传招标文件信息表，支持从Excel/CSV导入"
+      },
+      "erp_config": {
+        "enabled": true,
+        "systems": [
+          "u9",
+          "sap",
+          "kingdee"
+        ],
+        "u9": {
+          "endpoint": "/scm/purchaserequisition",
+          "method": "GET",
+          "params": [
+            "pageIndex",
+            "pageSize",
+            "filter"
+          ]
+        },
+        "sap": {
+          "endpoint": "/API_PURCHASEREQ_SRV/A_PurchaseRequisition",
+          "method": "GET",
+          "params": [
+            "$filter",
+            "$top",
+            "$skip"
+          ]
+        },
+        "kingdee": {
+          "endpoint": "/Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.View.common.kdsvc",
+          "method": "POST",
+          "form_id": "PUR_Requisition",
+          "params": [
+            "FieldKeys",
+            "FilterString",
+            "Limit"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.procurement"
+    },
+    {
+      "id": "evaluation_criteria",
+      "name": "评标标准",
+      "icon": "fa-list-check",
+      "color": "#f59e0b",
+      "visible": true,
+      "description": "设计科学的评标标准和评分体系",
+      "system_prompt": "你是一位评标专家。请帮助用户设计科学合理的评标标准，包括技术评分、商务评分、价格评分等维度，确保评标过程公平公正。",
+      "indicators": [
+        {
+          "name": "技术评审",
+          "formula": "方案可行性",
+          "meaning": "技术方案先进性、实施可行性、团队专业能力"
+        },
+        {
+          "name": "商务评审",
+          "formula": "企业实力",
+          "meaning": "企业资质、财务状况、类似项目经验、信誉评价"
+        },
+        {
+          "name": "价格评审",
+          "formula": "报价合理性",
+          "meaning": "报价完整性、价格构成合理性、性价比分析"
+        },
+        {
+          "name": "服务评审",
+          "formula": "售后保障",
+          "meaning": "售后服务承诺、响应时间、技术支持能力"
+        },
+        {
+          "name": "综合评审",
+          "formula": "整体优势",
+          "meaning": "交货期、付款条件、风险管控、创新方案等加分项"
+        }
+      ],
+      "required_fields": [
+        "评审维度",
+        "权重比例",
+        "评分标准",
+        "满分分值",
+        "合格分数线"
+      ],
+      "optional_fields": [
+        "扣分细则",
+        "加分项",
+        "废标条件",
+        "澄清机制",
+        "异议处理"
+      ],
+      "import_config": {
+        "enabled": true,
+        "accept": ".xlsx,.xls,.csv",
+        "template_headers": [
+          "评审维度",
+          "权重比例",
+          "评分标准",
+          "满分分值",
+          "合格分数线",
+          "扣分细则",
+          "加分项",
+          "废标条件",
+          "澄清机制",
+          "异议处理"
+        ],
+        "description": "上传评标标准数据表，支持从Excel/CSV导入"
+      },
+      "erp_config": {
+        "enabled": true,
+        "systems": [
+          "u9",
+          "sap",
+          "kingdee"
+        ],
+        "u9": {
+          "endpoint": "/scm/purchaserequisition",
+          "method": "GET",
+          "params": [
+            "pageIndex",
+            "pageSize",
+            "filter"
+          ]
+        },
+        "sap": {
+          "endpoint": "/API_PURCHASEREQ_SRV/A_PurchaseRequisition",
+          "method": "GET",
+          "params": [
+            "$filter",
+            "$top",
+            "$skip"
+          ]
+        },
+        "kingdee": {
+          "endpoint": "/Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.View.common.kdsvc",
+          "method": "POST",
+          "form_id": "PUR_Requisition",
+          "params": [
+            "FieldKeys",
+            "FilterString",
+            "Limit"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.procurement"
+    },
+    {
+      "id": "bid_analysis",
+      "name": "投标分析",
+      "icon": "fa-chart-pie",
+      "color": "#8b5cf6",
+      "visible": true,
+      "description": "分析投标方案，评估各投标人实力",
+      "system_prompt": "你是一位投标分析专家。请帮助用户分析各投标人的投标文件，对比技术方案、商务条件、价格水平，为评标决策提供专业建议。",
+      "indicators": [
+        {
+          "name": "方案对比",
+          "formula": "技术差异",
+          "meaning": "各投标人技术方案的优缺点、创新性、可行性对比"
+        },
+        {
+          "name": "价格分析",
+          "formula": "报价结构",
+          "meaning": "总报价、分项报价、价格构成、异常报价识别"
+        },
+        {
+          "name": "风险评估",
+          "formula": "履约能力",
+          "meaning": "供应商资质真实性、财务稳定性、交付风险"
+        },
+        {
+          "name": "合规审查",
+          "formula": "符合性",
+          "meaning": "投标文件完整性、资格符合性、实质性响应审查"
+        },
+        {
+          "name": "中标建议",
+          "formula": "最优选择",
+          "meaning": "综合技术、商务、价格因素，推荐中标候选人"
+        }
+      ],
+      "required_fields": [
+        "投标人名称",
+        "投标报价",
+        "技术得分",
+        "商务得分",
+        "综合排名"
+      ],
+      "optional_fields": [
+        "价格得分",
+        "优势分析",
+        "风险提示",
+        "澄清问题",
+        "推荐意见"
+      ],
+      "import_config": {
+        "enabled": true,
+        "accept": ".xlsx,.xls,.csv",
+        "template_headers": [
+          "投标人名称",
+          "投标报价",
+          "技术得分",
+          "商务得分",
+          "综合排名",
+          "价格得分",
+          "优势分析",
+          "风险提示",
+          "澄清问题",
+          "推荐意见"
+        ],
+        "description": "上传投标分析数据表，支持从Excel/CSV导入"
+      },
+      "erp_config": {
+        "enabled": true,
+        "systems": [
+          "u9",
+          "sap",
+          "kingdee"
+        ],
+        "u9": {
+          "endpoint": "/scm/purchaserequisition",
+          "method": "GET",
+          "params": [
+            "pageIndex",
+            "pageSize",
+            "filter"
+          ]
+        },
+        "sap": {
+          "endpoint": "/API_PURCHASEREQ_SRV/A_PurchaseRequisition",
+          "method": "GET",
+          "params": [
+            "$filter",
+            "$top",
+            "$skip"
+          ]
+        },
+        "kingdee": {
+          "endpoint": "/Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.View.common.kdsvc",
+          "method": "POST",
+          "form_id": "PUR_Requisition",
+          "params": [
+            "FieldKeys",
+            "FilterString",
+            "Limit"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.procurement"
+    },
+    {
+      "id": "compliance_review",
+      "name": "合规审查",
+      "icon": "fa-shield-check",
+      "color": "#ef4444",
+      "visible": true,
+      "description": "审查招投标流程，识别合规风险",
+      "system_prompt": "你是一位招投标合规专家。请帮助用户审查招投标流程的合规性，识别潜在风险点，确保符合《招标投标法》及相关法规要求。",
+      "indicators": [
+        {
+          "name": "流程合规",
+          "formula": "程序规范",
+          "meaning": "招标方式选择、公告发布、文件发售、开标评标流程"
+        },
+        {
+          "name": "文件合规",
+          "formula": "内容合法",
+          "meaning": "招标文件条款公平性、排斥性条款、歧视性条件"
+        },
+        {
+          "name": "评标合规",
+          "formula": "公正公平",
+          "meaning": "评标委员会组成、评分标准执行、异议处理程序"
+        },
+        {
+          "name": "合同合规",
+          "formula": "条款合法",
+          "meaning": "合同主要条款与招标文件一致性、风险分配合理性"
+        },
+        {
+          "name": "档案管理",
+          "formula": "资料完整",
+          "meaning": "招投标过程文件、评标记录、会议纪要等资料归档"
+        }
+      ],
+      "required_fields": [
+        "审查阶段",
+        "审查事项",
+        "法规依据",
+        "存在问题",
+        "整改建议"
+      ],
+      "optional_fields": [
+        "风险等级",
+        "责任部门",
+        "整改期限",
+        "复查安排",
+        "备注说明"
+      ],
+      "import_config": {
+        "enabled": true,
+        "accept": ".xlsx,.xls,.csv",
+        "template_headers": [
+          "审查阶段",
+          "审查事项",
+          "法规依据",
+          "存在问题",
+          "整改建议",
+          "风险等级",
+          "责任部门",
+          "整改期限",
+          "复查安排",
+          "备注说明"
+        ],
+        "description": "上传合规审查数据表，支持从Excel/CSV导入"
+      },
+      "erp_config": {
+        "enabled": true,
+        "systems": [
+          "u9",
+          "sap",
+          "kingdee"
+        ],
+        "u9": {
+          "endpoint": "/scm/purchaserequisition",
+          "method": "GET",
+          "params": [
+            "pageIndex",
+            "pageSize",
+            "filter"
+          ]
+        },
+        "sap": {
+          "endpoint": "/API_PURCHASEREQ_SRV/A_PurchaseRequisition",
+          "method": "GET",
+          "params": [
+            "$filter",
+            "$top",
+            "$skip"
+          ]
+        },
+        "kingdee": {
+          "endpoint": "/Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.View.common.kdsvc",
+          "method": "POST",
+          "form_id": "PUR_Requisition",
+          "params": [
+            "FieldKeys",
+            "FilterString",
+            "Limit"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.procurement"
+    },
+    {
+      "id": "bid_doc_analysis",
+      "name": "招标文件解析",
+      "icon": "fa-file-contract",
+      "color": "#10b981",
+      "visible": true,
+      "description": "上传招标文件，自动结构化解析并生成投标辅助工作台",
+      "skill_name": "bid-analysis",
+      "system_prompt": "你是一位招标文件解析与投标辅助专家。当用户上传招标文件（PDF/Word）后，请对文件进行自动结构化解析，提取项目基本信息、评标评分项、技术要求、商务条款、暗标格式规范、风险清单、资质材料清单、人员配置要求等核心数据，并生成 Word 分析报告和交互式 HTML 投标辅助工作台网页。如果用户尚未上传招标文件，请引导用户上传。",
+      "indicators": [
+        {
+          "name": "项目概览",
+          "formula": "基本信息",
+          "meaning": "项目名称、编号、采购人、预算金额、投标截止日等关键信息提取"
+        },
+        {
+          "name": "评标分析",
+          "formula": "评分标准",
+          "meaning": "评标办法、评分项、权重分布、得分策略建议"
+        },
+        {
+          "name": "技术要求",
+          "formula": "功能参数",
+          "meaning": "技术功能要求、硬件参数、系统集成要求等"
+        },
+        {
+          "name": "投标SOP",
+          "formula": "流程规划",
+          "meaning": "根据开标日期倒推，生成5阶段投标执行计划与任务清单"
+        },
+        {
+          "name": "风险预警",
+          "formula": "合规审查",
+          "meaning": "识别招标文件中的风险条款、资质门槛、暗标格式要求等"
+        }
+      ],
+      "required_fields": [],
+      "optional_fields": [],
+      "import_config": {
+        "enabled": false
+      },
+      "erp_config": {
+        "enabled": false
+      },
+      "demo_url": "skill://bid-analysis/assets/workbench-template.html",
+      "required_permission": "scenes.use.procurement"
+    }
+  ],
+  "required_permission": "scenes.use.procurement"
+}

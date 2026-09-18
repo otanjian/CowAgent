@@ -249,6 +249,17 @@ class SkillLoader:
                 entry = self._create_skill_entry(skill)
                 skill_map[skill.name] = entry
 
+        # Shipped scene skills keep their per-scene directories and builtin
+        # resource identity. Explicit alternate builtin roots remain isolated.
+        project_skills = Path(__file__).resolve().parents[2] / "skills"
+        if builtin_dir and Path(builtin_dir).resolve() == project_skills:
+            from Scene.catalog import skill_directories
+            for directory in skill_directories():
+                result = self.load_skills_from_dir(str(directory), source='builtin')
+                all_diagnostics.extend(result.diagnostics)
+                for skill in result.skills:
+                    skill_map.setdefault(skill.name, self._create_skill_entry(skill))
+
         # Load custom skills (higher precedence, overrides builtin)
         if custom_dir and os.path.exists(custom_dir):
             result = self.load_skills_from_dir(custom_dir, source='custom')

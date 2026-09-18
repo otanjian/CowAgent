@@ -1,0 +1,192 @@
+{
+  "id": "production_safety",
+  "name": "安全生产",
+  "category": "production",
+  "description": "安全规范、隐患排查、应急处理",
+  "icon": "fa-helmet-safety",
+  "skill_name": "production-safety",
+  "system_prompt": "你是一位安全生产管理专家，熟悉《安全生产法》及相关法规标准。你能够协助进行安全风险评估、隐患排查治理、应急预案编制以及安全培训体系设计。",
+  "has_workbench": true,
+  "workbench_title": "安全生产工作台",
+  "sub_scenes": [
+    {
+      "id": "safety_standard",
+      "name": "安全规范",
+      "icon": "fa-book",
+      "color": "#3b82f6",
+      "description": "建立安全操作规程，开展安全培训",
+      "system_prompt": "你是一位安全规范专家。请帮助用户建立安全操作规程，设计安全培训内容，制定特种作业管理规范，确保安全制度有效执行。",
+      "indicators": [
+        {
+          "name": "操作规程",
+          "formula": "SOP制定",
+          "meaning": "设备操作、危险作业、应急处置的标准操作程序"
+        },
+        {
+          "name": "安全培训",
+          "formula": "教育覆盖",
+          "meaning": "新员工三级教育、特种作业培训、定期安全教育"
+        },
+        {
+          "name": "特种作业",
+          "formula": "资质管理",
+          "meaning": "特种作业人员持证上岗、证件有效期管理"
+        },
+        {
+          "name": "PPE管理",
+          "formula": "防护用品",
+          "meaning": "个人防护装备的配备标准、使用规范、更换周期"
+        },
+        {
+          "name": "安全标识",
+          "formula": "警示标志",
+          "meaning": "安全警示标志、危险区域标识、疏散路线指示"
+        }
+      ],
+      "required_fields": [
+        "规范类型",
+        "适用范围",
+        "主要内容",
+        "生效日期"
+      ],
+      "optional_fields": [
+        "培训对象",
+        "培训时长",
+        "考核标准",
+        "责任人",
+        "备注"
+      ],
+      "field_types": {
+        "规范类型": {
+          "type": "select",
+          "options": [
+            "操作规程",
+            "安全培训",
+            "特种作业",
+            "PPE管理",
+            "安全标识"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.production"
+    },
+    {
+      "id": "hazard_investigation",
+      "name": "隐患排查",
+      "icon": "fa-magnifying-glass",
+      "color": "#f59e0b",
+      "description": "排查安全隐患，制定整改措施",
+      "system_prompt": "你是一位隐患排查治理专家。请帮助用户系统排查生产现场的安全隐患，评估风险等级，制定整改措施和闭环管理方案。",
+      "indicators": [
+        {
+          "name": "排查范围",
+          "formula": "全面覆盖",
+          "meaning": "生产区域、设备设施、作业活动、管理缺陷等排查范围"
+        },
+        {
+          "name": "隐患分级",
+          "formula": "风险等级",
+          "meaning": "一般隐患、重大隐患的分级标准和判定依据"
+        },
+        {
+          "name": "整改措施",
+          "formula": "治理方案",
+          "meaning": "隐患整改的技术措施、管理措施、防护措施"
+        },
+        {
+          "name": "整改期限",
+          "formula": "闭环管理",
+          "meaning": "整改责任人、完成时限、验收标准、复查确认"
+        },
+        {
+          "name": "统计分析",
+          "formula": "趋势分析",
+          "meaning": "隐患类型分布、整改率、重复发生率统计"
+        }
+      ],
+      "required_fields": [
+        "隐患描述",
+        "所在区域",
+        "风险等级",
+        "整改措施"
+      ],
+      "optional_fields": [
+        "整改期限",
+        "责任人",
+        "验收标准",
+        "复查结果",
+        "备注"
+      ],
+      "field_types": {
+        "风险等级": {
+          "type": "select",
+          "options": [
+            "一般隐患",
+            "重大隐患"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.production"
+    },
+    {
+      "id": "emergency_response",
+      "name": "应急处理",
+      "icon": "fa-kit-medical",
+      "color": "#ef4444",
+      "description": "编制应急预案，组织应急演练",
+      "system_prompt": "你是一位应急管理专家。请帮助用户编制应急预案，设计应急响应流程，组织应急演练，评估应急准备状态。",
+      "indicators": [
+        {
+          "name": "风险评估",
+          "formula": "情景分析",
+          "meaning": "火灾、爆炸、泄漏、坍塌等事故情景分析"
+        },
+        {
+          "name": "预案编制",
+          "formula": "响应流程",
+          "meaning": "应急组织、响应程序、处置措施、资源保障"
+        },
+        {
+          "name": "演练计划",
+          "formula": "实战训练",
+          "meaning": "桌面推演、功能演练、全面演练的计划和实施"
+        },
+        {
+          "name": "物资储备",
+          "formula": "应急资源",
+          "meaning": "应急物资、装备、队伍、资金的储备和管理"
+        },
+        {
+          "name": "评估改进",
+          "formula": "持续完善",
+          "meaning": "演练评估、预案修订、能力提升"
+        }
+      ],
+      "required_fields": [
+        "预案类型",
+        "事故情景",
+        "应急措施",
+        "责任人"
+      ],
+      "optional_fields": [
+        "演练计划",
+        "物资清单",
+        "联络方式",
+        "评估结果",
+        "备注"
+      ],
+      "field_types": {
+        "预案类型": {
+          "type": "select",
+          "options": [
+            "综合预案",
+            "专项预案",
+            "现场处置方案"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.production"
+    }
+  ],
+  "required_permission": "scenes.use.production"
+}

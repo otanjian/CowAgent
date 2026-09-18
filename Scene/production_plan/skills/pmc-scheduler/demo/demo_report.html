@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>生产排产分析报告 - SCH_20260620_142253_3545b9</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f5f7fa; color: #1e293b; line-height: 1.6; }
+.container { max-width: 1280px; margin: 0 auto; padding: 24px; }
+header { background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%); color: white; padding: 32px; border-radius: 12px; margin-bottom: 24px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+header h1 { font-size: 28px; margin-bottom: 8px; }
+header .meta { opacity: 0.9; font-size: 14px; }
+header .meta span { margin-right: 16px; }
+section { background: white; padding: 24px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+h2 { font-size: 20px; margin-bottom: 16px; color: #1e293b; border-left: 4px solid #3b82f6; padding-left: 12px; }
+h3 { font-size: 16px; margin: 16px 0 8px; color: #334155; }
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+.kpi { background: #f8fafc; padding: 16px; border-radius: 8px; border-left: 4px solid #3b82f6; }
+.kpi.warn { border-left-color: #f59e0b; background: #fffbeb; }
+.kpi.danger { border-left-color: #ef4444; background: #fef2f2; }
+.kpi.ok { border-left-color: #10b981; background: #f0fdf4; }
+.kpi .label { font-size: 13px; color: #64748b; margin-bottom: 6px; }
+.kpi .value { font-size: 26px; font-weight: 700; color: #1e293b; }
+.kpi .sub { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { background: #f1f5f9; padding: 10px 12px; text-align: left; font-weight: 600; color: #475569; border-bottom: 2px solid #e2e8f0; }
+td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; }
+tr:hover { background: #f8fafc; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
+.badge.ok { background: #dcfce7; color: #166534; }
+.badge.warn { background: #fef3c7; color: #92400e; }
+.badge.danger { background: #fee2e2; color: #991b1b; }
+.badge.lv0 { background: #dbeafe; color: #1e40af; }
+.badge.lv1 { background: #e0e7ff; color: #3730a3; }
+.badge.lv2 { background: #f3e8ff; color: #6b21a8; }
+.bar-bg { background: #e2e8f0; height: 18px; border-radius: 4px; overflow: hidden; position: relative; }
+.bar-fill { background: linear-gradient(90deg, #3b82f6, #60a5fa); height: 100%; }
+.bar-fill.high { background: linear-gradient(90deg, #ef4444, #f87171); }
+.bar-fill.mid { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+.bar-text { position: absolute; top: 50%; left: 8px; transform: translateY(-50%); color: #1e293b; font-size: 12px; font-weight: 500; }
+.alert-box { padding: 12px 16px; border-radius: 8px; margin-bottom: 8px; border-left: 4px solid; }
+.alert-box.high { background: #fef2f2; border-color: #ef4444; }
+.alert-box.med { background: #fffbeb; border-color: #f59e0b; }
+.alert-box .title { font-weight: 600; margin-bottom: 4px; }
+.alert-box .sug { font-size: 13px; color: #64748b; }
+.gantt-link { display: inline-block; background: #3b82f6; color: white; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-weight: 500; margin-top: 8px; }
+.gantt-link:hover { background: #2563eb; }
+.note { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px 16px; border-radius: 4px; margin: 12px 0; font-size: 14px; color: #78350f; }
+.tag-machine { background: #f1f5f9; padding: 2px 6px; border-radius: 3px; font-size: 12px; color: #475569; }
+ul.advice li { margin-left: 20px; margin-bottom: 8px; }
+.metric-row { display: flex; gap: 16px; align-items: center; padding: 10px 0; border-bottom: 1px solid #f1f5f9; }
+.metric-row:last-child { border: none; }
+.metric-name { width: 140px; font-weight: 500; color: #475569; }
+.metric-bar { flex: 1; }
+.metric-val { width: 110px; text-align: right; color: #64748b; font-size: 13px; }
+@media print { header { background: #1e40af !important; } }
+</style>
+</head>
+<body>
+<div class="container">
+<header>
+  <h1>📊 生产排产分析报告</h1>
+  <div class="meta">
+    <span>📌 排程ID: SCH_20260620_142253_3545b9</span>
+    <span>🕐 生成时间: 2026-06-20 14:22</span>
+    <span>📐 模式: backward（倒排）</span>
+  </div>
+</header>
+
+<section>
+  <h2>① 排产摘要</h2>
+  <div class="kpi-grid">
+    <div class="kpi"><div class="label">工单总数</div><div class="value">16</div><div class="sub">含 4 个成品 + 12 个子件</div></div>
+    <div class="kpi ok"><div class="label">准时交付率</div><div class="value">25%</div><div class="sub">齐套口径 4/16</div></div>
+    <div class="kpi"><div class="label">总工期</div><div class="value">23.3天</div><div class="sub">06-06 至 06-30</div></div>
+    <div class="kpi danger"><div class="label">缺料工单</div><div class="value">4</div><div class="sub">PH-100-00 / PH-201-00</div></div>
+    <div class="kpi danger"><div class="label">倒排不可行</div><div class="value">3</div><div class="sub">开始时间早于今日</div></div>
+    <div class="kpi ok"><div class="label">总任务数</div><div class="value">28</div><div class="sub">设备负荷 1164h</div></div>
+  </div>
+  <div class="note">
+    ⚠️ <b>关键矛盾</b>：调度器输出全部 28 条任务 status=ok（按时），但齐套检查显示 4 个成品全部缺料、且 3 个工单倒排开始时间已穿越当前时间（06-06~06-13 < 今日 06-20）。
+    <b>实际可执行性极低，必须先解决缺料和交期问题。</b>
+  </div>
+</section>
+
+<section>
+  <h2>② 设备负荷分析</h2>
+  <p style="color:#64748b;font-size:13px;margin-bottom:12px;">总排程时间窗 559 小时（约 23.3 天）</p>
+  
+    <div class="metric-row">
+      <div class="metric-name">🏭 总装中心</div>
+      <div class="metric-bar"><div class="bar-bg"><div class="bar-fill high" style="width:100.0%"></div><div class="bar-text">308.0h</div></div></div>
+      <div class="metric-val">4个任务 · 占窗口 55.1%</div>
+    </div>
+    <div class="metric-row">
+      <div class="metric-name">🏭 焊接中心</div>
+      <div class="metric-bar"><div class="bar-bg"><div class="bar-fill mid" style="width:73.1%"></div><div class="bar-text">225.0h</div></div></div>
+      <div class="metric-val">4个任务 · 占窗口 40.2%</div>
+    </div>
+    <div class="metric-row">
+      <div class="metric-name">🏭 印刷中心</div>
+      <div class="metric-bar"><div class="bar-bg"><div class="bar-fill " style="width:48.7%"></div><div class="bar-text">150.0h</div></div></div>
+      <div class="metric-val">4个任务 · 占窗口 26.8%</div>
+    </div>
+    <div class="metric-row">
+      <div class="metric-name">🏭 检测中心</div>
+      <div class="metric-bar"><div class="bar-bg"><div class="bar-fill " style="width:48.7%"></div><div class="bar-text">150.0h</div></div></div>
+      <div class="metric-val">4个任务 · 占窗口 26.8%</div>
+    </div>
+    <div class="metric-row">
+      <div class="metric-name">🏭 屏幕中心</div>
+      <div class="metric-bar"><div class="bar-bg"><div class="bar-fill " style="width:48.7%"></div><div class="bar-text">150.0h</div></div></div>
+      <div class="metric-val">4个任务 · 占窗口 26.8%</div>
+    </div>
+    <div class="metric-row">
+      <div class="metric-name">🏭 贴合中心</div>
+      <div class="metric-bar"><div class="bar-bg"><div class="bar-fill " style="width:31.8%"></div><div class="bar-text">98.0h</div></div></div>
+      <div class="metric-val">4个任务 · 占窗口 17.5%</div>
+    </div>
+    <div class="metric-row">
+      <div class="metric-name">🏭 装机中心</div>
+      <div class="metric-bar"><div class="bar-bg"><div class="bar-fill " style="width:26.9%"></div><div class="bar-text">83.0h</div></div></div>
+      <div class="metric-val">4个任务 · 占窗口 14.8%</div>
+    </div>
+  <div class="note" style="margin-top:16px;">
+    🎯 <b>瓶颈分析</b>：<b>总装中心</b>负荷 308h（占窗口 55%），
+    是关键路径瓶颈；<b>焊接中心</b> 225h 次之。
+    其余设备（贴合/装机）负荷较低，存在产能空闲。
+  </div>
+</section>
+
+<section>
+  <h2>③ 物料齐套预警</h2>
+  <table>
+    <thead><tr><th>物料编码</th><th>缺口总量</th><th>当前库存</th><th>在途</th><th>影响工单数</th><th>明细（工单·缺口）</th></tr></thead>
+    <tbody>
+    <tr>
+      <td><b>PH-100-00</b></td>
+      <td><span class="badge danger">缺 9000</span></td>
+      <td>0</td>
+      <td>0</td>
+      <td>4</td>
+      <td style="color:#64748b;font-size:12px;">M-000-01-001(1000), M-000-01-002(2000), M-000-02-001(3000), M-001-03-001(3000)</td>
+    </tr>
+    <tr>
+      <td><b>PH-201-00</b></td>
+      <td><span class="badge danger">缺 9000</span></td>
+      <td>0</td>
+      <td>0</td>
+      <td>4</td>
+      <td style="color:#64748b;font-size:12px;">M-000-01-001(1000), M-000-01-002(2000), M-000-02-001(3000), M-001-03-001(3000)</td>
+    </tr></tbody>
+  </table>
+  <div class="note">
+    💡 4 个成品工单（M-000-01-001/002, M-000-02-001, M-001-03-001）均缺 PH-100-00 和 PH-201-00。
+    但排程已为它们的子件 PH-100/PH-200/PH-201 排了生产任务（M-100-*, M-200-*, M-201-*）——
+    <b>说明这两个"缺料"实际是自制件</b>，齐套检查未识别下级 BOM 自制 → 误报。建议核对齐套规则。
+  </div>
+</section>
+
+<section>
+  <h2>④ 关键告警（11 条）</h2>
+  
+    <div class="alert-box high">
+      <div class="title">📦 [MATERIAL] 工单 M-000-01-001 缺 PH-100-00 1000.0 单位</div>
+      <div class="sug">建议: 建议立即采购，预计 N/A 天后到货</div>
+    </div>
+    <div class="alert-box high">
+      <div class="title">📦 [MATERIAL] 工单 M-000-01-001 缺 PH-201-00 1000.0 单位</div>
+      <div class="sug">建议: 建议立即采购，预计 N/A 天后到货</div>
+    </div>
+    <div class="alert-box high">
+      <div class="title">📦 [MATERIAL] 工单 M-000-01-002 缺 PH-100-00 2000.0 单位</div>
+      <div class="sug">建议: 建议立即采购，预计 N/A 天后到货</div>
+    </div>
+    <div class="alert-box high">
+      <div class="title">📦 [MATERIAL] 工单 M-000-01-002 缺 PH-201-00 2000.0 单位</div>
+      <div class="sug">建议: 建议立即采购，预计 N/A 天后到货</div>
+    </div>
+    <div class="alert-box high">
+      <div class="title">📦 [MATERIAL] 工单 M-000-02-001 缺 PH-100-00 3000.0 单位</div>
+      <div class="sug">建议: 建议立即采购，预计 N/A 天后到货</div>
+    </div>
+    <div class="alert-box high">
+      <div class="title">📦 [MATERIAL] 工单 M-000-02-001 缺 PH-201-00 3000.0 单位</div>
+      <div class="sug">建议: 建议立即采购，预计 N/A 天后到货</div>
+    </div>
+    <div class="alert-box high">
+      <div class="title">📦 [MATERIAL] 工单 M-001-03-001 缺 PH-100-00 3000.0 单位</div>
+      <div class="sug">建议: 建议立即采购，预计 N/A 天后到货</div>
+    </div>
+    <div class="alert-box high">
+      <div class="title">📦 [MATERIAL] 工单 M-001-03-001 缺 PH-201-00 3000.0 单位</div>
+      <div class="sug">建议: 建议立即采购，预计 N/A 天后到货</div>
+    </div>
+    <div class="alert-box high">
+      <div class="title">🚨 [INFEASIBLE] 工单 M-000-01-002 倒排结果不可行（开始时间早于当前时间）</div>
+      <div class="sug">建议: 建议调整交期或减少订单量</div>
+    </div>
+    <div class="alert-box high">
+      <div class="title">🚨 [INFEASIBLE] 工单 M-000-02-001 倒排结果不可行（开始时间早于当前时间）</div>
+      <div class="sug">建议: 建议调整交期或减少订单量</div>
+    </div>
+    <div class="alert-box high">
+      <div class="title">🚨 [INFEASIBLE] 工单 M-001-03-001 倒排结果不可行（开始时间早于当前时间）</div>
+      <div class="sug">建议: 建议调整交期或减少订单量</div>
+    </div>
+</section>
+
+<section>
+  <h2>⑤ 工单明细（16 个）</h2>
+  <table>
+    <thead><tr>
+      <th>工单号 / 层级</th><th>产品 / 数量</th><th>开始</th><th>结束</th><th>工期</th><th>工艺路线（工序·设备）</th><th>状态</th>
+    </tr></thead>
+    <tbody>
+    <tr>
+      <td><b>M-000-01-001</b><br><span class="badge lv0">L0</span></td>
+      <td>PH-000-00<br><span style="color:#64748b;font-size:12px;">×1000</span></td>
+      <td style="font-size:12px;">2026-06-24 10:19</td>
+      <td style="font-size:12px;">2026-06-26 23:59</td>
+      <td>61.7h<br><span style="color:#94a3b8;font-size:11px;">2.6天</span></td>
+      <td style="font-size:12px;color:#475569;">主板装机(装机中心) → 显示贴合(贴合中心) → 总装(总装中心)</td>
+      <td><span class="badge warn">📦 缺料</span></td>
+    </tr>
+    <tr>
+      <td><b>M-000-01-002</b><br><span class="badge lv0">L0</span></td>
+      <td>PH-000-00<br><span style="color:#64748b;font-size:12px;">×2000</span></td>
+      <td style="font-size:12px;">2026-06-25 06:19</td>
+      <td style="font-size:12px;">2026-06-30 00:00</td>
+      <td>113.7h<br><span style="color:#94a3b8;font-size:11px;">4.7天</span></td>
+      <td style="font-size:12px;color:#475569;">主板装机(装机中心) → 显示贴合(贴合中心) → 总装(总装中心)</td>
+      <td><span class="badge danger">🚨 已穿越</span> <span class="badge warn">📦 缺料</span></td>
+    </tr>
+    <tr>
+      <td><b>M-000-02-001</b><br><span class="badge lv0">L0</span></td>
+      <td>PH-000-00<br><span style="color:#64748b;font-size:12px;">×3000</span></td>
+      <td style="font-size:12px;">2026-06-17 11:59</td>
+      <td style="font-size:12px;">2026-06-25 14:38</td>
+      <td>194.7h<br><span style="color:#94a3b8;font-size:11px;">8.1天</span></td>
+      <td style="font-size:12px;color:#475569;">主板装机(装机中心) → 显示贴合(贴合中心) → 总装(总装中心)</td>
+      <td><span class="badge danger">🚨 已穿越</span> <span class="badge warn">📦 缺料</span></td>
+    </tr>
+    <tr>
+      <td><b>M-001-03-001</b><br><span class="badge lv0">L0</span></td>
+      <td>PH-001-00<br><span style="color:#64748b;font-size:12px;">×3000</span></td>
+      <td style="font-size:12px;">2026-06-12 02:59</td>
+      <td style="font-size:12px;">2026-06-19 23:59</td>
+      <td>189.0h<br><span style="color:#94a3b8;font-size:11px;">7.9天</span></td>
+      <td style="font-size:12px;color:#475569;">主板装机(装机中心) → 显示贴合(贴合中心) → 总装(总装中心)</td>
+      <td><span class="badge danger">🚨 已穿越</span> <span class="badge warn">📦 缺料</span></td>
+    </tr>
+    <tr>
+      <td><b>M-100-01-001</b><br><span class="badge lv1">L1</span></td>
+      <td>PH-100-00<br><span style="color:#64748b;font-size:12px;">×1000</span></td>
+      <td style="font-size:12px;">2026-06-22 11:39</td>
+      <td style="font-size:12px;">2026-06-24 10:19</td>
+      <td>46.7h<br><span style="color:#94a3b8;font-size:11px;">1.9天</span></td>
+      <td style="font-size:12px;color:#475569;">锡膏印刷(印刷中心) → 回流焊接(焊接中心)</td>
+      <td><span class="badge ok">✓ 正常</span></td>
+    </tr>
+    <tr>
+      <td><b>M-100-01-002</b><br><span class="badge lv1">L1</span></td>
+      <td>PH-100-00<br><span style="color:#64748b;font-size:12px;">×2000</span></td>
+      <td style="font-size:12px;">2026-06-18 14:39</td>
+      <td style="font-size:12px;">2026-06-22 23:59</td>
+      <td>105.3h<br><span style="color:#94a3b8;font-size:11px;">4.4天</span></td>
+      <td style="font-size:12px;color:#475569;">锡膏印刷(印刷中心) → 回流焊接(焊接中心)</td>
+      <td><span class="badge warn">⏰ 已开始</span></td>
+    </tr>
+    <tr>
+      <td><b>M-100-02-001</b><br><span class="badge lv1">L1</span></td>
+      <td>PH-100-00<br><span style="color:#64748b;font-size:12px;">×3000</span></td>
+      <td style="font-size:12px;">2026-06-12 01:59</td>
+      <td style="font-size:12px;">2026-06-17 11:59</td>
+      <td>130.0h<br><span style="color:#94a3b8;font-size:11px;">5.4天</span></td>
+      <td style="font-size:12px;color:#475569;">锡膏印刷(印刷中心) → 回流焊接(焊接中心)</td>
+      <td><span class="badge warn">⏰ 已开始</span></td>
+    </tr>
+    <tr>
+      <td><b>M-100-03-001</b><br><span class="badge lv1">L1</span></td>
+      <td>PH-100-00<br><span style="color:#64748b;font-size:12px;">×3000</span></td>
+      <td style="font-size:12px;">2026-06-06 16:59</td>
+      <td style="font-size:12px;">2026-06-12 02:59</td>
+      <td>130.0h<br><span style="color:#94a3b8;font-size:11px;">5.4天</span></td>
+      <td style="font-size:12px;color:#475569;">锡膏印刷(印刷中心) → 回流焊接(焊接中心)</td>
+      <td><span class="badge warn">⏰ 已开始</span></td>
+    </tr>
+    <tr>
+      <td><b>M-200-01-001</b><br><span class="badge lv1">L1</span></td>
+      <td>PH-200-00<br><span style="color:#64748b;font-size:12px;">×1000</span></td>
+      <td style="font-size:12px;">2026-06-23 17:39</td>
+      <td style="font-size:12px;">2026-06-24 10:19</td>
+      <td>16.7h<br><span style="color:#94a3b8;font-size:11px;">0.7天</span></td>
+      <td style="font-size:12px;color:#475569;">显示检测(检测中心)</td>
+      <td><span class="badge ok">✓ 正常</span></td>
+    </tr>
+    <tr>
+      <td><b>M-200-01-002</b><br><span class="badge lv1">L1</span></td>
+      <td>PH-200-00<br><span style="color:#64748b;font-size:12px;">×2000</span></td>
+      <td style="font-size:12px;">2026-06-22 08:18</td>
+      <td style="font-size:12px;">2026-06-23 17:38</td>
+      <td>33.3h<br><span style="color:#94a3b8;font-size:11px;">1.4天</span></td>
+      <td style="font-size:12px;color:#475569;">显示检测(检测中心)</td>
+      <td><span class="badge ok">✓ 正常</span></td>
+    </tr>
+    <tr>
+      <td><b>M-200-02-001</b><br><span class="badge lv1">L1</span></td>
+      <td>PH-200-00<br><span style="color:#64748b;font-size:12px;">×3000</span></td>
+      <td style="font-size:12px;">2026-06-15 09:59</td>
+      <td style="font-size:12px;">2026-06-17 11:59</td>
+      <td>50.0h<br><span style="color:#94a3b8;font-size:11px;">2.1天</span></td>
+      <td style="font-size:12px;color:#475569;">显示检测(检测中心)</td>
+      <td><span class="badge warn">⏰ 已开始</span></td>
+    </tr>
+    <tr>
+      <td><b>M-200-03-001</b><br><span class="badge lv1">L1</span></td>
+      <td>PH-200-00<br><span style="color:#64748b;font-size:12px;">×3000</span></td>
+      <td style="font-size:12px;">2026-06-10 00:59</td>
+      <td style="font-size:12px;">2026-06-12 02:59</td>
+      <td>50.0h<br><span style="color:#94a3b8;font-size:11px;">2.1天</span></td>
+      <td style="font-size:12px;color:#475569;">显示检测(检测中心)</td>
+      <td><span class="badge warn">⏰ 已开始</span></td>
+    </tr>
+    <tr>
+      <td><b>M-201-01-001</b><br><span class="badge lv2">L2</span></td>
+      <td>PH-201-00<br><span style="color:#64748b;font-size:12px;">×1000</span></td>
+      <td style="font-size:12px;">2026-06-23 00:59</td>
+      <td style="font-size:12px;">2026-06-23 17:39</td>
+      <td>16.7h<br><span style="color:#94a3b8;font-size:11px;">0.7天</span></td>
+      <td style="font-size:12px;color:#475569;">屏幕安装(屏幕中心)</td>
+      <td><span class="badge ok">✓ 正常</span></td>
+    </tr>
+    <tr>
+      <td><b>M-201-01-002</b><br><span class="badge lv2">L2</span></td>
+      <td>PH-201-00<br><span style="color:#64748b;font-size:12px;">×2000</span></td>
+      <td style="font-size:12px;">2026-06-20 22:58</td>
+      <td style="font-size:12px;">2026-06-22 08:18</td>
+      <td>33.3h<br><span style="color:#94a3b8;font-size:11px;">1.4天</span></td>
+      <td style="font-size:12px;color:#475569;">屏幕安装(屏幕中心)</td>
+      <td><span class="badge ok">✓ 正常</span></td>
+    </tr>
+    <tr>
+      <td><b>M-201-02-001</b><br><span class="badge lv2">L2</span></td>
+      <td>PH-201-00<br><span style="color:#64748b;font-size:12px;">×3000</span></td>
+      <td style="font-size:12px;">2026-06-13 07:59</td>
+      <td style="font-size:12px;">2026-06-15 09:59</td>
+      <td>50.0h<br><span style="color:#94a3b8;font-size:11px;">2.1天</span></td>
+      <td style="font-size:12px;color:#475569;">屏幕安装(屏幕中心)</td>
+      <td><span class="badge warn">⏰ 已开始</span></td>
+    </tr>
+    <tr>
+      <td><b>M-201-03-001</b><br><span class="badge lv2">L2</span></td>
+      <td>PH-201-00<br><span style="color:#64748b;font-size:12px;">×3000</span></td>
+      <td style="font-size:12px;">2026-06-07 22:59</td>
+      <td style="font-size:12px;">2026-06-10 00:59</td>
+      <td>50.0h<br><span style="color:#94a3b8;font-size:11px;">2.1天</span></td>
+      <td style="font-size:12px;color:#475569;">屏幕安装(屏幕中心)</td>
+      <td><span class="badge warn">⏰ 已开始</span></td>
+    </tr></tbody>
+  </table>
+  <p style="color:#64748b;font-size:12px;margin-top:8px;">
+    层级：L0=成品 (PH-000/PH-001) · L1=半成品 (PH-100/PH-200) · L2=子件 (PH-201)
+  </p>
+</section>
+
+<section>
+  <h2>⑥ 任务排程明细（28 条）</h2>
+  <table>
+    <thead><tr>
+      <th>序号</th><th>工单</th><th>产品</th><th>工序</th><th>设备</th><th>开始</th><th>结束</th><th>工时</th><th>模具</th><th>可行</th>
+    </tr></thead>
+    <tbody>
+    <tr>
+      <td>10</td>
+      <td><b>M-100-03-001</b></td>
+      <td>PH-100-00×3000</td>
+      <td>锡膏印刷</td>
+      <td><span class="tag-machine">印刷中心</span></td>
+      <td style="font-size:12px;">2026-06-06 16:59</td>
+      <td style="font-size:12px;">2026-06-08 18:59</td>
+      <td>50.0h</td>
+      <td>D</td>
+      <td>🚨</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><b>M-201-03-001</b></td>
+      <td>PH-201-00×3000</td>
+      <td>屏幕安装</td>
+      <td><span class="tag-machine">屏幕中心</span></td>
+      <td style="font-size:12px;">2026-06-07 22:59</td>
+      <td style="font-size:12px;">2026-06-10 00:59</td>
+      <td>50.0h</td>
+      <td>G</td>
+      <td>🚨</td>
+    </tr>
+    <tr>
+      <td>20</td>
+      <td><b>M-100-03-001</b></td>
+      <td>PH-100-00×3000</td>
+      <td>回流焊接</td>
+      <td><span class="tag-machine">焊接中心</span></td>
+      <td style="font-size:12px;">2026-06-08 23:59</td>
+      <td style="font-size:12px;">2026-06-12 02:59</td>
+      <td>75.0h</td>
+      <td>E</td>
+      <td>🚨</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><b>M-200-03-001</b></td>
+      <td>PH-200-00×3000</td>
+      <td>显示检测</td>
+      <td><span class="tag-machine">检测中心</span></td>
+      <td style="font-size:12px;">2026-06-10 00:59</td>
+      <td style="font-size:12px;">2026-06-12 02:59</td>
+      <td>50.0h</td>
+      <td>F</td>
+      <td>🚨</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><b>M-100-02-001</b></td>
+      <td>PH-100-00×3000</td>
+      <td>锡膏印刷</td>
+      <td><span class="tag-machine">印刷中心</span></td>
+      <td style="font-size:12px;">2026-06-12 01:59</td>
+      <td style="font-size:12px;">2026-06-14 03:59</td>
+      <td>50.0h</td>
+      <td>D</td>
+      <td>🚨</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><b>M-001-03-001</b></td>
+      <td>PH-001-00×3000</td>
+      <td>主板装机</td>
+      <td><span class="tag-machine">装机中心</span></td>
+      <td style="font-size:12px;">2026-06-12 02:59</td>
+      <td style="font-size:12px;">2026-06-13 11:59</td>
+      <td>33.0h</td>
+      <td>H</td>
+      <td>🚨</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><b>M-201-02-001</b></td>
+      <td>PH-201-00×3000</td>
+      <td>屏幕安装</td>
+      <td><span class="tag-machine">屏幕中心</span></td>
+      <td style="font-size:12px;">2026-06-13 07:59</td>
+      <td style="font-size:12px;">2026-06-15 09:59</td>
+      <td>50.0h</td>
+      <td>G</td>
+      <td>🚨</td>
+    </tr>
+    <tr>
+      <td>20</td>
+      <td><b>M-001-03-001</b></td>
+      <td>PH-001-00×3000</td>
+      <td>显示贴合</td>
+      <td><span class="tag-machine">贴合中心</span></td>
+      <td style="font-size:12px;">2026-06-13 16:59</td>
+      <td style="font-size:12px;">2026-06-15 06:59</td>
+      <td>38.0h</td>
+      <td>J</td>
+      <td>🚨</td>
+    </tr>
+    <tr>
+      <td>20</td>
+      <td><b>M-100-02-001</b></td>
+      <td>PH-100-00×3000</td>
+      <td>回流焊接</td>
+      <td><span class="tag-machine">焊接中心</span></td>
+      <td style="font-size:12px;">2026-06-14 08:59</td>
+      <td style="font-size:12px;">2026-06-17 11:59</td>
+      <td>75.0h</td>
+      <td>E</td>
+      <td>🚨</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><b>M-200-02-001</b></td>
+      <td>PH-200-00×3000</td>
+      <td>显示检测</td>
+      <td><span class="tag-machine">检测中心</span></td>
+      <td style="font-size:12px;">2026-06-15 09:59</td>
+      <td style="font-size:12px;">2026-06-17 11:59</td>
+      <td>50.0h</td>
+      <td>F</td>
+      <td>🚨</td>
+    </tr>
+    <tr>
+      <td>30</td>
+      <td><b>M-001-03-001</b></td>
+      <td>PH-001-00×3000</td>
+      <td>总装</td>
+      <td><span class="tag-machine">总装中心</span></td>
+      <td style="font-size:12px;">2026-06-15 11:59</td>
+      <td style="font-size:12px;">2026-06-19 23:59</td>
+      <td>108.0h</td>
+      <td>K</td>
+      <td>🚨</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><b>M-000-02-001</b></td>
+      <td>PH-000-00×3000</td>
+      <td>主板装机</td>
+      <td><span class="tag-machine">装机中心</span></td>
+      <td style="font-size:12px;">2026-06-17 11:59</td>
+      <td style="font-size:12px;">2026-06-18 12:59</td>
+      <td>25.0h</td>
+      <td>A</td>
+      <td>🚨</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><b>M-100-01-002</b></td>
+      <td>PH-100-00×2000</td>
+      <td>锡膏印刷</td>
+      <td><span class="tag-machine">印刷中心</span></td>
+      <td style="font-size:12px;">2026-06-18 14:39</td>
+      <td style="font-size:12px;">2026-06-19 23:59</td>
+      <td>33.3h</td>
+      <td>D</td>
+      <td>🚨</td>
+    </tr>
+    <tr>
+      <td>20</td>
+      <td><b>M-000-02-001</b></td>
+      <td>PH-000-00×3000</td>
+      <td>显示贴合</td>
+      <td><span class="tag-machine">贴合中心</span></td>
+      <td style="font-size:12px;">2026-06-18 17:59</td>
+      <td style="font-size:12px;">2026-06-19 23:59</td>
+      <td>30.0h</td>
+      <td>B</td>
+      <td>🚨</td>
+    </tr>
+    <tr>
+      <td>20</td>
+      <td><b>M-100-01-002</b></td>
+      <td>PH-100-00×2000</td>
+      <td>回流焊接</td>
+      <td><span class="tag-machine">焊接中心</span></td>
+      <td style="font-size:12px;">2026-06-20 21:59</td>
+      <td style="font-size:12px;">2026-06-22 23:59</td>
+      <td>50.0h</td>
+      <td>E</td>
+      <td>✓</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><b>M-201-01-002</b></td>
+      <td>PH-201-00×2000</td>
+      <td>屏幕安装</td>
+      <td><span class="tag-machine">屏幕中心</span></td>
+      <td style="font-size:12px;">2026-06-20 22:58</td>
+      <td style="font-size:12px;">2026-06-22 08:18</td>
+      <td>33.3h</td>
+      <td>G</td>
+      <td>✓</td>
+    </tr>
+    <tr>
+      <td>30</td>
+      <td><b>M-000-02-001</b></td>
+      <td>PH-000-00×3000</td>
+      <td>总装</td>
+      <td><span class="tag-machine">总装中心</span></td>
+      <td style="font-size:12px;">2026-06-21 10:38</td>
+      <td style="font-size:12px;">2026-06-25 14:38</td>
+      <td>100.0h</td>
+      <td>C</td>
+      <td>✓</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><b>M-200-01-002</b></td>
+      <td>PH-200-00×2000</td>
+      <td>显示检测</td>
+      <td><span class="tag-machine">检测中心</span></td>
+      <td style="font-size:12px;">2026-06-22 08:18</td>
+      <td style="font-size:12px;">2026-06-23 17:38</td>
+      <td>33.3h</td>
+      <td>F</td>
+      <td>✓</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><b>M-100-01-001</b></td>
+      <td>PH-100-00×1000</td>
+      <td>锡膏印刷</td>
+      <td><span class="tag-machine">印刷中心</span></td>
+      <td style="font-size:12px;">2026-06-22 11:39</td>
+      <td style="font-size:12px;">2026-06-23 04:19</td>
+      <td>16.7h</td>
+      <td>D</td>
+      <td>✓</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><b>M-201-01-001</b></td>
+      <td>PH-201-00×1000</td>
+      <td>屏幕安装</td>
+      <td><span class="tag-machine">屏幕中心</span></td>
+      <td style="font-size:12px;">2026-06-23 00:59</td>
+      <td style="font-size:12px;">2026-06-23 17:39</td>
+      <td>16.7h</td>
+      <td>G</td>
+      <td>✓</td>
+    </tr>
+    <tr>
+      <td>20</td>
+      <td><b>M-100-01-001</b></td>
+      <td>PH-100-00×1000</td>
+      <td>回流焊接</td>
+      <td><span class="tag-machine">焊接中心</span></td>
+      <td style="font-size:12px;">2026-06-23 09:19</td>
+      <td style="font-size:12px;">2026-06-24 10:19</td>
+      <td>25.0h</td>
+      <td>E</td>
+      <td>✓</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><b>M-200-01-001</b></td>
+      <td>PH-200-00×1000</td>
+      <td>显示检测</td>
+      <td><span class="tag-machine">检测中心</span></td>
+      <td style="font-size:12px;">2026-06-23 17:39</td>
+      <td style="font-size:12px;">2026-06-24 10:19</td>
+      <td>16.7h</td>
+      <td>F</td>
+      <td>✓</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><b>M-000-01-001</b></td>
+      <td>PH-000-00×1000</td>
+      <td>主板装机</td>
+      <td><span class="tag-machine">装机中心</span></td>
+      <td style="font-size:12px;">2026-06-24 10:19</td>
+      <td style="font-size:12px;">2026-06-24 18:39</td>
+      <td>8.3h</td>
+      <td>A</td>
+      <td>✓</td>
+    </tr>
+    <tr>
+      <td>20</td>
+      <td><b>M-000-01-001</b></td>
+      <td>PH-000-00×1000</td>
+      <td>显示贴合</td>
+      <td><span class="tag-machine">贴合中心</span></td>
+      <td style="font-size:12px;">2026-06-24 23:39</td>
+      <td style="font-size:12px;">2026-06-25 09:39</td>
+      <td>10.0h</td>
+      <td>B</td>
+      <td>✓</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><b>M-000-01-002</b></td>
+      <td>PH-000-00×2000</td>
+      <td>主板装机</td>
+      <td><span class="tag-machine">装机中心</span></td>
+      <td style="font-size:12px;">2026-06-25 06:19</td>
+      <td style="font-size:12px;">2026-06-25 22:59</td>
+      <td>16.7h</td>
+      <td>A</td>
+      <td>✓</td>
+    </tr>
+    <tr>
+      <td>30</td>
+      <td><b>M-000-01-001</b></td>
+      <td>PH-000-00×1000</td>
+      <td>总装</td>
+      <td><span class="tag-machine">总装中心</span></td>
+      <td style="font-size:12px;">2026-06-25 14:39</td>
+      <td style="font-size:12px;">2026-06-26 23:59</td>
+      <td>33.3h</td>
+      <td>C</td>
+      <td>✓</td>
+    </tr>
+    <tr>
+      <td>20</td>
+      <td><b>M-000-01-002</b></td>
+      <td>PH-000-00×2000</td>
+      <td>显示贴合</td>
+      <td><span class="tag-machine">贴合中心</span></td>
+      <td style="font-size:12px;">2026-06-26 03:59</td>
+      <td style="font-size:12px;">2026-06-26 23:59</td>
+      <td>20.0h</td>
+      <td>B</td>
+      <td>✓</td>
+    </tr>
+    <tr>
+      <td>30</td>
+      <td><b>M-000-01-002</b></td>
+      <td>PH-000-00×2000</td>
+      <td>总装</td>
+      <td><span class="tag-machine">总装中心</span></td>
+      <td style="font-size:12px;">2026-06-27 05:20</td>
+      <td style="font-size:12px;">2026-06-30 00:00</td>
+      <td>66.7h</td>
+      <td>C</td>
+      <td>✓</td>
+    </tr></tbody>
+  </table>
+</section>
+
+<section>
+  <h2>⑦ 关键建议（按优先级）</h2>
+
+  <h3>🔴 P0 立即处理（影响交付可行性）</h3>
+  <ul class="advice">
+    <li><b>解决倒排穿越</b>：M-000-01-002、M-000-02-001、M-001-03-001 倒排开始时间 06-07~06-13 < 今日 06-20，
+        说明在现有工艺时长和资源下<b>无法按时交付</b>。建议三选一：
+        <ol style="margin:6px 0 0 24px;">
+          <li>与客户协商<b>延迟交期</b>（保守预估顺延 7~13 天）；</li>
+          <li>对子件 PH-201、PH-100 启用<b>外协/加班/二班</b>，压缩 L2/L1 工序；</li>
+          <li>拆分订单，先发可生产的小批量，剩余分批补货。</li>
+        </ol>
+    </li>
+    <li><b>核对齐套规则</b>：当前齐套检查把自制件 PH-100-00、PH-201-00 当外购缺料预警。
+        建议在物料主数据里把它们标为"自制"，或让齐套引擎递归识别下级 BOM 已排产 → 避免误报采购。</li>
+  </ul>
+
+  <h3>🟡 P1 优化排程（一周内）</h3>
+  <ul class="advice">
+    <li><b>缓解总装中心瓶颈</b>：总装中心负荷 308h（全部 4 个 L0 成品工单串行），是关键路径。可考虑：
+        增开总装工位/班次、把检测/屏幕安装等下游环节<b>并行化</b>、评估总装工艺拆分可行性。</li>
+    <li><b>填平低负荷设备</b>：贴合中心 98h、装机中心 83h 利用率明显偏低，
+        若 PMC 后续有插单/急单，可优先派给这两类设备。</li>
+    <li><b>BOM 层级流水化</b>：当前 L2 → L1 → L0 三级生产严格串行。建议对相同产品族开启<b>批次重叠（lot streaming）</b>，
+        L2 完成首批就可启动 L1 准备，理论上可压缩总工期 15~25%。</li>
+  </ul>
+
+  <h3>🟢 P2 持续改进</h3>
+  <ul class="advice">
+    <li>建立 PH-100-00、PH-201-00 的<b>安全库存</b>，避免成品订单一来就触发缺料告警。</li>
+    <li>在排程器中加入<b>正排兜底</b>：倒排不可行时自动切换正排，并明确给出最早可交付时间，
+        而不是返回历史时间点。</li>
+    <li>定期复盘设备 OEE，识别工序瓶颈是产能、还是换模/换线时间（当前 setup_time 全 0，可能未启用）。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>⑧ 可视化甘特图</h2>
+  <p>已生成包含工单时间轴、工序色块、设备分组的交互式甘特图：</p>
+  <a id="gantt-link" class="gantt-link" href="demo_gantt.html" target="_blank">📊 打开甘特图 (demo_gantt.html)</a>
+  <script>
+    (function() {
+      var link = document.getElementById('gantt-link');
+      if (link && window.location.pathname.startsWith('/api/file')) {
+        var params = new URLSearchParams(window.location.search);
+        var path = params.get('path');
+        if (path) {
+          var dir = path.substring(0, path.lastIndexOf('\\'));
+          if (dir === path) dir = path.substring(0, path.lastIndexOf('/'));
+          var targetPath = dir + '/demo_gantt.html';
+          link.href = '/api/file?path=' + encodeURIComponent(targetPath);
+        }
+      }
+    })();
+  </script>
+  <p style="color:#64748b;font-size:13px;margin-top:12px;">
+    甘特图同时包含两种视图：① 按工单的工序时间条（顶部）② D3.js 按设备泳道的任务分布（底部）。
+  </p>
+</section>
+
+<section style="background:#1e293b;color:#cbd5e1;">
+  <h2 style="color:white;border-color:#60a5fa;">⑨ 报告小结</h2>
+  <p style="margin-bottom:8px;">本次排程 16 个工单（4 个成品 + 12 个 BOM 子件），生成 28 条任务排程，
+  覆盖 7 个生产中心，时间窗 23.3 天。</p>
+  <p style="margin-bottom:8px;"><b style="color:#f87171;">⚠ 不能直接执行</b>：
+  3 个工单倒排穿越当前时间，4 个成品被齐套引擎误报缺料。在解决 P0 项之前，本次排程结果仅作"理论可行性参考"。</p>
+  <p>建议路径：<b style="color:#86efac;">修复齐套规则 → 与销售协商交期 / 启动外协 → 重排</b> → 才能下达车间执行。</p>
+</section>
+
+<footer style="text-align:center;color:#94a3b8;padding:20px;font-size:12px;">
+  Production Scheduling Report · Generated by 智能生产排程专家
+</footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,539 @@
+{
+  "id": "procurement_analysis",
+  "name": "采购分析",
+  "category": "procurement",
+  "description": "采购比价分析、交货达成率分析、主材行情监控",
+  "icon": "fa-tags",
+  "skill_name": "procurement-analysis",
+  "system_prompt": "你是一位采购分析专家，擅长从 SAP 等 ERP 系统中提取采购历史数据，进行价格趋势分析、供应商交货达成率分析、主材市场行情监控。请帮助用户生成结构化的 Excel 报表和可视化 HTML 看板。",
+  "has_workbench": true,
+  "workbench_title": "采购分析工作台",
+  "sub_scenes": [
+    {
+      "id": "tco_analysis",
+      "name": "TCO分析",
+      "icon": "fa-calculator",
+      "color": "#8b5cf6",
+      "visible": false,
+      "description": "分析总拥有成本，识别隐性成本",
+      "system_prompt": "你是一位TCO成本分析专家。请帮助用户进行总拥有成本分析，包括采购价格、运输费用、仓储成本、维护成本、质量成本等全生命周期成本评估。",
+      "indicators": [
+        {
+          "name": "采购价格",
+          "formula": "显性成本",
+          "meaning": "产品单价、数量折扣、付款条件等直接采购支出"
+        },
+        {
+          "name": "物流成本",
+          "formula": "运输仓储",
+          "meaning": "运输费用、保险费用、仓储费用、装卸费用等"
+        },
+        {
+          "name": "质量成本",
+          "formula": "检验返工",
+          "meaning": "来料检验、不合格品处理、返工返修、退货损失等"
+        },
+        {
+          "name": "维护成本",
+          "formula": "售后支出",
+          "meaning": "质保期内维修、备件更换、技术支持等费用"
+        },
+        {
+          "name": "管理成本",
+          "formula": "采购管理",
+          "meaning": "供应商开发、订单处理、对账结算等管理费用"
+        }
+      ],
+      "required_fields": [
+        "物料名称",
+        "采购单价",
+        "年采购量",
+        "运输费用",
+        "仓储费用"
+      ],
+      "optional_fields": [
+        "检验费用",
+        "维护费用",
+        "管理费用",
+        "资金占用费",
+        "风险准备金"
+      ],
+      "import_config": {
+        "enabled": true,
+        "accept": ".xlsx,.xls,.csv",
+        "template_headers": [
+          "物料名称",
+          "采购单价",
+          "年采购量",
+          "运输费用",
+          "仓储费用",
+          "检验费用",
+          "维护费用",
+          "管理费用",
+          "资金占用费",
+          "风险准备金"
+        ],
+        "description": "上传TCO成本数据表，支持从Excel/CSV导入"
+      },
+      "erp_config": {
+        "enabled": true,
+        "systems": [
+          "u9",
+          "sap",
+          "kingdee"
+        ],
+        "u9": {
+          "endpoint": "/scm/purchaseorder",
+          "method": "GET",
+          "params": [
+            "pageIndex",
+            "pageSize",
+            "filter"
+          ]
+        },
+        "sap": {
+          "endpoint": "/API_PURCHASEORDER_SRV/A_PurchaseOrder",
+          "method": "GET",
+          "params": [
+            "$filter",
+            "$top",
+            "$skip"
+          ]
+        },
+        "kingdee": {
+          "endpoint": "/Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.View.common.kdsvc",
+          "method": "POST",
+          "form_id": "PUR_PurchaseOrder",
+          "params": [
+            "FieldKeys",
+            "FilterString",
+            "Limit"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.procurement"
+    },
+    {
+      "id": "market_research",
+      "name": "价格调研",
+      "icon": "fa-search",
+      "color": "#06b6d4",
+      "visible": false,
+      "description": "调研市场价格，掌握价格走势",
+      "system_prompt": "你是一位市场价格调研专家。请帮助用户分析原材料价格走势、竞争对手定价策略、市场供需状况，为采购决策提供数据支持。",
+      "indicators": [
+        {
+          "name": "市场行情",
+          "formula": "价格趋势",
+          "meaning": "原材料市场价格走势、供需关系变化、季节性波动"
+        },
+        {
+          "name": "竞品分析",
+          "formula": "横向对比",
+          "meaning": "同类产品的不同供应商报价对比、性价比分析"
+        },
+        {
+          "name": "成本构成",
+          "formula": "拆解分析",
+          "meaning": "原材料、人工、制造费用、利润等各环节成本占比"
+        },
+        {
+          "name": "议价空间",
+          "formula": "降价潜力",
+          "meaning": "基于市场行情和成本分析，评估可争取的价格降幅"
+        },
+        {
+          "name": "风险因素",
+          "formula": "价格波动",
+          "meaning": "汇率变动、政策调整、原材料紧缺等影响价格的因素"
+        }
+      ],
+      "required_fields": [
+        "物料名称",
+        "规格型号",
+        "当前价格",
+        "市场调研价",
+        "价格有效期"
+      ],
+      "optional_fields": [
+        "供应商报价",
+        "历史最低价",
+        "目标价格",
+        "价格趋势",
+        "备注说明"
+      ],
+      "import_config": {
+        "enabled": true,
+        "accept": ".xlsx,.xls,.csv",
+        "template_headers": [
+          "物料名称",
+          "规格型号",
+          "当前价格",
+          "市场调研价",
+          "价格有效期",
+          "供应商报价",
+          "历史最低价",
+          "目标价格",
+          "价格趋势",
+          "备注说明"
+        ],
+        "description": "上传市场价格调研表，支持从Excel/CSV导入"
+      },
+      "erp_config": {
+        "enabled": true,
+        "systems": [
+          "u9",
+          "sap",
+          "kingdee"
+        ],
+        "u9": {
+          "endpoint": "/scm/pricelist",
+          "method": "GET",
+          "params": [
+            "pageIndex",
+            "pageSize",
+            "filter"
+          ]
+        },
+        "sap": {
+          "endpoint": "/API_PURCHASEORDER_SRV/A_PurchaseOrder",
+          "method": "GET",
+          "params": [
+            "$filter",
+            "$top",
+            "$skip"
+          ]
+        },
+        "kingdee": {
+          "endpoint": "/Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.View.common.kdsvc",
+          "method": "POST",
+          "form_id": "PUR_PriceList",
+          "params": [
+            "FieldKeys",
+            "FilterString",
+            "Limit"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.procurement"
+    },
+    {
+      "id": "negotiation_strategy",
+      "name": "议价策略",
+      "icon": "fa-handshake",
+      "color": "#f59e0b",
+      "visible": false,
+      "description": "制定议价谈判策略，实现最优价格",
+      "system_prompt": "你是一位采购谈判专家。请帮助用户制定议价策略，包括价格目标设定、谈判要点准备、让步策略设计以及合同条款谈判技巧。",
+      "indicators": [
+        {
+          "name": "目标设定",
+          "formula": "理想价格",
+          "meaning": "基于成本分析和市场调研，设定合理的目标价格区间"
+        },
+        {
+          "name": "筹码准备",
+          "formula": "谈判优势",
+          "meaning": "采购量规模、长期合作意向、付款条件优化等筹码"
+        },
+        {
+          "name": "让步策略",
+          "formula": "交换条件",
+          "meaning": "价格与交期、质量、服务等其他条件的权衡交换"
+        },
+        {
+          "name": "底线把握",
+          "formula": "最高限价",
+          "meaning": "基于预算和成本分析，确定可接受的最高价格"
+        },
+        {
+          "name": "僵局处理",
+          "formula": "备选方案",
+          "meaning": "谈判陷入僵局时的替代方案和突破策略"
+        }
+      ],
+      "required_fields": [
+        "物料名称",
+        "供应商名称",
+        "当前报价",
+        "目标价格",
+        "采购数量"
+      ],
+      "optional_fields": [
+        "历史价格",
+        "竞品价格",
+        "付款条件",
+        "交期要求",
+        "质量要求"
+      ],
+      "import_config": {
+        "enabled": true,
+        "accept": ".xlsx,.xls,.csv",
+        "template_headers": [
+          "物料名称",
+          "供应商名称",
+          "当前报价",
+          "目标价格",
+          "采购数量",
+          "历史价格",
+          "竞品价格",
+          "付款条件",
+          "交期要求",
+          "质量要求"
+        ],
+        "description": "上传议价数据表，支持从Excel/CSV导入"
+      },
+      "erp_config": {
+        "enabled": true,
+        "systems": [
+          "u9",
+          "sap",
+          "kingdee"
+        ],
+        "u9": {
+          "endpoint": "/scm/purchaseorder",
+          "method": "GET",
+          "params": [
+            "pageIndex",
+            "pageSize",
+            "filter"
+          ]
+        },
+        "sap": {
+          "endpoint": "/API_PURCHASEORDER_SRV/A_PurchaseOrder",
+          "method": "GET",
+          "params": [
+            "$filter",
+            "$top",
+            "$skip"
+          ]
+        },
+        "kingdee": {
+          "endpoint": "/Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.View.common.kdsvc",
+          "method": "POST",
+          "form_id": "PUR_PurchaseOrder",
+          "params": [
+            "FieldKeys",
+            "FilterString",
+            "Limit"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.procurement"
+    },
+    {
+      "id": "cost_reduction",
+      "name": "降本方案",
+      "icon": "fa-trending-down",
+      "color": "#10b981",
+      "visible": false,
+      "description": "设计降本增效方案，优化成本结构",
+      "system_prompt": "你是一位成本优化专家。请帮助用户制定降本增效方案，包括供应商整合、集中采购、流程优化、价值工程等多种降本手段。",
+      "indicators": [
+        {
+          "name": "供应商整合",
+          "formula": "集中采购",
+          "meaning": "减少供应商数量，扩大单家采购规模，获取量价折扣"
+        },
+        {
+          "name": "流程优化",
+          "formula": "效率提升",
+          "meaning": "简化采购流程、缩短采购周期、降低管理成本"
+        },
+        {
+          "name": "价值工程",
+          "formula": "设计优化",
+          "meaning": "通过设计变更、材料替代、工艺改进降低成本"
+        },
+        {
+          "name": "库存优化",
+          "formula": "资金节约",
+          "meaning": "合理控制库存水平，减少资金占用和仓储成本"
+        },
+        {
+          "name": "长期协议",
+          "formula": "价格锁定",
+          "meaning": "签订年度框架协议，锁定价格，避免市场波动风险"
+        }
+      ],
+      "required_fields": [
+        "降本项目",
+        "当前成本",
+        "目标成本",
+        "降本措施",
+        "预期效果"
+      ],
+      "optional_fields": [
+        "实施周期",
+        "责任人",
+        "风险因素",
+        "配套措施",
+        "跟踪指标"
+      ],
+      "import_config": {
+        "enabled": true,
+        "accept": ".xlsx,.xls,.csv",
+        "template_headers": [
+          "降本项目",
+          "当前成本",
+          "目标成本",
+          "降本措施",
+          "预期效果",
+          "实施周期",
+          "责任人",
+          "风险因素",
+          "配套措施",
+          "跟踪指标"
+        ],
+        "description": "上传降本方案数据表，支持从Excel/CSV导入"
+      },
+      "erp_config": {
+        "enabled": true,
+        "systems": [
+          "u9",
+          "sap",
+          "kingdee"
+        ],
+        "u9": {
+          "endpoint": "/scm/purchaseorder",
+          "method": "GET",
+          "params": [
+            "pageIndex",
+            "pageSize",
+            "filter"
+          ]
+        },
+        "sap": {
+          "endpoint": "/API_PURCHASEORDER_SRV/A_PurchaseOrder",
+          "method": "GET",
+          "params": [
+            "$filter",
+            "$top",
+            "$skip"
+          ]
+        },
+        "kingdee": {
+          "endpoint": "/Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.View.common.kdsvc",
+          "method": "POST",
+          "form_id": "PUR_PurchaseOrder",
+          "params": [
+            "FieldKeys",
+            "FilterString",
+            "Limit"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.procurement"
+    },
+    {
+      "id": "supplier_quote_comparison",
+      "name": "采购比价分析",
+      "icon": "fa-scale-balanced",
+      "color": "#10b981",
+      "visible": true,
+      "description": "从 SAP EKPO 采购订单行项目读取指定物料的历史采购记录，按模板生成 Excel 采购历史报表（最高价红色、最低价绿色标注），并生成可视化 HTML 看板",
+      "skill_name": "procurement-comparison",
+      "system_prompt": "你是一位采购比价分析专家。请从 SAP EKPO 采购订单行项目中分析指定物料的价格趋势。数据已通过工作台同步为 JSON 文件，请直接读取该文件，调用 procurement-comparison 技能包中的 generate_excel_report.py 生成 Excel 采购历史报表，调用 generate_charts.py 生成 HTML 可视化看板。Excel 中需对每行最高价标红、最低价标绿。最终向用户汇报每个物料的最高价、最低价、平均价、价格波动情况，并提供 Excel 和 HTML 文件路径。",
+      "indicators": [
+        {
+          "name": "历史价格",
+          "formula": "NETPR 净价",
+          "meaning": "直接取 EKPO 采购订单行项目净价"
+        },
+        {
+          "name": "价格趋势",
+          "formula": "折线图",
+          "meaning": "按采购订单创建日期展示物料净价变化趋势"
+        },
+        {
+          "name": "极值标注",
+          "formula": "最高价红 / 最低价绿",
+          "meaning": "Excel 中每行内最高价红色背景、最低价绿色背景"
+        },
+        {
+          "name": "多物料查询",
+          "formula": "MATNR 列表",
+          "meaning": "支持一次性输入多条物料代码或短文本"
+        }
+      ],
+      "erp_config": {
+        "enabled": true,
+        "systems": [
+          "sap"
+        ],
+        "sap": {
+          "table": "EKPO",
+          "fields": [
+            "MATNR",
+            "TXZ01",
+            "NETPR",
+            "MENGE",
+            "NETWR",
+            "WAERS",
+            "EBELN",
+            "EBELP",
+            "AEDAT"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.procurement"
+    },
+    {
+      "id": "delivery_performance",
+      "name": "交货达成率分析",
+      "icon": "fa-truck-fast",
+      "color": "#3b82f6",
+      "visible": true,
+      "description": "上传供应商交付计划表，自动匹配 SAP/ICB 实际收货数据，统计交货准时率与标准送货区间",
+      "skill_name": "procurement-delivery",
+      "system_prompt": "你是一位供应商交货达成率分析专家。请帮助用户上传交付计划表，并从 SAP EKBE/EKES 或 ICB 同步实际收货数据，匹配计划与实际到货情况，计算准时率、平均延迟天数、标准送货区间，生成 HTML 看板与 Excel 报告。",
+      "indicators": [
+        {
+          "name": "准时率",
+          "formula": "准时批次 / 总批次",
+          "meaning": "实际到货日期不超过计划日期 + 1 个工作日的批次占比"
+        },
+        {
+          "name": "平均延迟",
+          "formula": "延迟天数平均值",
+          "meaning": "所有延迟批次的平均延迟天数"
+        },
+        {
+          "name": "标准送货区间",
+          "formula": "P25/P50/P75",
+          "meaning": "历史实际到货日期与计划日期差值的分位数统计"
+        }
+      ],
+      "required_permission": "scenes.use.procurement"
+    },
+    {
+      "id": "market_price_monitor",
+      "name": "主材行情监控",
+      "icon": "fa-chart-line",
+      "color": "#f59e0b",
+      "visible": true,
+      "description": "针对原丝、硅胶、混纫线等核心物料，定时爬取外部市场价格资讯并生成趋势报告",
+      "skill_name": "procurement-market",
+      "system_prompt": "你是一位原材料市场行情监控专家。请帮助用户配置需要监控的核心物料（如原丝、硅胶、混纫线），定时从网络爬取公开价格资讯，生成价格趋势图、季度对比报告，并推送到指定通道。",
+      "indicators": [
+        {
+          "name": "价格趋势",
+          "formula": "折线图",
+          "meaning": "按型号展示原材料价格走势"
+        },
+        {
+          "name": "季度对比",
+          "formula": "均价环比",
+          "meaning": "不同季度间的均价变化"
+        },
+        {
+          "name": "异常波动",
+          "formula": "偏离 30 日均价 ±20%",
+          "meaning": "价格异常时标记待核实"
+        }
+      ],
+      "required_permission": "scenes.use.procurement"
+    }
+  ],
+  "required_permission": "scenes.use.procurement"
+}

@@ -25,6 +25,15 @@ from scenes import config as scenes_config
 
 _TENANT = "tnt_test"
 
+_CATALOG = {
+    "categories": [{"id": "test", "name": "测试"}],
+    "scenes": [{
+        "id": "test_scene", "name": "测试场景", "category": "test",
+        "skill_name": "test-skill", "required_permission": "chat.use",
+        "sub_scenes": [{"id": "test_sub_scene", "name": "测试子场景"}],
+    }],
+}
+
 
 def _ctx():
     return RequestContext(
@@ -80,9 +89,14 @@ class ScenesApiTests(unittest.TestCase):
         resp = self._request("/api/scenes", method="GET")
         data = self._json(resp)
         self.assertEqual(data["status"], "success")
-        self.assertGreaterEqual(len(data["categories"]), 1)
-        self.assertGreaterEqual(len(data["scenes"]), 1)
-        self.assertIn("required_permission", data["scenes"][0])
+        self.assertEqual(len(data["categories"]), 10)
+        self.assertEqual(len(data["scenes"]), 26)
+
+    def test_scenes_returns_configured_catalog(self):
+        with patch.object(scenes_config, "load_config", return_value=_CATALOG):
+            data = self._json(self._request("/api/scenes"))
+        self.assertEqual(data["categories"], _CATALOG["categories"])
+        self.assertEqual(data["scenes"], _CATALOG["scenes"])
 
     def test_scenes_config_missing_returns_empty(self):
         with patch.object(scenes_config, "load_config", return_value=None):
@@ -125,46 +139,49 @@ class ScenesApiTests(unittest.TestCase):
         self.assertEqual(data["status"], "error")
         self.assertIn("not found", data["message"])
 
-    def test_activate_top_scene_writes_context(self):
+    @patch.object(scenes_config, "load_config", return_value=_CATALOG)
+    def test_activate_top_scene_writes_context(self, _load):
         resp = self._request(
             "/api/scenes/activate",
             method="POST",
-            data={"scene_id": "procurement_supplier", "session_id": "s1"},
+            data={"scene_id": "test_scene", "session_id": "s1"},
         )
         data = self._json(resp)
         self.assertEqual(data["status"], "success")
-        self.assertEqual(data["scene"]["id"], "procurement_supplier")
+        self.assertEqual(data["scene"]["id"], "test_scene")
         # 会话上下文已写入（按请求租户命名空间）
         ctx = scenes_service.get_scene_context("s1", tenant_id=_TENANT)
         self.assertIsNotNone(ctx)
-        self.assertEqual(ctx["id"], "procurement_supplier")
+        self.assertEqual(ctx["id"], "test_scene")
 
-    def test_activate_sub_scene_merges_parent(self):
+    @patch.object(scenes_config, "load_config", return_value=_CATALOG)
+    def test_activate_sub_scene_merges_parent(self, _load):
         resp = self._request(
             "/api/scenes/activate",
             method="POST",
-            data={"scene_id": "supplier_qualification", "session_id": "s2"},
+            data={"scene_id": "test_sub_scene", "session_id": "s2"},
         )
         data = self._json(resp)
         self.assertEqual(data["status"], "success")
         scene = data["scene"]
         # 子场景激活：合并父场景元数据
-        self.assertEqual(scene["id"], "supplier_qualification")
-        self.assertEqual(scene["parent_id"], "procurement_supplier")
-        self.assertEqual(scene["parent_name"], "供应商管理")
-        self.assertEqual(scene["skill_name"], "procurement-supplier")
+        self.assertEqual(scene["id"], "test_sub_scene")
+        self.assertEqual(scene["parent_id"], "test_scene")
+        self.assertEqual(scene["parent_name"], "测试场景")
+        self.assertEqual(scene["skill_name"], "test-skill")
 
     # ------------------------------------------------------------------
     # service 层直接验证
     # ------------------------------------------------------------------
-    def test_find_scene_top_and_sub(self):
-        scene, is_sub = scenes_service.find_scene("finance_voucher")
-        self.assertEqual(scene["id"], "finance_voucher")
+    @patch.object(scenes_config, "load_config", return_value=_CATALOG)
+    def test_find_scene_top_and_sub(self, _load):
+        scene, is_sub = scenes_service.find_scene("test_scene")
+        self.assertEqual(scene["id"], "test_scene")
         self.assertFalse(is_sub)
 
-        scene, is_sub = scenes_service.find_scene("supplier_qualification")
+        scene, is_sub = scenes_service.find_scene("test_sub_scene")
         self.assertTrue(is_sub)
-        self.assertEqual(scene["parent_id"], "procurement_supplier")
+        self.assertEqual(scene["parent_id"], "test_scene")
 
         scene, is_sub = scenes_service.find_scene("nope")
         self.assertIsNone(scene)

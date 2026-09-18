@@ -81,7 +81,13 @@ class ScenesTenantScopeTests(unittest.TestCase):
     def setUp(self):
         scenes_service.clear_all_scene_context()
         self.addCleanup(scenes_service.clear_all_scene_context)
-        self.scene_id = scenes_service.get_catalog()["scenes"][0]["id"]
+        self.scene_id = "test_scene"
+        catalog_patch = patch("scenes.config.load_config", return_value={
+            "categories": [],
+            "scenes": [{"id": self.scene_id, "name": "Test scene"}],
+        })
+        catalog_patch.start()
+        self.addCleanup(catalog_patch.stop)
 
     def tearDown(self):
         scenes_service.clear_all_scene_context()

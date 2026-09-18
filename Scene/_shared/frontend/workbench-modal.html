@@ -1,0 +1,265 @@
+<div id="workbench-modal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                    <div class="bg-white dark:bg-[#1A1A1A] rounded-2xl border border-slate-200 dark:border-white/10 shadow-2xl w-[90vw] h-[85vh] max-w-6xl flex flex-col overflow-hidden">
+                        <!-- Header -->
+                        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-white/10">
+                            <div class="flex items-center gap-3">
+                                <div id="workbench-icon" class="w-10 h-10 rounded-xl flex items-center justify-center">
+                                    <i class="fas fa-chart-pie text-white"></i>
+                                </div>
+                                <div>
+                                    <h3 id="workbench-title" class="text-lg font-bold text-slate-800 dark:text-slate-100">财务分析工作台</h3>
+                                    <p id="workbench-subtitle" class="text-xs text-slate-500 dark:text-slate-400">选择分析维度，上传数据，生成专业报告</p>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <button id="workbench-indicators-btn" type="button" onclick="toggleWorkbenchIndicators(this)" title="指标说明"
+                                        class="w-8 h-8 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 flex items-center justify-center transition-colors">
+                                    <i class="fas fa-book-open text-slate-400"></i>
+                                </button>
+                                <button type="button" onclick="toggleWorkbenchMaximize(this)" title="最大化 / 还原" class="w-8 h-8 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 flex items-center justify-center transition-colors">
+                                    <i class="fas fa-expand text-slate-400"></i>
+                                </button>
+                                <button onclick="closeWorkbench()" class="w-8 h-8 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 flex items-center justify-center transition-colors">
+                                    <i class="fas fa-xmark text-slate-400"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <!-- Body -->
+                        <div class="flex-1 flex overflow-hidden">
+                            <!-- Left Panel: Indicator Explanation -->
+                            <div class="w-80 border-r border-slate-200 dark:border-white/10 overflow-y-auto p-5">
+                                <h4 class="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-4 flex items-center gap-2">
+                                    <i class="fas fa-book-open text-primary-500"></i>
+                                    指标说明
+                                    <button id="workbench-indicators-close" type="button" onclick="toggleWorkbenchIndicators(this)" title="关闭"
+                                            class="ml-auto w-7 h-7 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 flex items-center justify-center transition-colors">
+                                        <i class="fas fa-xmark text-slate-400"></i>
+                                    </button>
+                                </h4>
+                                <div id="workbench-indicators" class="space-y-4">
+                                    <!-- Indicators injected by JS -->
+                                </div>
+                            </div>
+                            <!-- Right Panel: Data Upload & Mapping -->
+                            <div class="flex-1 overflow-y-auto p-6">
+                                <!-- Upload Mode Tabs -->
+                                <div id="wb-upload-mode-tabs" class="flex items-center gap-2 mb-4">
+                                    <button id="wb-mode-single" onclick="switchUploadMode('single')" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-primary-500 text-white transition-colors">单文件模式</button>
+                                    <button id="wb-mode-multi" onclick="switchUploadMode('multi')" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">三大报表模式</button>
+                                </div>
+
+                                <!-- Required Statements Hint -->
+                                <div id="wb-required-hint" class="hidden mb-4 p-3 bg-blue-50 dark:bg-blue-500/5 border border-blue-200 dark:border-blue-500/20 rounded-lg">
+                                    <p class="text-xs text-blue-600 dark:text-blue-400 font-medium mb-2 flex items-center gap-1">
+                                        <i class="fas fa-circle-info"></i>
+                                        <span id="wb-hint-title">本分析需要以下报表</span>
+                                    </p>
+                                    <div id="wb-hint-list" class="flex flex-wrap gap-2"></div>
+                                </div>
+
+                                <!-- Data Source Tabs (for procurement/sales/production/hr) -->
+                                <div id="wb-data-source-tabs" class="hidden flex items-center gap-2 mb-4">
+                                    <button id="wb-source-manual" onclick="switchDataSource('manual')" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-primary-500 text-white transition-colors flex items-center gap-1.5">
+                                        <i class="fas fa-keyboard"></i>手动录入
+                                    </button>
+                                    <button id="wb-source-file" onclick="switchDataSource('file')" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center gap-1.5">
+                                        <i class="fas fa-file-excel"></i>文件导入
+                                    </button>
+                                    <button id="wb-source-erp" onclick="switchDataSource('erp')" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center gap-1.5">
+                                        <i class="fas fa-server"></i>ERP同步
+                                    </button>
+                                </div>
+
+                                <!-- ERP Config Panel -->
+                                <div id="wb-erp-panel" class="hidden mb-6 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-white/10">
+                                    <h4 class="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-3 flex items-center gap-2">
+                                        <i class="fas fa-plug text-primary-500"></i>ERP系统配置
+                                    </h4>
+                                    <div class="space-y-3">
+                                        <div id="wb-erp-system-row">
+                                            <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">选择 ERP 系统</label>
+                                            <select id="wb-erp-system" onchange="onErpSystemChange()" class="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500">
+                                                <option value="">请选择 ERP 系统</option>
+                                                <option value="u9">用友 U9 Cloud</option>
+                                                <option value="sap">SAP S/4HANA</option>
+                                                <option value="kingdee">金蝶云星空</option>
+                                            </select>
+                                        </div>
+                                        <div id="wb-erp-connection-row" class="hidden">
+                                            <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">选择已有连接</label>
+                                            <div class="flex gap-2">
+                                                <select id="wb-erp-connection" onchange="onErpConnectionSelectChange()" class="flex-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500">
+                                                    <option value="">请选择连接配置</option>
+                                                </select>
+                                            </div>
+                                            <p id="wb-erp-connection-info" class="text-[10px] text-slate-500 mt-1 hidden"></p>
+                                        </div>
+
+                                        <!-- 数据范围 / 过滤条件 -->
+                                        <div id="wb-erp-filters" class="hidden space-y-3">
+                                            <div class="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                                                        <span id="wb-erp-filter-label-1">物料编码</span>
+                                                        <span class="text-slate-400 font-normal">（<span id="wb-erp-filter-hint-1">多条用逗号/换行分隔</span>）</span>
+                                                    </label>
+                                                    <textarea id="wb-erp-filter-materials" rows="3" placeholder="如：1000000048,1000000049" class="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none"></textarea>
+                                                </div>
+                                                <div>
+                                                    <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                                                        <span id="wb-erp-filter-label-2">物料名称</span>
+                                                        <span class="text-slate-400 font-normal">（<span id="wb-erp-filter-hint-2">短文本模糊匹配，多条用逗号/换行分隔</span>）</span>
+                                                    </label>
+                                                    <textarea id="wb-erp-filter-material-names" rows="3" placeholder="如：纸管,纸箱" class="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none"></textarea>
+                                                </div>
+                                            </div>
+                                            <div class="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">开始日期</label>
+                                                    <input type="date" id="wb-erp-filter-start-date" class="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500">
+                                                </div>
+                                                <div>
+                                                    <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">结束日期</label>
+                                                    <input type="date" id="wb-erp-filter-end-date" class="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500">
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">最大行数</label>
+                                                <input type="number" id="wb-erp-max-rows" value="1000" min="1" max="50000" class="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-sm text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary-500">
+                                            </div>
+                                        </div>
+
+                                        <button onclick="testErpConnectionWorkbench()" class="w-full px-4 py-2 rounded-lg text-sm border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex items-center justify-center gap-2">
+                                            <i class="fas fa-link"></i>测试连接
+                                        </button>
+                                        <button id="wb-erp-sync-btn" onclick="syncErpData()" class="hidden w-full px-4 py-2 rounded-lg text-sm bg-primary-500 hover:bg-primary-600 text-white font-medium transition-colors flex items-center justify-center gap-2">
+                                            <i class="fas fa-rotate"></i>同步数据
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Step 1: Upload -->
+                                <div id="wb-step-upload" class="mb-6">
+                                    <h4 id="wb-step-upload-title" class="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-3 flex items-center gap-2">
+                                        <span class="w-5 h-5 rounded-full bg-primary-500 text-white text-xs flex items-center justify-center">1</span>
+                                        <span id="wb-step-upload-text">上传财务数据</span>
+                                    </h4>
+                                    <!-- Single File Upload -->
+                                    <div id="wb-single-upload">
+                                        <div id="wb-drop-zone" class="border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl p-8 text-center hover:border-primary-400 dark:hover:border-primary-500 transition-colors cursor-pointer">
+                                            <div class="w-14 h-14 rounded-2xl bg-slate-50 dark:bg-slate-800 flex items-center justify-center mx-auto mb-3">
+                                                <i class="fas fa-cloud-arrow-up text-slate-400 text-xl"></i>
+                                            </div>
+                                            <p class="text-sm text-slate-600 dark:text-slate-300 mb-1">拖拽 Excel/CSV 文件到此处</p>
+                                            <p class="text-xs text-slate-400 dark:text-slate-500">或 <span class="text-primary-500">点击选择文件</span></p>
+                                            <input type="file" id="wb-file-input" accept=".xlsx,.xls,.csv" class="hidden">
+                                        </div>
+                                        <div id="wb-file-info" class="hidden mt-3 flex items-center gap-3 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
+                                            <i class="fas fa-file-excel text-emerald-500"></i>
+                                            <div class="flex-1 min-w-0">
+                                                <p id="wb-file-name" class="text-sm text-slate-700 dark:text-slate-200 truncate"></p>
+                                                <p id="wb-file-size" class="text-xs text-slate-400"></p>
+                                            </div>
+                                            <button onclick="clearWorkbenchFile()" class="text-slate-400 hover:text-red-500 transition-colors">
+                                                <i class="fas fa-trash-can"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <!-- Multi File Upload (3 Statements) -->
+                                    <div id="wb-multi-upload" class="hidden space-y-3">
+                                        <!-- Balance Sheet -->
+                                        <div class="wb-statement-upload border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl p-4 text-center hover:border-primary-400 dark:hover:border-primary-500 transition-colors cursor-pointer" data-type="balance_sheet">
+                                            <input type="file" class="wb-multi-file hidden" accept=".xlsx,.xls,.csv" data-type="balance_sheet">
+                                            <div class="flex items-center gap-3">
+                                                <div class="w-10 h-10 rounded-lg bg-blue-50 dark:bg-blue-500/10 flex items-center justify-center flex-shrink-0">
+                                                    <i class="fas fa-scale-balanced text-blue-500"></i>
+                                                </div>
+                                                <div class="flex-1 text-left">
+                                                    <p class="text-sm font-medium text-slate-700 dark:text-slate-200">资产负债表</p>
+                                                    <p class="text-xs text-slate-400 wb-file-label">点击上传或拖拽文件到此处</p>
+                                                </div>
+                                                <i class="fas fa-trash-can text-slate-300 hover:text-red-500 transition-colors wb-clear-file hidden"></i>
+                                            </div>
+                                        </div>
+                                        <!-- Income Statement -->
+                                        <div class="wb-statement-upload border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl p-4 text-center hover:border-primary-400 dark:hover:border-primary-500 transition-colors cursor-pointer" data-type="income_statement">
+                                            <input type="file" class="wb-multi-file hidden" accept=".xlsx,.xls,.csv" data-type="income_statement">
+                                            <div class="flex items-center gap-3">
+                                                <div class="w-10 h-10 rounded-lg bg-emerald-50 dark:bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
+                                                    <i class="fas fa-chart-line text-emerald-500"></i>
+                                                </div>
+                                                <div class="flex-1 text-left">
+                                                    <p class="text-sm font-medium text-slate-700 dark:text-slate-200">利润表</p>
+                                                    <p class="text-xs text-slate-400 wb-file-label">点击上传或拖拽文件到此处</p>
+                                                </div>
+                                                <i class="fas fa-trash-can text-slate-300 hover:text-red-500 transition-colors wb-clear-file hidden"></i>
+                                            </div>
+                                        </div>
+                                        <!-- Cash Flow Statement -->
+                                        <div class="wb-statement-upload border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-xl p-4 text-center hover:border-primary-400 dark:hover:border-primary-500 transition-colors cursor-pointer" data-type="cashflow_statement">
+                                            <input type="file" class="wb-multi-file hidden" accept=".xlsx,.xls,.csv" data-type="cashflow_statement">
+                                            <div class="flex items-center gap-3">
+                                                <div class="w-10 h-10 rounded-lg bg-amber-50 dark:bg-amber-500/10 flex items-center justify-center flex-shrink-0">
+                                                    <i class="fas fa-money-bill-transfer text-amber-500"></i>
+                                                </div>
+                                                <div class="flex-1 text-left">
+                                                    <p class="text-sm font-medium text-slate-700 dark:text-slate-200">现金流量表</p>
+                                                    <p class="text-xs text-slate-400 wb-file-label">点击上传或拖拽文件到此处</p>
+                                                </div>
+                                                <i class="fas fa-trash-can text-slate-300 hover:text-red-500 transition-colors wb-clear-file hidden"></i>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <!-- Sheet Selector (for Excel multi-sheet) -->
+                                    <div id="wb-sheet-selector" class="hidden mt-3 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
+                                        <p class="text-xs text-slate-500 dark:text-slate-400 mb-2">检测到多个工作表，请选择对应报表：</p>
+                                        <div id="wb-sheet-list" class="space-y-2"></div>
+                                    </div>
+                                    <!-- Auto-detect result -->
+                                    <div id="wb-auto-detect" class="hidden mt-3 p-3 bg-emerald-50 dark:bg-emerald-500/5 border border-emerald-200 dark:border-emerald-500/20 rounded-lg">
+                                        <p class="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                                            <i class="fas fa-wand-magic-sparkles"></i>
+                                            <span id="wb-detect-result"></span>
+                                        </p>
+                                    </div>
+                                </div>
+                                <!-- Step 2: Field Mapping -->
+                                <div id="wb-step-mapping" class="mb-6 hidden">
+                                    <h4 class="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-3 flex items-center gap-2">
+                                        <span class="w-5 h-5 rounded-full bg-primary-500 text-white text-xs flex items-center justify-center">2</span>
+                                        字段映射
+                                    </h4>
+                                    <p id="wb-mapping-desc" class="text-xs text-slate-500 dark:text-slate-400 mb-3">请将上传文件中的列名与标准财务字段进行匹配</p>
+                                    <div id="wb-mapping-list" class="space-y-2 max-h-64 overflow-y-auto">
+                                        <!-- Mapping rows injected by JS -->
+                                    </div>
+                                </div>
+                                <!-- Step 3: Data Preview & Submit -->
+                                <div id="wb-step-submit" class="hidden">
+                                    <h4 class="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-3 flex items-center gap-2">
+                                        <span class="w-5 h-5 rounded-full bg-primary-500 text-white text-xs flex items-center justify-center">3</span>
+                                        数据预览
+                                    </h4>
+                                    <div class="overflow-x-auto rounded-lg border border-slate-200 dark:border-white/10">
+                                        <table id="wb-preview-table" class="w-full text-xs">
+                                            <thead class="bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                                                <tr id="wb-preview-head"></tr>
+                                            </thead>
+                                            <tbody id="wb-preview-body" class="text-slate-700 dark:text-slate-200"></tbody>
+                                        </table>
+                                    </div>
+                                    <div class="mt-4 flex items-center justify-between">
+                                        <div id="wb-data-status" class="text-xs"></div>
+                                        <div class="flex gap-2">
+                                            <button onclick="closeWorkbench()" class="px-4 py-2 rounded-lg text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/10 transition-colors">取消</button>
+                                            <button onclick="submitWorkbenchAnalysis()" class="px-5 py-2 rounded-lg text-sm bg-primary-500 hover:bg-primary-600 text-white font-medium transition-colors flex items-center gap-2">
+                                                <i class="fas fa-wand-magic-sparkles"></i>
+                                                开始分析
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>

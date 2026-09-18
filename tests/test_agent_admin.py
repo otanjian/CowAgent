@@ -77,6 +77,22 @@ def test_create_agent_bootstraps_persona_without_forking_shared_assets(admin):
     assert [item["id"] for item in _saved(root)["agents"]] == ["primary", "research"]
 
 
+@pytest.mark.parametrize("submitted_scene_id", [None, "retired-scene"])
+def test_retired_scene_does_not_block_editing_an_existing_agent(admin, monkeypatch, submitted_scene_id):
+    service, root, _ = admin
+    monkeypatch.setattr("agent.admin._scene_exists", lambda _id: True)
+    service.create_agent("research", "Research", str(root / "research"), scene_id="retired-scene")
+    monkeypatch.setattr("agent.admin._scene_exists", lambda _id: False)
+
+    updated = service.update_agent("research", name="Updated research", scene_id=submitted_scene_id)
+    assert updated["name"] == "Updated research"
+    assert updated["scene_id"] == "retired-scene"
+    with pytest.raises(AgentAdminError, match="does not exist"):
+        service.update_agent("research", scene_id="another-missing-scene")
+    cleared = service.update_agent("research", scene_id="")
+    assert cleared.get("scene_id") is None
+
+
 def test_new_agent_reads_the_installed_shared_skills(admin):
     service, root, _ = admin
     (root / "primary" / "skills" / "web-search").mkdir(parents=True)

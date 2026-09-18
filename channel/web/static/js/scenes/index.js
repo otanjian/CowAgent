@@ -31,23 +31,25 @@
         });
         return _registryReady;
     }
-    const WORKBENCH_FILES = ['base.js', 'voucher.js', 'tax.js', 'financial_audit.js',
-        'sap_analysis.js', 'quality_trace.js', 'scheduling.js'];
-    let _workbenchesReady = Promise.resolve();
+    let _workbenchesReady = null;
     function ensureWorkbenches() {
-        _workbenchesReady = _workbenchesReady.then(function () {
-            return ensureRegistry().then(function () {
-                return Promise.all(WORKBENCH_FILES.map(function (f) {
-                    return new Promise(function (resolve) {
-                        const s = document.createElement('script');
-                        s.src = SCENES_BASE + '/workbenches/' + f;
-                        s.onload = resolve;
-                        s.onerror = resolve;
-                        document.head.appendChild(s);
-                    });
-                }));
+        if (_workbenchesReady) return _workbenchesReady;
+        const style = document.createElement('link');
+        style.rel = 'stylesheet';
+        style.href = '/scene-assets/_shared/frontend/host.css';
+        document.head.appendChild(style);
+        function script(url) {
+            return new Promise(function (resolve, reject) {
+                const s = document.createElement('script');
+                s.src = url;
+                s.onload = resolve;
+                s.onerror = function () { s.remove(); reject(new Error('场景脚本加载失败')); };
+                document.head.appendChild(s);
             });
-        });
+        }
+        _workbenchesReady = script('/scene-assets/_shared/frontend/xlsx.full.min.js')
+            .then(function () { return script('/scene-assets/runtime.js'); })
+            .catch(function (err) { _workbenchesReady = null; throw err; });
         return _workbenchesReady;
     }
 
@@ -163,7 +165,12 @@
         if (visible) {
             empty.classList.remove('hidden');
             const title = getEl('scenes-empty-title');
-            if (title) title.textContent = t(loading ? 'scenes_loading' : 'scenes_no_category');
+            if (title) {
+                const key = loading ? 'scenes_loading' :
+                    (!_catalogCache || !_catalogCache.scenes.length ? 'scenes_empty' : 'scenes_no_category');
+                title.textContent = t(key);
+                title.setAttribute('data-i18n', key);
+            }
             const guide = getEl('scenes-empty-guide');
             if (guide) guide.classList.toggle('hidden', !showGuide);
         } else {
@@ -262,12 +269,12 @@
         const empty = getEl('scenes-empty');
         const tabs = getEl('scenes-tabs');
         const grid = getEl('scenes-grid');
-        if (tabs) tabs.classList.add('hidden');
-        if (grid) grid.classList.add('hidden');
+        if (tabs) { tabs.replaceChildren(); tabs.classList.add('hidden'); }
+        if (grid) { grid.replaceChildren(); grid.classList.add('hidden'); }
         // 初始先显示「加载中」空态；数据到达后由 renderCards 决定空态/网格显隐。
         if (empty) { empty.classList.remove('hidden'); const l = getEl('scenes-empty-guide'); if (l) l.classList.add('hidden'); }
 
-        return ensureSceneData(false).then(function () {
+        return ensureSceneData(true).then(function () {
             if (!_catalogCache.scenes.length) {
                 // 整库无场景：显示空态与引导。
                 setEmptyState(true, true, false);
@@ -290,17 +297,21 @@
     function openSceneById(sceneId) {
         // 允许在进入场景中心前直接被调用（工作台/选择器/直链）：先确保目录数据。
         return ensureSceneData(false).then(function () {
-            return ensureWorkbenches();
+            return ensureRegistry();
         }).then(function () {
             const scene = findScene(sceneId);
             if (!scene) return;
             const registry = window.ScenesRegistry;
-            const wbType = registry && registry.resolveWorkbenchType ? registry.resolveWorkbenchType(scene) : 'base';
-            if (scene.has_workbench && registry && registry.hasRenderer && registry.hasRenderer(wbType)) {
-                return registry.render(wbType, scene);
-            }
-            activateScene(scene);
-        });
+            const wbType = registry && registry.resolveWorkbenchType
+                ? registry.resolveWorkbenchType(scene) : 'base';
+            return ensureWorkbenches().then(function () {
+                if (window.SceneOriginal) return window.SceneOriginal.open(scene);
+                if (scene.has_workbench && registry && registry.hasRenderer && registry.hasRenderer(wbType)) {
+                    return registry.render(wbType, scene);
+                }
+                activateScene(scene);
+            });
+        }).catch(function (error) { showNotice(error.message || t('scenes_activate_failed')); });
     }
 
     function activateScene(scene) {
@@ -348,6 +359,7 @@
         clearTimeout(el._hide);
         el._hide = setTimeout(function () { el.style.opacity = '0'; }, 2600);
     }
+    window.showScenesNotice = showNotice;
 
     // ---- `/场景` 场景选择器 ----------------------------------------------
     function ensureScenePickerData() {
@@ -457,4 +469,9 @@
     window.showScenePicker = showScenePicker;
     window.activateScene = activateScene;
     window.openSceneById = openSceneById;
+    window.continueSceneSapAnalysis = function (question) {
+        return ensureWorkbenches().then(function () {
+            return window.SceneOriginal.sendSapFollowUpAnalysis(question);
+        }).catch(function (error) { showNotice(error.message); });
+    };
 })();

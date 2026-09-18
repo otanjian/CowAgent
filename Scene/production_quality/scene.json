@@ -1,0 +1,181 @@
+{
+  "id": "production_quality",
+  "name": "质量管理",
+  "category": "production",
+  "description": "质量控制、ISO体系、异常处理",
+  "icon": "fa-shield-halved",
+  "skill_name": "production-quality",
+  "system_prompt": "你是一位质量管理专家，熟悉ISO9001、IATF16949等质量管理体系。你擅长质量控制计划制定、SPC统计过程控制、不合格品处理以及持续改进方案设计。",
+  "has_workbench": true,
+  "workbench_title": "质量管理工作台",
+  "sub_scenes": [
+    {
+      "id": "quality_control",
+      "name": "质量控制",
+      "icon": "fa-microscope",
+      "color": "#3b82f6",
+      "description": "制定质量控制计划，监控生产过程质量",
+      "system_prompt": "你是一位质量控制专家。请帮助用户制定质量控制计划，设计检验标准和抽样方案，建立过程监控机制，确保产品质量稳定。",
+      "indicators": [
+        {
+          "name": "检验标准",
+          "formula": "质量要求",
+          "meaning": "产品外观、尺寸、性能、可靠性等质量指标"
+        },
+        {
+          "name": "抽样方案",
+          "formula": "AQL标准",
+          "meaning": "来料检验、过程检验、成品检验的抽样规则"
+        },
+        {
+          "name": "过程监控",
+          "formula": "SPC控制",
+          "meaning": "关键工序的过程能力指数、控制图监控"
+        },
+        {
+          "name": "不合格处理",
+          "formula": "NCR流程",
+          "meaning": "不合格品的标识、隔离、评审、处置流程"
+        },
+        {
+          "name": "质量追溯",
+          "formula": "批次管理",
+          "meaning": "原材料批次、生产批次、检验记录的追溯"
+        }
+      ],
+      "required_fields": [
+        "产品名称",
+        "检验项目",
+        "质量标准",
+        "检验频率"
+      ],
+      "optional_fields": [
+        "抽样数量",
+        "检测方法",
+        "记录表单",
+        "责任人",
+        "备注"
+      ],
+      "required_permission": "scenes.use.production"
+    },
+    {
+      "id": "iso_system",
+      "name": "体系管理",
+      "icon": "fa-certificate",
+      "color": "#8b5cf6",
+      "description": "维护ISO质量体系，组织内审外审",
+      "system_prompt": "你是一位ISO体系管理专家。请帮助用户维护质量管理体系，组织内部审核、管理评审，应对外部审核，持续改进体系有效性。",
+      "indicators": [
+        {
+          "name": "文件管理",
+          "formula": "文件控制",
+          "meaning": "质量手册、程序文件、作业指导书的编制和更新"
+        },
+        {
+          "name": "内审管理",
+          "formula": "审核计划",
+          "meaning": "内部审核计划制定、检查表设计、不符合项跟踪"
+        },
+        {
+          "name": "管理评审",
+          "formula": "高层评审",
+          "meaning": "质量体系运行情况的定期评审和改进决策"
+        },
+        {
+          "name": "外审应对",
+          "formula": "认证维护",
+          "meaning": "第三方认证审核的准备、应对和整改"
+        },
+        {
+          "name": "持续改进",
+          "formula": "PDCA循环",
+          "meaning": "质量目标达成、纠正预防措施、改进项目推进"
+        }
+      ],
+      "required_fields": [
+        "体系类型",
+        "审核类型",
+        "审核时间",
+        "审核范围"
+      ],
+      "optional_fields": [
+        "审核员",
+        "不符合项",
+        "整改措施",
+        "完成期限",
+        "备注"
+      ],
+      "field_types": {
+        "体系类型": {
+          "type": "select",
+          "options": [
+            "ISO9001",
+            "IATF16949",
+            "ISO14001",
+            "ISO45001"
+          ]
+        },
+        "审核类型": {
+          "type": "select",
+          "options": [
+            "内审",
+            "外审",
+            "管理评审",
+            "监督审核"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.production"
+    },
+    {
+      "id": "abnormal_handling",
+      "name": "异常处理",
+      "icon": "fa-triangle-exclamation",
+      "color": "#ef4444",
+      "description": "处理质量异常，分析根因，制定对策",
+      "system_prompt": "你是一位质量异常处理专家。请帮助用户处理生产过程中的质量异常，运用8D、5Why等工具分析根本原因，制定纠正预防措施。",
+      "indicators": [
+        {
+          "name": "异常描述",
+          "formula": "问题定义",
+          "meaning": "异常现象、发生时间、影响范围、严重程度"
+        },
+        {
+          "name": "临时措施",
+          "formula": "遏制行动",
+          "meaning": "防止问题扩大和流出的紧急处理措施"
+        },
+        {
+          "name": "根因分析",
+          "formula": "5Why/8D",
+          "meaning": "运用分析工具找出问题的根本原因"
+        },
+        {
+          "name": "纠正措施",
+          "formula": "问题解决",
+          "meaning": "消除根本原因的措施，防止问题再发"
+        },
+        {
+          "name": "预防措施",
+          "formula": "水平展开",
+          "meaning": "类似产品和工序的预防，体系层面的改进"
+        }
+      ],
+      "required_fields": [
+        "异常描述",
+        "影响范围",
+        "临时措施",
+        "根因分析"
+      ],
+      "optional_fields": [
+        "纠正措施",
+        "预防措施",
+        "责任人",
+        "完成期限",
+        "验证结果"
+      ],
+      "required_permission": "scenes.use.production"
+    }
+  ],
+  "required_permission": "scenes.use.production"
+}

@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>企业财务报表综合分析报告</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<style>
+:root {
+  --primary: #1e3a5f;
+  --secondary: #2c5282;
+  --accent: #3182ce;
+  --success: #38a169;
+  --warning: #d69e2e;
+  --danger: #e53e3e;
+  --bg: #f7fafc;
+  --card-bg: #ffffff;
+  --text: #2d3748;
+  --text-light: #718096;
+  --border: #e2e8f0;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+}
+.container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+
+/* Header */
+.header {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+  color: white;
+  padding: 40px;
+  border-radius: 16px;
+  margin-bottom: 24px;
+  box-shadow: 0 10px 40px rgba(30,58,95,0.2);
+}
+.header h1 { font-size: 2rem; font-weight: 700; margin-bottom: 8px; }
+.header .meta { opacity: 0.9; font-size: 0.95rem; }
+.header .meta span { margin-right: 24px; }
+
+/* Score Badge */
+.score-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255,255,255,0.15);
+  padding: 8px 16px;
+  border-radius: 20px;
+  margin-top: 16px;
+  font-size: 0.9rem;
+}
+.score-badge .stars { color: #f6e05e; font-size: 1.1rem; }
+
+/* KPI Cards */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.kpi-card {
+  background: var(--card-bg);
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  border-left: 4px solid var(--accent);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.kpi-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+.kpi-card.green { border-left-color: var(--success); }
+.kpi-card.red { border-left-color: var(--danger); }
+.kpi-card.orange { border-left-color: var(--warning); }
+.kpi-card.purple { border-left-color: #805ad5; }
+.kpi-label { font-size: 0.85rem; color: var(--text-light); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+.kpi-value { font-size: 1.8rem; font-weight: 700; color: var(--primary); }
+.kpi-change {
+  font-size: 0.9rem;
+  margin-top: 6px;
+  font-weight: 600;
+}
+.kpi-change.up { color: var(--success); }
+.kpi-change.down { color: var(--danger); }
+.kpi-change.neutral { color: var(--text-light); }
+.kpi-sub { font-size: 0.8rem; color: var(--text-light); margin-top: 4px; }
+
+/* Section */
+.section {
+  background: var(--card-bg);
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 24px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+.section-title {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--primary);
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.section-title .icon { font-size: 1.3rem; }
+
+/* Charts */
+.chart-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  gap: 24px;
+}
+.chart-box { width: 100%; height: 380px; }
+.chart-full { width: 100%; height: 420px; }
+
+/* Risk Panel */
+.risk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+.risk-item {
+  padding: 16px;
+  border-radius: 10px;
+  border-left: 4px solid;
+  background: var(--bg);
+}
+.risk-item.red { border-left-color: var(--danger); background: #fff5f5; }
+.risk-item.orange { border-left-color: var(--warning); background: #fffaf0; }
+.risk-item.green { border-left-color: var(--success); background: #f0fff4; }
+.risk-level {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.risk-item.red .risk-level { background: var(--danger); color: white; }
+.risk-item.orange .risk-level { background: var(--warning); color: white; }
+.risk-item.green .risk-level { background: var(--success); color: white; }
+.risk-title { font-weight: 700; margin-bottom: 4px; }
+.risk-desc { font-size: 0.9rem; color: var(--text-light); }
+
+/* Suggestion Timeline */
+.timeline {
+  position: relative;
+  padding-left: 24px;
+}
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  background: var(--border);
+}
+.timeline-item {
+  position: relative;
+  margin-bottom: 20px;
+  padding-left: 20px;
+}
+.timeline-item::before {
+  content: '';
+  position: absolute;
+  left: -21px;
+  top: 4px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid white;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.timeline-item.short::before { background: var(--success); box-shadow: 0 0 0 2px var(--success); }
+.timeline-item.mid::before { background: var(--warning); box-shadow: 0 0 0 2px var(--warning); }
+.timeline-item.long::before { background: var(--secondary); box-shadow: 0 0 0 2px var(--secondary); }
+.timeline-phase {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-light);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+.timeline-title { font-weight: 700; margin-bottom: 4px; }
+.timeline-desc { font-size: 0.9rem; color: var(--text-light); }
+
+/* Table */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.data-table th, .data-table td {
+  padding: 10px 12px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+}
+.data-table th:first-child, .data-table td:first-child { text-align: left; }
+.data-table th {
+  background: var(--bg);
+  font-weight: 600;
+  color: var(--text-light);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+}
+.data-table tr:hover { background: var(--bg); }
+.data-table .highlight { font-weight: 700; color: var(--primary); }
+.data-table .up { color: var(--success); }
+.data-table .down { color: var(--danger); }
+
+/* Footer */
+.footer {
+  text-align: center;
+  padding: 30px;
+  color: var(--text-light);
+  font-size: 0.85rem;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .chart-row { grid-template-columns: 1fr; }
+  .header h1 { font-size: 1.4rem; }
+  .kpi-value { font-size: 1.4rem; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <h1>📊 企业财务报表综合分析报告</h1>
+    <div class="meta">
+      <span>📅 基准期间：2024年度 / 2024年末</span>
+      <span>📈 对比期间：2023年度 / 2023年末</span>
+      <span>💱 单位：人民币（元）</span>
+    </div>
+    <div class="score-badge">
+      <span>综合健康评分：</span>
+      <span class="stars">⭐⭐⭐⭐</span>
+      <span>（4/5星 · 整体健康，关注现金流与营运资本）</span>
+    </div>
+  </div>
+
+  <!-- KPI Cards -->
+  <div class="kpi-grid">
+    <div class="kpi-card green">
+      <div class="kpi-label">营业收入</div>
+      <div class="kpi-value">1,258.0万</div>
+      <div class="kpi-change up">▲ +15.94% 同比</div>
+      <div class="kpi-sub">2023年：1,085.0万</div>
+    </div>
+    <div class="kpi-card green">
+      <div class="kpi-label">净利润</div>
+      <div class="kpi-value">257.5万</div>
+      <div class="kpi-change up">▲ +70.00% 同比</div>
+      <div class="kpi-sub">净利率 20.47% · ROE 28.16%</div>
+    </div>
+    <div class="kpi-card purple">
+      <div class="kpi-label">资产总计</div>
+      <div class="kpi-value">2,298.0万</div>
+      <div class="kpi-change up">▲ +16.53% 同比</div>
+      <div class="kpi-sub">资产负债率 56.66%</div>
+    </div>
+    <div class="kpi-card orange">
+      <div class="kpi-label">经营现金流净额</div>
+      <div class="kpi-value">233.0万</div>
+      <div class="kpi-change up">▲ +14.78% 同比</div>
+      <div class="kpi-sub">现金流/净利润 0.90 ⚠️</div>
+    </div>
+    <div class="kpi-card red">
+      <div class="kpi-label">现金净增加额</div>
+      <div class="kpi-value">-14.0万</div>
+      <div class="kpi-change down">▼ 由正转负</div>
+      <div class="kpi-sub">2023年：+14.5万</div>
+    </div>
+    <div class="kpi-card orange">
+      <div class="kpi-label">存货周转天数</div>
+      <div class="kpi-value">141天</div>
+      <div class="kpi-change down">▲ +3.2天</div>
+      <div class="kpi-sub">行业参考：60-120天</div>
+    </div>
+  </div>
+
+  <!-- Charts Section 1: Trend -->
+  <div class="section">
+    <div class="section-title"><span class="icon">📈</span> 核心指标趋势分析（2022-2024）</div>
+    <div class="chart-row">
+      <div id="chartRevenueProfit" class="chart-box"></div>
+      <div id="chartRatios" class="chart-box"></div>
+    </div>
+  </div>
+
+  <!-- Charts Section 2: Cashflow & Structure -->
+  <div class="section">
+    <div class="section-title"><span class="icon">💰</span> 现金流量与资产结构</div>
+    <div class="chart-row">
+      <div id="chartCashflow" class="chart-box"></div>
+      <div id="chartAssetStructure" class="chart-box"></div>
+    </div>
+  </div>
+
+  <!-- Radar Chart -->
+  <div class="section">
+    <div class="section-title"><span class="icon">🎯</span> 财务健康多维评分雷达</div>
+    <div class="chart-full" id="chartRadar"></div>
+  </div>
+
+  <!-- Ratio Table -->
+  <div class="section">
+    <div class="section-title"><span class="icon">📋</span> 核心财务比率一览</div>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>指标</th>
+          <th>2024年</th>
+          <th>2023年</th>
+          <th>变动</th>
+          <th>行业参考</th>
+          <th>评价</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>毛利率</td>
+          <td class="highlight">37.84%</td>
+          <td>36.50%</td>
+          <td class="up">+1.34pp</td>
+          <td>25%-40%</td>
+          <td><span style="color:var(--success)">● 良好</span></td>
+        </tr>
+        <tr>
+          <td>净利率</td>
+          <td class="highlight">20.47%</td>
+          <td>13.95%</td>
+          <td class="up">+6.52pp</td>
+          <td>8%-15%</td>
+          <td><span style="color:var(--success)">● 优秀（偏高）</span></td>
+        </tr>
+        <tr>
+          <td>ROE</td>
+          <td class="highlight">28.16%</td>
+          <td>19.32%</td>
+          <td class="up">+8.84pp</td>
+          <td>12%-20%</td>
+          <td><span style="color:var(--success)">● 优秀（偏高）</span></td>
+        </tr>
+        <tr>
+          <td>流动比率</td>
+          <td class="highlight">1.60</td>
+          <td>1.56</td>
+          <td class="up">+0.04</td>
+          <td>1.5-2.0</td>
+          <td><span style="color:var(--success)">● 合适</span></td>
+        </tr>
+        <tr>
+          <td>速动比率</td>
+          <td class="highlight">1.17</td>
+          <td>1.12</td>
+          <td class="up">+0.05</td>
+          <td>0.8-1.2</td>
+          <td><span style="color:var(--success)">● 合适</span></td>
+        </tr>
+        <tr>
+          <td>资产负债率</td>
+          <td class="highlight">56.66%</td>
+          <td>57.86%</td>
+          <td class="up">-1.20pp</td>
+          <td>40%-60%</td>
+          <td><span style="color:var(--warning)">● 合适（偏高）</span></td>
+        </tr>
+        <tr>
+          <td>利息保障倍数</td>
+          <td class="highlight">18.19</td>
+          <td>12.40</td>
+          <td class="up">+5.79</td>
+          <td>&gt;3</td>
+          <td><span style="color:var(--success)">● 很安全</span></td>
+        </tr>
+        <tr>
+          <td>应收周转天数</td>
+          <td class="highlight">62天</td>
+          <td>61.5天</td>
+          <td class="down">+0.5天</td>
+          <td>30-90天</td>
+          <td><span style="color:var(--success)">● 合适</span></td>
+        </tr>
+        <tr>
+          <td>存货周转天数</td>
+          <td class="highlight">141天</td>
+          <td>138天</td>
+          <td class="down">+3.2天</td>
+          <td>60-120天</td>
+          <td><span style="color:var(--danger)">● 偏慢</span></td>
+        </tr>
+        <tr>
+          <td>经营现金流/净利润</td>
+          <td class="highlight">0.90</td>
+          <td>1.34</td>
+          <td class="down">-0.34</td>
+          <td>&gt;1.0</td>
+          <td><span style="color:var(--warning)">● 偏低</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Risk Panel -->
+  <div class="section">
+    <div class="section-title"><span class="icon">🚨</span> 主要发现与风险预警</div>
+    <div class="risk-grid">
+      <div class="risk-item red">
+        <div class="risk-level">高风险</div>
+        <div class="risk-title">存货积压严重</div>
+        <div class="risk-desc">存货328万，周转141天，远超行业良性区间（60-120天），资金占用严重，存在滞销与减值风险。</div>
+      </div>
+      <div class="risk-item red">
+        <div class="risk-level">高风险</div>
+        <div class="risk-title">应收增速超过收入增速</div>
+        <div class="risk-desc">应收账款增长18.7%，高于营业收入增长15.9%，客户账期在拉长，存在坏账风险。</div>
+      </div>
+      <div class="risk-item red">
+        <div class="risk-level">高风险</div>
+        <div class="risk-title">现金净增加额转负</div>
+        <div class="risk-desc">2024年现金净减少14万，投资+筹资双流出挤压现金储备，流动性承压。</div>
+      </div>
+      <div class="risk-item orange">
+        <div class="risk-level">中风险</div>
+        <div class="risk-title">利润含金量下降</div>
+        <div class="risk-desc">经营现金流/净利润从1.34降至0.90，连续三年下滑，盈利质量需关注。</div>
+      </div>
+      <div class="risk-item orange">
+        <div class="risk-level">中风险</div>
+        <div class="risk-title">受限资金存疑</div>
+        <div class="risk-desc">资产负债表货币资金458万，现金流量表期末余额仅351万，差额107万需核实是否为质押/保证金。</div>
+      </div>
+      <div class="risk-item orange">
+        <div class="risk-level">中风险</div>
+        <div class="risk-title">在建工程高速扩张</div>
+        <div class="risk-desc">在建工程从80万增至120万（+50%），若投产不及预期，将面临资产闲置和折旧压力。</div>
+      </div>
+      <div class="risk-item green">
+        <div class="risk-level">优势</div>
+        <div class="risk-title">盈利能力显著增强</div>
+        <div class="risk-desc">净利率20.47%，ROE 28.16%，远超行业均值，资本回报能力极强。</div>
+      </div>
+      <div class="risk-item green">
+        <div class="risk-level">优势</div>
+        <div class="risk-title">收入持续高增</div>
+        <div class="risk-desc">2022-2024年收入复合增长率约16%，业务扩张顺利，市场份额提升。</div>
+      </div>
+      <div class="risk-item green">
+        <div class="risk-level">优势</div>
+        <div class="risk-title">利息保障倍数极高</div>
+        <div class="risk-desc">18.19倍，偿付利息能力充裕，短期债务风险极低。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Suggestions -->
+  <div class="section">
+    <div class="section-title"><span class="icon">💡</span> 分层改善建议</div>
+    <div class="timeline">
+      <div class="timeline-item short">
+        <div class="timeline-phase">短期 · 立即执行（0-6个月）</div>
+        <div class="timeline-title">强化应收账款管理</div>
+        <div class="timeline-desc">建立客户信用评级体系，对账期超60天的客户启动催收；考虑信保/贴现方式释放运营资金。目标：应收周转天数压至50天以内。</div>
+      </div>
+      <div class="timeline-item short">
+        <div class="timeline-phase">短期 · 立即执行（0-6个月）</div>
+        <div class="timeline-title">压缩存货周转天数</div>
+        <div class="timeline-desc">引入JIT管理理念，对超180天库龄存货专项清理，及时计提减值。目标：存货周转压至100天以内。</div>
+      </div>
+      <div class="timeline-item mid">
+        <div class="timeline-phase">中期 · 持续优化（6-18个月）</div>
+        <div class="timeline-title">平衡资本支出与现金流</div>
+        <div class="timeline-desc">评估在建工程及固定资产投资ROI，确保项目IRR高于资金成本；考虑融资租赁降低一次性资本开支。</div>
+      </div>
+      <div class="timeline-item mid">
+        <div class="timeline-phase">中期 · 持续优化（6-18个月）</div>
+        <div class="timeline-title">提升现金流预测能力</div>
+        <div class="timeline-desc">建立13周现金流滚动预测模型，将"经营现金流/净利润"纳入经营层核心KPI，设定不低于1.0的底线。</div>
+      </div>
+      <div class="timeline-item long">
+        <div class="timeline-phase">长期 · 战略布局（1-3年）</div>
+        <div class="timeline-title">优化财务杠杆结构</div>
+        <div class="timeline-desc">通过股权融资或利润留存降低资产负债率至50%以内；建立内部资金池，对高回报业务单元倾斜资源。</div>
+      </div>
+      <div class="timeline-item long">
+        <div class="timeline-phase">长期 · 战略布局（1-3年）</div>
+        <div class="timeline-title">构建财务数字化能力</div>
+        <div class="timeline-desc">部署ERP财务业务一体化系统，利用大数据建立客户风险预警模型，实现应收/存货/应付实时监控。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Data Appendix -->
+  <div class="section">
+    <div class="section-title"><span class="icon">📑</span> 附录：核心财务数据速查</div>
+    <table class="data-table">
+      <thead>
+        <tr><th>项目</th><th>2024年度/末</th><th>2023年度/末</th><th>2022年度/末</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>营业收入</td><td>12,580,000</td><td>10,850,000</td><td>9,320,000</td></tr>
+        <tr><td>营业成本</td><td>7,820,000</td><td>6,890,000</td><td>5,980,000</td></tr>
+        <tr><td>营业利润</td><td>3,393,100</td><td>1,984,750</td><td>1,496,400</td></tr>
+        <tr><td>净利润</td><td>2,574,825</td><td>1,514,063</td><td>1,145,550</td></tr>
+        <tr><td>资产总计</td><td>22,980,000</td><td>19,720,000</td><td>17,050,000</td></tr>
+        <tr><td>负债合计</td><td>13,020,000</td><td>11,410,000</td><td>9,690,000</td></tr>
+        <tr><td>所有者权益</td><td>9,980,000</td><td>8,308,000</td><td>7,363,000</td></tr>
+        <tr><td>经营现金流净额</td><td>2,330,000</td><td>2,030,000</td><td>1,760,000</td></tr>
+        <tr><td>投资现金流净额</td><td>-1,440,000</td><td>-1,090,000</td><td>-870,000</td></tr>
+        <tr><td>筹资现金流净额</td><td>-1,010,000</td><td>-780,000</td><td>-650,000</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="footer">
+    <p>报告生成时间：2026年6月24日 · 分析基于企业提供的财务报表原始数据，未经审计调整</p>
+    <p style="margin-top:8px; font-size:0.8rem;">本报告仅供内部管理参考，不构成投资建议</p>
+  </div>
+</div>
+
+<script>
+// Chart 1: Revenue & Profit Trend
+const chartRevenueProfit = echarts.init(document.getElementById('chartRevenueProfit'));
+chartRevenueProfit.setOption({
+  title: { text: '收入与利润趋势', left: 'center', textStyle: { fontSize: 14, color: '#1e3a5f' } },
+  tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+  legend: { bottom: 0, data: ['营业收入', '营业成本', '净利润'] },
+  grid: { left: '3%', right: '4%', bottom: '15%', containLabel: true },
+  xAxis: { type: 'category', data: ['2022年', '2023年', '2024年'] },
+  yAxis: { type: 'value', name: '金额（万元）', axisLabel: { formatter: '{value}' } },
+  series: [
+    { name: '营业收入', type: 'bar', data: [932, 1085, 1258], itemStyle: { color: '#3182ce' }, barWidth: '25%' },
+    { name: '营业成本', type: 'bar', data: [598, 689, 782], itemStyle: { color: '#a0aec0' }, barWidth: '25%' },
+    { name: '净利润', type: 'line', data: [114.6, 151.4, 257.5], itemStyle: { color: '#38a169' }, lineStyle: { width: 3 }, symbol: 'circle', symbolSize: 8, yAxisIndex: 0 }
+  ]
+});
+
+// Chart 2: Key Ratios Trend
+const chartRatios = echarts.init(document.getElementById('chartRatios'));
+chartRatios.setOption({
+  title: { text: '关键比率趋势', left: 'center', textStyle: { fontSize: 14, color: '#1e3a5f' } },
+  tooltip: { trigger: 'axis' },
+  legend: { bottom: 0, data: ['毛利率', '净利率', 'ROE', '资产负债率'] },
+  grid: { left: '3%', right: '4%', bottom: '15%', containLabel: true },
+  xAxis: { type: 'category', data: ['2022年', '2023年', '2024年'] },
+  yAxis: { type: 'value', name: '百分比（%）', axisLabel: { formatter: '{value}%' } },
+  series: [
+    { name: '毛利率', type: 'line', data: [35.84, 36.50, 37.84], itemStyle: { color: '#3182ce' }, lineStyle: { width: 3 }, symbol: 'circle' },
+    { name: '净利率', type: 'line', data: [12.29, 13.95, 20.47], itemStyle: { color: '#38a169' }, lineStyle: { width: 3 }, symbol: 'circle' },
+    { name: 'ROE', type: 'line', data: [16.44, 19.32, 28.16], itemStyle: { color: '#805ad5' }, lineStyle: { width: 3 }, symbol: 'circle' },
+    { name: '资产负债率', type: 'line', data: [56.83, 57.86, 56.66], itemStyle: { color: '#e53e3e' }, lineStyle: { width: 2, type: 'dashed' }, symbol: 'diamond' }
+  ]
+});
+
+// Chart 3: Cashflow Waterfall
+const chartCashflow = echarts.init(document.getElementById('chartCashflow'));
+chartCashflow.setOption({
+  title: { text: '三大活动现金流量', left: 'center', textStyle: { fontSize: 14, color: '#1e3a5f' } },
+  tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: function(params) { let r = params[0].name + '<br/>'; params.forEach(p => { r += p.marker + ' ' + p.seriesName + ': ' + p.value + '万<br/>'; }); return r; } },
+  legend: { bottom: 0 },
+  grid: { left: '3%', right: '4%', bottom: '15%', containLabel: true },
+  xAxis: { type: 'category', data: ['2022年', '2023年', '2024年'] },
+  yAxis: { type: 'value', name: '金额（万元）' },
+  series: [
+    { name: '经营活动', type: 'bar', stack: 'total', data: [176, 203, 233], itemStyle: { color: '#38a169' } },
+    { name: '投资活动', type: 'bar', stack: 'total', data: [-87, -109, -144], itemStyle: { color: '#e53e3e' } },
+    { name: '筹资活动', type: 'bar', stack: 'total', data: [-65, -78, -101], itemStyle: { color: '#d69e2e' } },
+    { name: '现金净增加', type: 'line', data: [25, 14.5, -14], itemStyle: { color: '#1e3a5f' }, lineStyle: { width: 3, type: 'dotted' }, symbol: 'circle', symbolSize: 10 }
+  ]
+});
+
+// Chart 4: Asset Structure Pie
+const chartAssetStructure = echarts.init(document.getElementById('chartAssetStructure'));
+chartAssetStructure.setOption({
+  title: { text: '2024年末资产结构', left: 'center', textStyle: { fontSize: 14, color: '#1e3a5f' } },
+  tooltip: { trigger: 'item', formatter: '{b}: {c}万 ({d}%)' },
+  legend: { orient: 'vertical', right: 10, top: 'center', type: 'scroll' },
+  series: [
+    {
+      name: '资产结构',
+      type: 'pie',
+      radius: ['40%', '70%'],
+      center: ['40%', '50%'],
+      avoidLabelOverlap: false,
+      itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 2 },
+      label: { show: false },
+      emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold' } },
+      data: [
+        { value: 458, name: '货币资金', itemStyle: { color: '#3182ce' } },
+        { value: 235, name: '应收账款', itemStyle: { color: '#63b3ed' } },
+        { value: 328, name: '存货', itemStyle: { color: '#90cdf4' } },
+        { value: 197, name: '其他流动资产', itemStyle: { color: '#bee3f8' } },
+        { value: 520, name: '固定资产', itemStyle: { color: '#38a169' } },
+        { value: 120, name: '在建工程', itemStyle: { color: '#68d391' } },
+        { value: 180, name: '无形资产', itemStyle: { color: '#9ae6b4' } },
+        { value: 260, name: '其他非流动资产', itemStyle: { color: '#c6f6d5' } }
+      ]
+    }
+  ]
+});
+
+// Chart 5: Radar
+const chartRadar = echarts.init(document.getElementById('chartRadar'));
+chartRadar.setOption({
+  title: { text: '2024年度财务健康度多维评分（满分100）', left: 'center', textStyle: { fontSize: 16, color: '#1e3a5f', fontWeight: 'bold' } },
+  tooltip: { trigger: 'item' },
+  legend: { bottom: 0, data: ['本企业', '行业平均'] },
+  radar: {
+    indicator: [
+      { name: '盈利能力', max: 100 },
+      { name: '偿债能力', max: 100 },
+      { name: '营运能力', max: 100 },
+      { name: '成长能力', max: 100 },
+      { name: '现金流健康', max: 100 }
+    ],
+    shape: 'polygon',
+    splitNumber: 5,
+    name: { textStyle: { color: '#2d3748', fontSize: 14, fontWeight: 'bold' } },
+    splitLine: { lineStyle: { color: 'rgba(30,58,95,0.1)' } },
+    splitArea: { areaStyle: { color: ['rgba(49,130,206,0.02)', 'rgba(49,130,206,0.06)'] } },
+    axisLine: { lineStyle: { color: 'rgba(30,58,95,0.2)' } }
+  },
+  series: [
+    {
+      name: '财务健康度',
+      type: 'radar',
+      data: [
+        {
+          value: [95, 72, 55, 90, 60],
+          name: '本企业',
+          areaStyle: { color: 'rgba(49,130,206,0.25)' },
+          lineStyle: { color: '#3182ce', width: 3 },
+          itemStyle: { color: '#3182ce' },
+          label: { show: true, formatter: '{c}', color: '#3182ce', fontWeight: 'bold' }
+        },
+        {
+          value: [65, 70, 70, 65, 70],
+          name: '行业平均',
+          areaStyle: { color: 'rgba(160,174,192,0.15)' },
+          lineStyle: { color: '#a0aec0', width: 2, type: 'dashed' },
+          itemStyle: { color: '#a0aec0' }
+        }
+      ]
+    }
+  ]
+});
+
+// Resize
+window.addEventListener('resize', () => {
+  chartRevenueProfit.resize();
+  chartRatios.resize();
+  chartCashflow.resize();
+  chartAssetStructure.resize();
+  chartRadar.resize();
+});
+</script>
+</body>
+</html>

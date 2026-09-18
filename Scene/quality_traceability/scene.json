@@ -1,0 +1,133 @@
+{
+  "id": "quality_traceability",
+  "name": "质量智能追溯",
+  "category": "quality",
+  "description": "气袋全流程质量追溯，条码查询、原料追溯、面料LOT反查、检验录像下载",
+  "icon": "fa-shield-halved",
+  "skill_name": "quality-trace",
+  "system_prompt": "你是一位质量智能追溯专家，精通气袋全生命周期质量追溯。你能够协助用户进行气袋条码信息查询、原料与裁片辅料追溯、面料LOT反查气袋清单，以及检验过程录像的追溯下载。请用专业、严谨的语气回答质量追溯相关问题。",
+  "has_workbench": true,
+  "workbench_title": "质量智能追溯工作台",
+  "sub_scenes": [
+    {
+      "id": "airbag_query",
+      "name": "气袋总查询",
+      "icon": "fa-magnifying-glass",
+      "color": "#3b82f6",
+      "visible": true,
+      "description": "按箱号/产线/气袋条码查询气袋基本信息",
+      "skill_name": "quality-trace",
+      "system_prompt": "你是一位气袋总查询专家。请根据用户提供的箱号、产线或气袋条码（至少一项），调用气袋总查询接口，返回气袋的基本信息，包括箱号、产线、条码、序列号、状态等，并以清晰的结构化方式呈现。",
+      "indicators": [
+        {
+          "name": "基本信息",
+          "formula": "条码/箱号/产线",
+          "meaning": "气袋的箱号、产线、条码、序列号、状态等核心信息"
+        },
+        {
+          "name": "查询条件",
+          "formula": "至少一项",
+          "meaning": "箱号、产线、气袋条码至少提供一个查询条件"
+        }
+      ],
+      "required_fields": [
+        "气袋条码"
+      ],
+      "optional_fields": [
+        "箱号",
+        "产线"
+      ],
+      "required_permission": "scenes.use.quality"
+    },
+    {
+      "id": "airbag_material_trace",
+      "name": "气袋原料追溯",
+      "icon": "fa-boxes-stacked",
+      "color": "#10b981",
+      "visible": true,
+      "description": "按气袋条码追溯其用到的原料、裁片和辅材辅料",
+      "skill_name": "quality-trace",
+      "system_prompt": "你是一位气袋原料追溯专家。请根据用户提供的气袋条码，自动追溯该气袋生产过程中用到的原料、裁片和辅材辅料，包括原料名称、原料批次、原料编码、用量等信息，并生成完整的原料追溯清单。",
+      "indicators": [
+        {
+          "name": "原料追溯",
+          "formula": "条码两步追溯",
+          "meaning": "气袋条码 → 作业单号 → 原料批次、编码、用量"
+        },
+        {
+          "name": "裁片辅料",
+          "formula": "换料版本",
+          "meaning": "裁片换料版本、线料换料版本对应的辅材辅料"
+        }
+      ],
+      "required_fields": [
+        "气袋条码"
+      ],
+      "optional_fields": [
+        "作业单号",
+        "备注"
+      ],
+      "required_permission": "scenes.use.quality"
+    },
+    {
+      "id": "fabric_lot_trace",
+      "name": "面料LOT追溯",
+      "icon": "fa-layer-group",
+      "color": "#f59e0b",
+      "visible": true,
+      "description": "按面料LOT号反查用到的气袋清单",
+      "skill_name": "quality-trace",
+      "system_prompt": "你是一位面料LOT追溯专家。请根据用户提供的面料LOT号，反查该面料批次对应的气袋明细清单，包括气袋条码、箱号、产线、状态等信息，并生成气袋清单列表。",
+      "indicators": [
+        {
+          "name": "气袋清单",
+          "formula": "LOT反查",
+          "meaning": "该面料LOT对应的所有气袋条码、箱号、产线"
+        },
+        {
+          "name": "状态统计",
+          "formula": "批次统计",
+          "meaning": "气袋数量、状态分布统计"
+        }
+      ],
+      "required_fields": [
+        "面料LOT号"
+      ],
+      "optional_fields": [
+        "备注"
+      ],
+      "required_permission": "scenes.use.quality"
+    },
+    {
+      "id": "airbag_video_trace",
+      "name": "气袋条码追溯录像",
+      "icon": "fa-video",
+      "color": "#ef4444",
+      "visible": true,
+      "description": "按气袋条码自动追溯并下载检验过程录像",
+      "skill_name": "hikvision-record",
+      "system_prompt": "你是一位气袋检验录像查询专家。请根据用户提供的气袋条码，自动追溯该气袋的检验过程录像：先查询检验桌号和扫描时间，再自动下载对应时段的检验录像，并返回录像下载结果。",
+      "indicators": [
+        {
+          "name": "录像追溯",
+          "formula": "条码→检验桌",
+          "meaning": "气袋条码 → 检验桌号 + 扫描时间"
+        },
+        {
+          "name": "录像下载",
+          "formula": "自动下载",
+          "meaning": "自动计算录像时间范围并下载检验过程录像"
+        }
+      ],
+      "required_fields": [
+        "气袋条码"
+      ],
+      "optional_fields": [
+        "开始时间",
+        "结束时间"
+      ],
+      "required_permission": "scenes.use.quality"
+    }
+  ],
+  "required_permission": "scenes.use.quality"
+}

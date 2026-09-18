@@ -1,0 +1,273 @@
+{
+  "id": "sales_strategy",
+  "name": "销售策略",
+  "category": "sales",
+  "description": "销售计划、渠道管理、定价策略",
+  "icon": "fa-chess-knight",
+  "skill_name": "sales-strategy",
+  "system_prompt": "你是一位销售战略顾问，精通市场分析、销售目标分解、渠道策略设计、产品定价模型以及销售团队激励机制设计。请为用户提供可落地的销售策略建议。",
+  "has_workbench": true,
+  "workbench_title": "销售策略工作台",
+  "sub_scenes": [
+    {
+      "id": "sales_planning",
+      "name": "销售计划",
+      "icon": "fa-bullseye",
+      "color": "#3b82f6",
+      "description": "制定销售目标，分解到区域/产品/人员",
+      "system_prompt": "你是一位销售计划专家。请帮助用户制定年度/季度销售目标，进行目标分解（按区域、产品、客户、时间维度），设计达成路径和资源配置方案。",
+      "indicators": [
+        {
+          "name": "目标设定",
+          "formula": "SMART原则",
+          "meaning": "具体、可衡量、可达成、相关性强、有时限的目标"
+        },
+        {
+          "name": "目标分解",
+          "formula": "维度拆解",
+          "meaning": "按区域、产品线、客户类型、时间周期等维度分解"
+        },
+        {
+          "name": "资源配置",
+          "formula": "人财物匹配",
+          "meaning": "销售团队、预算费用、营销资源合理配置"
+        },
+        {
+          "name": "达成路径",
+          "formula": "策略方法",
+          "meaning": "实现销售目标的具体策略和行动计划"
+        },
+        {
+          "name": "跟踪机制",
+          "formula": "过程管控",
+          "meaning": "销售进度跟踪、偏差分析、动态调整机制"
+        }
+      ],
+      "required_fields": [
+        "计划周期",
+        "销售目标",
+        "分解维度",
+        "关键策略"
+      ],
+      "optional_fields": [
+        "预算费用",
+        "团队配置",
+        "重点客户",
+        "新产品",
+        "备注"
+      ],
+      "field_types": {
+        "计划周期": {
+          "type": "select",
+          "options": [
+            "年度",
+            "季度",
+            "月度"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.sales"
+    },
+    {
+      "id": "channel_management",
+      "name": "渠道管理",
+      "icon": "fa-network-wired",
+      "color": "#8b5cf6",
+      "description": "优化销售渠道，提升渠道效率",
+      "system_prompt": "你是一位渠道管理专家。请帮助用户分析销售渠道结构，评估各渠道贡献度，优化渠道布局，制定渠道激励政策和冲突解决方案。",
+      "indicators": [
+        {
+          "name": "渠道结构",
+          "formula": "渠道类型",
+          "meaning": "直销、分销、代理、电商等渠道的组合结构"
+        },
+        {
+          "name": "渠道贡献",
+          "formula": "业绩占比",
+          "meaning": "各渠道的销售额、利润贡献和增长情况"
+        },
+        {
+          "name": "渠道效率",
+          "formula": "投入产出",
+          "meaning": "渠道费用投入与销售产出的比率，评估效率"
+        },
+        {
+          "name": "渠道激励",
+          "formula": "政策设计",
+          "meaning": "返利、折扣、返点等激励政策的合理性"
+        },
+        {
+          "name": "渠道冲突",
+          "formula": "协调机制",
+          "meaning": "窜货、价格冲突等问题的预防和解决"
+        }
+      ],
+      "required_fields": [
+        "渠道类型",
+        "年度销售额",
+        "渠道费用",
+        "主要问题"
+      ],
+      "optional_fields": [
+        "覆盖区域",
+        "合作年限",
+        "激励政策",
+        "冲突情况",
+        "改进建议"
+      ],
+      "field_types": {
+        "渠道类型": {
+          "type": "select",
+          "options": [
+            "直销",
+            "分销",
+            "代理",
+            "电商",
+            "零售"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.sales"
+    },
+    {
+      "id": "pricing_strategy",
+      "name": "定价策略",
+      "icon": "fa-tags",
+      "color": "#f59e0b",
+      "description": "制定产品定价，优化价格体系",
+      "system_prompt": "你是一位定价策略专家。请帮助用户分析成本结构、竞争格局、客户价值感知，制定合理的产品定价策略和价格体系。",
+      "indicators": [
+        {
+          "name": "成本分析",
+          "formula": "成本加成",
+          "meaning": "产品成本构成分析，确定成本底线和加成空间"
+        },
+        {
+          "name": "竞争定价",
+          "formula": "市场对比",
+          "meaning": "与竞品价格对比，确定价格定位和差异化"
+        },
+        {
+          "name": "价值定价",
+          "formula": "客户感知",
+          "meaning": "基于客户价值感知和支付意愿的定价策略"
+        },
+        {
+          "name": "价格体系",
+          "formula": "层级设计",
+          "meaning": "标准价、折扣价、促销价、渠道价等体系设计"
+        },
+        {
+          "name": "动态调整",
+          "formula": "弹性机制",
+          "meaning": "根据市场变化、成本波动、竞争态势调整价格"
+        }
+      ],
+      "required_fields": [
+        "产品名称",
+        "当前价格",
+        "成本价格",
+        "竞品价格"
+      ],
+      "optional_fields": [
+        "目标客户",
+        "市场定位",
+        "促销策略",
+        "渠道价格",
+        "调整建议"
+      ],
+      "required_permission": "scenes.use.sales"
+    },
+    {
+      "id": "customer_quotation",
+      "name": "智能报价",
+      "icon": "fa-file-invoice-dollar",
+      "color": "#3b82f6",
+      "description": "解析客户询价（支持模板Excel和非结构化PDF/Word/邮件），自动核算成本并生成多方案报价单和可视化HTML看板",
+      "skill_name": "sales-quotation",
+      "system_prompt": "你是一位销售报价工程师。请解析用户上传的客户询价文件，提取客户名称、产品名称、规格、材质、表面处理、需求量、目标交期、付款方式、特殊要求等关键需求。结构化Excel文件使用脚本快速解析；非结构化PDF/Word/文本文件先使用LLM提取关键字段。然后结合企业BOM/工艺/库存/产能/成本费率数据自动核算产品成本，生成经济型/标准型/高配型多方案报价，测算毛利率和可承诺交期，输出Excel报价单和可视化HTML看板。",
+      "indicators": [
+        {
+          "name": "询价解析",
+          "formula": "信息提取",
+          "meaning": "从产品图纸、询价单中提取规格、数量、交期等需求"
+        },
+        {
+          "name": "成本核算",
+          "formula": "BOM+工艺",
+          "meaning": "材料成本、人工成本、制造费用、管理费用分摊"
+        },
+        {
+          "name": "报价策略",
+          "formula": "毛利率",
+          "meaning": "根据客户类型和订单特点生成多方案报价"
+        },
+        {
+          "name": "交期评估",
+          "formula": "库存+产能",
+          "meaning": "结合库存和产能给出可承诺交期"
+        },
+        {
+          "name": "报价输出",
+          "formula": "标准报价单",
+          "meaning": "生成Excel报价单和可视化HTML看板"
+        }
+      ],
+      "required_fields": [
+        "客户询价文件",
+        "产品BOM",
+        "工艺路线"
+      ],
+      "optional_fields": [
+        "成本费率",
+        "库存数据",
+        "产能负荷"
+      ],
+      "import_config": {
+        "enabled": true,
+        "accept": ".pdf,.docx,.xlsx,.xls,.txt,.md,.json",
+        "description": "请上传客户询价文件（支持PDF/Word/Excel/文本/Markdown/JSON），系统将自动解析产品名称、规格、数量、交期等需求。如需精确核算成本，请同时下载并使用BOM模板、工艺路线模板、库存数据模板、产能负荷模板和成本费率配置。",
+        "template_headers": [
+          "产品名称",
+          "产品型号",
+          "材质",
+          "表面处理",
+          "需求量",
+          "要求交期",
+          "付款方式",
+          "技术要求",
+          "客户名称",
+          "联系人"
+        ],
+        "templates": [
+          {
+            "name": "客户询价文件示例.txt",
+            "demo_url": "skill://sales-quotation/assets/upload_templates/客户询价文件示例.txt"
+          },
+          {
+            "name": "产品BOM模板.xlsx",
+            "demo_url": "skill://sales-quotation/assets/upload_templates/产品BOM模板.xlsx"
+          },
+          {
+            "name": "工艺路线模板.xlsx",
+            "demo_url": "skill://sales-quotation/assets/upload_templates/工艺路线模板.xlsx"
+          },
+          {
+            "name": "库存数据模板.xlsx",
+            "demo_url": "skill://sales-quotation/assets/upload_templates/库存数据模板.xlsx"
+          },
+          {
+            "name": "产能负荷模板.xlsx",
+            "demo_url": "skill://sales-quotation/assets/upload_templates/产能负荷模板.xlsx"
+          },
+          {
+            "name": "成本费率配置.json",
+            "demo_url": "skill://sales-quotation/assets/upload_templates/成本费率配置.json"
+          }
+        ]
+      },
+      "required_permission": "scenes.use.sales"
+    }
+  ],
+  "required_permission": "scenes.use.sales"
+}

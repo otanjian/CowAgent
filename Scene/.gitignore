@@ -1,0 +1,7 @@
+**/__pycache__/
+**/.pytest_cache/
+
+# 根 .gitignore 的 `README*.md` 会连带忽略本文件；这里显式打回，因为
+# 本目录的迁移说明是随仓库分发的源码（docs/design/scene-application-retrofit-plan.md
+# 直接链接到它）。与 webhelp/.gitignore 的处理一致。
+!README.md

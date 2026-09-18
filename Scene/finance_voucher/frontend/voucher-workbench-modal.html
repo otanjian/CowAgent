@@ -1,0 +1,66 @@
+<div id="voucher-workbench-modal" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                    <div class="bg-white dark:bg-[#1A1A1A] rounded-2xl border border-slate-200 dark:border-white/10 shadow-2xl w-[90vw] h-[85vh] max-w-6xl flex flex-col overflow-hidden">
+                        <!-- Header -->
+                        <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-white/10">
+                            <div class="flex items-center gap-3">
+                                <div id="voucher-wb-icon" class="w-10 h-10 rounded-xl flex items-center justify-center" style="background:#64748b">
+                                    <i class="fas fa-file-invoice text-white"></i>
+                                </div>
+                                <div>
+                                    <h3 id="voucher-wb-title" class="text-lg font-bold text-slate-800 dark:text-slate-100">凭证工作台</h3>
+                                    <p id="voucher-wb-subtitle" class="text-xs text-slate-500 dark:text-slate-400">选择功能模块，快速处理凭证业务</p>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <button id="voucher-wb-indicators-btn" type="button" onclick="toggleWorkbenchIndicators(this)" title="功能说明"
+                                        class="w-8 h-8 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 flex items-center justify-center transition-colors">
+                                    <i class="fas fa-book-open text-slate-400"></i>
+                                </button>
+                                <button type="button" onclick="toggleWorkbenchMaximize(this)" title="最大化 / 还原" class="w-8 h-8 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 flex items-center justify-center transition-colors">
+                                    <i class="fas fa-expand text-slate-400"></i>
+                                </button>
+                                <button onclick="closeVoucherWorkbench()" class="w-8 h-8 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 flex items-center justify-center transition-colors">
+                                    <i class="fas fa-xmark text-slate-400"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <!-- Body -->
+                        <div class="flex-1 flex overflow-hidden">
+                            <!-- Left Panel -->
+                            <div class="w-80 border-r border-slate-200 dark:border-white/10 overflow-y-auto p-5">
+                                <div class="flex items-center justify-between mb-4">
+                                    <span class="text-sm font-semibold text-slate-700 dark:text-slate-200">功能说明</span>
+                                    <button id="voucher-wb-indicators-close" type="button" onclick="toggleWorkbenchIndicators(this)" title="关闭"
+                                            class="w-7 h-7 rounded-lg hover:bg-slate-100 dark:hover:bg-white/10 flex items-center justify-center transition-colors">
+                                        <i class="fas fa-xmark text-slate-400"></i>
+                                    </button>
+                                </div>
+                                <div id="voucher-wb-left-content">
+                                    <!-- Left content injected by JS -->
+                                </div>
+                            </div>
+                            <!-- Right Panel -->
+                            <div class="flex-1 overflow-y-auto p-6">
+                                <!-- Sub-scene Selector -->
+                                <div id="voucher-wb-subscene-selector" class="mb-6">
+                                    <h4 class="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-3">选择功能模块</h4>
+                                    <div id="voucher-wb-subscene-grid" class="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                                        <!-- Sub-scene cards injected by JS -->
+                                    </div>
+                                </div>
+                                <!-- Dynamic Form Area -->
+                                <div id="voucher-wb-form-area" class="hidden">
+                                    <!-- Form content injected by JS based on selected sub-scene -->
+                                </div>
+                                <!-- Action Buttons -->
+                                <div id="voucher-wb-actions" class="hidden mt-6 flex items-center justify-end gap-3">
+                                    <button onclick="closeVoucherWorkbench()" class="px-4 py-2 rounded-lg text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/10 transition-colors">取消</button>
+                                    <button id="voucher-wb-submit-btn" class="px-5 py-2 rounded-lg text-sm bg-primary-500 hover:bg-primary-600 text-white font-medium transition-colors flex items-center gap-2">
+                                        <i class="fas fa-paper-plane"></i>
+                                        <span id="voucher-wb-submit-text">发送到对话</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>

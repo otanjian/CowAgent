@@ -1,0 +1,271 @@
+{
+  "id": "finance_report_audit",
+  "name": "财务报表审查",
+  "category": "finance",
+  "description": "智能解析财务文件，执行合规审查与风险识别",
+  "icon": "fa-magnifying-glass-chart",
+  "skill_name": "financial-report-audit",
+  "system_prompt": "你是一位资深财务报表审查专家，精通中国《会计法》《企业会计准则》和《税法》体系。你能够对企业财务报表进行全面合规性审查，识别税务风险、财务异常和舞弊迹象，并生成专业的审查意见书。",
+  "has_workbench": true,
+  "workbench_title": "财务报表审查工作台",
+  "sub_scenes": [
+    {
+      "id": "report_upload_parse",
+      "name": "报表上传解析",
+      "icon": "fa-file-arrow-up",
+      "color": "#10b981",
+      "description": "上传财务文件，自动识别并解析",
+      "system_prompt": "你是一位财务文件解析专家。请解析用户上传的财务文件，识别文件类型、财务软件来源，提取资产负债表、利润表、现金流量表的关键科目数据，并以结构化方式呈现。",
+      "import_config": {
+        "enabled": true,
+        "accept": ".xlsx,.xls,.xlsm,.pdf,.csv,.docx",
+        "description": "上传财务报表文件，支持金蝶/用友等软件导出格式"
+      },
+      "indicators": [
+        {
+          "name": "文件识别",
+          "formula": "自动检测",
+          "meaning": "自动识别文件格式及财务软件来源"
+        },
+        {
+          "name": "资产负债表",
+          "formula": "科目提取",
+          "meaning": "提取资产、负债、权益类关键科目"
+        },
+        {
+          "name": "利润表",
+          "formula": "科目提取",
+          "meaning": "提取收入、成本、费用、利润类科目"
+        },
+        {
+          "name": "现金流量表",
+          "formula": "科目提取",
+          "meaning": "提取经营/投资/筹资活动现金流"
+        },
+        {
+          "name": "数据校验",
+          "formula": "勾稽检查",
+          "meaning": "检查基础数据完整性和一致性"
+        }
+      ],
+      "required_permission": "scenes.use.finance"
+    },
+    {
+      "id": "reconciliation_review",
+      "name": "勾稽关系审查",
+      "icon": "fa-link",
+      "color": "#3b82f6",
+      "description": "检查报表间勾稽关系与数据异常",
+      "system_prompt": "你是一位财务报表勾稽关系审查专家。请检查资产负债表平衡关系、收入与现金流匹配性、存货与成本勾稽、往来款项异常等，识别数据矛盾和潜在的财务异常。",
+      "indicators": [
+        {
+          "name": "资产负债表平衡",
+          "formula": "资产=负债+权益",
+          "meaning": "检查最基本的会计恒等式是否成立"
+        },
+        {
+          "name": "流动比率",
+          "formula": "流动资产/流动负债",
+          "meaning": "评估短期偿债能力，低于1存在风险"
+        },
+        {
+          "name": "资产负债率",
+          "formula": "总负债/总资产",
+          "meaning": "超过70%视为财务杠杆过高"
+        },
+        {
+          "name": "应收账款占比",
+          "formula": "应收账款/总资产",
+          "meaning": "超过30%需关注回款风险"
+        },
+        {
+          "name": "货币资金占比",
+          "formula": "货币资金/总资产",
+          "meaning": "超过50%可能存在资金闲置或受限"
+        }
+      ],
+      "required_permission": "scenes.use.finance"
+    },
+    {
+      "id": "tax_risk_review",
+      "name": "税务风险审查",
+      "icon": "fa-file-shield",
+      "color": "#ef4444",
+      "description": "识别税务合规风险与纳税调整事项",
+      "system_prompt": "你是一位税务风险审查专家。请比对财务报表收入与增值税申报收入、财务利润与企业所得税应纳税所得额，计算税负率，识别少缴税款疑点和纳税调整事项。",
+      "indicators": [
+        {
+          "name": "增值税收入比对",
+          "formula": "申报收入 vs 财务收入",
+          "meaning": "差异过大可能存在未申报收入"
+        },
+        {
+          "name": "企业所得税比对",
+          "formula": "申报利润 vs 财务利润",
+          "meaning": "识别税会差异和纳税调整"
+        },
+        {
+          "name": "增值税税负率",
+          "formula": "实缴增值税/营业收入",
+          "meaning": "异常偏低可能存在少缴风险"
+        },
+        {
+          "name": "企业所得税税负率",
+          "formula": "实缴所得税/利润总额",
+          "meaning": "与法定税率对比识别异常"
+        },
+        {
+          "name": "理论税额测算",
+          "formula": "按法定税率测算",
+          "meaning": "测算理论应纳税额与实缴差异"
+        }
+      ],
+      "required_permission": "scenes.use.finance"
+    },
+    {
+      "id": "revenue_recognition_review",
+      "name": "收入确认审查",
+      "icon": "fa-chart-line",
+      "color": "#f59e0b",
+      "description": "基于CAS 14审查收入确认合规性",
+      "system_prompt": "你是一位收入确认审查专家。请基于《企业会计准则第14号——收入》的五步法模型，审查收入确认时点的合规性，识别年底突击确认收入、虚构收入、关联方空转等风险。",
+      "indicators": [
+        {
+          "name": "Q4收入占比",
+          "formula": "四季度收入/全年收入",
+          "meaning": "超过40%存在突击确认风险"
+        },
+        {
+          "name": "12月收入占比",
+          "formula": "12月收入/全年收入",
+          "meaning": "超过20%需重点核查"
+        },
+        {
+          "name": "收入现金流匹配",
+          "formula": "销售商品现金流/营业收入",
+          "meaning": "长期偏离1需关注收入质量"
+        },
+        {
+          "name": "客户集中度",
+          "formula": "前5大客户占比",
+          "meaning": "过高可能存在关联交易虚构收入"
+        },
+        {
+          "name": "完工百分比",
+          "formula": "实际进度 vs 确认进度",
+          "meaning": "差异过大可能存在人为调节"
+        }
+      ],
+      "required_permission": "scenes.use.finance"
+    },
+    {
+      "id": "cost_expense_review",
+      "name": "成本费用审查",
+      "icon": "fa-money-bill-wave",
+      "color": "#8b5cf6",
+      "description": "识别成本操纵与费用扣除合规性",
+      "system_prompt": "你是一位成本费用审查专家。请审查成本费用的真实性、合理性，识别通过成本费用调节利润的行为，检查业务招待费、福利费、广告费等限额扣除项目的合规性，以及税收优惠的适用条件。",
+      "indicators": [
+        {
+          "name": "毛利率异常",
+          "formula": "(收入-成本)/收入",
+          "meaning": "为负或大幅波动需关注"
+        },
+        {
+          "name": "业务招待费超标",
+          "formula": "实际发生 vs 扣除限额",
+          "meaning": "超过收入0.5%或发生额60%需纳税调整"
+        },
+        {
+          "name": "职工福利费超标",
+          "formula": "实际发生 vs 工资14%",
+          "meaning": "超限部分不得税前扣除"
+        },
+        {
+          "name": "广告费超标",
+          "formula": "实际发生 vs 收入15%",
+          "meaning": "一般企业不超过营业收入15%"
+        },
+        {
+          "name": "税收优惠时效",
+          "formula": "优惠期核查",
+          "meaning": "检查高新、小微等优惠资质有效性"
+        }
+      ],
+      "required_permission": "scenes.use.finance"
+    },
+    {
+      "id": "related_party_review",
+      "name": "关联交易审查",
+      "icon": "fa-people-arrows",
+      "color": "#06b6d4",
+      "description": "审查关联方交易税务合规性",
+      "system_prompt": "你是一位关联交易审查专家。请审查关联方交易的定价公允性、资本弱化比例、资金占用利息、关联销售收入占比等，识别转让定价风险和反避税调查疑点。",
+      "indicators": [
+        {
+          "name": "关联销售占比",
+          "formula": "关联销售收入/总收入",
+          "meaning": "过高存在收入转移风险"
+        },
+        {
+          "name": "资本弱化",
+          "formula": "债资比",
+          "meaning": "超过2:1（金融5:1）利息不得扣除"
+        },
+        {
+          "name": "资金占用利息",
+          "formula": "无息借款",
+          "meaning": "关联方无息借款可能被视为隐性分红"
+        },
+        {
+          "name": "转让定价",
+          "formula": "毛利率对比",
+          "meaning": "关联交易毛利率与独立第三方差异过大"
+        },
+        {
+          "name": "客户集中度",
+          "formula": "单一客户占比",
+          "meaning": "单一客户超过50%需核实是否关联方"
+        }
+      ],
+      "required_permission": "scenes.use.finance"
+    },
+    {
+      "id": "generate_audit_report",
+      "name": "生成审查报告",
+      "icon": "fa-file-contract",
+      "color": "#6366f1",
+      "description": "汇总分析结果，输出专业审查意见书",
+      "system_prompt": "你是一位审计报告撰写专家。请根据前述所有审查结果，生成一份结构化的财务报表审查意见书，包含执行摘要、财务分析、税务合规分析、主要发现与风险、改进建议等章节。",
+      "indicators": [
+        {
+          "name": "高风险事项",
+          "formula": "计数",
+          "meaning": "需立即整改的重大风险"
+        },
+        {
+          "name": "中风险事项",
+          "formula": "计数",
+          "meaning": "需关注并制定整改计划"
+        },
+        {
+          "name": "低风险事项",
+          "formula": "计数",
+          "meaning": "建议优化改进"
+        },
+        {
+          "name": "总体意见",
+          "formula": "保留/无保留",
+          "meaning": "基于风险数量给出的总体审查意见"
+        },
+        {
+          "name": "改进建议",
+          "formula": "逐条列示",
+          "meaning": "针对发现问题的具体整改建议"
+        }
+      ],
+      "required_permission": "scenes.use.finance"
+    }
+  ],
+  "required_permission": "scenes.use.finance"
+}

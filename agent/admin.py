@@ -832,7 +832,9 @@ class AgentAdminService:
                 else (persona_summary.strip() or None)
             )
             new_scene_id = current.scene_id if scene_id is None else (scene_id.strip() or None)
-            if new_scene_id and not _scene_exists(new_scene_id):
+            # Retired catalog entries must not block edits to an existing agent.
+            # New bindings still have to resolve to a registered scene.
+            if new_scene_id and new_scene_id != current.scene_id and not _scene_exists(new_scene_id):
                 raise AgentAdminError(f"scene '{new_scene_id}' does not exist")
             new_tags = (
                 current.tags

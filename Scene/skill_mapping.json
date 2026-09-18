@@ -1,0 +1,225 @@
+{
+  "chen-yiwei-perspective": {
+    "skill_dir": null,
+    "name": null,
+    "note": "陈义威视角/知识库，OneAgent 无独立技能目录",
+    "mapped": false
+  },
+  "finance-analysis": {
+    "skill_dir": "fin-report-analysis",
+    "name": "financial-report-analysis",
+    "note": "财务报表分析",
+    "mapped": true,
+    "path": "finance_analysis/skills/fin-report-analysis"
+  },
+  "finance-expert": {
+    "skill_dir": "taxation-expert",
+    "name": "财税专家",
+    "note": "财税专家（财务/税务咨询）",
+    "mapped": true,
+    "path": "finance_expert/skills/taxation-expert"
+  },
+  "finance-voucher": {
+    "skill_dir": "finance-ledger-generator",
+    "name": "finance-ledger-generator",
+    "note": "财务会计凭证生成",
+    "mapped": true,
+    "path": "finance_voucher/skills/finance-ledger-generator"
+  },
+  "financial-report-audit": {
+    "skill_dir": "financial-reprot-audit",
+    "name": "financial-report-audit",
+    "note": "财务报表合规审查",
+    "mapped": true,
+    "path": "finance_report_audit/skills/financial-reprot-audit"
+  },
+  "hr-labor": {
+    "skill_dir": null,
+    "name": null,
+    "note": "人事劳动关系，OneAgent 无独立技能目录",
+    "mapped": false
+  },
+  "hr-performance": {
+    "skill_dir": null,
+    "name": null,
+    "note": "人事绩效管理，OneAgent 无独立技能目录",
+    "mapped": false
+  },
+  "hr-recruit": {
+    "skill_dir": null,
+    "name": null,
+    "note": "人事招聘，OneAgent 无独立技能目录",
+    "mapped": false
+  },
+  "pmc-scheduler-hmt-qd": {
+    "skill_dir": "pmc-scheduler-hmt-qd",
+    "name": "pmc-scheduler-hmt-qd",
+    "note": "生产排产（气袋/华懋，同名目录）",
+    "mapped": true,
+    "path": "production_scheduling_airbag/skills/pmc-scheduler-hmt-qd"
+  },
+  "procurement-analysis": {
+    "skill_dir": "procurement-comparison",
+    "name": "procurement-comparison",
+    "note": "采购历史价格分析",
+    "mapped": true,
+    "path": "procurement_analysis/skills/procurement-comparison"
+  },
+  "procurement-execution": {
+    "skill_dir": null,
+    "name": null,
+    "note": "采购执行，OneAgent 无独立技能目录",
+    "mapped": false
+  },
+  "procurement-supplier": {
+    "skill_dir": "procurement-supplier-risk",
+    "name": "procurement-supplier-risk",
+    "note": "供应商风险预警",
+    "mapped": true,
+    "path": "procurement_supplier/skills/procurement-supplier-risk"
+  },
+  "procurement-tender": {
+    "skill_dir": "bid-analysis",
+    "name": "bid-analysis",
+    "note": "招标文件解析与投标辅助",
+    "mapped": true,
+    "path": "procurement_tender/skills/bid-analysis"
+  },
+  "production-plan": {
+    "skill_dir": "pmc-scheduler",
+    "name": "production-scheduling",
+    "note": "智能生产排产",
+    "mapped": true,
+    "path": "production_plan/skills/pmc-scheduler"
+  },
+  "production-quality": {
+    "skill_dir": null,
+    "name": null,
+    "note": "生产质量管理，OneAgent 无独立技能目录",
+    "mapped": false
+  },
+  "production-safety": {
+    "skill_dir": null,
+    "name": null,
+    "note": "生产安全管理，OneAgent 无独立技能目录",
+    "mapped": false
+  },
+  "quality-trace": {
+    "skill_dir": "quality-trace",
+    "name": "quality-trace",
+    "note": "质量智能追溯（同名目录）",
+    "mapped": true,
+    "path": "quality_traceability/skills/quality-trace"
+  },
+  "sales-contract": {
+    "skill_dir": "合同审查专家",
+    "name": "合同审查专家",
+    "note": "合同审查",
+    "mapped": true,
+    "path": "sales_contract/skills/合同审查专家"
+  },
+  "sales-customer": {
+    "skill_dir": "sales-quotation",
+    "name": "sales-quotation",
+    "note": "销售智能报价（客户询价/报价）",
+    "mapped": true,
+    "path": "sales_strategy/skills/sales-quotation"
+  },
+  "sales-strategy": {
+    "skill_dir": null,
+    "name": null,
+    "note": "销售策略分析，OneAgent 无独立技能目录",
+    "mapped": false
+  },
+  "sap-integration": {
+    "skill_dir": "sap-integration",
+    "name": "sap-integration",
+    "note": "SAP 数据分析（同名目录）",
+    "mapped": true,
+    "path": "sap_data_analysis/skills/sap-integration"
+  },
+  "financial-report-analysis": {
+    "mapped": true,
+    "name": "financial-report-analysis",
+    "skill_dir": "fin-report-analysis",
+    "path": "finance_analysis/skills/fin-report-analysis"
+  },
+  "fin-report-analysis": {
+    "mapped": true,
+    "name": "financial-report-analysis",
+    "skill_dir": "fin-report-analysis",
+    "path": "finance_analysis/skills/fin-report-analysis"
+  },
+  "taxation-expert": {
+    "mapped": true,
+    "name": "财税专家",
+    "skill_dir": "taxation-expert",
+    "path": "finance_expert/skills/taxation-expert"
+  },
+  "财税专家": {
+    "mapped": true,
+    "name": "财税专家",
+    "skill_dir": "taxation-expert",
+    "path": "finance_expert/skills/taxation-expert"
+  },
+  "financial-reprot-audit": {
+    "mapped": true,
+    "name": "financial-report-audit",
+    "skill_dir": "financial-reprot-audit",
+    "path": "finance_report_audit/skills/financial-reprot-audit"
+  },
+  "finance-ledger-generator": {
+    "mapped": true,
+    "name": "finance-ledger-generator",
+    "skill_dir": "finance-ledger-generator",
+    "path": "finance_voucher/skills/finance-ledger-generator"
+  },
+  "procurement-comparison": {
+    "mapped": true,
+    "name": "procurement-comparison",
+    "skill_dir": "procurement-comparison",
+    "path": "procurement_analysis/skills/procurement-comparison"
+  },
+  "tianji-business-search": {
+    "mapped": true,
+    "name": "tianji-business-search",
+    "skill_dir": "tianji-business-search",
+    "path": "procurement_supplier/skills/tianji-business-search"
+  },
+  "procurement-supplier-risk": {
+    "mapped": true,
+    "name": "procurement-supplier-risk",
+    "skill_dir": "procurement-supplier-risk",
+    "path": "procurement_supplier/skills/procurement-supplier-risk"
+  },
+  "bid-analysis": {
+    "mapped": true,
+    "name": "bid-analysis",
+    "skill_dir": "bid-analysis",
+    "path": "procurement_tender/skills/bid-analysis"
+  },
+  "pmc-scheduler": {
+    "mapped": true,
+    "name": "production-scheduling",
+    "skill_dir": "pmc-scheduler",
+    "path": "production_plan/skills/pmc-scheduler"
+  },
+  "production-scheduling": {
+    "mapped": true,
+    "name": "production-scheduling",
+    "skill_dir": "pmc-scheduler",
+    "path": "production_plan/skills/pmc-scheduler"
+  },
+  "合同审查专家": {
+    "mapped": true,
+    "name": "合同审查专家",
+    "skill_dir": "合同审查专家",
+    "path": "sales_contract/skills/合同审查专家"
+  },
+  "sales-quotation": {
+    "mapped": true,
+    "name": "sales-quotation",
+    "skill_dir": "sales-quotation",
+    "path": "sales_strategy/skills/sales-quotation"
+  }
+}

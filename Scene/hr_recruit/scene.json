@@ -1,0 +1,180 @@
+{
+  "id": "hr_recruit",
+  "name": "招聘管理",
+  "category": "hr",
+  "description": "人才画像、面试评估、入职管理",
+  "icon": "fa-user-plus",
+  "skill_name": "hr-recruit",
+  "system_prompt": "你是一位招聘与人才选拔专家，擅长人才画像构建、面试题库设计、结构化面试评估以及雇主品牌建设。请帮助用户建立科学高效的招聘体系。",
+  "has_workbench": true,
+  "workbench_title": "招聘管理工作台",
+  "sub_scenes": [
+    {
+      "id": "talent_profile",
+      "name": "人才画像",
+      "icon": "fa-user-tag",
+      "color": "#3b82f6",
+      "description": "构建岗位人才画像，明确招聘标准",
+      "system_prompt": "你是一位人才画像专家。请帮助用户分析岗位需求，构建精准的人才画像，包括硬性条件、核心能力、素质模型、薪酬定位等招聘标准。",
+      "indicators": [
+        {
+          "name": "岗位分析",
+          "formula": "JD制定",
+          "meaning": "岗位职责、任职资格、汇报关系、工作环境分析"
+        },
+        {
+          "name": "硬性条件",
+          "formula": "门槛标准",
+          "meaning": "学历、专业、工作年限、行业经验等基本要求"
+        },
+        {
+          "name": "核心能力",
+          "formula": "胜任力",
+          "meaning": "专业知识、技术技能、业务能力等硬性能力要求"
+        },
+        {
+          "name": "素质模型",
+          "formula": "软性素质",
+          "meaning": "沟通能力、团队协作、学习能力、抗压能力等"
+        },
+        {
+          "name": "薪酬定位",
+          "formula": "市场竞争力",
+          "meaning": "岗位薪酬水平、薪酬结构、福利待遇定位"
+        }
+      ],
+      "required_fields": [
+        "岗位名称",
+        "所属部门",
+        "硬性条件",
+        "核心能力"
+      ],
+      "optional_fields": [
+        "汇报对象",
+        "下属人数",
+        "薪酬范围",
+        "素质要求",
+        "备注"
+      ],
+      "required_permission": "scenes.use.hr"
+    },
+    {
+      "id": "interview_evaluation",
+      "name": "面试评估",
+      "icon": "fa-clipboard-check",
+      "color": "#8b5cf6",
+      "description": "设计面试题库，评估候选人匹配度",
+      "system_prompt": "你是一位面试评估专家。请帮助用户设计结构化面试题库，制定评分标准，评估候选人与岗位要求的匹配度，提供录用建议。",
+      "indicators": [
+        {
+          "name": "面试题库",
+          "formula": "问题设计",
+          "meaning": "行为面试、情景面试、专业面试等题目设计"
+        },
+        {
+          "name": "评分标准",
+          "formula": "量化评估",
+          "meaning": "各项能力的评分维度、权重、等级标准"
+        },
+        {
+          "name": "结构化面试",
+          "formula": "流程规范",
+          "meaning": "面试流程、时间分配、面试官分工、记录规范"
+        },
+        {
+          "name": "背景调查",
+          "formula": "信息核实",
+          "meaning": "学历、工作经历、业绩、离职原因等核实"
+        },
+        {
+          "name": "录用决策",
+          "formula": "综合评估",
+          "meaning": "多维度综合评分、录用建议、薪酬谈判"
+        }
+      ],
+      "required_fields": [
+        "岗位名称",
+        "候选人姓名",
+        "面试轮次",
+        "综合评分"
+      ],
+      "optional_fields": [
+        "面试官",
+        "面试时间",
+        "优势评价",
+        "劣势评价",
+        "录用建议"
+      ],
+      "field_types": {
+        "面试轮次": {
+          "type": "select",
+          "options": [
+            "初试",
+            "复试",
+            "终试"
+          ]
+        },
+        "录用建议": {
+          "type": "select",
+          "options": [
+            "强烈推荐",
+            "推荐",
+            "待定",
+            "不推荐"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.hr"
+    },
+    {
+      "id": "onboarding_management",
+      "name": "入职管理",
+      "icon": "fa-user-check",
+      "color": "#10b981",
+      "description": "设计入职流程，帮助新员工快速融入",
+      "system_prompt": "你是一位入职管理专家。请帮助用户设计新员工入职流程，制定试用期考核标准，规划培训内容，帮助新员工快速融入团队。",
+      "indicators": [
+        {
+          "name": "入职流程",
+          "formula": "标准化",
+          "meaning": "入职手续、资料准备、系统开通、工位安排等"
+        },
+        {
+          "name": "导师制度",
+          "formula": "传帮带",
+          "meaning": "为新员工配备导师，提供工作指导和帮助"
+        },
+        {
+          "name": "培训计划",
+          "formula": "能力提升",
+          "meaning": "企业文化、岗位技能、业务流程等培训内容"
+        },
+        {
+          "name": "试用期考核",
+          "formula": "转正评估",
+          "meaning": "试用期目标设定、阶段性评估、转正标准"
+        },
+        {
+          "name": "融入跟踪",
+          "formula": "关怀机制",
+          "meaning": "定期沟通、问题反馈、心理状态关注"
+        }
+      ],
+      "required_fields": [
+        "员工姓名",
+        "入职岗位",
+        "入职日期",
+        "导师姓名"
+      ],
+      "optional_fields": [
+        "试用期时长",
+        "培训计划",
+        "考核标准",
+        "联系方式",
+        "备注"
+      ],
+      "required_permission": "scenes.use.hr"
+    }
+  ],
+  "required_permission": "scenes.use.hr"
+}

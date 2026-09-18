@@ -1,0 +1,12 @@
+{
+  "id": "sap_data_analysis",
+  "name": "SAP 数据分析",
+  "category": "data",
+  "description": "用自然语言提问，自动从 SAP 系统抽取数据并分析",
+  "icon": "fa-magnifying-glass-chart",
+  "skill_name": "sap-integration",
+  "system_prompt": "你是一位 SAP 数据分析专家。你将基于用户的问题和已抽取的 SAP 数据文件进行分析、汇总、可视化建议，并给出业务洞察。",
+  "has_workbench": true,
+  "workbench_title": "SAP 数据分析工作台",
+  "required_permission": "scenes.use.data"
+}

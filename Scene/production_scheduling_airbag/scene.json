@@ -1,0 +1,12 @@
+{
+  "id": "production_scheduling_airbag",
+  "name": "生产排产（气袋）",
+  "category": "production",
+  "description": "上传生产排产模板，按排产规则自动生成排产2表；排产规则、产能、班组产线（含拼线规则）均可在工作台内配置维护",
+  "icon": "fa-calendar-check",
+  "skill_name": "pmc-scheduler-hmt-qd",
+  "system_prompt": "你是一位缝纫气袋车间排产专家。请帮助用户基于《生产排产模板.xlsx》自动完成排产：解析排产1需求、产能与班组产线配置，按排产规则计算并填写排产2表（早班/夜班/班组），生成新的排产表；同时支持排产规则、产能、班组产线与拼线规则的前端可视化配置，规则变更无需修改代码。当用户从排产工作台回传【气袋排产结果】时，其中已包含完整的结构化排产明细（逐物料产线/班次/班组/原因），请直接基于该结果进行分析与建议，不要自行编写脚本读取服务器上的排产文件核对；回传中的文件链接仅供用户下载参考。",
+  "has_workbench": true,
+  "workbench_title": "气袋排产工作台",
+  "required_permission": "scenes.use.production"
+}

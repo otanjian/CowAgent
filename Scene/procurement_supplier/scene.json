@@ -1,0 +1,496 @@
+{
+  "id": "procurement_supplier",
+  "name": "供应商管理",
+  "category": "procurement",
+  "description": "供应商评估、选择、关系维护与风险管理",
+  "icon": "fa-truck-field",
+  "skill_name": "procurement-supplier",
+  "system_prompt": "你是一位资深采购专家，精通供应商全生命周期管理。你能够协助用户进行供应商资质审核、绩效评估、分级分类管理、合同谈判策略制定以及供应链风险预警。请用专业、严谨的语气回答采购相关问题。",
+  "has_workbench": true,
+  "workbench_title": "供应商管理工作台",
+  "sub_scenes": [
+    {
+      "id": "supplier_qualification",
+      "name": "资质审核",
+      "icon": "fa-file-check",
+      "color": "#10b981",
+      "visible": true,
+      "description": "审核供应商资质文件，评估准入条件",
+      "system_prompt": "你是一位供应商资质审核专家。请根据用户提供的供应商资料，审核营业执照、资质证书、财务报表等文件的真实性和有效性，评估供应商是否符合准入标准。",
+      "indicators": [
+        {
+          "name": "准入标准",
+          "formula": "审核要点",
+          "meaning": "注册资本、成立年限、经营范围等基本信息核实"
+        },
+        {
+          "name": "资质审查",
+          "formula": "证书有效性",
+          "meaning": "行业资质、认证证书、许可证的真实性和有效期"
+        },
+        {
+          "name": "财务状况",
+          "formula": "偿债能力",
+          "meaning": "通过财务报表评估供应商的经营稳定性"
+        },
+        {
+          "name": "信用记录",
+          "formula": "履约历史",
+          "meaning": "第三方信用评级、诉讼记录、失信信息"
+        },
+        {
+          "name": "实地考察",
+          "formula": "现场评估",
+          "meaning": "生产能力、质量管理体系、环境安全等"
+        }
+      ],
+      "required_fields": [
+        "企业名称",
+        "统一社会信用代码",
+        "注册资本",
+        "成立日期",
+        "经营范围"
+      ],
+      "optional_fields": [
+        "法定代表人",
+        "联系电话",
+        "邮箱地址",
+        "企业官网",
+        "员工人数"
+      ],
+      "import_config": {
+        "enabled": true,
+        "accept": ".xlsx,.xls,.csv",
+        "template_headers": [
+          "企业名称",
+          "统一社会信用代码",
+          "注册资本",
+          "成立日期",
+          "经营范围",
+          "法定代表人",
+          "联系电话",
+          "邮箱地址",
+          "企业官网",
+          "员工人数"
+        ],
+        "description": "上传供应商资质信息表，支持从Excel/CSV导入"
+      },
+      "erp_config": {
+        "enabled": true,
+        "systems": [
+          "u9",
+          "sap",
+          "kingdee"
+        ],
+        "u9": {
+          "endpoint": "/mdm/supplier",
+          "method": "GET",
+          "params": [
+            "pageIndex",
+            "pageSize",
+            "filter"
+          ]
+        },
+        "sap": {
+          "endpoint": "/API_BUSINESS_PARTNER/A_BusinessPartner",
+          "method": "GET",
+          "params": [
+            "$filter",
+            "$top",
+            "$skip"
+          ]
+        },
+        "kingdee": {
+          "endpoint": "/Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.View.common.kdsvc",
+          "method": "POST",
+          "form_id": "BD_SUPPLIER",
+          "params": [
+            "FieldKeys",
+            "FilterString",
+            "Limit"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.procurement"
+    },
+    {
+      "id": "supplier_performance",
+      "name": "绩效评估",
+      "icon": "fa-chart-bar",
+      "color": "#3b82f6",
+      "visible": true,
+      "description": "多维度评估供应商绩效表现",
+      "system_prompt": "你是一位供应商绩效评估专家。请根据用户提供的供应商绩效数据，从质量、交付、成本、服务等维度进行综合评估，生成绩效报告并提出改进建议。",
+      "indicators": [
+        {
+          "name": "质量绩效",
+          "formula": "合格率",
+          "meaning": "来料检验合格率、退货率、质量事故次数"
+        },
+        {
+          "name": "交付绩效",
+          "formula": "准时率",
+          "meaning": "订单准时交付率、交付周期稳定性"
+        },
+        {
+          "name": "成本绩效",
+          "formula": "价格竞争力",
+          "meaning": "报价合理性、成本降幅、付款条件"
+        },
+        {
+          "name": "服务绩效",
+          "formula": "响应速度",
+          "meaning": "问题响应时间、技术支持能力、售后服务"
+        },
+        {
+          "name": "合作态度",
+          "formula": "配合度",
+          "meaning": "沟通效率、变更配合、信息共享意愿"
+        }
+      ],
+      "required_fields": [
+        "供应商名称",
+        "评估周期",
+        "质量评分",
+        "交付评分",
+        "成本评分"
+      ],
+      "optional_fields": [
+        "服务评分",
+        "合作评分",
+        "综合评级",
+        "改进建议",
+        "风险等级"
+      ],
+      "import_config": {
+        "enabled": true,
+        "accept": ".xlsx,.xls,.csv",
+        "template_headers": [
+          "供应商名称",
+          "评估周期",
+          "质量评分",
+          "交付评分",
+          "成本评分",
+          "服务评分",
+          "合作评分",
+          "综合评级",
+          "改进建议",
+          "风险等级"
+        ],
+        "description": "上传供应商绩效评分表，支持从Excel/CSV导入"
+      },
+      "erp_config": {
+        "enabled": true,
+        "systems": [
+          "u9",
+          "sap",
+          "kingdee"
+        ],
+        "u9": {
+          "endpoint": "/scm/supplierperformance",
+          "method": "GET",
+          "params": [
+            "pageIndex",
+            "pageSize",
+            "filter",
+            "orderby"
+          ]
+        },
+        "sap": {
+          "endpoint": "/API_SUPPLIER_EVALUATION_SRV/A_SupplierEvaluation",
+          "method": "GET",
+          "params": [
+            "$filter",
+            "$top",
+            "$skip",
+            "$orderby"
+          ]
+        },
+        "kingdee": {
+          "endpoint": "/Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.View.common.kdsvc",
+          "method": "POST",
+          "form_id": "PLN_SUPPLIER_EVAL",
+          "params": [
+            "FieldKeys",
+            "FilterString",
+            "Limit"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.procurement"
+    },
+    {
+      "id": "supplier_classification",
+      "name": "分级管理",
+      "icon": "fa-layer-group",
+      "color": "#f59e0b",
+      "visible": true,
+      "description": "根据绩效进行供应商分级，制定差异化策略",
+      "system_prompt": "你是一位供应商关系管理专家。请根据供应商绩效评估结果进行分级分类，制定A/B/C级供应商管理策略，优化供应商资源配置。",
+      "indicators": [
+        {
+          "name": "A级供应商",
+          "formula": "战略伙伴",
+          "meaning": "核心供应商，优先合作，长期协议，共同发展"
+        },
+        {
+          "name": "B级供应商",
+          "formula": "合格供应商",
+          "meaning": "表现良好，维持合作，定期评估，激励提升"
+        },
+        {
+          "name": "C级供应商",
+          "formula": "待改进供应商",
+          "meaning": "存在问题，限期整改，减少订单，备选淘汰"
+        },
+        {
+          "name": "分级标准",
+          "formula": "综合评分",
+          "meaning": "根据质量、交付、成本、服务等多维度评分划分"
+        },
+        {
+          "name": "管理策略",
+          "formula": "差异化",
+          "meaning": "不同级别采取不同的合作深度和管理力度"
+        }
+      ],
+      "required_fields": [
+        "供应商名称",
+        "当前等级",
+        "综合评分",
+        "分级依据",
+        "管理策略"
+      ],
+      "optional_fields": [
+        "合作深度",
+        "订单配额",
+        "改进期限",
+        "备选方案",
+        "升级条件"
+      ],
+      "import_config": {
+        "enabled": true,
+        "accept": ".xlsx,.xls,.csv",
+        "template_headers": [
+          "供应商名称",
+          "当前等级",
+          "综合评分",
+          "分级依据",
+          "管理策略",
+          "合作深度",
+          "订单配额",
+          "改进期限",
+          "备选方案",
+          "升级条件"
+        ],
+        "description": "上传供应商分级信息表，支持从Excel/CSV导入"
+      },
+      "erp_config": {
+        "enabled": true,
+        "systems": [
+          "u9",
+          "sap",
+          "kingdee"
+        ],
+        "u9": {
+          "endpoint": "/scm/supplierclassification",
+          "method": "GET",
+          "params": [
+            "pageIndex",
+            "pageSize",
+            "filter"
+          ]
+        },
+        "sap": {
+          "endpoint": "/API_BUSINESS_PARTNER/A_BusinessPartner",
+          "method": "GET",
+          "params": [
+            "$filter",
+            "$top",
+            "$skip"
+          ]
+        },
+        "kingdee": {
+          "endpoint": "/Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.View.common.kdsvc",
+          "method": "POST",
+          "form_id": "BD_SUPPLIER",
+          "params": [
+            "FieldKeys",
+            "FilterString",
+            "Limit"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.procurement"
+    },
+    {
+      "id": "supplier_risk",
+      "name": "风险预警",
+      "icon": "fa-shield-halved",
+      "color": "#ef4444",
+      "visible": true,
+      "description": "通过 SAP 同步供应商主数据（LFA1），调用天机商查技能（Web 搜索聚合公开工商/司法/经营信息），五维度评分生成供应商风险预警报告",
+      "skill_name": "procurement-supplier-risk",
+      "system_prompt": "你是一位供应商风险管控专家。工作台已通过 SAP LFA1 同步供应商基础信息（供应商编码、名称、统一社会信用代码、过账冻结、删除标记等）。请按以下步骤执行：1）调用 procurement-supplier-risk 技能包的 assess_risk.py，内部会调用 tianji-business-search 搜索各供应商风险；2）生成 Excel 风险报告和 HTML 风险看板；3）向用户汇报每个供应商的风险等级、关键风险点、处置建议，并提供文件路径。",
+      "indicators": [
+        {
+          "name": "工商信息",
+          "formula": "注册资本/成立时间/状态",
+          "meaning": "天机商查聚合：注册资本、成立日期、经营状态、统一社会信用代码核对"
+        },
+        {
+          "name": "司法风险",
+          "formula": "失信/被执行次数",
+          "meaning": "天机商查聚合：诉讼、失信被执行人、被执行人、行政处罚次数"
+        },
+        {
+          "name": "股东与关联",
+          "formula": "大股东/持股比例",
+          "meaning": "天机商查聚合：股东结构、实际控制人、关联企业风险传导"
+        },
+        {
+          "name": "SAP 内部风险",
+          "formula": "SPERR/LOEVM 标记",
+          "meaning": "SAP LFA1 过账冻结(SPERR)、删除标记(LOEVM)、创建时长"
+        },
+        {
+          "name": "新闻舆情",
+          "formula": "近 1 年负面新闻数",
+          "meaning": "天机商查聚合：百度新闻/新浪财经等公开媒体报道"
+        },
+        {
+          "name": "风险评分",
+          "formula": "加权总分 0-100",
+          "meaning": "五维度加权评分：司法 40% + 股东 20% + SAP 内部 20% + 舆情 10% + 工商 10%"
+        }
+      ],
+      "required_fields": [
+        "供应商编码",
+        "供应商名称",
+        "统一社会信用代码",
+        "风险等级",
+        "风险评分",
+        "关键风险点"
+      ],
+      "optional_fields": [
+        "司法风险详情",
+        "股东结构",
+        "SAP 冻结标记",
+        "新闻舆情摘要",
+        "处置建议",
+        "备选供应商"
+      ],
+      "field_types": {
+        "风险等级": {
+          "type": "select",
+          "options": [
+            "低",
+            "中",
+            "高",
+            "严重"
+          ]
+        },
+        "SAP 冻结标记": {
+          "type": "select",
+          "options": [
+            "正常",
+            "过账冻结",
+            "已删除"
+          ]
+        }
+      },
+      "import_config": {
+        "enabled": true,
+        "accept": ".xlsx,.xls,.csv",
+        "template_headers": [
+          "供应商编码",
+          "供应商名称",
+          "统一社会信用代码",
+          "风险等级",
+          "风险评分",
+          "关键风险点",
+          "司法风险详情",
+          "股东结构",
+          "SAP 冻结标记",
+          "新闻舆情摘要",
+          "处置建议",
+          "备选供应商"
+        ],
+        "description": "上传供应商风险信息表（含供应商编码与统一社会信用代码），支持从Excel/CSV导入"
+      },
+      "erp_config": {
+        "enabled": true,
+        "systems": [
+          "u9",
+          "sap",
+          "kingdee"
+        ],
+        "u9": {
+          "endpoint": "/mdm/supplier",
+          "method": "GET",
+          "params": [
+            "pageIndex",
+            "pageSize",
+            "filter"
+          ]
+        },
+        "sap": {
+          "table": "LFA1",
+          "fields": [
+            "LIFNR",
+            "NAME1",
+            "STCD1",
+            "STCD2",
+            "KTOKK",
+            "SPERR",
+            "LOEVM",
+            "LAND1",
+            "ORT01",
+            "ERDAT"
+          ],
+          "scene_id": "supplier_risk"
+        },
+        "kingdee": {
+          "endpoint": "/Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.View.common.kdsvc",
+          "method": "POST",
+          "form_id": "BD_SUPPLIER",
+          "params": [
+            "FieldKeys",
+            "FilterString",
+            "Limit"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.procurement"
+    },
+    {
+      "id": "supplier_profile",
+      "name": "供应商履历管理",
+      "icon": "fa-id-card",
+      "color": "#06b6d4",
+      "visible": true,
+      "description": "建立结构化供应商知识库，管理基本信息、生产能力、交易历史、资质证书、企业变迁与风险记录",
+      "skill_name": "procurement-supplier",
+      "system_prompt": "你是一位供应商履历管理专家。请帮助用户建立结构化供应商档案，支持从 SAP LFA1 同步基础信息、上传资质 PDF 解析、记录企业变迁历史、评估风险等级，并实现一键查询。",
+      "indicators": [
+        {
+          "name": "基础档案",
+          "formula": "信息完整度",
+          "meaning": "供应商编码、名称、产能、资质等核心字段"
+        },
+        {
+          "name": "企业变迁",
+          "formula": "更名/股权记录",
+          "meaning": "记录供应商前身、更名、关键人员变动"
+        },
+        {
+          "name": "风险评级",
+          "formula": "高/中/低",
+          "meaning": "综合财务、交付、质量、合规风险评分"
+        }
+      ],
+      "required_permission": "scenes.use.procurement"
+    }
+  ],
+  "required_permission": "scenes.use.procurement"
+}

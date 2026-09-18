@@ -1,0 +1,189 @@
+{
+  "id": "sales_contract",
+  "name": "合同评审",
+  "category": "sales",
+  "description": "销售合同审核、风险识别、条款优化",
+  "icon": "fa-file-contract",
+  "skill_name": "sales-contract",
+  "system_prompt": "你是一位销售合同评审专家，熟悉合同法及商务条款设计。你能够识别合同中的风险点、审核付款条款、交货条件、违约责任等关键条款，并提供修改建议。",
+  "has_workbench": true,
+  "workbench_title": "合同评审工作台",
+  "sub_scenes": [
+    {
+      "id": "contract_review",
+      "name": "条款审核",
+      "icon": "fa-magnifying-glass",
+      "color": "#3b82f6",
+      "description": "审核合同关键条款，识别风险点",
+      "system_prompt": "你是一位合同条款审核专家。请帮助用户审核销售合同中的关键条款，包括付款条件、交货条款、质量标准、违约责任、知识产权等，识别潜在风险。",
+      "indicators": [
+        {
+          "name": "付款条款",
+          "formula": "回款保障",
+          "meaning": "付款方式、账期、预付款比例、违约金等条款"
+        },
+        {
+          "name": "交货条款",
+          "formula": "交付保障",
+          "meaning": "交货时间、地点、方式、验收标准等约定"
+        },
+        {
+          "name": "质量标准",
+          "formula": "品质约定",
+          "meaning": "产品质量要求、检验标准、质保期限等条款"
+        },
+        {
+          "name": "违约责任",
+          "formula": "风险分担",
+          "meaning": "双方违约责任、赔偿标准、合同解除条件"
+        },
+        {
+          "name": "争议解决",
+          "formula": "纠纷处理",
+          "meaning": "争议解决方式、管辖法院、适用法律等约定"
+        }
+      ],
+      "required_fields": [
+        "合同编号",
+        "客户名称",
+        "合同金额",
+        "付款条款"
+      ],
+      "optional_fields": [
+        "交货条款",
+        "质量标准",
+        "违约责任",
+        "争议解决",
+        "备注"
+      ],
+      "required_permission": "scenes.use.sales"
+    },
+    {
+      "id": "risk_identification",
+      "name": "风险识别",
+      "icon": "fa-shield-halved",
+      "color": "#ef4444",
+      "description": "识别合同风险，评估风险等级",
+      "system_prompt": "你是一位合同风险识别专家。请帮助用户系统识别销售合同中的各类风险，包括商务风险、法律风险、执行风险等，评估风险等级并提出防范建议。",
+      "indicators": [
+        {
+          "name": "商务风险",
+          "formula": "交易安全",
+          "meaning": "客户信用、付款能力、交易背景真实性等风险"
+        },
+        {
+          "name": "法律风险",
+          "formula": "合规性",
+          "meaning": "合同条款合法性、权利义务对等、格式条款风险"
+        },
+        {
+          "name": "执行风险",
+          "formula": "履约能力",
+          "meaning": "交付能力、质量保障、售后服务等履约风险"
+        },
+        {
+          "name": "变更风险",
+          "formula": "调整管控",
+          "meaning": "合同变更、终止、解除的条件和程序风险"
+        },
+        {
+          "name": "外部风险",
+          "formula": "环境影响",
+          "meaning": "政策变化、市场波动、不可抗力等外部因素"
+        }
+      ],
+      "required_fields": [
+        "合同编号",
+        "风险类型",
+        "风险等级",
+        "风险描述"
+      ],
+      "optional_fields": [
+        "影响范围",
+        "发生概率",
+        "防范措施",
+        "责任部门",
+        "跟踪状态"
+      ],
+      "field_types": {
+        "风险类型": {
+          "type": "select",
+          "options": [
+            "商务风险",
+            "法律风险",
+            "执行风险",
+            "变更风险",
+            "外部风险"
+          ]
+        },
+        "风险等级": {
+          "type": "select",
+          "options": [
+            "高风险",
+            "中风险",
+            "低风险"
+          ]
+        },
+        "跟踪状态": {
+          "type": "select",
+          "options": [
+            "待处理",
+            "处理中",
+            "已关闭"
+          ]
+        }
+      },
+      "required_permission": "scenes.use.sales"
+    },
+    {
+      "id": "clause_optimization",
+      "name": "条款优化",
+      "icon": "fa-pen-to-square",
+      "color": "#10b981",
+      "description": "优化合同条款，保护我方权益",
+      "system_prompt": "你是一位合同条款优化专家。请帮助用户优化销售合同条款，在保护我方合法权益的同时，保持条款的公平合理，提升合同的可执行性。",
+      "indicators": [
+        {
+          "name": "权益保护",
+          "formula": "条款平衡",
+          "meaning": "确保我方核心利益得到充分保护，风险可控"
+        },
+        {
+          "name": "表述清晰",
+          "formula": "无歧义",
+          "meaning": "条款表述准确清晰，避免模糊和歧义"
+        },
+        {
+          "name": "可执行性",
+          "formula": "操作可行",
+          "meaning": "条款约定具体可操作，便于执行和验收"
+        },
+        {
+          "name": "公平合理",
+          "formula": "双赢设计",
+          "meaning": "条款公平合理，有利于长期合作关系"
+        },
+        {
+          "name": "合规合法",
+          "formula": "法律审查",
+          "meaning": "符合法律法规要求，避免无效条款"
+        }
+      ],
+      "required_fields": [
+        "合同编号",
+        "优化条款",
+        "当前表述",
+        "建议修改"
+      ],
+      "optional_fields": [
+        "优化理由",
+        "法律依据",
+        "风险提示",
+        "谈判要点",
+        "备注"
+      ],
+      "required_permission": "scenes.use.sales"
+    }
+  ],
+  "required_permission": "scenes.use.sales"
+}

@@ -21,14 +21,24 @@ _session_scenes_lock = threading.RLock()
 # 目录
 # ---------------------------------------------------------------------------
 def get_catalog() -> Dict:
-    """返回 ``{categories, scenes}``；配置缺失/解析失败返回空结构。"""
+    """返回 ``{categories, scenes}``；配置缺失/解析失败返回空结构。
+
+    经典场景来自 ``scenes_config``；``skill://`` 演示链接在响应期解析，
+    源 JSON 不被改写。
+    """
     data = scenes_config.load_config()
     if not data:
         return {"categories": [], "scenes": []}
     categories = list(data.get("categories", []) or [])
     scenes = list(data.get("scenes", []) or [])
     # v1 可访问性占位：默认全部可见（保留 required_permission 字段）。
-    visible = [s for s in scenes if scenes_config.can_access_scene(s)]
+    from Scene.catalog import resolve_demo_urls
+    visible = [resolve_demo_urls(s) for s in scenes
+               if s.get("visible") is not False and scenes_config.can_access_scene(s)]
+    for scene in visible:
+        if "sub_scenes" in scene:
+            scene["sub_scenes"] = [sub for sub in scene["sub_scenes"]
+                                   if sub.get("visible") is not False and scenes_config.can_access_scene(sub)]
     return {"categories": categories, "scenes": visible}
 
 
@@ -162,6 +172,8 @@ def activate(scene_id: str, session_id: str) -> Tuple[Optional[Dict], Optional[s
     scene, _ = find_scene(scene_id)
     if scene is None:
         return None, f"scene not found: {scene_id}"
+    if scene.get("visible") is False or not scenes_config.can_access_scene(scene):
+        return None, f"scene not available: {scene_id}"
 
     set_scene_context(session_id, scene)
 

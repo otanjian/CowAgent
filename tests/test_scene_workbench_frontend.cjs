@@ -1,7 +1,7 @@
 // Exercise the shipped scenes workbench renderer (scenes/workbenches/base.js)
 // through the registry. Browser acceptance owns layout; these tests make the
 // generic workbench (sub-scene tabs, module cards, import, ERP metadata) and
-// the specialized dispatch reproducible.
+// the generic dispatch reproducible.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -187,16 +187,14 @@ test('back button returns to the scene catalog', async () => {
     assert.equal(h.ctx._nav, 'scenes');
 });
 
-test('specialized renderers register and delegate to the generic one', () => {
+test('legacy registry preserves the generic workbench fallback', () => {
     const h = setup();
     for (const [type, file] of [
         ['voucher', 'voucher'], ['tax', 'tax'], ['financial_audit', 'financial_audit'],
         ['sap_analysis', 'sap_analysis'], ['quality_trace', 'quality_trace'], ['scheduling', 'scheduling'],
     ]) {
-        const src = fs.readFileSync(path.join(__dirname, `../channel/web/static/js/scenes/workbenches/${file}.js`), 'utf8');
-        h.run(src);
-        assert.equal(h.ctx.ScenesRegistry.hasRenderer(type), true, type + ' renderer registered');
-        assert.equal(h.ctx.ScenesRegistry.resolveWorkbenchType({ skill_name: typeMap(type) }), type);
+        assert.equal(h.ctx.ScenesRegistry.hasRenderer(type), false, type + ' renderer removed');
+        assert.equal(h.ctx.ScenesRegistry.resolveWorkbenchType({ skill_name: typeMap(type) }), 'base');
     }
 });
 

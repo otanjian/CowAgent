@@ -1,0 +1,1357 @@
+{
+  "source": "oneagent",
+  "source_revision": "uncommitted local source; per-file SHA-256 recorded",
+  "files": [
+    {
+      "path": "procurement_supplier/scene.json",
+      "source": "scenes_config.json#procurement_supplier",
+      "sha256": "b90d1fa004138fb2c47fec3fb6a5b15ec405277f85f74a3756af4c1346de33eb",
+      "format": "json value preserved"
+    },
+    {
+      "path": "procurement_analysis/scene.json",
+      "source": "scenes_config.json#procurement_analysis",
+      "sha256": "25cab2b61a3cea002ad095fe97bfe5cca9be71e8ecd632ec0d4840332120c262",
+      "format": "json value preserved"
+    },
+    {
+      "path": "procurement_tender/scene.json",
+      "source": "scenes_config.json#procurement_tender",
+      "sha256": "ff156cd56ebedbb7f887870e4aa356daa6ff3e8d1f499a1fc449d615bb4676c1",
+      "format": "json value preserved"
+    },
+    {
+      "path": "procurement_execution/scene.json",
+      "source": "scenes_config.json#procurement_execution",
+      "sha256": "06908d7437d9ca41c5af5c8ac8ba5f4621896a4752031b8d3bd2e7c53867aa0d",
+      "format": "json value preserved"
+    },
+    {
+      "path": "sales_customer/scene.json",
+      "source": "scenes_config.json#sales_customer",
+      "sha256": "5abb861d1590bebd27787d5073674b7b95ed70068ab29cdabef414279afd1259",
+      "format": "json value preserved"
+    },
+    {
+      "path": "sales_strategy/scene.json",
+      "source": "scenes_config.json#sales_strategy",
+      "sha256": "9eca40e458d4736e60d157834300cd5208c54b804671822280dfa669c72f20ee",
+      "format": "json value preserved"
+    },
+    {
+      "path": "sales_contract/scene.json",
+      "source": "scenes_config.json#sales_contract",
+      "sha256": "afd231643e7ed76ad9ac3fa8f3240a9178afd2108db9acc919c965f27e37c632",
+      "format": "json value preserved"
+    },
+    {
+      "path": "production_plan/scene.json",
+      "source": "scenes_config.json#production_plan",
+      "sha256": "c8dadda77411e29f309d4cd8ef4db57074d75019f6473c3cfeab6adaf9144803",
+      "format": "json value preserved"
+    },
+    {
+      "path": "production_quality/scene.json",
+      "source": "scenes_config.json#production_quality",
+      "sha256": "8417ace8cc7457d8826ae05268cd46b67118c3d1d0b9d66294f11124fb635643",
+      "format": "json value preserved"
+    },
+    {
+      "path": "production_safety/scene.json",
+      "source": "scenes_config.json#production_safety",
+      "sha256": "e735c9345501d87956dfd1438d274ac626c640706ce1aaf09ab411a787f4059d",
+      "format": "json value preserved"
+    },
+    {
+      "path": "hr_recruit/scene.json",
+      "source": "scenes_config.json#hr_recruit",
+      "sha256": "77ba85dc70b1d93f829db69bc897b8df4e09f9dc0db401d3dc995a611d2d812f",
+      "format": "json value preserved"
+    },
+    {
+      "path": "hr_performance/scene.json",
+      "source": "scenes_config.json#hr_performance",
+      "sha256": "9fd1f31680c6f3dc9710b8bfc149b49db05727c383a310de501728542eea4410",
+      "format": "json value preserved"
+    },
+    {
+      "path": "hr_labor/scene.json",
+      "source": "scenes_config.json#hr_labor",
+      "sha256": "2e027a59903b7507772687fd0be3fb49fcf6057774fee9fd7867ea3544bb60bc",
+      "format": "json value preserved"
+    },
+    {
+      "path": "finance_expert/scene.json",
+      "source": "scenes_config.json#finance_expert",
+      "sha256": "f508c2d43a0aea83144bca00f9ee76cf1d332e95a0ffba5c8eb2d6c6485198c9",
+      "format": "json value preserved"
+    },
+    {
+      "path": "finance_analysis/scene.json",
+      "source": "scenes_config.json#finance_analysis",
+      "sha256": "b3f8df4cc32ae6b63166fa6e718b0e4404d53ac781b11a053e52bfc09d9ef9bd",
+      "format": "json value preserved"
+    },
+    {
+      "path": "finance_voucher/scene.json",
+      "source": "scenes_config.json#finance_voucher",
+      "sha256": "ef34fb453b38afc1ab79eb391050d192284ed9326be02b8a6ca393f7b4bb6a38",
+      "format": "json value preserved"
+    },
+    {
+      "path": "finance_chenyiwei/scene.json",
+      "source": "scenes_config.json#finance_chenyiwei",
+      "sha256": "bc79c68dab300e08637427572442662a22a34edaa6b96f74c6491488cd584160",
+      "format": "json value preserved"
+    },
+    {
+      "path": "finance_report_audit/scene.json",
+      "source": "scenes_config.json#finance_report_audit",
+      "sha256": "005b459fd368124c4350fcc2d7798f6053967dba205e081910b13d1ee4025f9e",
+      "format": "json value preserved"
+    },
+    {
+      "path": "sap_data_analysis/scene.json",
+      "source": "scenes_config.json#sap_data_analysis",
+      "sha256": "a602e4ad0fa38a9a7724c16f3ae031ead379c0c00aad07b92a724c23e9a4d041",
+      "format": "json value preserved"
+    },
+    {
+      "path": "quality_traceability/scene.json",
+      "source": "scenes_config.json#quality_traceability",
+      "sha256": "283875d1d12360fc42665f73c361c0892df24beb2ba3278b8ca2bacb836f9308",
+      "format": "json value preserved"
+    },
+    {
+      "path": "production_scheduling_airbag/scene.json",
+      "source": "scenes_config.json#production_scheduling_airbag",
+      "sha256": "b070d2ce4d43186d3a21068d8fd33d0955535e99a4cf0d3e927f19f2ba5aacd1",
+      "format": "json value preserved"
+    },
+    {
+      "path": "it_support/scene.json",
+      "source": "scenes_config.json#it_support",
+      "sha256": "10ec768c73546d55853e9a3ddc5ec721bd1c6d52c400c539b2dbb4bf1147c176",
+      "format": "json value preserved"
+    },
+    {
+      "path": "hr_service/scene.json",
+      "source": "scenes_config.json#hr_service",
+      "sha256": "fdaff0f7fe31dc776fc8bc3af355a06ac21c448811d5973b90a2c4c0df384b2f",
+      "format": "json value preserved"
+    },
+    {
+      "path": "legal_review/scene.json",
+      "source": "scenes_config.json#legal_review",
+      "sha256": "46e5ad8068887087ce6ce5712d19b06aeca843411ebb509d84fc81fccf46c7bd",
+      "format": "json value preserved"
+    },
+    {
+      "path": "admin_affairs/scene.json",
+      "source": "scenes_config.json#admin_affairs",
+      "sha256": "c82234eb57b832d39a92fd1cff2706ac0323298da5e94e9e5974e8ede111adaa",
+      "format": "json value preserved"
+    },
+    {
+      "path": "finance_reimbursement/scene.json",
+      "source": "scenes_config.json#finance_reimbursement",
+      "sha256": "2db743a79006f09eefca5ac8ecf332130230265dbd6fcd6ee309fe1f3e27a320",
+      "format": "json value preserved"
+    },
+    {
+      "path": "catalog.json",
+      "source": "scenes_config.json",
+      "sha256": "1d2b8fca80cc11c83a514b91f272994d1a8377079806ae1404311f53dc64c722",
+      "format": "json value preserved"
+    },
+    {
+      "path": "procurement_supplier/skills/procurement-supplier-risk/SKILL.md",
+      "source": "skills/procurement-supplier-risk/SKILL.md",
+      "sha256": "a4e2465a41e448664c0cbbe6ebcfeb6ce89a1c478dfea924fb373eae036aa4bd"
+    },
+    {
+      "path": "procurement_supplier/skills/procurement-supplier-risk/scripts/assess_risk.py",
+      "source": "skills/procurement-supplier-risk/scripts/assess_risk.py",
+      "sha256": "647c915442f92e8f017b858f2ab1f422320bfb23fd13e7fb636aba2ffec33b8a"
+    },
+    {
+      "path": "procurement_supplier/skills/procurement-supplier-risk/scripts/build_dashboard.py",
+      "source": "skills/procurement-supplier-risk/scripts/build_dashboard.py",
+      "sha256": "6ce26f28b9d509bdaccaf5b4bceabd33346a78d25855d12e799de1890522e68a"
+    },
+    {
+      "path": "procurement_supplier/skills/procurement-supplier-risk/scripts/generate_report.py",
+      "source": "skills/procurement-supplier-risk/scripts/generate_report.py",
+      "sha256": "c4d6038635c0443f99aaf0f39d05dd295e53c57578b31a48aba4636de1724708"
+    },
+    {
+      "path": "procurement_supplier/skills/procurement-supplier-risk/scripts/scoring_rules.py",
+      "source": "skills/procurement-supplier-risk/scripts/scoring_rules.py",
+      "sha256": "d0433824d6370d920dde00ddcc7a5b7dea85bfa80275f696446cd662d32a0ace"
+    },
+    {
+      "path": "procurement_supplier/skills/procurement-supplier-risk/scripts/ai_recommendation.py",
+      "source": "skills/procurement-supplier-risk/scripts/ai_recommendation.py",
+      "sha256": "36cb6dc4f15df873668a4c05df7bbc8202f701125aa99d657390dbe811bceb68"
+    },
+    {
+      "path": "procurement_supplier/skills/procurement-supplier-risk/scripts/_mock_e2e_test.py",
+      "source": "skills/procurement-supplier-risk/scripts/_mock_e2e_test.py",
+      "sha256": "cf4451406f613d955383995b6422fddf0dd416483cbec02717bf9b8e81df8a35"
+    },
+    {
+      "path": "procurement_analysis/skills/procurement-comparison/SKILL.md",
+      "source": "skills/procurement-comparison/SKILL.md",
+      "sha256": "7788cfa80cc37cdc57b6c83724ced41a28f502c488f802863049b837f555b2aa"
+    },
+    {
+      "path": "procurement_analysis/skills/procurement-comparison/scripts/generate_excel_report.py",
+      "source": "skills/procurement-comparison/scripts/generate_excel_report.py",
+      "sha256": "78e1f05685c6a9dc0d7bd6fdf6716c134b547db1ca828f5a26f483ea92c7d31c"
+    },
+    {
+      "path": "procurement_analysis/skills/procurement-comparison/scripts/generate_charts.py",
+      "source": "skills/procurement-comparison/scripts/generate_charts.py",
+      "sha256": "5ccf30ebae6fdfc1dc1b4a469b478acccf379f49ba8c9883415c6db0c890bc31"
+    },
+    {
+      "path": "procurement_analysis/skills/procurement-comparison/scripts/compare_quotes.py",
+      "source": "skills/procurement-comparison/scripts/compare_quotes.py",
+      "sha256": "84cc1017039cdff3ddaee8a95ddb83697cbf5267bb72c43f497087b30c9f4d0c"
+    },
+    {
+      "path": "procurement_analysis/skills/procurement-comparison/scripts/fetch_ekbe_history.py",
+      "source": "skills/procurement-comparison/scripts/fetch_ekbe_history.py",
+      "sha256": "3263ad99fdaa25cef66265874e11efb1eb51a8120c7c275adc0cf89b5db7b123"
+    },
+    {
+      "path": "procurement_analysis/skills/procurement-comparison/scripts/create_templates.py",
+      "source": "skills/procurement-comparison/scripts/create_templates.py",
+      "sha256": "9a81cebfeadfbef399bc21ec9d1375dfeacb4e8ed48d748d1252ff95b14ea92e"
+    },
+    {
+      "path": "procurement_analysis/skills/procurement-comparison/scripts/parse_quote.py",
+      "source": "skills/procurement-comparison/scripts/parse_quote.py",
+      "sha256": "9922b9305484633a94380e54bc2ebd2dfa388dd88b3056769bed3a5b6ca61742"
+    },
+    {
+      "path": "procurement_analysis/skills/procurement-comparison/scripts/generate_report.py",
+      "source": "skills/procurement-comparison/scripts/generate_report.py",
+      "sha256": "89911e578cf20f2197393bb3201351d5fdd9c5a795f35cb0f7a6ab3ec0d434fc"
+    },
+    {
+      "path": "procurement_analysis/skills/procurement-comparison/assets/comparison_report_template.xlsx",
+      "source": "skills/procurement-comparison/assets/comparison_report_template.xlsx",
+      "sha256": "dff8edbd13fbb515e11bcfa6b0de2b40ffa713283d1d19d1bd94c4721be2b391"
+    },
+    {
+      "path": "procurement_analysis/skills/procurement-comparison/assets/history_price_template.xlsx",
+      "source": "skills/procurement-comparison/assets/history_price_template.xlsx",
+      "sha256": "8c5d82a251a5fa4da3e01a9f9c7a36ba5698bf0886e1fd90fab8e39c35765192"
+    },
+    {
+      "path": "procurement_analysis/skills/procurement-comparison/assets/supplier_profile_template.xlsx",
+      "source": "skills/procurement-comparison/assets/supplier_profile_template.xlsx",
+      "sha256": "6751f4f109f86ce596821abea9d3e6e2898fe1dd134bad43f705f30a02050faf"
+    },
+    {
+      "path": "procurement_analysis/skills/procurement-comparison/assets/upload_templates/供应商报价文件示例.txt",
+      "source": "skills/procurement-comparison/assets/upload_templates/供应商报价文件示例.txt",
+      "sha256": "501fbdbbf0f694c863af5bf3978175ce93df0a30c8f0f3f0380cfa0992dd54fa"
+    },
+    {
+      "path": "procurement_analysis/skills/procurement-comparison/assets/upload_templates/供应商档案模板.xlsx",
+      "source": "skills/procurement-comparison/assets/upload_templates/供应商档案模板.xlsx",
+      "sha256": "eb8b19216a56342ad7cf254c53a92bfe68ea6cfe35ce91d7bba8059caacc4c1e"
+    },
+    {
+      "path": "procurement_analysis/skills/procurement-comparison/assets/upload_templates/历史采购价模板.xlsx",
+      "source": "skills/procurement-comparison/assets/upload_templates/历史采购价模板.xlsx",
+      "sha256": "64a2affb3fb4e3445e4d11bc0c952f3b7761e5e9e8bee54db60422d6b12ef519"
+    },
+    {
+      "path": "procurement_analysis/skills/procurement-comparison/assets/upload_templates/采购比价分析模板.XLSX",
+      "source": "skills/procurement-comparison/assets/upload_templates/采购比价分析模板.XLSX",
+      "sha256": "c15b7b3bce1a77085f10e09d67711970cf68e7acace8c92c5749f3555a675791"
+    },
+    {
+      "path": "procurement_tender/skills/bid-analysis/_meta.json",
+      "source": "skills/bid-analysis/_meta.json",
+      "sha256": "ea83f8dd8f98274ae0c4dd1a46516e3a2f48c313cab0bb864926f5efe303a17d"
+    },
+    {
+      "path": "procurement_tender/skills/bid-analysis/SKILL.md",
+      "source": "skills/bid-analysis/SKILL.md",
+      "sha256": "2edc3ec513db9055bc4e757d4e2e69a44154a90495bce38c2199347581f47db4"
+    },
+    {
+      "path": "procurement_tender/skills/bid-analysis/references/parsing-guide.md",
+      "source": "skills/bid-analysis/references/parsing-guide.md",
+      "sha256": "659cf0e4e06ad7c80c59e41e3da7d32b762720fed8f55470ed1f43e1c1cbd24f"
+    },
+    {
+      "path": "procurement_tender/skills/bid-analysis/scripts/document_to_md.py",
+      "source": "skills/bid-analysis/scripts/document_to_md.py",
+      "sha256": "6ed778d109adc657aa07fe033ad8a2b9642d24a517221bda4ca4b5c37720dbc6"
+    },
+    {
+      "path": "procurement_tender/skills/bid-analysis/assets/workbench-template1.html",
+      "source": "skills/bid-analysis/assets/workbench-template1.html",
+      "sha256": "3ea8bb51db8427c3dd8b12b4e9c82d45ce57a60983ab6fe058792e4f2a8e13be"
+    },
+    {
+      "path": "procurement_tender/skills/bid-analysis/assets/workbench-template.html.bak",
+      "source": "skills/bid-analysis/assets/workbench-template.html.bak",
+      "sha256": "1f53d25dc6f090c83a5eb42609523aa30b988932bb229e8993acc650cec3ac9a"
+    },
+    {
+      "path": "procurement_tender/skills/bid-analysis/assets/workbench-template.html",
+      "source": "skills/bid-analysis/assets/workbench-template.html",
+      "sha256": "6c9ff1f5d81cc1975c67b86f5cc1cfde3f1a0f8a4b027f4992110644a08a3b94"
+    },
+    {
+      "path": "sales_strategy/skills/sales-quotation/SKILL.md",
+      "source": "skills/sales-quotation/SKILL.md",
+      "sha256": "e7dee5479d200ca6ee15b26d6a80140043812b3a59496938f7e2ce111b4f8a7c"
+    },
+    {
+      "path": "sales_strategy/skills/sales-quotation/scripts/calculate_cost.py",
+      "source": "skills/sales-quotation/scripts/calculate_cost.py",
+      "sha256": "2d48e5126b05e785d73de4edea49d9363b68b87ffac320767428b78299e69823"
+    },
+    {
+      "path": "sales_strategy/skills/sales-quotation/scripts/evaluate_delivery.py",
+      "source": "skills/sales-quotation/scripts/evaluate_delivery.py",
+      "sha256": "b3114d4e453c5b38ac2cb162aeaa89b09cdffd99c3261fa81d83aa6dc72a52bc"
+    },
+    {
+      "path": "sales_strategy/skills/sales-quotation/scripts/parse_inquiry.py",
+      "source": "skills/sales-quotation/scripts/parse_inquiry.py",
+      "sha256": "275604c6836b87ba526b4902551f3ff64f08ce7f2311e6bf54f900efae59ae41"
+    },
+    {
+      "path": "sales_strategy/skills/sales-quotation/scripts/create_templates.py",
+      "source": "skills/sales-quotation/scripts/create_templates.py",
+      "sha256": "c682756d9f0c2ff69ef16e1e308693b3010069552c27da2126e81cb37a0154f9"
+    },
+    {
+      "path": "sales_strategy/skills/sales-quotation/scripts/generate_quotation.py",
+      "source": "skills/sales-quotation/scripts/generate_quotation.py",
+      "sha256": "af1391e3579fd79fb961befec390e8e1e0204efe678f6b0d6b8dc8b741df9ef5"
+    },
+    {
+      "path": "sales_strategy/skills/sales-quotation/assets/inventory_template.xlsx",
+      "source": "skills/sales-quotation/assets/inventory_template.xlsx",
+      "sha256": "acd43e3f043eff27d61bdd49d877f53b84a98c379db78b67391d7fa4b0c5fe8c"
+    },
+    {
+      "path": "sales_strategy/skills/sales-quotation/assets/capacity_template.json",
+      "source": "skills/sales-quotation/assets/capacity_template.json",
+      "sha256": "1e98214da478ce91628a6ad1e3fc951ef934303c2dc133f829d961209b7eab04"
+    },
+    {
+      "path": "sales_strategy/skills/sales-quotation/assets/quotation_template.xlsx",
+      "source": "skills/sales-quotation/assets/quotation_template.xlsx",
+      "sha256": "4c8a2cd3d02bbc989090ce5bac1d02ae322accf3d625ef25ea622bd5eb9b5b43"
+    },
+    {
+      "path": "sales_strategy/skills/sales-quotation/assets/process_template.xlsx",
+      "source": "skills/sales-quotation/assets/process_template.xlsx",
+      "sha256": "a17c0573c5b3e212953c33937f81cbc6fa81eba3742de3506b56d53511d979ed"
+    },
+    {
+      "path": "sales_strategy/skills/sales-quotation/assets/bom_template.xlsx",
+      "source": "skills/sales-quotation/assets/bom_template.xlsx",
+      "sha256": "9a85157348a6ac53ec023fdc4c3466115be8e705920c61846f677baac69705e3"
+    },
+    {
+      "path": "sales_strategy/skills/sales-quotation/assets/rates_template.json",
+      "source": "skills/sales-quotation/assets/rates_template.json",
+      "sha256": "9f4b7daeb607a4a95a3a349254a8067a85f008ba02eb5748e5f280fe7ed62e4a"
+    },
+    {
+      "path": "sales_strategy/skills/sales-quotation/assets/upload_templates/库存数据模板.xlsx",
+      "source": "skills/sales-quotation/assets/upload_templates/库存数据模板.xlsx",
+      "sha256": "0daed3a564943a71865473fb48e944406115750ac4e2f68334204e52167dc3ba"
+    },
+    {
+      "path": "sales_strategy/skills/sales-quotation/assets/upload_templates/产品BOM模板.xlsx",
+      "source": "skills/sales-quotation/assets/upload_templates/产品BOM模板.xlsx",
+      "sha256": "d8e884157d91888be27c2b8a26c80fc929f387413057e18c015e1fdb8899969b"
+    },
+    {
+      "path": "sales_strategy/skills/sales-quotation/assets/upload_templates/客户询价文件示例.txt",
+      "source": "skills/sales-quotation/assets/upload_templates/客户询价文件示例.txt",
+      "sha256": "c8876532df9a6b92b5e5106eafa510deba1afba8fc1db7c2f406a50fd9f88648"
+    },
+    {
+      "path": "sales_strategy/skills/sales-quotation/assets/upload_templates/成本费率配置.json",
+      "source": "skills/sales-quotation/assets/upload_templates/成本费率配置.json",
+      "sha256": "a6a57f96fa3cc8f24a29530a5764a5297355e44dfca14c1e4fff78c0f010db34"
+    },
+    {
+      "path": "sales_strategy/skills/sales-quotation/assets/upload_templates/产能负荷模板.xlsx",
+      "source": "skills/sales-quotation/assets/upload_templates/产能负荷模板.xlsx",
+      "sha256": "2a00ee09a731521e87ad515faf7694ee1a2ccdc060e7b114be7872d2a33c8142"
+    },
+    {
+      "path": "sales_strategy/skills/sales-quotation/assets/upload_templates/工艺路线模板.xlsx",
+      "source": "skills/sales-quotation/assets/upload_templates/工艺路线模板.xlsx",
+      "sha256": "cc9e14c96a5e58ce3489f7a14be40c0dd427d6f73471b9fb9ea1cc080eefc691"
+    },
+    {
+      "path": "sales_contract/skills/合同审查专家/SKILL.md",
+      "source": "skills/合同审查专家/SKILL.md",
+      "sha256": "7a75870db992ce01b46fc1ba461746a2c4c8cd1823764729c20a6ff95334edaf"
+    },
+    {
+      "path": "production_plan/skills/pmc-scheduler/README.md",
+      "source": "skills/pmc-scheduler/README.md",
+      "sha256": "e1adf2b6289a6a97d8fce164bf90505569dbcf646f1d160cf4c2ec291ed166b5"
+    },
+    {
+      "path": "production_plan/skills/pmc-scheduler/demo_gantt.html",
+      "source": "skills/pmc-scheduler/demo_gantt.html",
+      "sha256": "494e793275d555d4d3a331980f327861c9407423575f9777dcd6f942daf95d23"
+    },
+    {
+      "path": "production_plan/skills/pmc-scheduler/SKILL.md",
+      "source": "skills/pmc-scheduler/SKILL.md",
+      "sha256": "945dfe71181fde57ac0a87e8c0e90966fcd512cb1e4e424285fdad49f30c2741"
+    },
+    {
+      "path": "production_plan/skills/pmc-scheduler/demo/demo_report.html",
+      "source": "skills/pmc-scheduler/demo/demo_report.html",
+      "sha256": "07e5a6f1fea3dbc30ae9cc461887c15a07fc0dbab23f9f2895a305bc19e890ce"
+    },
+    {
+      "path": "production_plan/skills/pmc-scheduler/demo/demo_gantt.html",
+      "source": "skills/pmc-scheduler/demo/demo_gantt.html",
+      "sha256": "494e793275d555d4d3a331980f327861c9407423575f9777dcd6f942daf95d23"
+    },
+    {
+      "path": "production_plan/skills/pmc-scheduler/scripts/schedule_template.py",
+      "source": "skills/pmc-scheduler/scripts/schedule_template.py",
+      "sha256": "436fa499ef12d66c9f698672e7b4ecf626b2332ec567facbcbaebe37d8d36666"
+    },
+    {
+      "path": "production_plan/skills/pmc-scheduler/scripts/scheduler.py",
+      "source": "skills/pmc-scheduler/scripts/scheduler.py",
+      "sha256": "99cd2fa3390467249440d509b7e022e43cd95dadbc312342616549bd699b5d73"
+    },
+    {
+      "path": "production_plan/skills/pmc-scheduler/assets/bom.csv",
+      "source": "skills/pmc-scheduler/assets/bom.csv",
+      "sha256": "d0fa67ad1dd25ccc900724ccf970dccce0a44251e203055eb537c34e65856663"
+    },
+    {
+      "path": "production_plan/skills/pmc-scheduler/assets/gantt_template.html",
+      "source": "skills/pmc-scheduler/assets/gantt_template.html",
+      "sha256": "0ba755387e0436ad0124277976105065aad0bbd4fab732d6f628da7961712af0"
+    },
+    {
+      "path": "finance_expert/skills/taxation-expert/_skillhub_meta.json",
+      "source": "skills/taxation-expert/_skillhub_meta.json",
+      "sha256": "bc2f0c68e0ad0f1449795da92763ca6b9ba2c148c85a911d9197e573e19f8b7c"
+    },
+    {
+      "path": "finance_expert/skills/taxation-expert/README.md",
+      "source": "skills/taxation-expert/README.md",
+      "sha256": "6c7823d232d3674263147f1c04a2a44333b0a5ed34c5de801058f2e71198c055"
+    },
+    {
+      "path": "finance_expert/skills/taxation-expert/SKILL.md",
+      "source": "skills/taxation-expert/SKILL.md",
+      "sha256": "114a1c5ea0510365337d8017dc2cb04cb3336a6a1f14ee40a792e5516db26d55"
+    },
+    {
+      "path": "finance_expert/skills/taxation-expert/references/tax_terms.md",
+      "source": "skills/taxation-expert/references/tax_terms.md",
+      "sha256": "ef1855e034e9aeaab334709b9ab783eb0e362ef5cfb46321d9220a1b88a22b16"
+    },
+    {
+      "path": "finance_expert/skills/taxation-expert/references/tax_laws.md",
+      "source": "skills/taxation-expert/references/tax_laws.md",
+      "sha256": "f50f0acf40e15e38562c059fd2dde68378fe3a51b85c6e48d5266c2c6cb253ab"
+    },
+    {
+      "path": "finance_expert/skills/taxation-expert/references/tax_regulations.md",
+      "source": "skills/taxation-expert/references/tax_regulations.md",
+      "sha256": "c38232e6e3dadc4ebc67abadaf4f6b8f307e9fecce0ff5b91c238a94f0cd857d"
+    },
+    {
+      "path": "finance_expert/skills/taxation-expert/references/disclaimer_template.md",
+      "source": "skills/taxation-expert/references/disclaimer_template.md",
+      "sha256": "e4e2e7f860017a61d3a9febc146af161ba54bceb51e170435be22c997736e162"
+    },
+    {
+      "path": "finance_expert/skills/taxation-expert/assets/consultation_example.md",
+      "source": "skills/taxation-expert/assets/consultation_example.md",
+      "sha256": "d6e7d1b7457c1f1524ac6e09e2b7f9abf4db019bf4beaf3e824b5588c8c33059"
+    },
+    {
+      "path": "finance_analysis/skills/fin-report-analysis/_meta.json",
+      "source": "skills/fin-report-analysis/_meta.json",
+      "sha256": "eff25daa3c3e712509c9f6568362459f6cc6f5415654814ed2f01944ae951a8e"
+    },
+    {
+      "path": "finance_analysis/skills/fin-report-analysis/SKILL.md",
+      "source": "skills/fin-report-analysis/SKILL.md",
+      "sha256": "d91d90373425d4d7f88bb581541bbdf4695b28b22969d5ac18ceeb1941b5790c"
+    },
+    {
+      "path": "finance_analysis/skills/fin-report-analysis/demo/企业财务报表综合分析报告.html",
+      "source": "skills/fin-report-analysis/demo/企业财务报表综合分析报告.html",
+      "sha256": "5c7d56110ac36bb1b91b182ca8c82a8ff466c43d5c14972999650cc1c65fe92a"
+    },
+    {
+      "path": "finance_analysis/skills/fin-report-analysis/demo/盈利能力分析报告_demo.md",
+      "source": "skills/fin-report-analysis/demo/盈利能力分析报告_demo.md",
+      "sha256": "ae30ee1b52b30245e6cf4589069aa02f429117ca86417c263232cef5371c52ce"
+    },
+    {
+      "path": "finance_analysis/skills/fin-report-analysis/demo/盈利能力分析报告_demo.html",
+      "source": "skills/fin-report-analysis/demo/盈利能力分析报告_demo.html",
+      "sha256": "d2159f020ee16ec035289ddc8ddedf52daa5d1011580d76503b53b3fb3a296ae"
+    },
+    {
+      "path": "finance_analysis/skills/fin-report-analysis/demo/企业财务报表综合分析报告.md",
+      "source": "skills/fin-report-analysis/demo/企业财务报表综合分析报告.md",
+      "sha256": "f2f1f6451a2538a51ace6b9e761131cf6784e382ad33096b540a2acca51cd85a"
+    },
+    {
+      "path": "finance_analysis/skills/fin-report-analysis/scripts/analyze_financial_report.py",
+      "source": "skills/fin-report-analysis/scripts/analyze_financial_report.py",
+      "sha256": "f1431dd1210c2fa55d4f6c2b26744b9eb33649f9856591defb7aa2d6c2d3703f"
+    },
+    {
+      "path": "finance_voucher/skills/finance-ledger-generator/SKILL.md",
+      "source": "skills/finance-ledger-generator/SKILL.md",
+      "sha256": "3442a8d5a3eb834201e97c3f47a3636c992c1c1bb880dc9cc19e936acf5cd31b"
+    },
+    {
+      "path": "finance_voucher/skills/finance-ledger-generator/references/data_schema.md",
+      "source": "skills/finance-ledger-generator/references/data_schema.md",
+      "sha256": "7a886f7dc74d6a90bda122faf0e8a5dae796f0af056d5f68766ba7dd64bd3dff"
+    },
+    {
+      "path": "finance_voucher/skills/finance-ledger-generator/scripts/voucher_generator.py",
+      "source": "skills/finance-ledger-generator/scripts/voucher_generator.py",
+      "sha256": "34b1db36d034e04e7395c7bba569153efed5b04a04032c5d63a0aa81475a056b"
+    },
+    {
+      "path": "finance_voucher/skills/finance-ledger-generator/scripts/data_manager.py",
+      "source": "skills/finance-ledger-generator/scripts/data_manager.py",
+      "sha256": "ecdecfa2f5357c03f78ee8f71fdfb5dd9d6dce012f0da9aa76daa1f6915a724c"
+    },
+    {
+      "path": "finance_voucher/skills/finance-ledger-generator/scripts/rule_learner.py",
+      "source": "skills/finance-ledger-generator/scripts/rule_learner.py",
+      "sha256": "20672b21d877fbc30f1c878f0af0abac63e294705a8cc18a605440714f450875"
+    },
+    {
+      "path": "finance_voucher/skills/finance-ledger-generator/scripts/init_data.py",
+      "source": "skills/finance-ledger-generator/scripts/init_data.py",
+      "sha256": "6797fb434716628784a6c21e14c9876428b21603a170e04839eef6846113ba24"
+    },
+    {
+      "path": "finance_voucher/skills/finance-ledger-generator/assets/template_format.md",
+      "source": "skills/finance-ledger-generator/assets/template_format.md",
+      "sha256": "3c3cf84081ba011f76890bc111d25c9f0f9c1770c5f62577339070cbab87c5d6"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/_meta.json",
+      "source": "skills/financial-reprot-audit/_meta.json",
+      "sha256": "8eb563b9f977d8dfb2907f0737006cd6e983e45fb2c3afd3fa814822e0c619be"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/requirements.txt",
+      "source": "skills/financial-reprot-audit/requirements.txt",
+      "sha256": "90a44fa854c24f1b5adb365e87ccb72a3cd6aeb1e7062c6672d21ab3cd70b1b3"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/_skillhub_meta.json",
+      "source": "skills/financial-reprot-audit/_skillhub_meta.json",
+      "sha256": "723fcb9e3569bad24f6c5eace14f4da7b95e70c151a90851a52860f6bf53bcd9"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/README.md",
+      "source": "skills/financial-reprot-audit/README.md",
+      "sha256": "a0e28ff0138c481bb2229bb45dde40704ea516b2d36d8b2271e1315f81dc41ea"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/setup.py",
+      "source": "skills/financial-reprot-audit/setup.py",
+      "sha256": "45b0954634b641e399413788bee31642bfc1eed313ee4285d11796c7891376d2"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/CONTRIBUTING.md",
+      "source": "skills/financial-reprot-audit/CONTRIBUTING.md",
+      "sha256": "e3715a9fcc9e562b0324af5e7c471e0fc3e911930c2a4fe7322e8e24148d4dab"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/SKILL.md",
+      "source": "skills/financial-reprot-audit/SKILL.md",
+      "sha256": "0de6a4b18bc7b93f351a1c9ceccf67f5b9e446b231eb3ac555de9427ff6584b0"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/parsers/kingdee_parser.py",
+      "source": "skills/financial-reprot-audit/parsers/kingdee_parser.py",
+      "sha256": "ddba8a0e202bf9e7671322dc07a7d8ff4486e70d33e74033ca2ca0b3af332b2c"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/parsers/pdf_parser.py",
+      "source": "skills/financial-reprot-audit/parsers/pdf_parser.py",
+      "sha256": "f93a05f51ecd58acc0d22c28032c791fef10ad9ad99d900dddb09395bd30e15b"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/parsers/excel_parser.py",
+      "source": "skills/financial-reprot-audit/parsers/excel_parser.py",
+      "sha256": "f5187f2abba95c2706857f54ea3f3378c8e07006391f0de0d9357848cfe8c68d"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/parsers/csv_parser.py",
+      "source": "skills/financial-reprot-audit/parsers/csv_parser.py",
+      "sha256": "16a7db6eafd419c344d3bcaae1f478b99ad0267cceaa9c5f7142bee42317888a"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/parsers/ufida_parser.py",
+      "source": "skills/financial-reprot-audit/parsers/ufida_parser.py",
+      "sha256": "50470f0baa04416b9d4d35bdefa80ba796e485460515f606466d98d3da1f1499"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/parsers/__init__.py",
+      "source": "skills/financial-reprot-audit/parsers/__init__.py",
+      "sha256": "3520916df942115f92775ddbfcae92e1778c1bf254783e6c704d263fd06c5f43"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/parsers/base_parser.py",
+      "source": "skills/financial-reprot-audit/parsers/base_parser.py",
+      "sha256": "1dfe4d054095277f61c0e702fa20a8fcc09039a39d60cef53b8a9d17100e8405"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/parsers/parser_manager.py",
+      "source": "skills/financial-reprot-audit/parsers/parser_manager.py",
+      "sha256": "e8b94ba2c15789c29d9591c458a457202196f596d70fce52a4def2c064df0459"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/parsers/file_identifier.py",
+      "source": "skills/financial-reprot-audit/parsers/file_identifier.py",
+      "sha256": "ec401d7a804251b8f09488a453d7c32b875f88f768204fb50c6b8c3a2dfe2306"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/parsers/word_parser.py",
+      "source": "skills/financial-reprot-audit/parsers/word_parser.py",
+      "sha256": "f8ade0850756e10ec1f37be642a6c0c65bb325005efcb1adf2679c381e55bee0"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/references/review_methodology.md",
+      "source": "skills/financial-reprot-audit/references/review_methodology.md",
+      "sha256": "eab4730eb6fa2de5d98f5ed2e9503310672a6447921bd13d15f1f39ac1c194c1"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/references/accounting_law.md",
+      "source": "skills/financial-reprot-audit/references/accounting_law.md",
+      "sha256": "757900096f4a28d4fa17aca838bb212d9941fbdf0a77c2cfb2fdda95ef2095bb"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/references/tax_law_summary.md",
+      "source": "skills/financial-reprot-audit/references/tax_law_summary.md",
+      "sha256": "00d566d7eb91ff5fb2b35bb095f631ab5dca82db37f8e9638b2101b5d35bdddd"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/strategies/tax_reconciliation.py",
+      "source": "skills/financial-reprot-audit/strategies/tax_reconciliation.py",
+      "sha256": "f2ba62448db1f0d1a6254047166a4ef124ae1e643ced1a25158b6c1ec14fb051"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/strategies/related_party.py",
+      "source": "skills/financial-reprot-audit/strategies/related_party.py",
+      "sha256": "19ef96433c88cb2903370a2bb1a0a9f01ac077e23c41915d467cd7e3799616fb"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/strategies/revenue_recognition.py",
+      "source": "skills/financial-reprot-audit/strategies/revenue_recognition.py",
+      "sha256": "b78e967dd580fab34d16250cb8b84c2d8c65485990a1e8d33c10b125ece59a4f"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/strategies/base_strategy.py",
+      "source": "skills/financial-reprot-audit/strategies/base_strategy.py",
+      "sha256": "68ec685948fda546476535c22e2a515877d41af9c4318188eacbe060a1df1021"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/strategies/cost_manipulation.py",
+      "source": "skills/financial-reprot-audit/strategies/cost_manipulation.py",
+      "sha256": "1b3ff0a595a7f8fa06dedbb6893d91e3010cba1bcac4c6e0ae5dd2f0e37ad77e"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/strategies/__init__.py",
+      "source": "skills/financial-reprot-audit/strategies/__init__.py",
+      "sha256": "3caca454ddf2e81702e924ced405d0baa39e288188a8364c861fd854a3d2d630"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/strategies/tax_preference.py",
+      "source": "skills/financial-reprot-audit/strategies/tax_preference.py",
+      "sha256": "9fc278e7bcb2b67e10a4fad8c1098599ddb07f1c7433d98d6ceb9ea5a602cc79"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/strategies/strategy_manager.py",
+      "source": "skills/financial-reprot-audit/strategies/strategy_manager.py",
+      "sha256": "602949959af722abb9d621e2a2528d01d6f1f7ad5db9cd7851e989bb01ee2846"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/strategies/STRATEGY_GUIDE.md",
+      "source": "skills/financial-reprot-audit/strategies/STRATEGY_GUIDE.md",
+      "sha256": "373e9448796097924841f007c5317149b4e20107fbb28a0f4ab11d7bcc142c9c"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/tests/__init__.py",
+      "source": "skills/financial-reprot-audit/tests/__init__.py",
+      "sha256": "968a92a5e04d453067d2812a8c465280d4b3c3568de94f6a3228ea07ac2a9568"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/tests/test_base.py",
+      "source": "skills/financial-reprot-audit/tests/test_base.py",
+      "sha256": "3d09ab90abbe22bf53151a91d329635cc2da80a66ec88e4edb1e557d2fc465bd"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/scripts/strategy_demo.py",
+      "source": "skills/financial-reprot-audit/scripts/strategy_demo.py",
+      "sha256": "ef000d9b1f53829ef716a60efd1015590ff44e29b36d61bc1d6287f100a1b259"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/scripts/data_loader.py",
+      "source": "skills/financial-reprot-audit/scripts/data_loader.py",
+      "sha256": "65ae532b14738c74aae49ab0ac68df36a5c6c9956d1fa20e61ba359bf6cc8897"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/scripts/__init__.py",
+      "source": "skills/financial-reprot-audit/scripts/__init__.py",
+      "sha256": "89ff24216225da9b7833a071bd6b0221dbcc709a1d398eb60b570034c943f6d5"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/scripts/cli.py",
+      "source": "skills/financial-reprot-audit/scripts/cli.py",
+      "sha256": "2ccab3a098f03bd0f68a2c4df8bd006b79d2efa2ed47f9f4b6881979ce7f63db"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/scripts/report_generator.py",
+      "source": "skills/financial-reprot-audit/scripts/report_generator.py",
+      "sha256": "225227d26fd7d8f547bf9788dec2d2360a0dce7b3ef64322ff62557a20d62ca3"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/scripts/demo_review.py",
+      "source": "skills/financial-reprot-audit/scripts/demo_review.py",
+      "sha256": "5408b8260b8b68e81fe325e098f8f3c9697d62c9fb9d5a900151b0003c7d47f3"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/scripts/statement_analyzer.py",
+      "source": "skills/financial-reprot-audit/scripts/statement_analyzer.py",
+      "sha256": "c799ea3b4703dd8aa446d98cec853b198b05d101b7bf97535e5f96c08eb9b262"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/scripts/parser_demo.py",
+      "source": "skills/financial-reprot-audit/scripts/parser_demo.py",
+      "sha256": "d783c7f11c3db549852fbe224444ce8cd23949ae3c6ceee0deca507b07ef57c9"
+    },
+    {
+      "path": "finance_report_audit/skills/financial-reprot-audit/scripts/tax_analyzer.py",
+      "source": "skills/financial-reprot-audit/scripts/tax_analyzer.py",
+      "sha256": "7266efbd19feeac1cccd462f6ae8b10e18424c178093d9e54cb6322f1e7878f4"
+    },
+    {
+      "path": "quality_traceability/skills/quality-trace/SKILL.md",
+      "source": "skills/quality-trace/SKILL.md",
+      "sha256": "65e46ebf1eb9445fc1a320f75a5f4c2aa162f364dffc317102b24ca9be799d05"
+    },
+    {
+      "path": "quality_traceability/skills/quality-trace/references/api_spec.md",
+      "source": "skills/quality-trace/references/api_spec.md",
+      "sha256": "f8eb941d95ca293a22b72118af8555ca22bcd01a880973622b7679e54243e2fa"
+    },
+    {
+      "path": "quality_traceability/skills/quality-trace/scripts/trace_query.py",
+      "source": "skills/quality-trace/scripts/trace_query.py",
+      "sha256": "925b5a3fb80b6ab82cebf383b6db6a6ecfb4e99f5e010b349ef2e2d074e1e2af"
+    },
+    {
+      "path": "sap_data_analysis/skills/sap-integration/SKILL.md",
+      "source": "skills/sap-integration/SKILL.md",
+      "sha256": "114dd6dc5cd6c8a9d8fbe178b76095cb7f78997c6dc68e100eec68cd87a71830"
+    },
+    {
+      "path": "sap_data_analysis/skills/sap-integration/skill-card.md",
+      "source": "skills/sap-integration/skill-card.md",
+      "sha256": "90f15a01c31436f0a92a8bf10008f1b7fd66f5dbad5133745078276abda1e0c3"
+    },
+    {
+      "path": "sap_data_analysis/skills/sap-integration/references/data-file-schema.md",
+      "source": "skills/sap-integration/references/data-file-schema.md",
+      "sha256": "81cef01bcb4d26763dbb2c8a13f7e022bb6f51ad6f943b298f2fea9386e521ba"
+    },
+    {
+      "path": "sap_data_analysis/skills/sap-integration/references/sap_query_catalog.json",
+      "source": "skills/sap-integration/references/sap_query_catalog.json",
+      "sha256": "ac5151bfcb2ccfabe00e760a759bbd8eb93ef96517b2e2cfb016bbe7bf3ee6d4"
+    },
+    {
+      "path": "sap_data_analysis/skills/sap-integration/references/sap-tables.md",
+      "source": "skills/sap-integration/references/sap-tables.md",
+      "sha256": "db55ae63a22c55a39e29a628dca3b2122132964d6cb3b20f121020d8164d4e13"
+    },
+    {
+      "path": "sap_data_analysis/skills/sap-integration/references/SAP BAPI .md",
+      "source": "skills/sap-integration/references/SAP BAPI .md",
+      "sha256": "ea44576126611ffa1d35aa44f6c0a1774825a47801866c5ba7890780fcfdd5b6"
+    },
+    {
+      "path": "sap_data_analysis/skills/sap-integration/references/query-plan-examples.md",
+      "source": "skills/sap-integration/references/query-plan-examples.md",
+      "sha256": "e7625ca06617afbb494f91f63d57a4e3cd69202c4c53393090d9dc12c0f51389"
+    },
+    {
+      "path": "sap_data_analysis/skills/sap-integration/references/hana-integration.md",
+      "source": "skills/sap-integration/references/hana-integration.md",
+      "sha256": "05cc791abd34a2985c05549a698e764aa4cc6700c8f2dbbe7b36b7f3ad1bcf0c"
+    },
+    {
+      "path": "sap_data_analysis/skills/sap-integration/references/s4hana-migration.md",
+      "source": "skills/sap-integration/references/s4hana-migration.md",
+      "sha256": "677959a7760415ff8f5fca831e53eecad1dcef993216b9849e275f3b9e32d438"
+    },
+    {
+      "path": "sap_data_analysis/skills/sap-integration/references/enhancement-framework.md",
+      "source": "skills/sap-integration/references/enhancement-framework.md",
+      "sha256": "62c70786516e0deeb3510a5ed46c8c149c4dd2eb1e7aa1f796389a419926f84e"
+    },
+    {
+      "path": "sap_data_analysis/skills/sap-integration/scripts/query_planner.py",
+      "source": "skills/sap-integration/scripts/query_planner.py",
+      "sha256": "b724ee17f74d406f21358773bfbc51ff2f598af9f87a26e271abdd8cb62bfda5"
+    },
+    {
+      "path": "sap_data_analysis/skills/sap-integration/scripts/data_analyzer.py",
+      "source": "skills/sap-integration/scripts/data_analyzer.py",
+      "sha256": "5121d76c1d049845d837e085addf1b5f27d3dd89fabd997234de143d424ebcd7"
+    },
+    {
+      "path": "production_scheduling_airbag/skills/pmc-scheduler-hmt-qd/SKILL.md",
+      "source": "skills/pmc-scheduler-hmt-qd/SKILL.md",
+      "sha256": "7bf105f60acf60dd57513a10a8f0fcf8bd6fd0a56e26155666d57ec65ae9354f"
+    },
+    {
+      "path": "production_scheduling_airbag/skills/pmc-scheduler-hmt-qd/references/excel_structure.md",
+      "source": "skills/pmc-scheduler-hmt-qd/references/excel_structure.md",
+      "sha256": "a2ce3d6a45ff6e9f763916a37b503aa385ad45df7baa10f78f6746ee44b1d6b2"
+    },
+    {
+      "path": "production_scheduling_airbag/skills/pmc-scheduler-hmt-qd/references/scheduling_rules.md",
+      "source": "skills/pmc-scheduler-hmt-qd/references/scheduling_rules.md",
+      "sha256": "57829040cd0b170a991494ef84b7d82eab9c5bef92466480a37c8b97c3841c32"
+    },
+    {
+      "path": "production_scheduling_airbag/skills/pmc-scheduler-hmt-qd/scripts/schedule_production.py",
+      "source": "skills/pmc-scheduler-hmt-qd/scripts/schedule_production.py",
+      "sha256": "f382c7f1c4f90f68fc3c026f2a62a311c7a5af6dd8f8b6c5b61942b0690bd304"
+    },
+    {
+      "path": "production_scheduling_airbag/skills/pmc-scheduler-hmt-qd/templates/产能配置表v1.xlsx",
+      "source": "skills/pmc-scheduler-hmt-qd/templates/产能配置表v1.xlsx",
+      "sha256": "819abfe1637b8ca4fcaa644b77a2e4fe9fe8986f600077a170d135b6bc3a26a0"
+    },
+    {
+      "path": "production_scheduling_airbag/skills/pmc-scheduler-hmt-qd/templates/生产排产模板.xlsx",
+      "source": "skills/pmc-scheduler-hmt-qd/templates/生产排产模板.xlsx",
+      "sha256": "8e896759acf3d43dfd9cc6a41fcedb598961c0e0bfcc8712bca0499bcd3e18dd"
+    },
+    {
+      "path": "production_scheduling_airbag/skills/pmc-scheduler-hmt-qd/templates/生产排产模板1.xlsx",
+      "source": "skills/pmc-scheduler-hmt-qd/templates/生产排产模板1.xlsx",
+      "sha256": "e8d518e162b724e88cf8ed32b8881dbcbf95cdda0177ee6987c3cf5cb19455e9"
+    },
+    {
+      "path": "production_scheduling_airbag/skills/pmc-scheduler-hmt-qd/templates/班组产线配置表new.xlsx",
+      "source": "skills/pmc-scheduler-hmt-qd/templates/班组产线配置表new.xlsx",
+      "sha256": "b87018c40bffbfc44d203f77837306f43b8a1871d0700ed742b260bbaa00db4e"
+    },
+    {
+      "path": "production_scheduling_airbag/skills/pmc-scheduler-hmt-qd/templates/预估出货量模板.xlsx",
+      "source": "skills/pmc-scheduler-hmt-qd/templates/预估出货量模板.xlsx",
+      "sha256": "74587fa4e5b0735b5e135f05d48b46a6d53585f932376b8ebd2a61bf37d9e7a7"
+    },
+    {
+      "path": "_shared/frontend/activation.js",
+      "source": "channel/web/static/js/console.js",
+      "sha256": "146ddf617e81626f0d3906a7de9a9d9bf49a6e6935cf168d4328b536354d3bd7",
+      "lines": [
+        13148,
+        13211
+      ]
+    },
+    {
+      "path": "_shared/frontend/greeting.js",
+      "source": "channel/web/static/js/console.js",
+      "sha256": "b9986a1b071d4acaa3ad07a6374b728af3a8f38970c64b14f0483394dc43e9dc",
+      "lines": [
+        13356,
+        13398
+      ]
+    },
+    {
+      "path": "_shared/frontend/ui.js",
+      "source": "channel/web/static/js/console.js",
+      "sha256": "a5cdc5313bd4347753c14ebff36384f4e6ed01628b3174c97a0684136f65056a",
+      "lines": [
+        1876,
+        1940
+      ]
+    },
+    {
+      "path": "_shared/frontend/workbench.js",
+      "source": "channel/web/static/js/console.js",
+      "sha256": "6d551ec4ee6938050e9393c6813d65918b04f04bf6347df53ce9f23766318f4f",
+      "lines": [
+        14216,
+        17389
+      ],
+      "adapted": "add-external-system-access task 6.5: openErpConnectionManager forwards to the console page; the scene keeps no connection form"
+    },
+    {
+      "path": "quality_traceability/frontend/workbench.js",
+      "source": "channel/web/static/js/console.js",
+      "sha256": "30ee469411b2ae736cd5683f7aeabf888bb47a2a32a33214cc4739fc69a1ae30",
+      "lines": [
+        13214,
+        13354
+      ]
+    },
+    {
+      "path": "sap_data_analysis/frontend/workbench.js",
+      "source": "channel/web/static/js/console.js",
+      "sha256": "2c5b775025b78d88148eeac5fce9a42886055ffe5aafeaa3222b8437d15bfb23",
+      "lines": [
+        13523,
+        14211
+      ]
+    },
+    {
+      "path": "finance_voucher/frontend/workbench.js",
+      "source": "channel/web/static/js/console.js",
+      "sha256": "70d421098b280002d14aba32783292af242a94971356e03bfb7eb692e015c2ee",
+      "lines": [
+        17393,
+        18002
+      ]
+    },
+    {
+      "path": "finance_chenyiwei/frontend/workbench.js",
+      "source": "channel/web/static/js/console.js",
+      "sha256": "325094856953c2ec770e6c96b5e25aea2102de26e350032899457cd4b284e8fa",
+      "lines": [
+        18008,
+        18305
+      ]
+    },
+    {
+      "path": "finance_expert/frontend/workbench.js",
+      "source": "channel/web/static/js/console.js",
+      "sha256": "ac6feeb4a4749ba53565fad62111fd0914ac0d83652e0bbd393fb50dee77d023",
+      "lines": [
+        18308,
+        18616
+      ]
+    },
+    {
+      "path": "finance_report_audit/frontend/workbench.js",
+      "source": "channel/web/static/js/console.js",
+      "sha256": "606a2f45f1afa2a004a435e37c9924bf05d1279f8bbfa142048702ef9022552e",
+      "lines": [
+        18620,
+        19368
+      ]
+    },
+    {
+      "path": "production_plan/frontend/workbench.js",
+      "source": "channel/web/static/js/scheduling_workbench.js",
+      "sha256": "f7f2c634344343c929a5940a9752e2320c3502776531365960a492ec77d2f923"
+    },
+    {
+      "path": "production_scheduling_airbag/frontend/workbench.js",
+      "source": "channel/web/static/js/airbag_scheduling_workbench.js",
+      "sha256": "a697249c1725bcedb6354097fc4b4bc2f460b12debfb0e4380f229644326f28d"
+    },
+    {
+      "path": "_shared/frontend/xlsx.full.min.js",
+      "source": "channel/web/static/js/xlsx.full.min.js",
+      "sha256": "06b0589566e576e48d0da0c357c804bef26fd09f7e7e8e9fee3ee2d582a51b48"
+    },
+    {
+      "path": "_shared/frontend/oneagent.css",
+      "source": "channel/web/static/css/console.css",
+      "sha256": "d68ed8b488d45cb157fd55a3001fd528def7a9056157cb65f22b2146894f6f80"
+    },
+    {
+      "path": "production_plan/assets/scheduling_template.xlsx",
+      "source": "channel/web/static/assets/scheduling_template.xlsx",
+      "sha256": "0fb09d5981feed20f1a875276fbe0c9ab15552313c36792e5a76eeed9ff0edf7"
+    },
+    {
+      "path": "production_plan/assets/scheduling_test_data.xlsx",
+      "source": "channel/web/static/assets/scheduling_test_data.xlsx",
+      "sha256": "617bb42e5f7529a879e55d0488597a72412c0d32aefc854d5508f5b701ca80ba"
+    },
+    {
+      "path": "_shared/frontend/workbench-modal.html",
+      "source": "channel/web/chat.html",
+      "sha256": "4fbb16962220bef80f5fb6f67f47cf17919a22cb97dbf53040e2d7fa1b9a9900",
+      "offsets": [
+        243738,
+        269975
+      ]
+    },
+    {
+      "path": "_shared/frontend/file-preview-modal.html",
+      "source": "channel/web/chat.html",
+      "sha256": "8caae0314934cb7797e9208b1fcf367c1128f8734a6275dbb4be55babfe91679",
+      "offsets": [
+        418193,
+        419829
+      ]
+    },
+    {
+      "path": "finance_voucher/frontend/voucher-workbench-modal.html",
+      "source": "channel/web/chat.html",
+      "sha256": "a97a70353d9c3b007d6b60ea622d33e37492a4dfb38238a10c6aa5e9d615c7cf",
+      "offsets": [
+        270239,
+        275815
+      ]
+    },
+    {
+      "path": "finance_chenyiwei/frontend/cas-workbench-modal.html",
+      "source": "channel/web/chat.html",
+      "sha256": "779c8ea37fe21b108bcddf3e299181486f235681d8ad39c765ca5caf61f8d881",
+      "offsets": [
+        276079,
+        290779
+      ]
+    },
+    {
+      "path": "finance_expert/frontend/taxation-workbench-modal.html",
+      "source": "channel/web/chat.html",
+      "sha256": "e4a6d0237bcf2a739f531e07d3dfe70bf5c346a582d15c34a19a3c2a399d02ca",
+      "offsets": [
+        291043,
+        305769
+      ]
+    },
+    {
+      "path": "finance_report_audit/frontend/financial-audit-workbench-modal.html",
+      "source": "channel/web/chat.html",
+      "sha256": "f52f3a44868e75a8e65d6080be58705bd6b731b017510e3d51955468589d4d63",
+      "offsets": [
+        306033,
+        321011
+      ]
+    },
+    {
+      "path": "sap_data_analysis/frontend/sap-data-analysis-workbench-modal.html",
+      "source": "channel/web/chat.html",
+      "sha256": "0aaa0efceee7f646a31435df90f6921c8f55b32946e3a71ebb1af1b1f1c5b122",
+      "offsets": [
+        397155,
+        417982
+      ]
+    },
+    {
+      "path": "production_plan/frontend/scheduling-workbench-modal.html",
+      "source": "channel/web/chat.html",
+      "sha256": "7a51a0b69e062fb34724aeb2c294acdfe932022991762f43e154c7533e46c9dd",
+      "offsets": [
+        420045,
+        445497
+      ]
+    },
+    {
+      "path": "quality_traceability/frontend/scene-subpanel.html",
+      "source": "channel/web/chat.html",
+      "sha256": "edb41b7351724566d722617e7f2b4f8f3c1a93bbdd14ba59eb6873f8190ac877",
+      "offsets": [
+        39755,
+        41119
+      ]
+    },
+    {
+      "path": "_shared/backend/WorkbenchUploadHandler.py",
+      "source": "channel/web/web_channel.py",
+      "sha256": "c7dd382b86ac33fbe9557159e0bf7a989b4890b2df7a56c2a229aafc1ac5ee7f",
+      "lines": [
+        6741,
+        6817
+      ]
+    },
+    {
+      "path": "procurement_analysis/backend/WorkbenchGenerateReportHandler.py",
+      "source": "channel/web/web_channel.py",
+      "sha256": "eb313e13da86c1edd798f0256b2a5a61dcd8ee88bbe376c814909191e6d1d0e6",
+      "lines": [
+        6819,
+        6938
+      ]
+    },
+    {
+      "path": "_shared/backend/WorkbenchParseExcelHandler.py",
+      "source": "channel/web/web_channel.py",
+      "sha256": "84e30cff4eb7eb0ca2d6c59b2817ba6a57816db8803ed4a9433c8a3eee2e8f3f",
+      "lines": [
+        6940,
+        7147
+      ]
+    },
+    {
+      "path": "finance_voucher/backend/VoucherTemplateHandler.py",
+      "source": "channel/web/web_channel.py",
+      "sha256": "b78c4e420a63da147a49a46737005f3191cb259b440712d2a311630f5cc07e86",
+      "lines": [
+        7150,
+        7292
+      ]
+    },
+    {
+      "path": "procurement_analysis/backend/ProcurementImportHandler.py",
+      "source": "channel/web/web_channel.py",
+      "sha256": "c68027c727f2165643fda6a73538e50e94fd2909c103454c18578b1a7fe4e10c",
+      "lines": [
+        7295,
+        7370
+      ]
+    },
+    {
+      "path": "_shared/backend/ErpConnectionsHandler.py",
+      "source": "channel/web/web_channel.py",
+      "sha256": "dd4bcd9b91e9735f32653601ab05726be2a147ca75e9a13d370dfb71b942d767",
+      "lines": [
+        7373,
+        7458
+      ],
+      "adapted": "add-external-system-access task 6.5: GET-only read projection; the writable shim was removed so connection management has a single home (/api/erp/connections is registered for GET only)",
+      "provenance": "rewritten"
+    },
+    {
+      "path": "_shared/backend/ErpConnectionsOptionsHandler.py",
+      "source": "channel/web/web_channel.py",
+      "sha256": "2e54072a4194ec0dc0a2aa3ffd07b4b352628658479dcfd32b5f321ef74a885e",
+      "lines": [
+        7461,
+        7504
+      ],
+      "adapted": "add-external-system-access task 6: converted to the external connection service (/api/erp/connections shim)"
+    },
+    {
+      "path": "procurement_analysis/backend/ProcurementErpSyncHandler.py",
+      "source": "channel/web/web_channel.py",
+      "sha256": "7a4879e97a2a411524f1d14387efa819fca64ee39bef0b37a8fdb754cfd0a882",
+      "lines": [
+        7507,
+        7719
+      ],
+      "adapted": "add-external-system-access task 6: converted to the external connection service (/api/erp/connections shim)"
+    },
+    {
+      "path": "production_plan/backend/api.py",
+      "source": "channel/web/web_channel_scheduling.py",
+      "sha256": "4b087b484b089cf75c4ab6033e97dd66c7528b572964f7424a55f28876a8c1b7"
+    },
+    {
+      "path": "production_plan/backend/scheduler_engine.py",
+      "source": "agent/tools/scheduler/scheduler_engine.py",
+      "sha256": "76c74ff1d795b22224fccd028ed5eab0e2b26f992c6e3dae0f0ee9ddb4c66b03"
+    },
+    {
+      "path": "production_plan/backend/gantt_generator.py",
+      "source": "agent/tools/scheduler/gantt_generator.py",
+      "sha256": "dc606e39300048531c8342fd615110af49f4726e1f48ec0284787c47500014d3"
+    },
+    {
+      "path": "production_plan/backend/bom_tree.py",
+      "source": "agent/tools/scheduler/bom_tree.py",
+      "sha256": "eb141d74e7978452a7e0a76013ba1d4d2ea6149c46fc7fc073eddbb2dedb99f5"
+    },
+    {
+      "path": "production_scheduling_airbag/backend/api.py",
+      "source": "channel/web/handlers/airbag_scheduling.py",
+      "sha256": "8a6997f9336a4b54f223bbb487df9cc7825730204fd72ebd0b7e70d3612186c7"
+    },
+    {
+      "path": "sap_data_analysis/backend/api.py",
+      "source": "channel/web/handlers/sap_data_analysis.py",
+      "sha256": "fba29be89a7d079d17f47cad3ee1716543f666a2dd3518fd3870a3ec7b3db78f",
+      "adapted": "add-external-system-access task 6: converted to the external connection service (/api/erp/connections shim)"
+    },
+    {
+      "path": "sap_data_analysis/backend/sap/config.py",
+      "source": "channel/web/sap/config.py",
+      "sha256": "151e772208943aca78a1daa7e0249f39e4f779a10f132a82f321298469d6c965"
+    },
+    {
+      "path": "sap_data_analysis/backend/sap/scene_config.py",
+      "source": "channel/web/sap/scene_config.py",
+      "sha256": "16bccb3f243ea4947cd8db28df9b97c9930532b368db5a9ce337985e75cc6e65"
+    },
+    {
+      "path": "sap_data_analysis/backend/sap/provider.py",
+      "source": "channel/web/sap/provider.py",
+      "sha256": "733c50a85ceabfab7d2709c5c3660c0a390e2ac2e31407fc118f515e3abaa0b8"
+    },
+    {
+      "path": "sap_data_analysis/backend/sap/adt_sql_provider.py",
+      "source": "channel/web/sap/adt_sql_provider.py",
+      "sha256": "56c3af78bf180570058973d2df016b47e07b8513c4eec99a5583fe06a918d3b9"
+    },
+    {
+      "path": "sap_data_analysis/backend/sap/__init__.py",
+      "source": "channel/web/sap/__init__.py",
+      "sha256": "184b5813d81c52ccceeb68db0cc1b4b5858f820a06c8db46c4d6fc2fa345b51d"
+    },
+    {
+      "path": "sap_data_analysis/backend/sap/factory.py",
+      "source": "channel/web/sap/factory.py",
+      "sha256": "1333c0b252b890912ccc09c0f169bd4137eaa00c25bc5810958b7652a1ee0512"
+    },
+    {
+      "path": "sap_data_analysis/backend/sap/query_planner.py",
+      "source": "channel/web/sap/query_planner.py",
+      "sha256": "f41329f84026334de7d3f1c38930887e4e6c3b68853ceeb78a9d39187f3aebf8"
+    },
+    {
+      "path": "sap_data_analysis/backend/sap/rfc_provider.py",
+      "source": "channel/web/sap/rfc_provider.py",
+      "sha256": "1dc542632b9d5a657ec08ea3633c70280e7eb68d875adc36b294a46777786aed"
+    },
+    {
+      "path": "sap_data_analysis/backend/sap/data_exporter.py",
+      "source": "channel/web/sap/data_exporter.py",
+      "sha256": "79d1c43b63779eba50214ac1cd729332ed209702f873284eea4082be585ea843"
+    },
+    {
+      "path": "sap_data_analysis/backend/sap/dashboard_builder.py",
+      "source": "channel/web/sap/dashboard_builder.py",
+      "sha256": "7917e9078f68a132cf26eb003dee03982c349c8f946436febb0bbb3663fb0e96"
+    },
+    {
+      "path": "sap_data_analysis/backend/sap/permission_guard.py",
+      "source": "channel/web/sap/permission_guard.py",
+      "sha256": "8c19175775e6ea4f1dc5cb7d33eea1a4616de73c3cd68bb07ca7ceee528dfcd3"
+    },
+    {
+      "path": "sap_data_analysis/backend/sap/ai_insights.py",
+      "source": "channel/web/sap/ai_insights.py",
+      "sha256": "686e0a3ab1c7caa8c503ba227da90ed5458bf005ef31d8a5c7c5a370574e8ef9"
+    },
+    {
+      "path": "sap_data_analysis/backend/sap/visualizer.py",
+      "source": "channel/web/sap/visualizer.py",
+      "sha256": "40042ea9d10736e7017c5aa6a9fbda700d1c14014391bd5372d06bb2388ab7fb"
+    },
+    {
+      "path": "sap_data_analysis/backend/sap/fetch_executor.py",
+      "source": "channel/web/sap/fetch_executor.py",
+      "sha256": "93a8de4559b974c2036e8b73c998059b037aaa4a230122960553e34fdc8f48c6"
+    },
+    {
+      "path": "_shared/frontend/i18n.js",
+      "source": "channel/web/static/js/console.js",
+      "sha256": "82dfd59496dc8a19fa423eff7d560eee1e5d5174c83d999125c959b2649cab4a",
+      "byte_range": [
+        740,
+        93313
+      ]
+    },
+    {
+      "path": "sap_data_analysis/vendor/sap-adt-cli/README.md",
+      "source": "vendor/sap-adt-cli/README.md",
+      "sha256": "d3060e190490648169e9321b21e3dad1a9e3b32824852e27c5c2e1308beaf691"
+    },
+    {
+      "path": "sap_data_analysis/vendor/sap-adt-cli/SKILL.md",
+      "source": "vendor/sap-adt-cli/SKILL.md",
+      "sha256": "911ce703a374f3ec039556ba35d7bdefa334a8b9a2a19b42346e10d7fd4cfe18"
+    },
+    {
+      "path": "sap_data_analysis/vendor/sap-adt-cli/README.zh-CN.md",
+      "source": "vendor/sap-adt-cli/README.zh-CN.md",
+      "sha256": "8de6bae56eedce3994d52fb91de016544aa580fc49364289cbe0eaa4adede4a3"
+    },
+    {
+      "path": "sap_data_analysis/vendor/sap-adt-cli/references/adt_api.md",
+      "source": "vendor/sap-adt-cli/references/adt_api.md",
+      "sha256": "357aca407d92f6f40d9528686174dc3ad48f283510272d798c8ec980a902401a"
+    },
+    {
+      "path": "sap_data_analysis/vendor/sap-adt-cli/scripts/requirements.txt",
+      "source": "vendor/sap-adt-cli/scripts/requirements.txt",
+      "sha256": "1abe361e65841fb33a9da57ee063285680328cf38c0909670930b8bb2646787f"
+    },
+    {
+      "path": "sap_data_analysis/vendor/sap-adt-cli/scripts/sap_adt_cli.py",
+      "source": "vendor/sap-adt-cli/scripts/sap_adt_cli.py",
+      "sha256": "5feff26a300c43b4127a7360c5082e1b77f44542f6bca714d23920e2e12a836a"
+    },
+    {
+      "path": "sap_data_analysis/vendor/sap-adt-cli/scripts/lib/config.py",
+      "source": "vendor/sap-adt-cli/scripts/lib/config.py",
+      "sha256": "7d179e1fd7d9440bf60a66a8cd132287c8f990efd4de2699db0f26891a516ffd"
+    },
+    {
+      "path": "sap_data_analysis/vendor/sap-adt-cli/scripts/lib/client.py",
+      "source": "vendor/sap-adt-cli/scripts/lib/client.py",
+      "sha256": "6c359a83abca2bb56c7a9d7d8372d0fd9cfc4d2f761553aa98719b315f8ed80f"
+    },
+    {
+      "path": "sap_data_analysis/vendor/sap-adt-cli/scripts/lib/handlers.py",
+      "source": "vendor/sap-adt-cli/scripts/lib/handlers.py",
+      "sha256": "9c936ee8baa54fac21aed2664bf50f096b53e15539624f1a4d9aa8f28cc55293"
+    },
+    {
+      "path": "sap_data_analysis/vendor/sap-adt-cli/scripts/lib/__init__.py",
+      "source": "vendor/sap-adt-cli/scripts/lib/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "procurement_supplier/skills/tianji-business-search/SKILL.md",
+      "source": "skills/tianji-business-search/SKILL.md",
+      "sha256": "75be3d64ac54692604473fb21dcfb90bf174886dd9ac01db806fb31e8b5dedcb"
+    },
+    {
+      "path": "procurement_supplier/skills/tianji-business-search/references/sources.md",
+      "source": "skills/tianji-business-search/references/sources.md",
+      "sha256": "48a9c8c91a7437f8101077f88aaf6c1f0f64e8de621166a2045a97aba28a172d"
+    },
+    {
+      "path": "procurement_supplier/skills/tianji-business-search/references/search-tips.md",
+      "source": "skills/tianji-business-search/references/search-tips.md",
+      "sha256": "92b097a74cea31f4e643aa5dade18bebea21bc1374beb4493e2d7d3e83d3b72b"
+    },
+    {
+      "path": "procurement_supplier/skills/tianji-business-search/scripts/search_business.py",
+      "source": "skills/tianji-business-search/scripts/search_business.py",
+      "sha256": "7b5b606221d158c54cdaf03b3b08cba29d8b3f5e4182eb36e5b656f3ca0e9b0f"
+    },
+    {
+      "path": "procurement_supplier/skills/tianji-business-search/scripts/business_query.py",
+      "source": "skills/tianji-business-search/scripts/business_query.py",
+      "sha256": "1bb824ac8676e09de3b75b9e53c09df943d21104d6a7002052e431412dfcd403"
+    },
+    {
+      "path": "_shared/frontend/erp.js",
+      "source": "channel/web/static/js/console.js",
+      "sha256": "e6b5c33972e11692a7588d1a1626887f70500655bb190bbb0e3c85055e042ba8",
+      "lines": [
+        6574,
+        6823
+      ],
+      "adapted": "add-external-system-access task 6.5: read-only picker; the second writable ERP form was removed in favour of the console page",
+      "provenance": "rewritten"
+    }
+  ]
+}

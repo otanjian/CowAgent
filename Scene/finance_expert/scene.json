@@ -1,0 +1,353 @@
+{
+  "id": "finance_expert",
+  "name": "财税专家",
+  "category": "finance",
+  "description": "税务筹划、政策解读、风险防控",
+  "icon": "fa-calculator",
+  "skill_name": "finance-expert",
+  "system_prompt": "你是一位资深财税专家，精通中国税法、会计准则和财务管理制度。你能够解答增值税、企业所得税、个人所得税等税务问题，提供税务筹划建议，解读最新财税政策，并帮助企业识别财税合规风险。",
+  "has_workbench": true,
+  "workbench_title": "财税专家工作台",
+  "sub_scenes": [
+    {
+      "id": "tax_consultation",
+      "name": "税务咨询",
+      "icon": "fa-comments",
+      "color": "#ef4444",
+      "description": "直接提出税务问题，获取专业解答",
+      "system_prompt": "你是一位专业税务咨询专家。请根据用户提出的税务问题，严格依据法律法规及国家税务总局官方口径进行解答。要求：1. 结论先行，直接明确给出税务处理结论；2. 多观点对比，列示实务中多方观点并分析；3. 政策依据必须标注来源、文号、发布时间、官方链接；4. 明确给出本人观点倾向及理由；5. 末尾附加固定免责声明。",
+      "params": [
+        {
+          "name": "question",
+          "label": "税务问题",
+          "type": "textarea",
+          "required": true,
+          "placeholder": "请描述您的税务问题，例如：小规模纳税人季度销售额30万以内是否免征增值税？"
+        },
+        {
+          "name": "taxpayer_type",
+          "label": "纳税人类型",
+          "type": "select",
+          "required": false,
+          "options": [
+            {
+              "value": "general",
+              "label": "一般纳税人"
+            },
+            {
+              "value": "small",
+              "label": "小规模纳税人"
+            },
+            {
+              "value": "individual",
+              "label": "个体工商户"
+            },
+            {
+              "value": "unknown",
+              "label": "不确定/其他"
+            }
+          ]
+        },
+        {
+          "name": "industry",
+          "label": "所属行业",
+          "type": "text",
+          "required": false,
+          "placeholder": "如：制造业、服务业、贸易业等"
+        }
+      ],
+      "required_permission": "scenes.use.finance"
+    },
+    {
+      "id": "policy_interpretation",
+      "name": "政策解读",
+      "icon": "fa-file-lines",
+      "color": "#3b82f6",
+      "description": "解读最新财税政策，分析对企业的影响",
+      "system_prompt": "你是一位财税政策解读专家。请帮助用户解读最新财税政策，分析政策背景、核心内容、适用条件、执行时间，并评估对企业的影响。要求：1. 政策原文引用准确；2. 标注文件文号、发布机构、生效日期；3. 分析政策变化点；4. 给出企业应对建议。",
+      "params": [
+        {
+          "name": "policy",
+          "label": "政策名称或文号",
+          "type": "text",
+          "required": true,
+          "placeholder": "如：财税〔2024〕XX号 或 小规模纳税人减免政策"
+        },
+        {
+          "name": "focus",
+          "label": "关注重点",
+          "type": "select",
+          "required": false,
+          "options": [
+            {
+              "value": "general",
+              "label": "全面解读"
+            },
+            {
+              "value": "impact",
+              "label": "影响分析"
+            },
+            {
+              "value": "operation",
+              "label": "实操指引"
+            },
+            {
+              "value": "comparison",
+              "label": "新旧对比"
+            }
+          ]
+        },
+        {
+          "name": "context",
+          "label": "企业背景",
+          "type": "textarea",
+          "required": false,
+          "placeholder": "请简述企业情况，便于针对性分析政策影响"
+        }
+      ],
+      "required_permission": "scenes.use.finance"
+    },
+    {
+      "id": "tax_planning",
+      "name": "税务筹划",
+      "icon": "fa-chess-knight",
+      "color": "#8b5cf6",
+      "description": "设计合规的税务筹划方案",
+      "system_prompt": "你是一位税务筹划专家。请在合法合规的前提下，帮助用户设计税务筹划方案。要求：1. 严格基于现行有效税法；2. 方案必须合规，严禁涉及偷逃税；3. 量化筹划收益；4. 提示潜在风险；5. 明确适用条件。",
+      "params": [
+        {
+          "name": "goal",
+          "label": "筹划目标",
+          "type": "textarea",
+          "required": true,
+          "placeholder": "如：降低增值税税负、优化企业所得税、合理利用税收优惠等"
+        },
+        {
+          "name": "business_scale",
+          "label": "企业规模",
+          "type": "select",
+          "required": false,
+          "options": [
+            {
+              "value": "small",
+              "label": "小型企业"
+            },
+            {
+              "value": "medium",
+              "label": "中型企业"
+            },
+            {
+              "value": "large",
+              "label": "大型企业"
+            },
+            {
+              "value": "group",
+              "label": "集团企业"
+            }
+          ]
+        },
+        {
+          "name": "current_tax",
+          "label": "当前税负情况",
+          "type": "textarea",
+          "required": false,
+          "placeholder": "简述当前主要税种及大致税负水平"
+        }
+      ],
+      "required_permission": "scenes.use.finance"
+    },
+    {
+      "id": "risk_diagnosis",
+      "name": "风险诊断",
+      "icon": "fa-shield-halved",
+      "color": "#f59e0b",
+      "description": "识别企业财税合规风险",
+      "system_prompt": "你是一位财税合规风险诊断专家。请帮助用户识别企业在税务和财务方面的合规风险。要求：1. 系统梳理常见风险点；2. 结合用户提供的信息进行针对性分析；3. 评估风险等级（高/中/低）；4. 给出整改建议和预防措施。",
+      "params": [
+        {
+          "name": "risk_area",
+          "label": "风险领域",
+          "type": "select",
+          "required": true,
+          "options": [
+            {
+              "value": "general",
+              "label": "全面风险扫描"
+            },
+            {
+              "value": "vat",
+              "label": "增值税风险"
+            },
+            {
+              "value": "cit",
+              "label": "企业所得税风险"
+            },
+            {
+              "value": "iit",
+              "label": "个人所得税风险"
+            },
+            {
+              "value": "invoice",
+              "label": "发票管理风险"
+            },
+            {
+              "value": "filing",
+              "label": "申报缴纳风险"
+            }
+          ]
+        },
+        {
+          "name": "business_desc",
+          "label": "企业业务描述",
+          "type": "textarea",
+          "required": false,
+          "placeholder": "简述企业主营业务、组织架构、税务管理方式等"
+        },
+        {
+          "name": "concern",
+          "label": "具体担忧",
+          "type": "textarea",
+          "required": false,
+          "placeholder": "如：近期收到税务通知、发票被预警、成本异常偏高等"
+        }
+      ],
+      "required_permission": "scenes.use.finance"
+    },
+    {
+      "id": "filing_guidance",
+      "name": "申报指导",
+      "icon": "fa-clipboard-check",
+      "color": "#10b981",
+      "description": "指导纳税申报流程与填报",
+      "system_prompt": "你是一位纳税申报指导专家。请帮助用户了解纳税申报的流程、填报要点和注意事项。要求：1. 说明申报期限和渠道；2. 解释各栏次填报规则；3. 提示常见错误；4. 说明所需附报资料。",
+      "params": [
+        {
+          "name": "tax_type",
+          "label": "申报税种",
+          "type": "select",
+          "required": true,
+          "options": [
+            {
+              "value": "vat",
+              "label": "增值税"
+            },
+            {
+              "value": "cit",
+              "label": "企业所得税"
+            },
+            {
+              "value": "iit",
+              "label": "个人所得税"
+            },
+            {
+              "value": "stamp",
+              "label": "印花税"
+            },
+            {
+              "value": "land",
+              "label": "土地增值税"
+            },
+            {
+              "value": "other",
+              "label": "其他"
+            }
+          ]
+        },
+        {
+          "name": "period",
+          "label": "申报期",
+          "type": "select",
+          "required": false,
+          "options": [
+            {
+              "value": "monthly",
+              "label": "月报"
+            },
+            {
+              "value": "quarterly",
+              "label": "季报"
+            },
+            {
+              "value": "annual",
+              "label": "年报"
+            },
+            {
+              "value": "periodic",
+              "label": "按次申报"
+            }
+          ]
+        },
+        {
+          "name": "situation",
+          "label": "具体情况",
+          "type": "textarea",
+          "required": false,
+          "placeholder": "如：本期有进项税额转出、享受税收优惠、发生视同销售等特殊情况"
+        }
+      ],
+      "required_permission": "scenes.use.finance"
+    },
+    {
+      "id": "preferential_policy",
+      "name": "优惠申请",
+      "icon": "fa-gift",
+      "color": "#06b6d4",
+      "description": "梳理可适用的税收优惠政策",
+      "system_prompt": "你是一位税收优惠政策专家。请帮助用户梳理可适用的税收优惠政策，包括优惠内容、适用条件、申请流程、留存备查资料等。要求：1. 政策引用准确，标注文号和有效期；2. 适用条件逐条说明；3. 申请流程清晰；4. 提醒时效性风险。",
+      "params": [
+        {
+          "name": "preferential_type",
+          "label": "优惠类型",
+          "type": "select",
+          "required": true,
+          "options": [
+            {
+              "value": "general",
+              "label": "全面梳理"
+            },
+            {
+              "value": "small",
+              "label": "小微企业优惠"
+            },
+            {
+              "value": "high_tech",
+              "label": "高新技术企业"
+            },
+            {
+              "value": "rd",
+              "label": "研发费用加计扣除"
+            },
+            {
+              "value": "deduction",
+              "label": "固定资产加速折旧"
+            },
+            {
+              "value": "refund",
+              "label": "即征即退/留抵退税"
+            },
+            {
+              "value": "exemption",
+              "label": "免税/减税"
+            }
+          ]
+        },
+        {
+          "name": "enterprise_info",
+          "label": "企业信息",
+          "type": "textarea",
+          "required": false,
+          "placeholder": "如：成立时间、行业、年收入规模、是否高新技术企业等"
+        },
+        {
+          "name": "current_policy",
+          "label": "已享受的优惠",
+          "type": "textarea",
+          "required": false,
+          "placeholder": "简述目前已享受的税收优惠政策"
+        }
+      ],
+      "required_permission": "scenes.use.finance"
+    }
+  ],
+  "required_permission": "scenes.use.finance"
+}

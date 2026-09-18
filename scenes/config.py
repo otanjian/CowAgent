@@ -1,7 +1,7 @@
 """场景配置路径解析、加载与校验。
 
-场景应用配置相对独立地存放在 ``scenes/scenes_config.json``，结构沿用
-OneAgent 的 ``{ categories, scenes }``，移植时已剔除连接串、凭据与客户数据。
+主服务兼容入口：读取 ``Scene/catalog.json`` 和每个场景的 ``scene.json``，
+向既有调用方返回 OneAgent 的 ``{ categories, scenes }`` 结构。
 """
 import os
 import json
@@ -14,12 +14,13 @@ SKILL_MAPPING_FILENAME = "skill_mapping.json"
 
 
 def scenes_dir() -> str:
-    """场景应用顶层目录（``scenes/``）。"""
-    return os.path.dirname(os.path.abspath(__file__))
+    """场景应用顶层目录（``Scene/``）。"""
+    from Scene.catalog import ROOT
+    return str(ROOT)
 
 
 def config_path() -> str:
-    return os.path.join(scenes_dir(), SCENES_CONFIG_FILENAME)
+    return os.path.join(scenes_dir(), "catalog.json")
 
 
 def skill_mapping_path() -> str:
@@ -27,7 +28,7 @@ def skill_mapping_path() -> str:
 
 
 def load_config() -> Optional[Dict]:
-    """加载并校验 ``scenes_config.json``。
+    """加载并校验场景目录及每个场景的定义。
 
     配置缺失、JSON 解析失败或顶层结构非法时返回 ``None``（调用方降级为
     空结构，不抛出未捕获异常）。
@@ -37,8 +38,8 @@ def load_config() -> Optional[Dict]:
         logger.warning(f"[scenes] 场景配置不存在: {path}")
         return None
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        from Scene.catalog import read_catalog
+        data = read_catalog(path)
     except Exception as e:
         logger.warning(f"[scenes] 场景配置解析失败: {e}")
         return None

@@ -90,9 +90,6 @@ class SkillManager:
         """
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         self.builtin_dir = builtin_dir or os.path.join(project_root, 'skills')
-        # 场景应用关联技能：顶层 ``scenes/skills`` 作为额外可发现目录，与
-        # builtin 同为随仓库分发的技能（同名时 builtin/custom 优先）。
-        self.scenes_dir = os.path.join(project_root, 'scenes', 'skills')
         self.custom_dir = custom_dir or os.path.join(project_root, 'workspace', 'skills')
         self.config = config or {}
         self._skills_config_path = os.path.join(self.custom_dir, SKILLS_CONFIG_FILE)
@@ -118,12 +115,6 @@ class SkillManager:
             builtin_dir=self.builtin_dir,
             custom_dir=self.custom_dir,
         )
-        # 场景技能作为额外可发现集合并入（同名时以 builtin/custom 为准）。
-        if os.path.isdir(self.scenes_dir):
-            result = self.loader.load_skills_from_dir(self.scenes_dir, source='scenes')
-            for skill in result.skills:
-                if skill.name not in self.skills:
-                    self.skills[skill.name] = self.loader._create_skill_entry(skill)
         self._sync_skills_config()
         logger.debug(f"SkillManager: Loaded {len(self.skills)} skills")
 

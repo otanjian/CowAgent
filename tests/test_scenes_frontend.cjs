@@ -125,7 +125,7 @@ function setup({ scenesPayload = catalog, activate = null } = {}) {
         return nodes.get(id);
     };
     // 场景中心视图的固定 DOM 节点（chat.html 恒定存在）预注册，供 getEl 命中。
-    for (const id of ['scenes-empty', 'scenes-empty-guide', 'scenes-tabs', 'scenes-grid']) node(id);
+    for (const id of ['scenes-empty', 'scenes-empty-title', 'scenes-empty-guide', 'scenes-tabs', 'scenes-grid']) node(id);
     // getElementById: 先查注册节点，再从 body 后代中按 id 查找（动态创建的模态框）。
     function byIdInTree(id) {
         const walk = el => {
@@ -158,9 +158,10 @@ function setup({ scenesPayload = catalog, activate = null } = {}) {
         I18N: {
             zh: {
                 scenes_title: '场景应用', scenes_subtitle: '选择一个业务场景，进入专用工作台或对话上下文。',
-                scenes_loading: '加载场景中...', scenes_empty: '当前分类没有可用的场景。',
+                scenes_loading: '加载场景中...', scenes_empty: '暂无场景应用。',
                 scenes_go_chat: '开始对话', scenes_all: '全部', scenes_workbench: '工作台',
                 scenes_activate_failed: '场景激活失败，请稍后重试。',
+                scenes_no_category: '当前分类没有可用的场景。',
                 scenes_picker_title: '选择场景', scenes_picker_placeholder: '搜索场景...',
                 scenes_picker_empty: '没有匹配的场景',
                 scenes_greeting: '已进入「{name}」场景。', slash_scenes: '打开场景选择器',
@@ -178,6 +179,8 @@ function setup({ scenesPayload = catalog, activate = null } = {}) {
         addBotMessage(content) { state.greeted = content; },
         setTimeout(fn) { timers.push(fn); return timers.length; },
         clearTimeout() {},
+        setInterval() { return 1; },
+        clearInterval() {},
         fetch(url, options) {
             requests.push({ url, options });
             if (url === '/api/scenes') return Promise.resolve(response(scenesPayload));
@@ -206,7 +209,9 @@ function setup({ scenesPayload = catalog, activate = null } = {}) {
     return { ctx, run, node, document, nodes, requests, state, timers };
 }
 
-const settle = () => new Promise(resolve => setImmediate(resolve));
+const settle = async () => {
+    for (let i = 0; i < 4; i++) await new Promise(resolve => setTimeout(resolve, 0));
+};
 
 test('scenes view renders category tabs and scene cards from the catalog', async () => {
     const h = setup();
@@ -242,10 +247,26 @@ test('category tabs switch the visible scene cards and empty category shows the 
 });
 
 test('empty catalog shows the empty state and hides the card grid', async () => {
-    const h = setup({ scenesPayload: { status: 'success', categories: [], scenes: [] } });
+    const emptyCatalog = JSON.parse(fs.readFileSync(path.join(__dirname, '../scenes/scenes_config.json'), 'utf8'));
+    const h = setup({ scenesPayload: { status: 'success', ...emptyCatalog } });
     await h.ctx.loadScenesView();
     assert.equal(h.node('scenes-empty').classList.contains('hidden'), false);
     assert.equal(h.node('scenes-grid').classList.contains('hidden'), true);
+    assert.equal(h.node('scenes-tabs').classList.contains('hidden'), true);
+    assert.equal(h.node('scenes-empty-title').textContent, '暂无场景应用。');
+});
+
+test('reopening the catalog removes cached cards after its contents are cleared', async () => {
+    const payload = JSON.parse(JSON.stringify(catalog));
+    const h = setup({ scenesPayload: payload });
+    await h.ctx.loadScenesView();
+    assert.ok(h.node('scenes-grid').children.length > 0);
+    payload.categories = [];
+    payload.scenes = [];
+    await h.ctx.loadScenesView();
+    assert.equal(h.node('scenes-tabs').children.length, 0);
+    assert.equal(h.node('scenes-grid').children.length, 0);
+    assert.equal(h.node('scenes-empty').classList.contains('hidden'), false);
 });
 
 test('a non-workbench scene card activates into chat and injects the greeting', async () => {
@@ -268,12 +289,12 @@ test('a non-workbench scene card activates into chat and injects the greeting', 
 
 test('a workbench scene with a registered renderer dispatches instead of activating', async () => {
     const h = setup();
-    // 注册 voucher 渲染器，记录被分发到的场景。
+    // 注册通用渲染器，记录被分发到的测试场景。
     h.run(`
         window.__wbScenes = [];
-        window.ScenesRegistry.registerRenderer('voucher', function(scene){ window.__wbScenes.push(scene); return true; });
+        window.ScenesRegistry.registerRenderer('base', function(scene){ window.__wbScenes.push(scene); return true; });
     `);
-    // finance_voucher 的 skill_name=finance-voucher -> workbench 类型 voucher
+    // 旧业务技能名也只会分发到通用工作台。
     await h.ctx.openSceneById('finance_voucher');
     await settle();
     assert.equal(h.requests.some(r => r.url === '/api/scenes/activate'), false);

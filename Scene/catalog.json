@@ -1,0 +1,92 @@
+{
+  "categories": [
+    {
+      "id": "procurement",
+      "name": "采购",
+      "icon": "fa-cart-shopping",
+      "color": "#10b981"
+    },
+    {
+      "id": "sales",
+      "name": "销售",
+      "icon": "fa-handshake",
+      "color": "#3b82f6"
+    },
+    {
+      "id": "production",
+      "name": "生产",
+      "icon": "fa-industry",
+      "color": "#f59e0b"
+    },
+    {
+      "id": "hr",
+      "name": "人事",
+      "icon": "fa-users",
+      "color": "#8b5cf6"
+    },
+    {
+      "id": "finance",
+      "name": "财务",
+      "icon": "fa-coins",
+      "color": "#ef4444"
+    },
+    {
+      "id": "data",
+      "name": "数据",
+      "icon": "fa-database",
+      "color": "#06b6d4"
+    },
+    {
+      "id": "quality",
+      "name": "质量",
+      "icon": "fa-shield-halved",
+      "color": "#06b6d4"
+    },
+    {
+      "id": "legal",
+      "name": "法务",
+      "icon": "fa-scale-balanced",
+      "color": "#6366f1"
+    },
+    {
+      "id": "it",
+      "name": "IT",
+      "icon": "fa-laptop-code",
+      "color": "#0ea5e9"
+    },
+    {
+      "id": "admin",
+      "name": "行政",
+      "icon": "fa-building-user",
+      "color": "#f97316"
+    }
+  ],
+  "scenes": [
+    "procurement_supplier",
+    "procurement_analysis",
+    "procurement_tender",
+    "procurement_execution",
+    "sales_customer",
+    "sales_strategy",
+    "sales_contract",
+    "production_plan",
+    "production_quality",
+    "production_safety",
+    "hr_recruit",
+    "hr_performance",
+    "hr_labor",
+    "finance_expert",
+    "finance_analysis",
+    "finance_voucher",
+    "finance_chenyiwei",
+    "finance_report_audit",
+    "sap_data_analysis",
+    "quality_traceability",
+    "production_scheduling_airbag",
+    "it_support",
+    "hr_service",
+    "legal_review",
+    "admin_affairs",
+    "finance_reimbursement"
+  ]
+}
