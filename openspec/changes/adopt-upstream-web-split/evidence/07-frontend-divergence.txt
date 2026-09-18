@@ -1,0 +1,58 @@
+=== console.js ===
+  statements    base=13313  fork=18679  similarity=0.7141
+  customization 365 hunks, +7832 -2061
+  base lines mapped to an upstream module: 14413/14413  across 33 modules
+  per upstream module:
+      1320+     95-   22 hunks  js/core/auth.js
+      1034+     68-   63 hunks  js/views/agents.js
+      1029+    130-   70 hunks  js/views/sessions.js
+       923+     22-    7 hunks  js/views/channels.js
+       894+      1-    3 hunks  js/core/version.js
+       729+     30-   28 hunks  js/core/nav.js
+       653+     94-   17 hunks  js/views/config.js
+       298+     19-   16 hunks  js/views/skills.js
+       231+     10-    9 hunks  js/views/doc-viewers.js
+       116+      6-   10 hunks  js/chat/state.js
+        94+     29-    5 hunks  js/core/theme.js
+        89+      0-    2 hunks  js/views/models.js
+        79+   1295-   19 hunks  js/core/i18n.js
+        74+     11-   11 hunks  js/chat/send.js
+        56+     11-   15 hunks  js/views/tasks.js
+        56+      5-   10 hunks  js/views/knowledge.js
+        51+      6-   14 hunks  js/views/channels-feishu.js
+        47+    114-   16 hunks  js/chat/new-chat.js
+        45+      4-    3 hunks  js/views/memory.js
+        30+      8-    8 hunks  js/chat/render.js
+        22+     98-   12 hunks  js/chat/session-settings.js
+         5+      5-    3 hunks  js/chat/workspace-selector.js
+         3+     18-    2 hunks  js/chat/composer-input.js
+         2+      2-    1 hunks  js/core/notify.js
+         2+      2-    2 hunks  js/chat/message-actions.js
+  portability: 258/365 hunks re-anchorable (70.7%), 107 need hand porting
+  worst modules by hand-port volume:
+      21 hand-port /   69 hunks  js/views/sessions.js
+      20 hand-port /   63 hunks  js/views/agents.js
+      12 hand-port /   28 hunks  js/core/nav.js
+       7 hand-port /   17 hunks  js/views/config.js
+       7 hand-port /   21 hunks  js/core/auth.js
+       5 hand-port /   15 hunks  js/chat/new-chat.js
+       4 hand-port /   19 hunks  js/core/i18n.js
+       4 hand-port /   10 hunks  js/views/knowledge.js
+
+=== console.css ===
+  statements    base=3514  fork=5829  similarity=0.7083
+  customization 79 hunks, +2606 -229
+  base lines mapped to an upstream module: 3671/3671  across 8 modules
+  per upstream module:
+      1561+    209-   64 hunks  css/sessions.css
+       409+      0-    7 hunks  css/agents.css
+        48+      3-    3 hunks  css/base.css
+        13+      0-    1 hunks  css/components.css
+         3+     17-    3 hunks  css/chat.css
+  portability: 67/79 hunks re-anchorable (84.8%), 12 need hand porting
+  worst modules by hand-port volume:
+       7 hand-port /   64 hunks  css/sessions.css
+       3 hand-port /    8 hunks  css/agents.css
+       2 hand-port /    3 hunks  css/base.css
+
+report -> openspec/changes/adopt-upstream-web-split/evidence/frontend_divergence.json

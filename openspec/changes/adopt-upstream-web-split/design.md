@@ -94,15 +94,19 @@
 
 **校验判据**：以「上游模块内出现 fork 专有符号/注册块」为判据，而非「出现 tenant 等关键字」——上游自身也大量使用 tenant 语义命名，关键字判据会误伤。fork 专有符号取自 `route_registry.py` 的 `fork:*` 条目 handler 名与 fork 授权模块的公开符号集合。
 
-### D5 — 前端 fork 定制为独立模块，经运行时装载而非改写上游视图
+### D5 — 前端 fork 定制以「fork 拥有模块 + 服务端覆盖映射」承载，不改写上游模块
 
-**决定**：采用上游 `static/js/{core,views,chat}/*` 与 `static/css/*`；fork 定制（外观、身份管理、待办、场景工作台、外部连接、渠道工作台、品牌、i18n 扩展）成为独立模块，由 fork 引导脚本在**上游模块之后**装载，通过 DOM 挂载点、事件以及上游已导出的注册表附着；`console.js` / `console.css` 迁移完成后删除，不留兼容层。
+**决定**：采用上游 `static/js/{core,chat,views}/*`、`static/css/*`、`chat.html` shell 与 `templates/**`，**保持全部未改动**。fork 定制落在 `static/js/fork/<上游子路径>` 与 `static/css/fork/<上游子路径>`，由 fork 自有页面处理器经上游 `core/template.py` 组装页面后，按覆盖映射把 `assets/js|css/**` 引用替换为 fork 版本；fork 专有模块（`todos.js`、`identity-admin.js`、`scenes/` 等）装载顺序不变，`boot.js` 仍最后加载。`console.js` / `console.css` 迁移完成后删除，不留兼容层。
 
-**理由**：兼容层会让单体文件以另一种形式复活，违背本次目标。上游视图模块（`js/views/*.js`）不被 fork 编辑，满足新增 capability 的前端要求。「上游模块之后装载」保证上游的初始化与渲染已就绪，fork 片段的挂载时机可控（复用既有 `fork-fragment-mounted` 事件语义）。
+**理由（含被实测推翻的初版假设）**：初版 D5 假设「fork 定制可成为独立模块，在上游模块之后装载并附着到挂载点」。上游 `channel/web/README.md` 明确：前端是**共享同一全局作用域的经典脚本**，无打包器，且**同一顶层名在两个文件中声明即 `SyntaxError`、整页白屏**（顶层 `const`/`let`）。而本次实测的 fork 定制是 365 hunk 中 84% 集中在 7 个上游模块内部（`core/auth.js`、`views/agents.js`、`views/sessions.js`、`views/channels.js`、`core/version.js`、`core/nav.js`、`views/config.js`），是既有函数体内的改写，不是可附着的独立单元。因此「之后装载」既会触发重名白屏，也无法改变定制代码所读的 `const`。覆盖映射把「fork 版本取代上游版本」做成显式、可校验的一条声明，同时保住 D2 的核心收益：**上游模块零 fork 改动**，下次上游演进不再重复失血。
 
-**挂载点与 shell**：`chat.html` 属已登记 `seam:` 处置，保留最小挂载元素是既有契约；挂载元素只声明「在此装载 fork 片段」，不含 fork 业务逻辑。若上游对 `chat.html` 的结构改动使挂载元素位置变化，按 `seam:` 重新登记处置。
+**代价与对冲**：fork 因此拥有 33 个 JS 模块中的 25 个、8 个 CSS 模块中的 5 个（定制量前 7 个模块占增行 84%）。代价是上游对这些模块的后续改动不会自动流入，故以 `static/js/fork/manifest.json` 记录每个 fork 模块的上游来源路径与移植时的 sha256，并加漂移门禁：上游模块变更即失败并指出需人工重新应用的路径与提交（与 D2 的后端漂移守护同一机制）。
 
-**备选与否决**：fork 直接改写上游 `js/views/*.js`（否决：下次上游重构重复失血）；构建期合并出单一 bundle（否决：把冲突从源文件挪到产物，且上游无构建期扩展约定）。
+**移植机制**：`scripts/migration/port_frontend.py` 按归一化 diff 求得 hunk，归属到上游模块，再按上/下文再锚定并拼接 fork 原文。实测可机械再锚定 JS 258/365（70.7%）、CSS 67/79（84.8%）；余下 ~107 JS / ~12 CSS hunk 输出为人工移植清单（含 base 与 fork 样例），不得静默丢弃。移植器须确定性（重复运行逐字节一致）。产出以 `node --check` 与 `tools/check-load-order.mjs` 校验。
+
+**挂载点与 shell**：`chat.html` 的 include 语义与按文件 mtime 的 `?v=` 版本戳一并采用；上游 shell 不改动，故上游新增脚本会被自动继承。fork 的挂载元素（片段契约）按 `seam:` 保留最小挂载语义，其内容经既有 `data-fork-fragment` / `fork-fragment-mounted` 装载。
+
+**备选与否决**：① fork 定制在上游模块之后装载并重新声明（否决：顶层重名 `SyntaxError` 白屏，且改不动定制代码读取的 `const`）；② fork 直接改写上游 `js/views/*.js`（否决：下次上游重构重复失血）；③ 保留 `console.js`/`console.css` 并以 `keep-fork` 处置该 `DU`（本 change 范围内否决：`chat.html` 亦为冲突且与 shell/templates/JS 是同一耦合单元，保留单体等于静默丢弃上游前端重构及其携带的功能与修复；若 Phase 3 确定降级，必须显式改为 `keep-fork` 基线决策并逐条列出被丢弃的上游增量，不得默认发生）；④ 构建期合并出单一 bundle（否决：把冲突从源文件挪到产物，且上游无构建期扩展约定）。
 
 ### D6 — 前端与后端的迁移顺序：先后端（解冲突主体），再前端（解 `DU` 主体）
 
@@ -122,7 +126,9 @@
 
 - [迁移期间行为漂移（授权判定在移动中语义改变）] → 迁移提交必须保持既有接缝测试与权限隔离测试通过（`test_identity_resource_authorization.py`、`test_http_policy.py`、`test_route_registry.py`、`test_upstream_core_seams.py`），并以「迁移前后同一请求的授权结果一致」为验收，而非仅「测试仍绿」。
 - [fork 子类覆写上游 handler 后，上游方法改名/重构导致覆写静默失效] → 第三腿不变量校验以 handler 内省比对登记方法；新增校验断言「每个 fork 子类的上游基类存在且被覆写的方法仍存在」，上游重构时立即失败而非静默丢失授权。
-- [前端「之后装载」的时序在慢网络或上游异步初始化下不稳] → 复用既有 `fork-fragment-mounted` 事件与显式 ready 信号，不以固定延时挂载；浏览器验收覆盖冷启动与刷新两条路径。
+- [前端顶层重名导致整页白屏（上游规则：同一顶层名在两文件声明即 `SyntaxError`）] → 不采用「叠加后重新声明」方案，改以覆盖映射取代上游模块；移植器产出后以 `node --check` 逐模块校验，并以 `tools/check-load-order.mjs` 校验 fork 实际装载顺序。
+- [fork 拥有 25/33 个 JS 模块后，上游对这些模块的后续改动不再自动流入] → `static/js/fork/manifest.json` 记录上游来源路径与移植时 sha256，漂移门禁在上游变更时失败并指出需人工重新应用的路径；把「重新应用」变成可检测义务而非期望。
+- [移植器把 fork 原文拼接到错误位置，或人工移植的 ~119 hunk 丢失语义] → 移植器确定性（重复运行逐字节一致）且只做「上下文锚定 + 原文拼接」，不做语义重写；未能锚定的 hunk 输出为人工工作清单，不得静默丢弃；浏览器验收覆盖登录、上下文切换、流式请求、上传回读、下载预览。
 - [`chat.html` 挂载元素被上游结构调整打散] → 属已登记 `seam:`，按基线重新登记；浏览器验收包含「shell 采用上游结构后 fork 片段仍装载」。
 - [本 change 规模大，单轮交付周期长] → 按 D6 的阶段性门槛切分，每阶段有独立可执行门槛与可独立回退的提交；未过门槛不进入下一阶段。
 - [上游可能在迁移期间再次移动] → 固定 `MERGE_SOURCE_SHA`，迁移期间新到的上游提交不纳入本轮，按规范 §7.2 明确「本轮仍同步固定 SHA」。
@@ -142,8 +148,8 @@
 门槛：45 处冲突全部解决且有登记依据；基础回归（规范 §6.2 全量）+ 路由覆盖通过；`test_no_resurrection_legacy_identity.py` 与漂移守护通过。
 
 **阶段 3 — 前端模块化迁移**
-采用上游 `static/js/{core,views,chat}` 与 `static/css/*`；fork 定制成为独立模块经挂载点装载；删除 `console.js` / `console.css`；`static/js/fragments.js` 的挂载语义保留。
-门槛：`node --test tests/test_fork_fragments.cjs`、`tests/test_execution_permission_ui.cjs` 通过；浏览器验收覆盖登录、上下文切换、流式请求与文件传输；`chat.html` 采用上游结构后 fork 片段仍装载。
+采用上游 `static/js/{core,chat,views}`、`static/css/*`、`chat.html` shell 与 `templates/**`（全部不改动）；以 `scripts/migration/port_frontend.py` 生成 `static/js/fork/**`、`static/css/fork/**`，并由覆盖映射在服务端组装时取代对应上游模块（D5）；删除 `console.js` / `console.css`；`static/js/fragments.js` 的挂载语义保留。
+门槛：移植器可重跑且逐字节一致；`node --check` 全部通过；`node --test tests/test_fork_fragments.cjs`、`tests/test_execution_permission_ui.cjs` 通过；`tools/check-load-order.mjs` 通过；浏览器验收覆盖登录、上下文切换、流式请求与文件传输；`chat.html` 采用上游结构后 fork 片段仍装载；`static/js/fork/manifest.json` 漂移门禁可独立运行并在上游变更时失败。
 
 **阶段 4 — 结构不变量落地与基线重生成**
 新增上游模块零 fork 分支的可执行校验（D4）；重新生成 `scripts/conflict-baseline.txt`，登记 24 处漂移与新的双向 `DU`。
@@ -158,3 +164,5 @@
 
 - fork 授权模块与新 fork handler 模块的**具体文件划分与命名**，在阶段 1 首个任务中按实际耦合度确定（不影响不变量判据——判据依赖 D4 的显式符号集合，而非文件划分）。**已定**：见 D2 —— `channel/web/fork/**` 包，`common.py`（共享管道）、`authorization.py`（授权 helper）、`handlers/<view>.py`（按上游 `api/` 视图划分的平行实现）。
 - `desktop/build/notarize-dmg.sh`（上游删除 / fork 修改）的最终处置，在阶段 2 按基线复核该 fork 修改是否仍必要；属 `DU` 登记项，不改变本方案结构。
+- `static/js/doc-editor.js`、`workspace.js` 与上游 `assets/js/doc-editor.js` 的关系：若它们实为上游文件的 fork 版，应纳入覆盖映射而非留在 fork 专有清单；在阶段 3 首个任务中判定。
+- `core/i18n.js` 的方向性异常（fork 净删 1295 行、增 79 行，翻译移至 `static/js/i18n/`）：该模块不可按「移植 diff」处理，需先阅读确认 fork 意图后再决定其在覆盖映射中的处置。

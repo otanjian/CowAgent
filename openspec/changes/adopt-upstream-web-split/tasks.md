@@ -47,10 +47,31 @@
 
 ## 4. 前端模块化迁移（阶段 3）与基线重生成（阶段 4）
 
-- [ ] 4.1 枚举 `console.js` / `console.css` 中全部 fork 定制，登记为迁移清单（外观、身份管理、待办、场景工作台、外部连接、渠道工作台、品牌、i18n 扩展、片段加载）
-- [ ] 4.2 采用上游 `static/js/{core,views,chat}/*` 与 `static/css/*`，确认 `chat.html` 采用上游结构且 fork 挂载元素按 `seam:` 重新登记
-- [ ] 4.3 将 fork 前端定制实现为独立模块，经 fork 引导脚本在上游模块之后装载；`static/js/fragments.js` 的挂载语义保留并复用 `fork-fragment-mounted` 事件
-- [ ] 4.4 删除 `console.js` / `console.css`，不留兼容层；确认无上游视图模块（`js/views/*.js`）被 fork 原地编辑
+- [x] 4.1 枚举 `console.js` / `console.css` 中全部 fork 定制，登记为迁移清单（外观、身份管理、待办、场景工作台、外部连接、渠道工作台、品牌、i18n 扩展、片段加载）
+  - 证据 `evidence/07-frontend-divergence.md`（原始输出 `07-frontend-divergence.txt`，逐 hunk 明细 `frontend_divergence.json`）
+  - `console.js`：365 hunk，+7832 / −2061 行，相似度 0.71；`console.css`：79 hunk，+2606 / −229，相似度 0.71
+  - 归一化 diff 是前提：按原样行 diff 会把 `console.js` 报成「2 hunk / 18671 增行」，实际是 fork 改了空白与缩进
+  - 定制集中在 7 个上游模块（占增行 84%）：`core/auth.js` 1320、`views/agents.js` 1034、`views/sessions.js` 1029、`views/channels.js` 923、`core/version.js` 894、`core/nav.js` 729、`views/config.js` 653
+  - `core/i18n.js` 为反向（+79 / −1295）：fork 把翻译移出到 `static/js/i18n/`，该模块不可按「移植 diff」处理
+  - fork 专有文件（`appearance.js`、`identity-admin.js`、`todos.js`、`scenes/`、`external-connections.js`、`channel-workbench.js`、`i18n/`、`fragments.js`、`appearance.css`、`fragments/appearance-dialog.html`）本已是独立文件，不在本次拆分范围内
+- [x] 4.2 定位每个 fork 定制所属的上游模块所有者（迁移清单 → 上游模块映射）
+  - 判据：以归一化后的**具判识度**行（长度 ≥ 8 且被 ≤ 3 个模块包含）为锚点；短结构行（`}`、`});`）会命中所有模块，首版分析因此给出「36 个模块各 ≈7000 行」的无意义结果
+  - 结果：base 行 100% 可映射（JS 14413/14413、CSS 3671/3671），覆盖 33 / 8 个上游模块
+  - 可移植性实测：JS 258/365 hunk（70.7%）可机械再锚定，107 处需人工移植；CSS 67/79（84.8%），12 处需人工
+  - 人工移植量最大的模块：`views/sessions.js` 21、`views/agents.js` 20、`core/nav.js` 12、`views/config.js` 7、`core/auth.js` 7、`css/sessions.css` 7
+- [ ] 4.3 采用上游 `static/js/{core,chat,views}/*`、`static/css/*`、`chat.html` shell 与 `templates/**`，全部保持未改动；fork 挂载元素按 `seam:` 重新登记
+  - 上游 shell 与 `core/template.py` 的 include 语义、按文件 mtime 的 `?v=` 版本戳、`tools/check-load-order.mjs` 门禁一并采用
+- [ ] 4.4 以「fork 拥有模块 + 服务端覆盖映射」实现 fork 前端定制（`evidence/08-frontend-port-strategy.md`）
+  - 上游脚本是**共享同一全局作用域的经典脚本**，同名顶层 `const`/`let` 重复声明即 `SyntaxError`（整页白屏），因此**不得**用「在上游模块之后加载并重新声明」的叠加方案
+  - 做法：`static/js/fork/<上游子路径>` 与 `static/css/fork/<上游子路径>` 承载 fork 定制；fork 自有页面处理器经上游 `core/template.py` 组装后按覆盖映射替换 `assets/js|css/**` 引用；`boot.js` 仍最后加载
+  - fork 专有模块（`todos.js`、`identity-admin.js`、`scenes/` 等）顺序不变，仍在上游模块之后
+  - 判据：上游模块零 fork 改动
+- [ ] 4.4a 编写确定性移植器 `scripts/migration/port_frontend.py`：归一化 diff → hunk 归属 → 按上/下文再锚定并拼接 fork 原文 → 生成 `static/js/fork/**`、`static/css/fork/**`；重复运行须逐字节一致
+- [ ] 4.4b 输出无法再锚定的 ~107 JS / ~12 CSS hunk 为人工移植工作清单（含 base 与 fork 样例），不得静默丢弃
+- [ ] 4.4c 生成 `static/js/fork/manifest.json`（`{fork_path: {upstream_path, upstream_sha256}}`）并加漂移门禁：上游模块变更后必须失败，使「上游变更需人工重新应用」可检测
+- [ ] 4.4d 以 `node --check` 校验全部产出模块，并以 `tools/check-load-order.mjs` 校验 fork 实际装载顺序
+- [ ] 4.4e 处置 `static/js/doc-editor.js`、`workspace.js` 与上游 `assets/js/doc-editor.js` 的重叠：若为上游文件的 fork 版则纳入覆盖映射，而非留在 fork 专有清单
+- [ ] 4.4f 删除 `console.js` / `console.css`，不留兼容层；确认无上游视图模块（`js/views/*.js`、`js/core/*.js`、`js/chat/*.js`、`css/*.css`）被 fork 原地编辑
 - [ ] 4.5 运行 `.cjs` 与浏览器验收：`node --test tests/test_fork_fragments.cjs`、`node --test tests/test_execution_permission_ui.cjs`，以及登录、上下文切换、流式请求、上传回读、下载预览
 - [ ] 4.6 为 D4 的上游模块集合与 fork 专有符号集合编写结构不变量校验，且可独立运行并在注入违规时失败
 - [ ] 4.7 校验不得以关键字（如 `tenant`）为判据；以 `route_registry.py` 的 `fork:*` handler 名与 fork 授权模块公开符号为判据，并验证对独立上游形态不误报
