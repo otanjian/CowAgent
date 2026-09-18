@@ -126,6 +126,7 @@ hiddenimports += collect_submodules('playwright')
 # Runtime-read files/dirs that must travel with the executable. Paths are
 # (source, dest_dir_in_bundle).
 datas = [
+    (rp('Scene'), 'Scene'),
     (rp('config-template.json'), '.'),
     (rp('skills'), 'skills'),
     # PluginManager.scan_plugins() walks the on-disk ./plugins dir at runtime
@@ -140,6 +141,14 @@ datas = [
     # entry alongside the Electron UI.
     (rp('channel', 'web', 'chat.html'), 'channel/web'),
     (rp('channel', 'web', 'static'), 'channel/web/static'),
+    # /help is served by the same bundled backend.
+    (rp('webhelp', 'templates'), 'webhelp/templates'),
+    (rp('webhelp', 'assets'), 'webhelp/assets'),
+    (rp('webhelp', 'docs'), 'webhelp/docs'),
+    (rp('webhelp', 'lang'), 'webhelp/lang'),
+    (rp('webhelp', 'config.json'), 'webhelp'),
+    (rp('webhelp', 'content.json'), 'webhelp'),
+    (rp('webhelp', 'icons.json'), 'webhelp'),
 ]
 
 # Some libraries (tiktoken encodings, etc.) ship data files.

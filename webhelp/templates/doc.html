@@ -1,0 +1,44 @@
+$def with (v)
+<main id="main">
+$if not v.ok:
+    <header class="page-hero"><div class="section-container">
+    <nav class="breadcrumb" aria-label="breadcrumb"><a href="$(v.url())">$(v.t('nav.home'))</a><span aria-hidden="true">/</span><span>$(v.t('doc.breadcrumb'))</span></nav>
+    <h1>$(v.t('doc.not_found'))</h1><p>$(v.t('doc.not_found_desc'))</p>
+    </div></header>
+    <section class="section"><div class="section-container"><div class="cta-actions" style="justify-content:center">
+    <a class="btn btn-primary" href="$(v.url('features'))">$(v.t('cta.back_features'))</a>
+    </div></div></section>
+$else:
+    $ body = v.doc_body(v.slug)
+    $ toc = v.doc_toc(body)
+    $ prev = v.doc_neighbor(v.slug, -1)
+    $ next = v.doc_neighbor(v.slug, 1)
+    <header class="page-hero doc-hero"><div class="section-container">
+    <nav class="breadcrumb" aria-label="breadcrumb"><a href="$(v.url())">$(v.t('nav.home'))</a><span aria-hidden="true">/</span><a href="$(v.url('features'))">$(v.t('doc.breadcrumb'))</a><span aria-hidden="true">/</span><span>$(v.doc_title(v.slug))</span></nav>
+    <h1>$(v.doc_title(v.slug))</h1><p>$(v.doc_lead(v.slug))</p>
+    </div></header>
+    <section class="section"><div class="section-container"><div class="doc-layout">
+    <article class="doc-article"><p class="doc-notice">$(v.t('doc.notice'))</p>
+    $if toc:
+        <details class="doc-toc" open><summary>$(v.t('doc.toc'))</summary><ol>
+        $for entry in toc:
+            <li class="doc-toc-item doc-toc-item--h$(entry['level'])"><a href="#$(entry['id'])">$(entry['text'])</a></li>
+        </ol></details>
+    <div class="doc-body">$:(body)</div>
+    <nav class="doc-pager" aria-label="$(v.t('doc.all_docs'))">
+    $if prev:
+        <a class="doc-pager-link doc-pager-link--prev" href="$(v.doc_url(prev))"><span class="doc-pager-label">$(v.t('doc.prev'))</span><span class="doc-pager-title">$(v.doc_title(prev))</span></a>
+    $else:
+        <span></span>
+    $if next:
+        <a class="doc-pager-link doc-pager-link--next" href="$(v.doc_url(next))"><span class="doc-pager-label">$(v.t('doc.next'))</span><span class="doc-pager-title">$(v.doc_title(next))</span></a>
+    </nav><p class="doc-source">$(v.t('doc.source'))</p></article>
+    <aside class="doc-aside"><p class="doc-aside-title">$(v.t('doc.all_docs'))</p>
+    $for section, items in v.doc_grouped().items():
+        <p class="doc-aside-section">$(v.t('doc.sections.' + section, section))</p><ul class="doc-aside-list">
+        $for slug in items:
+            <li><a class="doc-aside-link$(' is-active' if slug == v.slug else '')" href="$(v.doc_url(slug))">$(v.doc_title(slug))</a></li>
+        </ul>
+    <a class="btn btn-cloud doc-aside-back" href="$(v.url('features'))">$(v.t('cta.back_features'))</a></aside>
+    </div></div></section>
+</main>

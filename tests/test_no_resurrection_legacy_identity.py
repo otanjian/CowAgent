@@ -123,13 +123,13 @@ class NoResurrectionTests(unittest.TestCase):
             "webhelp/assets/deploy/docker-compose.yml",
             "docker/docker-compose.yml",
             "config-template.json",
-            "webhelp/includes/config.php",
+            "webhelp/config.json",
         ):
             text = _read(rel)
             self.assertNotIn("WEB_PASSWORD:", text)
             self.assertNotIn("web_password", text)
             self.assertNotIn("external_api_token", text)
-        self.assertIn("identity_mode", _read("webhelp/includes/config.php"))
+        self.assertIn("identity_mode", _read("webhelp/config.json"))
         self.assertIn("IDENTITY_MODE", _read("webhelp/assets/deploy/docker-compose.yml"))
 
 

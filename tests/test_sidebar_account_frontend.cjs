@@ -655,11 +655,7 @@ test('valid version survives invalid responses, and a brand repaint changes only
     assert.equal(h.document.activeElement, focus);
 });
 
-// --- 帮助与关于 target (change help-about-project-site-link) ---------------
-// The entry used to open the brand-version row's href, so both entries shared
-// one hard-coded operator address. It now opens the project's own site, whose
-// address the public brand snapshot delivers; an absent or unusable value keeps
-// the local development default so the entry is never dead.
+// --- Integrated same-origin help entry ----------------------------------
 function collectOpened(h) {
     const opened = [];
     h.ctx.open = (url, target) => { opened.push([url, target]); };
@@ -678,7 +674,7 @@ test('帮助与关于 opens the project site address, not the brand version row'
     await settle();
     const opened = collectOpened(h);
     h.ctx.openAccountAbout();
-    assert.deepEqual(opened, [['http://localhost:8080/', '_blank']]);
+    assert.deepEqual(opened, [['/help/', '_blank']]);
     // The version row keeps its own target, and replacing it does not move the
     // help entry: the two are no longer the same link.
     assert.equal(h.node('sidebar-version').getAttribute('href'),
@@ -686,23 +682,23 @@ test('帮助与关于 opens the project site address, not the brand version row'
     h.node('sidebar-version').setAttribute('href', 'https://stale.invalid/');
     h.ctx.openAccountAbout();
     assert.equal(opened.length, 2);
-    assert.equal(opened[1][0], 'http://localhost:8080/');
+    assert.equal(opened[1][0], '/help/');
 });
 
-test('the public brand snapshot supplies the help target when it is usable', async () => {
+test('the public brand snapshot cannot redirect integrated help off-site', async () => {
     const h = setup(async url => url === '/api/branding/public'
         ? response({ enabled: true, revision: 2, help_url: 'https://help.example.com/webhelp' })
         : response({ status: 'success' }));
     await settle();
     runFetchPublicBrand(h);
     await h.ctx.fetchPublicBrand();
-    assert.equal(h.run('_accountAboutUrl'), 'https://help.example.com/webhelp');
+    assert.equal(h.run('_accountAboutUrl'), '/help/');
     const opened = collectOpened(h);
     h.ctx.openAccountAbout();
-    assert.deepEqual(opened, [['https://help.example.com/webhelp', '_blank']]);
+    assert.deepEqual(opened, [['/help/', '_blank']]);
 });
 
-test('an absent or unusable help_url keeps the local development default', async () => {
+test('an absent or unusable help_url keeps integrated help available', async () => {
     for (const payload of [
         { enabled: true, revision: 1 },                       // snapshot without the field
         { enabled: true, revision: 1, help_url: '' },
@@ -715,11 +711,11 @@ test('an absent or unusable help_url keeps the local development default', async
         await settle();
         runFetchPublicBrand(h);
         await h.ctx.fetchPublicBrand();
-        assert.equal(h.run('_accountAboutUrl'), 'http://localhost:8080/',
+        assert.equal(h.run('_accountAboutUrl'), '/help/',
             JSON.stringify(payload));
         const opened = collectOpened(h);
         h.ctx.openAccountAbout();
-        assert.deepEqual(opened, [['http://localhost:8080/', '_blank']]);
+        assert.deepEqual(opened, [['/help/', '_blank']]);
     }
 });
 
@@ -733,7 +729,7 @@ test('a failed public brand read leaves the help target usable', async () => {
     await h.ctx.fetchPublicBrand();
     const opened = collectOpened(h);
     h.ctx.openAccountAbout();
-    assert.deepEqual(opened, [['http://localhost:8080/', '_blank']]);
+    assert.deepEqual(opened, [['/help/', '_blank']]);
 });
 
 test('account menu restores focus on Escape and closes on outside pointer without taking the new focus', async () => {

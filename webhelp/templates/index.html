@@ -1,0 +1,91 @@
+$def with (v)
+$ demo = v.demo_image()
+<main id="main">
+<!-- ===== Hero ===== -->
+<section class="hero">
+<div class="hero-container">
+<span class="hero-badge">$(v.t('hero.badge'))</span>
+<h1 class="hero-title">$(v.t('hero.title_line1'))<br />$(v.t('hero.title_line2'))</h1>
+<p class="hero-desc">$(v.t('hero.desc'))</p>
+<div class="hero-actions">
+<a class="btn btn-primary" href="$(v.url('manual'))">
+$:(v.icon('book'))<span>$(v.t('cta.manual'))</span>
+</a>
+<a class="btn btn-cloud" href="$(v.url('enterprise'))">
+$:(v.icon('shield'))<span>$(v.t('cta.enterprise'))</span>
+</a>
+</div>
+<div class="hero-demo">
+<img class="demo-image" src="$(demo)" alt="$(v.t('demo.aria'))" />
+</div>
+</div>
+</section>
+<!-- ===== 核心能力 ===== -->
+<section class="section" id="features">
+<div class="section-container">
+$:(v.section_heading('capabilities.title', 'capabilities.subtitle'))
+<div class="features-grid">
+$for item in v.content('capabilities', []):
+    $:(v.capability_card(item))
+</div>
+</div>
+</section>
+<!-- ===== 企业级管控 ===== -->
+<section class="section enterprise" id="enterprise">
+<div class="section-container">
+<div style="text-align:center">
+<span class="eyebrow-pill">$:(v.icon('shield'))$(v.t('nav.enterprise'))</span>
+</div>
+$:(v.section_heading('enterprise.title', 'enterprise.subtitle'))
+<div class="enterprise-banner reveal">
+$:(v.icon('shield'))
+<div>
+<h3>$(v.t('enterprise.banner_title'))</h3>
+<p>$(v.t('enterprise.banner_desc'))</p>
+</div>
+</div>
+<div class="features-grid">
+$for item in v.content('enterprise', []):
+    $:(v.enterprise_card(item))
+</div>
+<div style="text-align:center;margin-top:40px">
+<a class="btn btn-cloud" href="$(v.url('enterprise'))">
+$:(v.icon('arrow'))<span>$(v.t('cta.enterprise'))</span>
+</a>
+</div>
+</div>
+</section>
+<!-- ===== 模型与通道 ===== -->
+<section class="section" id="integrations">
+<div class="section-container">
+$:(v.section_heading('integrations.title', 'integrations.subtitle'))
+<div class="integration-group">
+<h3 class="integration-label">$(v.t('integrations.label_models'))</h3>
+<div class="tags-container">
+$for vendor in v.cfg('model_vendors', []):
+    $:(v.tag(vendor, 'model'))
+</div>
+</div>
+<div class="integration-group">
+<h3 class="integration-label">$(v.t('integrations.label_channels'))</h3>
+<div class="tags-container">
+$for channel in v.cfg('channels', []):
+    $:(v.tag(v.t('integrations.channels.' + channel), 'channel'))
+</div>
+</div>
+</div>
+</section>
+<!-- ===== CTA ===== -->
+<section class="section section--soft">
+<div class="section-container">
+<div class="cta-banner reveal">
+<h2>$(v.t('cta.title'))</h2>
+<p>$(v.t('cta.subtitle'))</p>
+<div class="cta-actions">
+<a class="btn btn-primary" href="$(v.url('quickstart'))">$(v.t('cta.primary'))</a>
+<a class="btn btn-cloud" href="$(v.url('enterprise'))">$(v.t('cta.enterprise'))</a>
+</div>
+</div>
+</div>
+</section>
+</main>

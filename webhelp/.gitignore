@@ -1,3 +1,6 @@
 # 根 .gitignore 的 `README*.md` 会连带忽略本文件；
 # 这里显式打回，保留站点的使用与维护说明。
 !README.md
+
+# Public help-site defaults are source content, not the main app credentials.
+!config.json

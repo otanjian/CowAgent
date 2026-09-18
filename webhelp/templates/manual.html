@@ -1,0 +1,34 @@
+$def with (v)
+$ topics = v.content('manual_topics', [])
+<main id="main">
+$:(v.page_hero('manual.title', 'manual.lead', { 'title_accent': 'manual.title_accent', 'extra': '<p class="manual-hint">' + v.icon('zoom') + v.escape(v.t('manual.shot_hint')) + '</p>', }))
+<section class="section">
+<div class="section-container">
+<div class="doc-layout">
+<article class="doc-article manual-article">
+$for index, item in enumerate(topics):
+    $ id = item['id']
+    $ steps = (item.get('steps', []))
+    <section class="manual-topic" id="manual-$(id)">
+    <h2 class="manual-title">
+    <span class="manual-title-num">$((index + 1))</span>
+    <span class="manual-title-icon">$:(v.icon(item['icon']))</span>
+    $(v.t('manual.topics.' + id + '.title'))
+    </h2>
+    $ lead = v.t_opt('manual.topics.' + id + '.lead').strip()
+    $if lead != '':
+        <p class="manual-lead">$(lead)</p>
+    <div class="manual-steps">
+    $for n, step in enumerate(steps):
+        $:(v.manual_step(id, n + 1, step))
+    </div>
+    $:(v.manual_refs(item))
+    </section>
+</article>
+<aside class="doc-aside manual-aside">
+$:(v.manual_nav())
+</aside>
+</div>
+</div>
+</section>
+</main>

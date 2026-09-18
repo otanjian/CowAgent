@@ -1,0 +1,59 @@
+$def with (v)
+$ brand = v.brand
+$ other = 'en' if v.lang == 'zh' else 'zh'
+<!DOCTYPE html>
+<html lang="$('zh-CN' if v.lang == 'zh' else 'en')">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>$(v.title)</title>
+  <meta name="description" content="$(v.description)" />
+  <meta name="keywords" content="$(v.t('meta.keywords'))" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <link rel="canonical" href="$(v.canonical())" />
+  <link rel="alternate" hreflang="zh-CN" href="$(v.lang_url('zh'))" />
+  <link rel="alternate" hreflang="en" href="$(v.lang_url('en'))" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="$(brand['name'])" />
+  <meta property="og:title" content="$(v.title)" />
+  <meta property="og:description" content="$(v.description)" />
+  <meta property="og:locale" content="$('zh_CN' if v.lang == 'zh' else 'en_US')" />
+  <meta property="og:image" content="$(v.asset(brand['upstream_logo']))" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="$(v.title)" />
+  <meta name="twitter:description" content="$(v.description)" />
+  <link rel="icon" type="image/x-icon" href="$(v.asset(brand['favicon']))" />
+  <link rel="stylesheet" href="$(v.asset('assets/css/style.css'))" />
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('webhelp-theme');
+        if (saved === 'light' || saved === 'dark') {
+          document.documentElement.setAttribute('data-theme', saved);
+        }
+      } catch (err) { /* 隐私模式下使用默认主题 */ }
+    })();
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">$(v.t('common.skip_to_content'))</a>
+  <nav class="navbar" id="navbar">
+    <div class="nav-container">
+      <a href="$(v.url())" class="nav-logo" aria-label="$(brand['name'])">
+        <img src="$(v.asset(brand['logo_dark']))" alt="$(brand['name'])" class="logo-img logo-img--dark" />
+        <img src="$(v.asset(brand['logo_light']))" alt="" aria-hidden="true" class="logo-img logo-img--light" />
+      </a>
+      <button class="nav-toggle" type="button" id="navToggle" aria-expanded="false" aria-controls="navLinks" aria-label="$(v.t('common.menu'))">
+        $:(v.icon('menu'))
+      </button>
+      <div class="nav-links" id="navLinks">
+        $for page, key in v.cfg('nav', {}).items():
+            <a href="$(v.url(page))" class="nav-link$(' is-active' if page.removesuffix('.php') == v.page else '')">$(v.t(key))</a>
+        <button class="theme-switch" type="button" id="themeToggle" aria-label="$(v.t('common.theme_toggle'))">
+          <span class="icon-sun">$:(v.icon('sun'))</span>
+          <span class="icon-moon">$:(v.icon('moon'))</span>
+        </button>
+        <a href="$(v.lang_url(other))" class="lang-switch" hreflang="$(other)" aria-label="$(v.t('common.lang_switch_aria'))">$(v.t('common.lang_switch'))</a>
+      </div>
+    </div>
+  </nav>

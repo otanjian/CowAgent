@@ -1,0 +1,63 @@
+{
+  "brand": {
+    "name": "容大AI",
+    "name_en": "RongAI",
+    "logo_light": "assets/img/rongda-ai-logo.svg",
+    "logo_dark": "assets/img/rongda-ai-logo-dark.svg",
+    "favicon": "assets/img/favicon.ico",
+    "upstream_name": "CowAgent",
+    "upstream_logo": "assets/img/cow-logo.png"
+  },
+  "version": "2.x",
+  "site_url": "",
+  "demo_image": "assets/img/home-demo-console.jpg",
+  "nav": {
+    "index": "nav.home",
+    "features": "nav.features",
+    "enterprise": "nav.enterprise",
+    "architecture": "nav.architecture",
+    "about": "nav.about"
+  },
+  "page_titles": {
+    "index": "meta.title_home",
+    "features": "meta.title_features",
+    "enterprise": "meta.title_enterprise",
+    "quickstart": "meta.title_quickstart",
+    "manual": "manual.title",
+    "architecture": "meta.title_architecture",
+    "about": "meta.title_about"
+  },
+  "deployments": {
+    "unix": "bash <(curl -fsSL {site_url}/assets/deploy/run.sh)",
+    "win": "irm {site_url}/assets/deploy/run.ps1 | iex",
+    "docker": "curl -O {site_url}/assets/deploy/docker-compose.yml\ndocker compose up -d"
+  },
+  "model_vendors": [
+    "OpenAI",
+    "Claude",
+    "Gemini",
+    "DeepSeek",
+    "MiniMax",
+    "GLM",
+    "Qwen",
+    "Kimi",
+    "Doubao",
+    "LinkAI"
+  ],
+  "channels": [
+    "wechat",
+    "feishu",
+    "dingtalk",
+    "wecom_bot",
+    "qq",
+    "wecom_app",
+    "official",
+    "telegram",
+    "slack",
+    "discord",
+    "web",
+    "terminal"
+  ],
+  "config_sample": "{\n  \"model\": \"deepseek-v4-flash\",\n  \"deepseek_api_key\": \"sk-...\",\n  \"web_host\": \"127.0.0.1\",\n  \"web_port\": 9899,\n  \"identity_mode\": \"database\"\n}",
+  "bootstrap_sample": ".venv/bin/python -m cli.cli management bootstrap \\\n  --tenant-code default \\\n  --tenant-name \"默认租户\" \\\n  --admin-username admin"
+}

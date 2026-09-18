@@ -1,0 +1,71 @@
+$def with (v)
+<main id="main">
+$:(v.page_hero('meta.title_architecture', 'architecture.subtitle'))
+<!-- ===== 分层结构 ===== -->
+<section class="section">
+<div class="section-container">
+<h2 class="section-title section-title--left">$(v.t('architecture.layers_title'))</h2>
+<div class="stack-sm" style="margin-top:28px">
+$for item in v.content('arch_layers', []):
+    $ id = item['id']
+    $ pills = v.t_list('architecture.layers.' + id + '.items')
+    <article class="layer-row reveal">
+    <span class="feature-icon">$:(v.icon(item['icon']))</span>
+    <div>
+    <h3>
+    $(v.t('architecture.layers.' + id + '.title'))
+    </h3>
+    <p>$(v.t('architecture.layers.' + id + '.desc'))</p>
+    $if pills != []:
+        <div class="pill-list" style="margin-top:14px">
+        $for pill in pills:
+            <span class="pill">$:(v.icon('check'))$(pill)</span>
+        </div>
+    </div>
+    </article>
+</div>
+</div>
+</section>
+<!-- ===== 请求流转 ===== -->
+<section class="section section--soft">
+<div class="section-container">
+$:(v.section_heading('architecture.flow_title', 'architecture.flow_subtitle'))
+<div class="governance-flow">
+$for index, item in enumerate(v.content('arch_flow', [])):
+    $ id = item['id']
+    <article class="flow-card reveal">
+    <span class="flow-num">$((index + 1))</span>
+    <h4>$(v.t('architecture.flow.' + id + '.title'))</h4>
+    <p>$(v.t('architecture.flow.' + id + '.desc'))</p>
+    </article>
+</div>
+</div>
+</section>
+<!-- ===== 设计原则 ===== -->
+<section class="section">
+<div class="section-container">
+<h2 class="section-title section-title--left">$(v.t('architecture.principles_title'))</h2>
+<p class="section-subtitle section-subtitle--left">$(v.t('architecture.principles_subtitle'))</p>
+<div class="stack-sm">
+$for item in v.t_list('architecture.principles'):
+    <div class="note reveal">
+    $:(v.icon('check-circle'))
+    <span>$(item)</span>
+    </div>
+</div>
+</div>
+</section>
+<!-- ===== CTA ===== -->
+<section class="section section--soft">
+<div class="section-container">
+<div class="cta-banner reveal">
+<h2>$(v.t('cta.title'))</h2>
+<p>$(v.t('cta.subtitle'))</p>
+<div class="cta-actions">
+<a class="btn btn-primary" href="$(v.url('enterprise'))">$(v.t('cta.enterprise'))</a>
+<a class="btn btn-cloud" href="$(v.url('quickstart'))">$(v.t('cta.primary'))</a>
+</div>
+</div>
+</div>
+</section>
+</main>

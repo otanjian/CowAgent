@@ -1,0 +1,72 @@
+$def with (v)
+<main id="main">
+$:(v.page_hero('meta.title_quickstart', 'quickstart.subtitle'))
+<!-- ===== 安装命令 ===== -->
+<section class="section">
+<div class="section-container">
+$:(v.deploy_block())
+<div style="max-width:640px;margin:32px auto 0" class="note reveal">
+$:(v.icon('shield'))
+<span>$(v.t('quickstart.port_note'))</span>
+</div>
+</div>
+</section>
+<!-- ===== 五步开始 ===== -->
+<section class="section section--soft">
+<div class="section-container">
+$:(v.section_heading('quickstart.steps_title', ''))
+<div class="features-grid">
+$for index, item in enumerate(v.content('quickstart_steps', [])):
+    $ id = item['id']
+    <article class="flow-card reveal">
+    <span class="flow-num">$((index + 1))</span>
+    <h4>$(v.t('quickstart.steps.' + id + '.title'))</h4>
+    <p>$(v.t('quickstart.steps.' + id + '.desc'))</p>
+    </article>
+</div>
+</div>
+</section>
+<!-- ===== 配置 ===== -->
+<section class="section">
+<div class="section-container">
+$:(v.section_heading('quickstart.access_title', 'quickstart.access_desc'))
+<div class="split">
+<div class="stack">
+<h3 class="section-title section-title--left" style="font-size:18px">config.json</h3>
+$:(v.code_block('config.json', v.cfg('config_sample')))
+</div>
+<div class="stack">
+<h3 class="section-title section-title--left" style="font-size:18px">$(v.t('quickstart.enterprise_title'))</h3>
+<p class="section-subtitle section-subtitle--left" style="margin-bottom:0">$(v.t('quickstart.enterprise_desc'))</p>
+$:(v.code_block('bootstrap', v.cfg('bootstrap_sample')))
+</div>
+</div>
+</div>
+</section>
+<!-- ===== 命令速查 ===== -->
+<section class="section section--soft">
+<div class="section-container">
+$:(v.section_heading('cli.title', 'cli.subtitle'))
+<div class="cmd-list">
+$for item in v.content('cli_commands', []):
+    <div class="cmd-row">
+    <code>$(item['cmd'])</code>
+    <span>$(v.t('cli.commands.' + item['id']))</span>
+    </div>
+</div>
+</div>
+</section>
+<!-- ===== CTA ===== -->
+<section class="section">
+<div class="section-container">
+<div class="cta-banner reveal">
+<h2>$(v.t('cta.title'))</h2>
+<p>$(v.t('cta.subtitle'))</p>
+<div class="cta-actions">
+<a class="btn btn-primary" href="$(v.url('enterprise'))">$(v.t('cta.enterprise'))</a>
+<a class="btn btn-cloud" href="$(v.url('features'))">$(v.t('nav.features'))</a>
+</div>
+</div>
+</div>
+</section>
+</main>
