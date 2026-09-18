@@ -17,6 +17,10 @@ from bridge.context import *
 from bridge.reply import Reply, ReplyType
 from channel.chat_channel import ChatChannel, check_prefix
 from channel.chat_message import ChatMessage
+# Upstream's core helper, re-exported through ``channel.web.web_channel`` so the
+# display-path rewrite has one definition. Used to absolutize workspace-relative
+# media refs in replies and history (see ``_send`` / ``HistoryHandler``).
+from channel.web.core._common import _rewrite_relative_media
 from collections import OrderedDict, deque
 from common import const
 from common import i18n
@@ -860,9 +864,20 @@ class WebChannel(ChatChannel):
                 seqs = self._fetch_latest_pair_seqs(
                     session_id, context.get("agent_id")
                 )
+                # Absolutize workspace-relative media so images/videos the agent
+                # embedded render for non-default agents too. Only affects the
+                # displayed copy; TTS below still reads the original text.
+                display_content = content
+                if reply.type == ReplyType.TEXT and content:
+                    try:
+                        display_content = _rewrite_relative_media(
+                            content, _get_workspace_root(session_id, context.get("agent_id"))
+                        )
+                    except Exception as e:
+                        logger.debug(f"[WebChannel] media rewrite skipped: {e}")
                 self._publish_sse_event(request_id, {
                     "type": "done",
-                    "content": content,
+                    "content": display_content,
                     "request_id": request_id,
                     "timestamp": time.time(),
                     "user_seq": seqs.get("user_seq"),
@@ -906,6 +921,16 @@ class WebChannel(ChatChannel):
                 if reply.type == ReplyType.TEXT and context.get("on_event") is not None:
                     logger.debug(f"Polling skipped SSE text reply for session {session_id}")
                     return
+                # Same workspace-relative media rewrite as the SSE path, so a
+                # polled reply from a non-default Agent renders its images too.
+                if reply.type == ReplyType.TEXT and content:
+                    try:
+                        content = _rewrite_relative_media(
+                            content,
+                            _get_workspace_root(session_id, context.get("agent_id")),
+                        )
+                    except Exception as e:
+                        logger.debug(f"[WebChannel] media rewrite skipped: {e}")
                 response_data = {
                     "type": str(reply.type),
                     "content": content,
@@ -1361,7 +1386,12 @@ class WebChannel(ChatChannel):
 
             is_directory_upload = bool(directory_files) or bool(directory_rel_paths) or bool(relative_path) or bool(upload_id)
 
-            upload_dir = _get_upload_dir(agent_id or _request_agent_id(params))
+            # ``agent_id`` comes from the authorized target; the fallback keeps
+            # the pre-authorization behaviour for embedders that publish none,
+            # and has to read the query string too — a multipart body carries no
+            # ``agent_id`` (see ``_scoped_agent_id``), so the body-only helper
+            # would write the upload into the default Agent's workspace.
+            upload_dir = _get_upload_dir(agent_id or _scoped_agent_id(params))
             if is_directory_upload:
                 if not upload_id:
                     return _reject("Missing upload_id for directory upload")
@@ -2244,6 +2274,34 @@ def _request_agent_id(source) -> str:
     if isinstance(value, (list, tuple)):
         value = value[0] if value else None
     return value or None
+
+
+def _scoped_agent_id(source) -> str:
+    """The Agent a request is scoped to: its payload, or the URL's query string.
+
+    Clients put ``agent_id`` in the query string and deliberately keep it out of
+    a multipart body — web.py merges the two, and a field present in both
+    arrives as a list that breaks handlers expecting a string (see the console's
+    fetch wrapper and the desktop client's ``postFormData``). So a body read on
+    its own — ``_raw_web_input()`` is ``rawinput("post")`` — misses the Agent
+    unless the query string is read too, and the request quietly answers as the
+    *default* Agent instead of the selected one: a recording is written into the
+    wrong workspace and an imported document builds the wrong knowledge service.
+
+    Upstream fixed exactly this in its own handlers
+    (``channel/web/core/_common.py::_scoped_agent_id``). The fork serves its own
+    handlers, so the pattern lives here too, next to ``_request_agent_id``, and
+    every body-reading fork route resolves through it.
+    """
+    agent_id = _request_agent_id(source)
+    if agent_id:
+        return agent_id
+    try:
+        from urllib.parse import parse_qs
+        query = parse_qs(web.ctx.env.get("QUERY_STRING") or "")
+    except Exception:
+        return None
+    return _request_agent_id(query)
 
 
 def _skill_service(agent_id: str = ''):

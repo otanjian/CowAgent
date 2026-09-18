@@ -160,24 +160,41 @@ class UpstreamFeaturePreservationTests(unittest.TestCase):
         self.assertIn("_import_local_file", source)
 
     def test_local_file_import_is_loopback_and_token_guarded_when_present(self):
-        source = web_layer_source()
+        # Read the *whole* layer, upstream's modules included: upstream is where
+        # the route lives now (``channel/web/core/channel.py``), and a guard that
+        # reads only the fork's side of the tree would skip forever -- reporting
+        # green while the feature it exists to protect is unverified.
+        source = web_layer_source(include_upstream=True)
         if "_import_local_file" not in source:
-            # Upstream has not landed the feature in this fork's tree yet. The
+            # Upstream has not landed the feature in this tree at all. The
             # obligation is recorded above; nothing to assert on behaviour, and
             # asserting its absence would contradict the promise to keep it.
             self.skipTest("upstream _import_local_file not merged yet (obligation recorded)")
         # Once merged, the feature must exist unchanged *and* keep the checks
         # that stop a remote caller from asking the server to read a local path.
-        self.assertIn("_import_local_file", source)
-        window = source[source.index("_import_local_file"):]
-        window = window[:window.index("def ", 1)] if "def " in window[1:] else window
-        self.assertTrue(
-            re.search(r"REMOTE_ADDR|127\.0\.0\.1|::1", window),
+        # Slice from the definition (not from the first mention -- the route is
+        # named in a docstring above it) to the next method at the same indent.
+        self.assertIn("def _import_local_file", source)
+        window = source[source.index("def _import_local_file"):]
+        end = window.find("\n    def ", 1)
+        if end != -1:
+            window = window[:end]
+        # The two checks are named where they are called...
+        self.assertRegex(
+            window, r"_is_loopback_request\(\)",
             "local-file import must verify the request is loopback",
         )
-        self.assertTrue(
-            re.search(r"token", window, re.IGNORECASE),
+        self.assertRegex(
+            window, r"_desktop_token_matches\(\)",
             "local-file import must verify the per-boot token",
+        )
+        # ...and, since a rename could satisfy the names above while dropping the
+        # checks themselves, the helpers must still test the peer address and the
+        # desktop header.
+        self.assertRegex(source, r"REMOTE_ADDR", "the loopback check must read the peer address")
+        self.assertRegex(
+            source, r"X_COW_DESKTOP_TOKEN",
+            "the token check must compare the desktop shell's header",
         )
 
     def test_the_fork_keeps_no_unauthenticated_local_path_route(self):

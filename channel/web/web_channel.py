@@ -445,6 +445,7 @@ from channel.web.fork.handlers.memory import (
 )
 from channel.web.fork.handlers.models import (
     ModelsHandler,
+    model_catalog,
 )
 from channel.web.fork.handlers.pages import (
     AssetsHandler,
@@ -576,6 +577,7 @@ from channel.web.fork.runtime import (
     _mark_memory_dirty,
     _parse_sse_cursor,
     _paths_written_by_step,
+    _rewrite_relative_media,
     _project_state,
     _raw_web_input,
     _read_config_file_for_write,
@@ -587,6 +589,7 @@ from channel.web.fork.runtime import (
     _roster_from_members,
     _sanitize_upload_id,
     _sanitize_upload_relative_path,
+    _scoped_agent_id,
     _serve_allowed_roots,
     _session_expire_seconds,
     _session_model_catalog,

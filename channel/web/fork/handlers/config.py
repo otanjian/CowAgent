@@ -291,7 +291,11 @@ class ConfigHandler:
                 "bot_type": "openai" if local_config.get("bot_type") == "chatGPT" else local_config.get("bot_type", ""),
                 "use_linkai": bool(local_config.get("use_linkai", False)),
                 "channel_type": local_config.get("channel_type", ""),
-                "agent_max_context_tokens": local_config.get("agent_max_context_tokens", 50000),
+                # Manual cap on the input budget (compact once reached); 0
+                # disables the cap and follows the model window. The fallback has
+                # to match config.py's shipped default, or a config that predates
+                # the key reports a stale budget to the console.
+                "agent_max_context_tokens": local_config.get("agent_max_context_tokens", 64000),
                 "agent_max_context_turns": local_config.get("agent_max_context_turns", 20),
                 "agent_max_steps": local_config.get("agent_max_steps", 20),
                 "enable_thinking": bool(local_config.get("enable_thinking", False)),
@@ -407,6 +411,32 @@ class ConfigHandler:
                     logger.info("[WebChannel] Bridge bot routing reset due to config change")
                 except Exception as reset_err:
                     logger.warning(f"[WebChannel] Failed to reset bridge: {reset_err}")
+
+            # Evict cached agent runtimes when a config baked into the Agent at
+            # construction time changes. These values (context budget, turn/step
+            # caps) are read once in agent_initializer and cached on the Agent
+            # instance, so without eviction an edit only takes effect after a
+            # restart — the user changes the budget in the UI and sees no change
+            # (the context-usage chart keeps the old limit). Clearing the
+            # instances makes the next turn rebuild each agent from the new
+            # config, no restart needed.
+            agent_rebuild_keys = {
+                "agent_max_context_tokens",
+                "agent_max_context_turns",
+                "agent_max_steps",
+            }
+            if any(k in applied for k in agent_rebuild_keys):
+                try:
+                    from bridge.bridge import Bridge
+                    agent_bridge = Bridge().get_agent_bridge()
+                    if agent_bridge is not None:
+                        agent_bridge.clear_all_sessions()
+                        logger.info(
+                            "[WebChannel] Cleared cached agents so new "
+                            f"{sorted(agent_rebuild_keys & applied.keys())} takes effect"
+                        )
+                except Exception as rebuild_err:
+                    logger.warning(f"[WebChannel] Failed to clear agents: {rebuild_err}")
 
             return json.dumps({"status": "success", "applied": applied}, ensure_ascii=False)
         except Exception as e:

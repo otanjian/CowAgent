@@ -290,11 +290,11 @@ class UploadHandler:
         from channel.web.web_channel import WebChannel
         from channel.web.web_channel import _db_scope
         from channel.web.web_channel import _raw_web_input
-        from channel.web.web_channel import _request_agent_id
         from channel.web.web_channel import _require_agent_action
         from channel.web.web_channel import _require_chat_csrf
         from channel.web.web_channel import _require_private_owner
         from channel.web.web_channel import _require_tenant_agent_binding
+        from channel.web.web_channel import _scoped_agent_id
         web.header('Content-Type', 'application/json; charset=utf-8')
         web.header('Cache-Control', 'no-store')
         with _db_scope() as ctx:
@@ -303,7 +303,10 @@ class UploadHandler:
             # execution-authorized (attachments belong to the chat workflow).
             _require_chat_csrf()
             params = _raw_web_input()
-            agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
+            # The client keeps agent_id out of the multipart body (a field in
+            # both query and body arrives as a list), so resolve it across both:
+            # reading the body alone scopes the write to the default Agent.
+            agent_id = _require_tenant_agent_binding(ctx, _scoped_agent_id(params))
             _require_private_owner(ctx, agent_id)
             _require_agent_action(ctx, agent_id, "use", "agent.use")
             with authorized_target_scope(agent_id=agent_id):
@@ -317,10 +320,10 @@ class VoiceAsrHandler:
         from channel.web.web_channel import _db_scope
         from channel.web.web_channel import _get_upload_dir
         from channel.web.web_channel import _raw_web_input
-        from channel.web.web_channel import _request_agent_id
         from channel.web.web_channel import _require_agent_action
         from channel.web.web_channel import _require_private_owner
         from channel.web.web_channel import _require_tenant_agent_binding
+        from channel.web.web_channel import _scoped_agent_id
         web.header('Content-Type', 'application/json; charset=utf-8')
 
         saved_path = None
@@ -328,8 +331,11 @@ class VoiceAsrHandler:
             params = _raw_web_input()
             with _db_scope() as ctx:
                 # Mic recording lands in a tenant-bound agent's upload dir;
-                # voice input is part of the chat flow.
-                agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
+                # voice input is part of the chat flow. The recording route is
+                # multipart, so the Agent comes from the query string as well as
+                # the body — resolving the body alone writes the recording into
+                # the default Agent's workspace.
+                agent_id = _require_tenant_agent_binding(ctx, _scoped_agent_id(params))
                 _require_private_owner(ctx, agent_id)
                 _require_agent_action(ctx, agent_id, "use", "agent.use")
                 file_obj = params.get("file")

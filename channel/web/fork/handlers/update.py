@@ -15,7 +15,8 @@ import web
 class VersionHandler:
     def GET(self):
         web.header('Content-Type', 'application/json; charset=utf-8')
-        from cli import __version__
-        return json.dumps({"version": __version__})
+        from cli.update_service import version_payload
+        # Local metadata only — never contacts GitHub.
+        return json.dumps(version_payload(), ensure_ascii=False)
 
 

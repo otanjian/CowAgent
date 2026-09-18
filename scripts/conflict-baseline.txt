@@ -85,6 +85,29 @@
 3	UU	tests/test_workspace_edit.py	merge	upstream cases + fork stack targets
 
 # ---------------------------------------------------------------------------
+# Unconflicted upstream modules carried as-is (no fork branch inside them)
+# ---------------------------------------------------------------------------
+#
+# The 46 rows above are the files that *conflict*. Everything else upstream
+# changed is taken whole, which is only safe while two properties hold, so the
+# baseline records them here (task 4.7's criterion: an upstream module carries
+# no fork branch):
+#
+# ``channel/web/core/channel.py``, ``channel/web/core/_common.py``
+#   Adopted verbatim: both are byte-identical to ``origin/master`` in the merge
+#   tree, and they are where upstream put the desktop-only path-import route --
+#   ``_import_local_file`` guarded by ``_is_loopback_request()`` **and**
+#   ``_desktop_token_matches()`` (the per-launch ``COW_DESKTOP_TOKEN`` handed to
+#   the shell, compared against ``X-Cow-Desktop-Token``, failing closed when the
+#   env var is unset). The obligation from the retired monolith row ("keep
+#   upstream ``_import_local_file``") is therefore *satisfied by not editing
+#   it*; the route is reachable only through upstream's namespace
+#   (``build_app()`` + ``channel/web/api/**``), while the fork's live
+#   ``/upload`` is ``channel/web/fork/handlers/files.py::UploadHandler`` with no
+#   ``local_path`` branch. See ``evidence/19-desktop-token-seam.md`` and
+#   ``evidence/18-backend-increment-gap.md``.
+#
+# ---------------------------------------------------------------------------
 # Deliberate removals (task 9.7, decision D9) — re-decide on every sync
 # ---------------------------------------------------------------------------
 #

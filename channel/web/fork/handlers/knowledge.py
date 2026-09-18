@@ -238,10 +238,10 @@ class KnowledgeImportHandler:
         from channel.web.web_channel import _knowledge_workspace_root
         from channel.web.web_channel import _raw_web_input
         from channel.web.web_channel import _read_uploaded_file_bytes_limited
-        from channel.web.web_channel import _request_agent_id
         from channel.web.web_channel import _require_knowledge_write
         from channel.web.web_channel import _require_private_owner
         from channel.web.web_channel import _require_tenant_agent_binding
+        from channel.web.web_channel import _scoped_agent_id
         web.header('Content-Type', 'application/json; charset=utf-8')
         try:
             from agent.knowledge.service import KnowledgeService
@@ -255,7 +255,10 @@ class KnowledgeImportHandler:
                 })
             with _db_scope() as ctx:
                 params = _raw_web_input()
-                agent_id = _require_tenant_agent_binding(ctx, _request_agent_id(params))
+                # Import is multipart: the client keeps agent_id in the query
+                # string, so a body-only read would build the *default* Agent's
+                # knowledge service instead of the selected one.
+                agent_id = _require_tenant_agent_binding(ctx, _scoped_agent_id(params))
                 _require_private_owner(ctx, agent_id)
                 _require_knowledge_write(ctx, agent_id)
                 root = _knowledge_workspace_root(agent_id)

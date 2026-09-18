@@ -45,6 +45,12 @@ def history_api(tmp_path, monkeypatch):
         response = app.request("/api/history?agent_id=" + agent_id + "&session_id=" + session_id,
                                headers={"Authorization": "Bearer " + token, "X-Tenant-ID": tenant["id"]})
         return json.loads(response.data)
+    request.shared_root = shared
+    request.erp_workspace = erp
+    request.registry = registry
+    request.identity = RuntimeIdentity(
+        user_id=uid, tenant_id=tenant["id"], agent_id="erp"
+    )
     yield request
     clear_conversation_store_cache()
 
@@ -63,3 +69,66 @@ def test_another_users_history_is_not_returned(history_api):
 
 def test_unbound_agent_is_not_read(history_api):
     assert history_api("unbound")["status"] == "error"
+
+
+def test_history_media_refs_are_rewritten_to_a_servable_url(history_api):
+    """A workspace-relative image in a stored reply has to come back as a URL
+    the browser can fetch. The live SSE path rewrites these; the history path
+    reloads the same messages, so it has to rewrite them too or every image in
+    a reopened conversation renders broken.
+
+    The anchor is the same root the runtime uses for the request
+    (``_get_workspace_root``: the session's open project, else the tenant shared
+    root), so the file is placed there — exactly where an agent running in that
+    root would have written it.
+    """
+    from agent.memory import get_conversation_store
+
+    shared = history_api.shared_root
+    shared.mkdir(parents=True, exist_ok=True)
+    (shared / "shot.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    workspace = history_api.registry.get("erp").workspace
+    store = get_conversation_store(workspace)
+    with use_identity(history_api.identity):
+        store.append_messages(
+            "media-session",
+            [
+                {"role": "user", "content": "look at this"},
+                {"role": "assistant", "content": "![shot](shot.png)"},
+            ],
+            channel_type="web",
+        )
+
+    result = history_api("erp", "media-session")
+
+    assert result["status"] == "success", result
+    contents = [m["content"] for m in result["messages"]]
+    assert any(
+        c == f"![shot](/api/file?path={shared / 'shot.png'})" for c in contents
+    ), contents
+    assert not any("](shot.png)" in c for c in contents), contents
+
+
+def test_the_media_rewrite_leaves_refs_that_escape_the_root_alone(tmp_path):
+    """The rewrite turns relative refs into servable URLs, so it must not
+    follow a ref out of the workspace: a path like ``../../etc/passwd`` stays
+    literal instead of becoming a URL that serves it."""
+    from channel.web.web_channel import _rewrite_relative_media
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "shot.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    outside = tmp_path / "secret.png"
+    outside.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    assert _rewrite_relative_media("![ok](shot.png)", str(root)) == (
+        f"![ok](/api/file?path={root / 'shot.png'})"
+    )
+    assert (
+        _rewrite_relative_media("![no](../secret.png)", str(root))
+        == "![no](../secret.png)"
+    )
+    assert (
+        _rewrite_relative_media("![no](missing.png)", str(root))
+        == "![no](missing.png)"
+    )

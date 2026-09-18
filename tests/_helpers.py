@@ -64,6 +64,26 @@ def upstream_web_layer_source() -> str:
                        and p.relative_to(web).parts[0] in ("api", "core"))
 
 
+def fork_web_layer_files():
+    """Every fork-owned file of the console web layer, the entry module first.
+
+    The same set :func:`web_layer_source` concatenates, kept as paths so an
+    assertion can parse one file at a time (per-handler structural checks) instead
+    of regex-matching one enormous string.
+    """
+    web = Path(__file__).resolve().parents[1] / "channel" / "web"
+    entry = web / "web_channel.py"
+    files = [entry]
+    for path in sorted(web.rglob("*.py")):
+        if path == entry:
+            continue
+        rel = path.relative_to(web)
+        if rel.parts and rel.parts[0] in ("api", "core"):
+            continue
+        files.append(path)
+    return files
+
+
 def cookie_value(response, name):
     """Return the value of the cookie ``name`` from a response's Set-Cookie.
 

@@ -272,6 +272,7 @@ class ChannelsHandler:
         from agent import team
 
         settings = team.resolve(conf())
+        local_config = conf()
         is_hant = i18n.get_language() == i18n.ZH_HANT
         out = []
         for inst in resolve_channel_instances(settings):
@@ -283,6 +284,13 @@ class ChannelsHandler:
             fields_out = []
             for f in ch_def["fields"]:
                 raw_val = (inst.credentials or {}).get(f["key"], "")
+                # Mirror runtime credential resolution (channel.cfg): when an
+                # instance record is missing a value, the channel falls back to
+                # the global config.json. Show the same value so a credential
+                # the bot actually uses never renders as a blank field (e.g. a
+                # secret that lives only in the global config still shows masked).
+                if raw_val in (None, ""):
+                    raw_val = local_config.get(f["key"], f.get("default", ""))
                 if f["type"] == "secret" and raw_val:
                     display_val = cls._mask_secret(str(raw_val))
                 else:
@@ -311,6 +319,8 @@ class ChannelsHandler:
                 "instance_id": inst.instance_id,
                 "channel_type": inst.channel_type,
                 "agent_id": inst.agent_id or "",
+                # User-editable label; empty falls back client-side to the id.
+                "instance_name": inst.name or "",
                 "members": list(inst.members or []),
                 "label": label_val,
                 "icon": ch_def["icon"],
@@ -417,13 +427,23 @@ class ChannelsHandler:
             # "create a new instance".
             from channel.channel_instances import MULTI_INSTANCE_READY
             instance_id = (body.get("instance_id") or "").strip()
-            if self._multi_agent_mode() and channel_name in MULTI_INSTANCE_READY:
+            # A multi-instance-ready type (feishu) is only an *instance* when it
+            # carries an instance_id (connect with an empty id creates one). But
+            # the same type can still be active the legacy way — enabled in
+            # config.json's channel_type before this install went multi-Agent —
+            # in which case its card has no instance_id. Disconnect/rename on
+            # such a card must fall through to the legacy per-type path, or it
+            # would be rejected ("instance_id is required") and never removed.
+            is_instance_op = action in ("save", "connect") or bool(instance_id)
+            if self._multi_agent_mode() and channel_name in MULTI_INSTANCE_READY and is_instance_op:
                 if action == "save":
                     return self._handle_instance_save(channel_name, instance_id, body.get("config", {}))
                 elif action == "connect":
                     return self._handle_instance_connect(channel_name, instance_id, body.get("config", {}))
                 elif action == "disconnect":
                     return self._handle_instance_disconnect(channel_name, instance_id)
+                elif action == "rename":
+                    return self._handle_instance_rename(channel_name, instance_id, body.get("name", ""))
                 else:
                     return json.dumps({"status": "error", "message": f"unknown action: {action}"})
 
@@ -764,13 +784,48 @@ class ChannelsHandler:
         )
         return json.dumps({"status": "success", "instance_id": inst.instance_id}, ensure_ascii=False)
 
-    def _handle_instance_disconnect(self, channel_name: str, instance_id: str):
-        """Remove one instance record from team.json and stop its channel."""
+    def _handle_instance_rename(self, channel_name: str, instance_id: str, name):
+        """Set an instance's friendly label. Does not touch credentials or the
+        live connection, so renaming never interrupts a running channel."""
         from channel.web.web_channel import conf
-        from channel.channel_instances import remove_instance
+        from channel.channel_instances import upsert_instance
 
         if not instance_id:
             return json.dumps({"status": "error", "message": "instance_id is required"})
+        inst = upsert_instance(
+            conf(),
+            channel_type=channel_name,
+            instance_id=instance_id,
+            name=str(name or ""),
+        )
+        logger.info(f"[WebChannel] Channel instance '{inst.instance_id}' renamed to '{inst.name}'")
+        return json.dumps(
+            {"status": "success", "instance_id": inst.instance_id, "name": inst.name},
+            ensure_ascii=False,
+        )
+
+    def _handle_instance_disconnect(self, channel_name: str, instance_id: str):
+        """Remove one instance record from team.json and stop its channel."""
+        from channel.web.web_channel import conf
+        from channel.channel_instances import remove_instance, read_raw_instances
+
+        if not instance_id:
+            return json.dumps({"status": "error", "message": "instance_id is required"})
+
+        # A legacy channel (enabled the old way via config.json's channel_type)
+        # is folded into channel_instances on every team.json write by
+        # bootstrap_legacy_instances. Just dropping the record isn't enough:
+        # remove_instance itself writes team.json, whose bootstrap immediately
+        # re-materializes the record straight from channel_type — so the card
+        # comes right back. Prune the type from channel_type *first* (when this
+        # is the last instance of it), so by the time remove_instance writes,
+        # the bootstrap has nothing to recreate.
+        remaining = [
+            r for r in read_raw_instances(conf())
+            if str(r.get("instance_id") or "").strip() != instance_id
+        ]
+        self._prune_legacy_channel_type(channel_name, remaining)
+
         remove_instance(conf(), instance_id)
 
         def _do_stop():
@@ -792,6 +847,49 @@ class ChannelsHandler:
 
         threading.Thread(target=_do_stop, daemon=True).start()
         return json.dumps({"status": "success", "instance_id": instance_id}, ensure_ascii=False)
+
+    def _prune_legacy_channel_type(self, channel_name: str, remaining):
+        """Drop *channel_name* from config.json's channel_type once no instance
+        of that type is left (``remaining`` = the instance records that will
+        survive this disconnect).
+
+        Without this, bootstrap_legacy_instances (which runs on every team.json
+        write and is keyed off channel_type) would recreate the instance we just
+        removed, so the disconnect would never stick. Only prunes when the last
+        instance of the type is gone, so removing one of several Feishu bots
+        leaves the type — and the others — untouched.
+        """
+        from channel.web.web_channel import conf
+        from channel.web.web_channel import _read_config_file_for_write
+        from channel.web.web_channel import get_data_root
+        from channel.channel_instances import _normalize_type
+
+        target = _normalize_type(channel_name)
+        if any(_normalize_type(str(r.get("channel_type") or "")) == target for r in remaining):
+            return
+
+        existing = self._parse_channel_list(conf().get("channel_type", ""))
+        pruned = [ch for ch in existing if _normalize_type(ch) != target]
+        if len(pruned) == len(existing):
+            return
+        new_channel_type = ",".join(pruned)
+
+        conf()["channel_type"] = new_channel_type
+        try:
+            config_path = os.path.join(get_data_root(), "config.json")
+            file_cfg = _read_config_file_for_write()
+            file_cfg["channel_type"] = new_channel_type
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(file_cfg, f, indent=4, ensure_ascii=False)
+            logger.info(
+                f"[WebChannel] Pruned legacy channel_type '{channel_name}', "
+                f"channel_type={new_channel_type}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"[WebChannel] Failed to prune legacy channel_type '{channel_name}': {e}",
+                exc_info=True,
+            )
 
 
 class WeixinQrHandler:

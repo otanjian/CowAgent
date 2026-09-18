@@ -24,8 +24,12 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from common import channel_registry
-from channel.web.api import channels as channels_api
+from channel.web import web_channel as channels_api
 from channel.web.core._common import _live_channel_manager
+
+# The fork serves its own handler; upstream's ``channel.web.api.channels`` is
+# carried for upstream's assembly (``build_app``) only, so these assertions
+# follow the class the console actually resolves.
 
 
 class FakeManager:

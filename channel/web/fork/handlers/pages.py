@@ -129,12 +129,37 @@ class AssetsHandler:
                 # 默认为二进制流
                 web.header('Content-Type', 'application/octet-stream')
 
+            # Without a validator a browser has nothing to cache on, so the
+            # console re-downloaded every script, stylesheet, font and logo on
+            # every reload. The ETag lets it ask instead, and a hit costs one
+            # header rather than the file.
+            from channel.web.core import template
+            info = os.stat(full_path)
+            etag = '"%x-%x"' % (info.st_mtime_ns, info.st_size)
+            web.header('ETag', etag)
+            # ctx fields are read defensively: this handler is also driven
+            # directly, outside a live request, where ctx is empty.
+            if template.is_versioned(file_path) and 'v=' in web.ctx.get('query', ''):
+                # render() stamps these with the file's own mtime, so the URL
+                # cannot outlive the bytes it names: a changed file is a
+                # changed URL. That is what makes it safe to promise the copy
+                # never goes stale — the promise is about this URL, not about
+                # this path.
+                web.header('Cache-Control', 'public, max-age=31536000, immutable')
+            else:
+                # Everything else (vendor bundles, fonts, logos) is served off
+                # an unstamped URL, so it has to be revalidated. no-cache means
+                # "keep it, but ask" — not "do not keep it".
+                web.header('Cache-Control', 'no-cache')
+            if web.ctx.get('env', {}).get('HTTP_IF_NONE_MATCH') == etag:
+                raise web.notmodified()
+
             # 读取并返回文件内容
             with open(full_path, 'rb') as f:
                 return f.read()
 
         except web.HTTPError:
-            # The 404 path above already logged at debug; re-raise as-is so
+            # A 304 or the 404 above, both already handled; re-raise as-is so
             # web.py returns the original status to the client.
             raise
         except Exception as e:

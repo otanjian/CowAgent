@@ -143,6 +143,101 @@ class TestModelsHandler(unittest.TestCase):
 
         self.assertFalse(result["providers"]["deepseek"]["reasoning"]["supported"])
 
+    def test_agent_max_context_tokens_defaults_to_the_shipped_config_default(self):
+        """The console's fallback must match config.py's shipped default.
+
+        A config file written before the key existed has no value for it, so the
+        GET fallback is what the settings page shows; a stale number there makes
+        the user's budget look smaller than the runtime is actually using.
+        """
+        from channel.web.web_channel import ConfigHandler
+
+        # A plain mapping: the point is the *absent* key, which a Config built
+        # from config.py's defaults would silently supply.
+        local_config = {"model": "deepseek-v4-flash", "bot_type": "deepseek"}
+
+        with patch("channel.web.web_channel._require_platform_console", lambda: None), \
+                _no_response_headers():
+            with patch("channel.web.web_channel.conf", return_value=local_config):
+                result = json.loads(ConfigHandler().GET())
+
+        self.assertEqual(result["agent_max_context_tokens"], 64000)
+
+    def test_config_save_evicts_cached_agents_for_the_context_budget_keys(self):
+        """Editing the context budget has to take effect without a restart.
+
+        ``agent_max_context_tokens`` / ``_turns`` / ``agent_max_steps`` are read
+        once when an Agent is constructed and cached on the instance, so a save
+        that only rewrites config.json leaves the running Agent on the old limit
+        (the context-usage chart keeps showing it).
+        """
+        from channel.web.web_channel import ConfigHandler
+
+        local_config = {}
+        file_config = {}
+        payload = {"updates": {"agent_max_context_tokens": 32000}}
+        cleared = []
+
+        class _AgentBridge:
+            def clear_all_sessions(self):
+                cleared.append(True)
+
+        class _Bridge:
+            def __init__(self):
+                self.reset_bot_calls = 0
+
+            def get_agent_bridge(self):
+                return _AgentBridge()
+
+            def reset_bot(self):
+                self.reset_bot_calls += 1
+
+        with patch("channel.web.web_channel._require_platform_console", lambda: None), \
+                patch("channel.web.web_channel.web.header"), \
+                patch("channel.web.web_channel.web.data", return_value=json.dumps(payload).encode()), \
+                patch("channel.web.web_channel.conf", return_value=local_config), \
+                patch("channel.web.web_channel._read_config_file_for_write", return_value=file_config), \
+                patch("bridge.bridge.Bridge", _Bridge), \
+                patch("builtins.open", mock_open()):
+            result = json.loads(ConfigHandler().POST())
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(local_config["agent_max_context_tokens"], 32000)
+        self.assertEqual(file_config["agent_max_context_tokens"], 32000)
+        self.assertEqual(cleared, [True], "the cached Agents were not evicted")
+
+    def test_config_save_leaves_cached_agents_alone_for_unrelated_keys(self):
+        """The eviction is scoped to the baked-in values, not every save."""
+        from channel.web.web_channel import ConfigHandler
+
+        local_config = {}
+        file_config = {}
+        payload = {"updates": {"enable_thinking": True}}
+        cleared = []
+
+        class _AgentBridge:
+            def clear_all_sessions(self):
+                cleared.append(True)
+
+        class _Bridge:
+            def get_agent_bridge(self):
+                return _AgentBridge()
+
+            def reset_bot(self):
+                pass
+
+        with patch("channel.web.web_channel._require_platform_console", lambda: None), \
+                patch("channel.web.web_channel.web.header"), \
+                patch("channel.web.web_channel.web.data", return_value=json.dumps(payload).encode()), \
+                patch("channel.web.web_channel.conf", return_value=local_config), \
+                patch("channel.web.web_channel._read_config_file_for_write", return_value=file_config), \
+                patch("bridge.bridge.Bridge", _Bridge), \
+                patch("builtins.open", mock_open()):
+            result = json.loads(ConfigHandler().POST())
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(cleared, [])
+
     def test_set_asr_capability_persists_provider_and_model(self):
         from channel.web.web_channel import ModelsHandler
 
@@ -193,6 +288,34 @@ class TestModelsHandler(unittest.TestCase):
         self.assertEqual(local_config["voice_to_text_model"], "qwen3-asr-flash")
         self.assertEqual(file_config["voice_to_text_model"], "qwen3-asr-flash")
         self.assertEqual(result["model"], "qwen3-asr-flash")
+
+    def test_set_asr_empty_model_clears_for_default_option(self):
+        # LinkAI exposes an explicit empty-value option ("默认 · 由网关自动
+        # 选择引擎"); picking it must clear the stored model so the gateway
+        # falls back to its own default instead of keeping the old id.
+        # (Upstream added this case; the merge dropped it -- see
+        # evidence/21-upstream-behaviour-audit.md.)
+        from channel.web.web_channel import ModelsHandler
+
+        local_config = {"voice_to_text_model": "doubao"}
+        file_config = {"voice_to_text_model": "doubao"}
+        handler = ModelsHandler()
+
+        with patch("channel.web.web_channel.conf", return_value=local_config):
+            with patch.object(ModelsHandler, "_read_file_config", return_value=file_config):
+                with patch.object(ModelsHandler, "_write_file_config"):
+                    with patch.object(ModelsHandler, "_refresh_voice_routing"):
+                        result = json.loads(handler._handle_set_capability({
+                            "capability": "asr",
+                            "provider_id": "linkai",
+                            "model": "",
+                        }))
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(local_config["voice_to_text"], "linkai")
+        self.assertEqual(local_config["voice_to_text_model"], "")
+        self.assertEqual(file_config["voice_to_text_model"], "")
+        self.assertEqual(result["model"], "")
 
     def test_chat_capability_infers_provider_when_bot_type_empty(self):
         """A config with an empty bot_type but a recognizable model should

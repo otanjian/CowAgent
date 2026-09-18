@@ -131,7 +131,7 @@ def test_failed_pip_resets_git(tmp_path, monkeypatch):
     assert ["git", "reset", "--hard", "abc123"] in calls
 
 
-def test_web_handlers_auth_and_no_github_on_version(monkeypatch):
+def test_web_version_is_local_and_never_contacts_github(monkeypatch):
     if "web" not in sys.modules:
         web_stub = types.ModuleType("web")
         web_stub.HTTPError = type("HTTPError", (Exception,), {})
@@ -141,32 +141,35 @@ def test_web_handlers_auth_and_no_github_on_version(monkeypatch):
         web_stub.input = lambda **kwargs: types.SimpleNamespace(**kwargs)
         sys.modules["web"] = web_stub
 
-    from channel.web.api import update as update_api
+    from channel.web.fork.handlers import update as update_api
 
     monkeypatch.setattr(
         "cli.update_service.fetch_github_releases",
         lambda timeout=20: (_ for _ in ()).throw(AssertionError("no github on version")),
     )
-    with patch("channel.web.api.update.web.header"):
+    with patch("channel.web.fork.handlers.update.web.header"):
         payload = json.loads(update_api.VersionHandler().GET())
     assert "version" in payload
     assert "update_supported" in payload
 
-    with patch("channel.web.api.update._require_auth") as require_auth, \
-         patch("channel.web.api.update.web.header"), \
-         patch("cli.update_service.check_for_updates", return_value={"status": "success", "up_to_date": True, "newer_releases": [], "latest": None, "current_release": None, "current_version": "2.1.8"}):
-        body = json.loads(update_api.UpdateCheckHandler().POST())
-    require_auth.assert_called_once_with()
-    assert body["status"] == "success"
-    assert body["up_to_date"] is True
 
-    with patch("channel.web.api.update._require_auth") as require_status, \
-         patch("channel.web.api.update.web.header"), \
-         patch("cli.update_service.read_update_status", return_value={"state": "idle"}):
-        status = json.loads(update_api.UpdateStatusHandler().GET())
-    require_status.assert_called_once_with()
-    assert status["state"] == "idle"
+def test_the_fork_console_does_not_route_the_one_click_update_api():
+    """FORK DIVERGENCE (adopt-upstream-web-split Phase 3): the fork's console
+    serves its own monolithic UI, so upstream's one-click update menu -- and the
+    ``/api/update/*`` endpoints behind it -- are not routed. ``/api/version``
+    stays, because the version row is shown everywhere. When the split console
+    is wired (tasks 4.4-4.9) this test comes off with the routes that land.
 
+    Registered through the route registry, not asserted against upstream's own
+    ``URLS`` table (which ``build_app()`` exposes for upstream's assembly only).
+    """
+    from channel.web.route_registry import all_routes
+
+    patterns = {entry.pattern for entry in all_routes()}
+    assert "/api/version" in patterns
+    assert not {p for p in patterns if p.startswith("/api/update/")}, sorted(
+        p for p in patterns if p.startswith("/api/update/")
+    )
 
 def test_start_rejects_unsupported_install(monkeypatch, tmp_path):
     monkeypatch.setattr(

@@ -127,7 +127,7 @@ def test_the_handler_actually_serves_the_nested_script_paths():
     reachable, so this goes through the handler that answers /assets/."""
     from unittest.mock import patch
 
-    import channel.web.api.pages as pages_api
+    import channel.web.fork.handlers.pages as pages_api
 
     sent = []
     with patch.object(pages_api.web, "header",
@@ -148,7 +148,7 @@ def test_the_handler_serves_the_assembled_page():
     chat.html is include markers, which a browser renders as nothing."""
     from unittest.mock import patch
 
-    import channel.web.api.pages as pages_api
+    import channel.web.fork.handlers.pages as pages_api
 
     with patch.object(pages_api.web, "header", lambda *a, **k: None):
         html = pages_api.ChatHandler().GET()

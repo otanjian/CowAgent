@@ -33,16 +33,14 @@
 
 ## 3. 吸收上游（阶段 2，merge commit）
 
-- [ ] 3.1 检查阶段 1 证据齐备后，以固定 `$MERGE_SOURCE_SHA` 执行 `git merge --no-ff --no-commit`；记录冲突清单与 `git ls-files -u`
-  - 已执行（`evidence/10-merge-dispositions.md`）：隔离克隆 `/tmp/merge-20260919-020204/repo`，源 `8f1b19f1`、目标 `b5c5090f`（是 HEAD 祖先）、共同祖先 `e5e2a52d`、分支 `c47aa3c8`
-  - 冲突 46 处，与阶段 1 后排练一致；`conflict-baseline.txt` 的 21 行全部命中、无一消失
-  - 已解决 9 处：`.gitignore`（keep-fork，上游 `.obsidian/` 规则置于 fork 段落 banner 之上——banner 自述要求保持最后）、四个 README `keep-deletion`、`PermissionSelector.tsx` `keep-deletion`、以及前端三件（`console.js`/`console.css`/`chat.html`）作为一个整体延后（keep-fork，见 4.4h）
-  - 余 37 处已分类登记（A 文档 8、B 后端接缝 7、C 漂移 19 含 11 个测试文件）
-- [ ] 3.2 引入上游 `channel/web/api/**` 与 `channel/web/core/**`，确认 `web_channel.py` 收敛为 URL 表 + `build_app()`，且不含业务 handler 实现
-  - 已定解析方案（design D8、`evidence/11-entry-module-composition.md`）：入口模块须以**两个独立命名空间**同时提供上游 `URLS`+`build_app()` 与 fork `_WEB_URLS`+`build_web_app()`；上游 handler 类不得以公开名进入入口模块 `globals()`
-  - 硬约束：上游 `api/` 与 fork 的 handler 类 76/79 个中 **64 个同名**，同命名空间必然导致两套 URL 表之一解析到另一栈的 handler——静默错误授权，非崩溃
-  - `build_app()` 不可删除：上游新增 `channel/web/core/channel.py:1507` 调用它
-  - 待办：按 D8 改造入口模块，作为独立可评审提交，并跑路由覆盖与接缝测试
+- [x] 3.1 检查阶段 1 证据齐备后，以固定 `$MERGE_SOURCE_SHA` 执行 `git merge --no-ff --no-commit`；记录冲突清单与 `git ls-files -u`
+  - 排练（`evidence/13`、`evidence/16`）：隔离克隆 `/tmp/merge-20260919-020927/repo`，源 `8f1b19f1`、目标 `163951b5`（本分支），共同祖先 `e5e2a52d`；先 `git rerere` 关闭以取**真实**冲突集（否则第一次解完就再也看不见同一批冲突，「复现基线」无从谈起）
+  - 实测 **46** 处冲突（基线 21 行全部命中、无一消失）；前一轮的中间快照见 `evidence/10`
+  - **真实提交已生成**：`163951b5 merge: sync master into rdai`，第一父 `65596a99`、第二父 `8f1b19f1`，树 `07244685…`；`git ls-files -u` 为空
+- [x] 3.2 引入上游 `channel/web/api/**` 与 `channel/web/core/**`，确认 `web_channel.py` 收敛为 URL 表 + `build_app()`，且不含业务 handler 实现
+  - D8 结论：入口模块现在**定义 0 个** `*Handler` 类（`grep -c '^class .*Handler'` → 0），只有两张 URL 表、`_upstream_namespace()`、`build_app()`、`build_web_app()` 与 fork 的 patch 兼容别名；fork 的 79 个 handler 类在 `channel/web/fork/handlers/*.py`（与上游 `channel/web/api/*.py` 按模块名 1:1 对应）
+  - 上游 `URLS` 与 `build_app()` 按字面保留（`build_app()` 必须存在：上游新增的 `channel/web/core/channel.py:1507` 会 `from channel.web.web_channel import build_app`），上游类只经 `_upstream_namespace()` 的**惰性** import 进入，绝不进本模块 `globals()`
+  - 见 3.2a / 3.2b 两条落地记录与 `evidence/11`、`evidence/12`
 - [x] 3.2a 按 D8 改造入口模块：加入上游 `URLS`（逐字提取自 `origin/master`，非手抄）与 `build_app()`、`_upstream_namespace()`（惰性 import 上游 `api/*`，按 `URLS` 引用的名字逐个取类，缺名显式报错而非回落到 fork 同名声）；fork 路径完全不受影响（`build_web_app()` 仍以 `_WEB_URLS`+本模块 `globals()` 构建，实测 352 项 URL 表正常）
   - 惰性 import 是硬约束而非优化：分支上 `api/**` 尚不存在（随 merge 引入），且 fork 的线上路径不得在 import 期依赖上游栈
   - **连带发现（重要）**：`tests/test_route_registry.py::test_core_files_no_longer_carry_route_literals` 按名禁用 `'/api/health', 'HealthHandler'` 字面量，而上游 `URLS` 逐字包含它——该护栏原把「整个 web 层」等同于「fork 的 web 层」，在吸收上游后会因上游的**合法**代码失败
@@ -50,14 +48,36 @@
   - 字面量禁令改为**逐模块正则**匹配任意 `'/…', 'XHandler'` 手写对（比只认一个已知字符串更强），作用域排除入口模块（其承载上游 `URLS`）与 `route_registry.py`（即清单本身），上游 `api/`、`core/` 不在 fork 的管辖范围
   - 新增 `test_upstream_url_table_is_verbatim_and_separate`：以解析后 `(pattern, handler)` 对的 sha256 钉住上游表（重排字面量不受影响、改任一路由/名字/顺序即失败），并断言 `build_app()` 用 `URLS`、`build_web_app()` 用 `_WEB_URLS`（两栈 64 个同名 handler，混用即静默错栈）
   - 非空验证：改一条路由、把 `build_app()` 换成 `_WEB_URLS`、在 fork 模块手写 URL 表，三处诱因分别精确失败于预期测试（见 `evidence/12-route-table-guardrails.md`）
-- [ ] 3.3 逐项处置 45 处冲突：`seam:` / `keep-fork` / `merge-docs` / `keep-deletion` 各按基线登记，逐路径记录双方意图、最终行为与采用的接缝
-- [ ] 3.4 复核并处置四个 README 的 `keep-deletion`、`PermissionSelector.tsx` 的 `keep-deletion`，以及新增的反方向 `DU`（见 4.3）——不得对文件内删除使用 `keep-deletion`
-- [ ] 3.5 逐项检查**无冲突文件**的上游增量：路由、HTTP 方法、任务字段、通知语义、凭据响应与请求传输，确认未被静默丢弃
-- [ ] 3.6 保留上游新增行为与安全约束，至少包含：上传预览按所选 Agent 限定、仅读 body 的路由的 Agent 解析、飞书群消息提及门控、QQ 文件接收与 Markdown 回复、钉钉收文件、知识库空状态、ASR 模型取配置值
-- [ ] 3.7 保留 fork 侧 `_import_local_file` 的 loopback 与每启动令牌校验，确认未因合并被移除或放宽
+- [x] 3.3 逐项处置 46 处冲突（任务书写的是 45，实测 46）：`seam:` / `keep-fork` / `merge-docs` / `keep-deletion` / `retarget` 各按基线登记，逐路径记录双方意图、最终行为与采用的接缝 —— 见 `evidence/13`（第一轮 30 处）、`evidence/16`（第二轮）、`evidence/19`（桌面凭据接缝）、`evidence/18`（handler 增量缺口）；`scripts/conflict-baseline.txt` 每行都带 disposition，且已按本轮 tip 重新冻结
+- [x] 3.4 复核并处置四个 README 的 `keep-deletion`、`PermissionSelector.tsx` 的 `keep-deletion`，以及新增的反方向 `DU`（见 4.3）——不得对文件内删除使用 `keep-deletion`
+  - 四个 README + `PermissionSelector.tsx`：均确认 `keep-deletion`（理由见基线末尾的 DELIBERATE_REMOVALS 段）
+  - 新增反方向 `UD`（上游删、fork 改）三行：`desktop/build/notarize-dmg.sh` → `take-deletion`（上游 `e3674f89` 退役且删净引用，fork 侧唯一改动是注释里的品牌字样，无能力损失）；`console.js` / `console.css` → `keep-fork`，且基线显式写明「Phase 3（4.4h）完成前不得按删除处置」
+  - 另有两条新 `DU`（`channel/web/README.md`、`channel/web/static/vendor/README.md`）→ `keep-deletion`：前者描述的是**上游**入口模块（「URL 表和别的什么都没有：77 条路由」），与 D8 的入口模块不是一回事，故不随之纳入
+- [x] 3.5 逐项检查**无冲突文件**的上游增量：路由、HTTP 方法、任务字段、通知语义、凭据响应与请求传输，确认未被静默丢弃
+  - 方法（可重跑）：对「两侧自 `e5e2a52d` 起都改过」的全部 348 个文件跑 `git diff --numstat HEAD origin/master`，非零即「上游有、HEAD 无」的候选；未被静默丢弃的判定落在逐行归属，而不是冲突数
+  - **路由 / HTTP 方法**：`scripts/check-route-coverage.py` → `176 routes (68 upstream, 108 fork), 221 method entries, OK`；`tests/test_route_registry.py` 的覆盖不变量（登记的每个方法在 handler 上确有实现）通过，故无方法因合并丢失。仅上游有的 12 条路由见 `evidence/21` §E（一键更新、scheduler runs/create/recipients/instances、session context_usage/compact_context、SPA 深链 catch-all），均属拆分后前端，登记为随 4.3/4.4 落地
+  - **任务字段 / 通知语义**：`agent/tools/scheduler/task_store.py::list_tasks(enabled_only, agent_id)` + `effective_task_agent_id` 过滤 + `_DescStr` 的 created_at 倒序（`87706bee`）在 HEAD 在位；残留计数是 fork 自己的加固（revision 冲突、`TaskWriteLease` 多写者拒绝），上游无对应物。投递语义见 `evidence/21` §C/§H
+  - **凭据响应与请求传输**：桌面令牌链见 `evidence/19`；实例凭据解析见 `evidence/21` §B4/§C/§H；微信公众号上游回退共享凭据文件的那处按 fork 加固保留（§H）
+  - 逐项裁定表：`evidence/21`（§B 已移植、§C fork 加固、§D 同名等价、§E 未路由、§H 非 web 层）
+- [x] 3.6 保留上游新增行为与安全约束，至少包含：上传预览按所选 Agent 限定、仅读 body 的路由的 Agent 解析、飞书群消息提及门控、QQ 文件接收与 Markdown 回复、钉钉收文件、知识库空状态、ASR 模型取配置值
+  - 上传预览按所选 Agent 限定：`_scoped_agent_id(params)` 已接入 `files.py` 的 `UploadHandler.POST` / `VoiceAsrHandler.POST` 与 `knowledge.py` 的 `KnowledgeImportHandler.POST`（multipart 时 query string 优先，与 JSON body 路径同源），有 `tests/test_fork_multipart_agent_scope.py`
+  - 仅读 body 的路由的 Agent 解析：`_request_agent_id` / `_scoped_agent_id` 在 `channel/web/fork/runtime.py` 定义并经 `channel.web.web_channel` 再导出；`tests/test_upload_agent_scope.py`、`test_web_multipart_agent_scope.py` 已指向 fork 实际服务的处理链
+  - 飞书群消息提及门控：在位 —— `feishu_channel.py:549` 的 `_is_mention_bot` 与 `:740-751` 的群门控（覆盖 `text` **与** `post`，且区分「有 mentions 但只@了别人」），合并未削弱
+  - QQ 文件接收与 Markdown 回复：`channel/qq/qq_channel.py` 与 `origin/master` **逐字节相同**，`msg_type=2` 的 Markdown 发送 + 被拒时的纯文本回退 + 原始文件名保留全部在位
+  - 钉钉收文件：在位 —— 单聊与群聊两个 handler 都有 `ContextType.FILE` 缓存分支（`file_cache.add(..., file_type="file")`）与 `ctype is None` 守卫，另有「下载失败即丢弃并告警」的负路
+  - 知识库空状态：**随拆分前端落地，非本阶段可移植** —— 上游该修复（`cbe14fd1` / `d081f65d`）只改 `static/js/views/knowledge.js`，而 fork 的 shell 尚不装载该模块（4.3/4.4）；不得为它去改 fork 单体 `console.js`（违反「不原地编辑上游视图模块」的反向要求）。已在 `evidence/21` §H 显式登记
+  - ASR 模型取配置值：已在 `models.py::_set_asr` 移植（LinkAI 的 `voice_to_text_model` 置空走配置默认值），`tests/test_models_handler.py` / `test_web_search.py` 覆盖
+- [x] 3.7 保留 fork 侧 `_import_local_file` 的 loopback 与每启动令牌校验，确认未因合并被移除或放宽
+  - 复核结论与任务书假设**相反、但结论更强**：该路由与校验都不是 fork 代码，而是上游新增的 `channel/web/core/channel.py::_import_local_file` 与 `channel/web/core/_common.py::_desktop_token_matches()`，且合并树上这两个文件与 `origin/master` **逐字节相同**（无 fork 分支混入，符合 4.7 判据）；`_desktop_token_matches()` 在 `COW_DESKTOP_TOKEN` 缺省时 **fail closed**
+  - 因此校验既没被移除也没被放宽；它只在**上游命名空间**（`build_app()` + `channel/web/api/**`）里被服务，fork 线上路径（`build_web_app()`）的 `/upload` 解析到 `channel/web/fork/handlers/files.py::UploadHandler`（只有 `POST`，无 `local_path` 分支），故桌面端不持有令牌是自洽的
+  - 桌面侧由此降落为**功能移植项**而非合并项：见 `evidence/19` 的「Post-merge audit」段与 `evidence/18`
 - [x] 3.8 逐路径 `git add`，检查暂存内容无无关文件；运行 `git diff --check` / `git diff --cached --check` —— 通过：暂存集仅含合并相关的 342 个文件与本次证据/脚本，`git diff --cached --check` 无告警（曾报 `evidence/18` 文件尾空行的告警已修）；工作树无残留（临时软链 `desktop/node_modules` 仅供 `.cjs` 套件转译用，未暂存即删除）
 - [x] 3.9 运行阶段 2 门槛：规范 §6.2 全量基础回归（含 `tests/test_sync_report.py`、`test_conversation_schema_seam`、`test_scheduler_identity_seam`、`test_startup_hook_seam`、`test_channel_signature_seam`、`test_scheduler_web_update`、`test_upstream_drift_guards`、`test_recovered_entry_acceptance`、`test_desktop_auth_flow`）与路由覆盖校验 —— 门槛子集 **138 passed**；路由覆盖 `scripts/check-route-coverage.py` → `176 routes (68 upstream, 108 fork), 221 method entries, OK`；全量回归见 3.11 的验证段
-- [ ] 3.10 处理本轮 11 处 web 测试漂移：逐文件确认该测试对应的能力已进入目标版本，按新模块位置更新引用；不得删除测试或放宽断言后声称通过
+- [x] 3.10 处理本轮 11 处 web 测试漂移：逐文件确认该测试对应的能力已进入目标版本，按新模块位置更新引用；不得删除测试或放宽断言后声称通过
+  - 处置方式与逐文件对照见 `evidence/21` §A；判定标准是「该测试断言的对象是否仍是被请求实际执行的那份代码」——`build_app()` 组装的 `channel/web/api/**` 在本 change 后不再被线上服务，控制台走 `build_web_app()` + `channel/web/fork/handlers/**`（D8），因此凡仍 import `channel.web.api.*` 的测试都在断言无人调用的代码
+  - 已改指：`test_web_search.py`、`test_chat_model_fallback.py`、`test_web_channel_disconnect.py`、`test_web_console_update.py`、`test_console_channel_manager_resolution.py`、`test_web_multipart_agent_scope.py`、`test_upload_agent_scope.py`、`test_history_agent_workspace.py`、`test_model_catalog_api.py`、`test_route_registry.py`、`tests/_helpers.py`、`test_web_console_assets.py`（该文件仍按 Phase 3 跳过，理由写在文件头）
+  - **漂移本身就是探针**：改指后 `test_web_channel_disconnect.py` 的 5 条路由用例立刻失败（fork 对无 `instance_id` 的旧卡片拒绝 disconnect），版本用例的 `update_supported` 断言也失败——两处都不是「测试过时」，而是真实缺口，已在 §B1/B2/B5 移植修好。未删除任何测试、未放宽任何断言；唯一新增的 skip 是上游的「复活」用例，其前置（`bootstrap_legacy_instances` 合成记录）在 fork 的 no-op passthrough 下不成立，理由写在测试内
+  - `grep -rl 'channel\.web\.api' tests/` 现在只命中 docstring；`tests/e2e` 不在本轮范围（Phase 0 既定）
 - [x] 3.11 生成候选并记录暂存树哈希（`git write-tree`），提交 merge commit `merge: sync master into rdai`，校验第一父为 `$MERGE_TARGET_SHA`、第二父为 `$MERGE_SOURCE_SHA`、树哈希一致
   - 隔离克隆解析后的候选树：`07244685012289d58d5d541b4c6fff632ab4ad21`
   - 工作区分支上的提交：`163951b5`，父为 `65596a99`（rdai 线 + web-split 工作 + 本次证据）与 `8f1b19f1`（`origin/master`），`git rev-parse HEAD^{tree}` 与候选树**逐字节一致**（先用 `git merge --no-commit` 开出 46 处冲突，再 `git read-tree -u --reset <候选树>` 收敛，因此提交树就是被验证过的那棵树）

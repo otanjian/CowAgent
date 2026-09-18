@@ -68,3 +68,19 @@ Note: the node suite is a *frontend* suite. Its behavioural half transpiles the
 real `.ts` sources and needs `desktop/node_modules/typescript`, so the comparison
 was run with the workspace's `desktop/node_modules` temporarily linked in (the
 clone ships no dependencies); the link was removed before staging anything.
+
+## Post-merge audit of the seam (2 assertions that the resolution is *safe*)
+
+Removing a renderer-visible secret is only safe if nothing on the served path
+still demands it. Both halves were re-checked against the committed merge tree:
+
+| question | finding |
+| --- | --- |
+| does the fork edit upstream's Python side? | no: `channel/web/core/channel.py` and `channel/web/core/_common.py` are **byte-identical** to `origin/master` (`git diff origin/master:<path> <path>` is empty). The `_import_local_file` route and `_desktop_token_matches()` are upstream's, unmodified — no fork branch lives in an upstream module (task 4.7's criterion) |
+| is the removed token still required by anything the fork serves? | no: `_desktop_token_matches()` reads `COW_DESKTOP_TOKEN` and **fails closed** when it is unset, so the route it guards can only answer inside upstream's namespace (`build_app()` + `channel/web/api/**`). The fork's live application is `build_web_app()`, and its `/upload` resolves to `channel/web/fork/handlers/files.py::UploadHandler`, which has a `POST` and no `local_path` branch at all — so the desktop sending no token is correct, not a silent 403 |
+
+Consequence for the runtime: the fork's desktop falls back to the multipart
+upload it has always used. Upstream's import-by-path stays a **feature port**
+(evidence/18), and its two ends are now explicit — the renderer needs a path
+(`getPathForFile`, kept) and the main process needs a token it can read
+(`local_import.token`, published `0600`; the fork never reads it yet).

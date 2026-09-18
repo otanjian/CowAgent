@@ -8,6 +8,7 @@ reference each other without import cycles.
 
 from __future__ import annotations
 from bridge.context import *
+from collections import OrderedDict
 from common import const
 from common.log import logger
 from config import (
@@ -20,6 +21,11 @@ from config import (
 import json
 import os
 import web
+
+# Re-exported so the entry module can carry it as a patch seam: the model
+# catalog overlay is upstream's shared runtime module, and the console handler
+# is the only web surface that reads and writes it.
+from models import model_catalog
 
 
 class ModelsHandler:
@@ -86,10 +92,15 @@ class ModelsHandler:
         "zhipu": [
             {"value": "glm-asr-2512", "hint": "智谱语音识别"},
         ],
-        # LinkAI gateway pins whisper-1 for ASR and ignores any other id,
-        # so expose only that to avoid misleading the user.
+        # LinkAI gateway routes ASR by `model` (see
+        # https://docs.link-ai.tech/platform/api/voice-recognition). An empty
+        # value means "let the gateway pick its default engine", so it is a real
+        # choice rather than a missing one — see `_set_asr`.
         "linkai": [
-            {"value": "whisper-1", "hint": "网关固定使用"},
+            {"value": "", "hint": "默认"},
+            {"value": "doubao", "hint": "火山豆包"},
+            {"value": "whisper-1", "hint": "OpenAI Whisper"},
+            {"value": "baidu", "hint": "百度"},
         ],
     }
 
@@ -477,6 +488,8 @@ class ModelsHandler:
         _, active_id = parse_custom_bot_type(bot_type)
 
         meta = ConfigHandler.PROVIDER_MODELS.get("custom") or {}
+        catalog_map = model_catalog.get_catalog_map()
+        hidden_map = model_catalog.get_hidden_map()
         cards = []
         for p in providers:
             pid = p.get("id") or ""
@@ -488,6 +501,9 @@ class ModelsHandler:
             # as configured once it has an api_base, so a keyless-but-valid
             # endpoint isn't shown as an unconfigured (greyed-out) vendor.
             configured = bool(raw_base) or cls._is_real_key(raw_key)
+            # A custom endpoint has no presets, so its overrides are its whole
+            # list and there is nothing to tombstone.
+            catalog = catalog_map.get(f"custom:{pid}") or []
             cards.append({
                 "id": f"custom:{pid}",
                 "label": {"zh": name, "en": name},
@@ -506,7 +522,12 @@ class ModelsHandler:
                 "api_base": raw_base,
                 "api_base_default": "",
                 "api_base_placeholder": meta.get("api_base_placeholder") or "",
-                "models": [p.get("model")] if p.get("model") else [],
+                "catalog": catalog,
+                "hidden": hidden_map.get(f"custom:{pid}") or [],
+                "seed": [],
+                "effective": catalog,
+                "models": ([e["name"] for e in catalog] if catalog
+                           else ([p.get("model")] if p.get("model") else [])),
             })
         return cards
 
@@ -520,6 +541,187 @@ class ModelsHandler:
             return True
         return (cls._is_real_key(local_config.get("custom_api_key") or "")
                 or bool(local_config.get("custom_api_base")))
+
+    # --- model catalog overlay ---------------------------------------
+    # Upstream lets the console edit a provider's model list; the overlay
+    # itself is the shared runtime module ``models.model_catalog`` (merged
+    # whole). These helpers are the web surface for it: presets are the
+    # base, and only what the user actually changed is layered on top, so a
+    # preset the user never touched keeps following the code-side metadata.
+    _PRESET_MODEL_META = {
+        "deepseek-flash": {"capabilities": ["text", "vision"], "context_window": 1000000, "max_output_tokens": 393216},
+        "deepseek-v4-flash": {"context_window": 1000000, "max_output_tokens": 393216},
+        "deepseek-v4-pro": {"context_window": 1000000, "max_output_tokens": 393216},
+        "glm-5.3-flash": {"context_window": 1000000, "max_output_tokens": 131072},
+        "glm-5.3": {"context_window": 1000000, "max_output_tokens": 131072},
+        "glm-5.2": {"context_window": 1000000, "max_output_tokens": 131072},
+        "glm-5.1": {"context_window": 200000},
+        "glm-5-turbo": {"context_window": 200000},
+        "glm-5": {"context_window": 200000},
+        "glm-4.7": {"context_window": 200000},
+        "glm-5v-turbo": {"capabilities": ["text", "vision"]},
+        "qwen3.8-flash": {"context_window": 1000000},
+        "qwen3.8-max": {"context_window": 1000000},
+        "qwen3.7-plus": {"context_window": 1000000},
+        "qwen3.7-max": {"context_window": 1000000},
+        "qwen3.6-plus": {"context_window": 128000},
+        "kimi-k3": {"capabilities": ["text", "vision"], "context_window": 1048576},
+        "kimi-k2.7-code": {"context_window": 262144},
+        "kimi-k2.7-code-highspeed": {"context_window": 262144},
+        "kimi-k2.6": {"context_window": 262144},
+        "kimi-k2.5": {"context_window": 262144},
+        "doubao-seed-2-1-pro-260628": {"context_window": 256000, "max_output_tokens": 32000},
+        "doubao-seed-2-1-turbo-260628": {"context_window": 256000, "max_output_tokens": 32000},
+        "doubao-seed-2-0-pro-260215": {"context_window": 256000},
+        "doubao-seed-2-0-code-preview-260215": {"context_window": 256000},
+        "ernie-5.1": {"context_window": 128000},
+        "ernie-5.0": {"capabilities": ["text", "vision"], "context_window": 128000},
+        "ernie-x1.1": {"context_window": 64000},
+        "ernie-4.5-turbo-128k": {"context_window": 128000, "max_output_tokens": 16000},
+        "ernie-4.5-turbo-32k": {"context_window": 32000, "max_output_tokens": 16000},
+        "ernie-4.5-turbo-vl": {"capabilities": ["text", "vision"], "context_window": 128000, "max_output_tokens": 16000},
+        "MiniMax-M3": {"capabilities": ["text", "vision"], "context_window": 1000000, "max_output_tokens": 512000},
+        "MiniMax-M2.7": {"capabilities": ["text", "vision"], "context_window": 204800, "max_output_tokens": 196608},
+        "MiniMax-M2.7-highspeed": {"capabilities": ["text", "vision"], "context_window": 204800, "max_output_tokens": 196608},
+        "MiniMax-Text-01": {"context_window": 1000000},
+        "mimo-v2.5-pro": {"context_window": 1000000, "max_output_tokens": 131072},
+        "mimo-v2.5": {"context_window": 1000000, "max_output_tokens": 131072},
+        "gpt-5.6-luna": {"context_window": 1050000, "max_output_tokens": 128000},
+        "gpt-5.6-terra": {"context_window": 1050000, "max_output_tokens": 128000},
+        "gpt-5.6-sol": {"context_window": 1050000, "max_output_tokens": 128000},
+        "gpt-5.5": {"context_window": 1050000, "max_output_tokens": 128000},
+        "gpt-5.4": {"context_window": 1050000, "max_output_tokens": 128000},
+        "gpt-5.4-mini": {"context_window": 1050000, "max_output_tokens": 128000},
+        "gpt-5.4-nano": {"context_window": 1050000, "max_output_tokens": 128000},
+        "gpt-5": {"context_window": 400000, "max_output_tokens": 128000},
+        "gpt-4.1": {"context_window": 1047576, "max_output_tokens": 32768},
+        "gpt-4.1-mini": {"context_window": 1047576, "max_output_tokens": 32768},
+        "gpt-4o": {"context_window": 128000, "max_output_tokens": 16384},
+        "claude-opus-5": {"context_window": 1000000, "max_output_tokens": 128000},
+        "claude-sonnet-5": {"context_window": 1000000, "max_output_tokens": 128000},
+        "claude-fable-5": {"context_window": 1000000, "max_output_tokens": 128000},
+        "claude-opus-4-8": {"context_window": 200000, "max_output_tokens": 64000},
+        "claude-opus-4-7": {"context_window": 200000, "max_output_tokens": 64000},
+        "claude-sonnet-4-6": {"context_window": 200000, "max_output_tokens": 64000},
+        "claude-opus-4-6": {"context_window": 200000, "max_output_tokens": 64000},
+        "gemini-3.7-flash": {"context_window": 1048576, "max_output_tokens": 65536},
+        "gemini-3.6-flash": {"context_window": 1048576, "max_output_tokens": 65536},
+        "gemini-3.5-flash": {"context_window": 1048576, "max_output_tokens": 65536},
+        "gemini-3.1-flash-lite-preview": {"context_window": 1048576, "max_output_tokens": 65536},
+        "gemini-3.1-pro-preview": {"context_window": 1048576, "max_output_tokens": 65536},
+        "gemini-3-flash-preview": {"context_window": 1048576, "max_output_tokens": 65536},
+    }
+
+    @classmethod
+    def _apply_catalog(cls, presets: dict, capability, custom_cards=None) -> dict:
+        """Layer per-provider catalog overlays onto a capability's model list.
+
+        A provider without any overlay keeps its presets untouched. When the
+        user has an overlay, the provider's effective list (preset base minus
+        tombstones, plus overrides) is filtered to `capability` ("text" for the
+        main chat model) so only models that can serve this role are offered."""
+        from channel.web.web_channel import ConfigHandler
+        provider_models = ConfigHandler.PROVIDER_MODELS
+        merged = dict(presets)
+        catalog_map = model_catalog.get_catalog_map()
+        hidden_map = model_catalog.get_hidden_map()
+        ids = [pid for pid in list(merged.keys()) + list(provider_models.keys())
+               if pid != "custom"]
+        ids += [c["id"] for c in (custom_cards or [])]
+        for pid in dict.fromkeys(ids):  # dedupe, keep order
+            if not catalog_map.get(pid) and not hidden_map.get(pid):
+                continue  # no overlay: presets stand as-is
+            base_seed = [] if pid.startswith("custom:") else cls._preset_seed(pid)
+            effective = cls._merged_catalog(pid, base_seed, catalog_map, hidden_map)
+            merged[pid] = [
+                {"value": e["name"]} for e in effective
+                if capability is None or capability in (e.get("capabilities") or [])
+            ]
+        return merged
+
+    @classmethod
+    def _preset_seed(cls, pid: str) -> List[dict]:
+        """Type-tagged catalog entries for a built-in vendor's preset models.
+
+        Membership in the per-capability preset lists IS the type: the chat
+        list -> "text", the vision list -> "vision", etc. Tags merge across
+        lists (gpt-4o -> text+vision, mimo-v2.5 -> text+vision+tts), so the
+        catalog editor seeds each preset with its real capabilities."""
+        from channel.web.web_channel import ConfigHandler
+        merged: "OrderedDict[str, dict]" = OrderedDict()
+
+        def add(name, cap):
+            if not name:
+                return
+            entry = merged.setdefault(name, {"name": name, "capabilities": []})
+            if cap not in entry["capabilities"]:
+                entry["capabilities"].append(cap)
+
+        for m in ConfigHandler.PROVIDER_MODELS.get(pid, {}).get("models") or []:
+            add(m if isinstance(m, str) else m.get("value"), "text")
+        tables = (
+            ("vision", cls._VISION_PROVIDER_MODELS),
+            ("asr", cls._ASR_PROVIDER_MODELS),
+            ("tts", cls._TTS_PROVIDER_MODELS),
+            ("embedding", cls._EMBEDDING_PROVIDER_MODELS),
+            ("image", cls._IMAGE_PROVIDER_MODELS),
+        )
+        for cap, table in tables:
+            for m in table.get(pid) or []:
+                add(m if isinstance(m, str) else m.get("value"), cap)
+        from agent.protocol.agent import resolve_family_spec
+        for entry in merged.values():
+            extra = cls._PRESET_MODEL_META.get(entry["name"]) or {}
+            for cap in extra.get("capabilities", []):
+                if cap not in entry["capabilities"]:
+                    entry["capabilities"].append(cap)
+            # Explicit researched specs win; otherwise fall back to the runtime
+            # family table so the editor shows the same budget that actually
+            # takes effect (e.g. gpt-6-astra -> 1M/128K) instead of a blank.
+            fam_window, fam_output = resolve_family_spec(entry["name"])
+            window = extra.get("context_window") or fam_window
+            output = extra.get("max_output_tokens") or fam_output
+            if window:
+                entry["context_window"] = window
+            if output:
+                entry["max_output_tokens"] = output
+        return list(merged.values())
+
+    @classmethod
+    def _merged_catalog(cls, pid, base_seed=None, catalog_map=None, hidden_map=None) -> List[dict]:
+        """The provider's effective model list: preset base, minus removals,
+        with user overrides layered on.
+
+        The catalog is an overlay, not a replacement — a preset the user never
+        touched stays on the list (and keeps following the code-side metadata),
+        an overridden preset takes the user's values, a tombstoned preset drops
+        out, and an override with a new name is appended.
+
+        ``base_seed`` is the preset base; for a built-in vendor it defaults to
+        ``_preset_seed(pid)``, and a custom provider passes ``[]`` (no presets,
+        so its overrides are simply its whole list)."""
+        if catalog_map is None:
+            catalog_map = model_catalog.get_catalog_map()
+        if hidden_map is None:
+            hidden_map = model_catalog.get_hidden_map()
+        overrides = catalog_map.get(pid) or []
+        hidden = set(hidden_map.get(pid) or [])
+        if base_seed is None:
+            base_seed = [] if pid == "custom" else cls._preset_seed(pid)
+
+        override_by_name = {e["name"]: e for e in overrides}
+        merged: "OrderedDict[str, dict]" = OrderedDict()
+        for entry in base_seed:
+            name = entry.get("name")
+            if not name or name in hidden:
+                continue
+            merged[name] = override_by_name.get(name, entry)
+        # Appended models (overrides the presets don't carry), order preserved.
+        for entry in overrides:
+            name = entry.get("name")
+            if name and name not in merged:
+                merged[name] = entry
+        return list(merged.values())
 
     @classmethod
     def _provider_overview(cls) -> List[dict]:
@@ -540,6 +742,8 @@ class ModelsHandler:
         # ones when the flat custom_api_key/base config is active or filled,
         # so existing single-provider setups never disappear from the UI.
         keep_legacy_custom = cls._legacy_custom_in_use(local_config)
+        catalog_map = model_catalog.get_catalog_map()
+        hidden_map = model_catalog.get_hidden_map()
         items = []
         for pid, p in ConfigHandler.PROVIDER_MODELS.items():
             if pid == "custom" and custom_cards:
@@ -553,6 +757,13 @@ class ModelsHandler:
             raw_key = local_config.get(key_field, "") if key_field else ""
             raw_base = local_config.get(base_field, "") if base_field else ""
             configured = cls._is_real_key(raw_key)
+            overrides = catalog_map.get(pid) or []
+            hidden = hidden_map.get(pid) or []
+            seed = [] if pid == "custom" else cls._preset_seed(pid)
+            # The editor prefills from the effective list (presets minus
+            # removals, plus overrides), so the user always edits the full
+            # list — adding one model can no longer wipe the rest.
+            effective = cls._merged_catalog(pid, seed, catalog_map, hidden_map)
             items.append({
                 "id": pid,
                 "label": p["label"],
@@ -564,7 +775,17 @@ class ModelsHandler:
                 "api_base": raw_base or (p.get("api_base_default") or ""),
                 "api_base_default": p.get("api_base_default") or "",
                 "api_base_placeholder": p.get("api_base_placeholder") or "",
-                "models": list(p.get("models") or []),
+                # Raw stored overlay (overrides + tombstones), so the editor can
+                # tell what the user actually changed from the presets.
+                "catalog": overrides,
+                "hidden": hidden,
+                # Preset models pre-typed with their real capabilities: the base
+                # the editor diffs against and the "restore presets" reset uses.
+                "seed": seed,
+                # The full effective list the editor loads as its rows.
+                "effective": effective,
+                "models": [e["name"] for e in effective] if effective
+                          else list(p.get("models") or []),
             })
 
         def _sort_key(it):
@@ -680,6 +901,10 @@ class ModelsHandler:
             "current_provider": provider_id,
             "current_model": local_config.get("model", ""),
             "providers": provider_ids,
+            # Chat has no preset model list of its own (the vendors' models[]
+            # drives the dropdown); a catalog still narrows it to text-tagged
+            # entries, so a model the user re-tagged away stops being offered.
+            "provider_models": cls._apply_catalog({}, "text", custom_cards),
             "use_linkai": bool(local_config.get("use_linkai", False)),
         }
 
@@ -701,34 +926,64 @@ class ModelsHandler:
 
     @classmethod
     def _chat_fallback_capability(cls, local_config: dict) -> dict:
-        """The backup chat model, tried only after the primary one fails.
+        """The fallback chain, tried in order after the primary model fails.
 
         Deliberately separate from ``_chat_capability``: the primary model is
         the one that answers, while this is a safety net that stays idle until
-        an outage. It is opt-in (``enabled`` defaults to false) and needs both
-        a provider and a model — a half-filled entry is treated as "off" so a
-        partially configured fallback can never hijack a healthy setup.
+        an outage. It is opt-in (``enabled`` defaults to false) and every link
+        needs both a provider and a model — a half-filled link is dropped so a
+        partially configured chain can never hijack a healthy setup.
+
+        The chain is ordered and unbounded: the console renders one editable
+        row per link and the runtime walks them front to back, so the number of
+        links the user saves *is* the number of backups a turn gets.
         """
         cfg = local_config.get("chat_fallback") or {}
         if not isinstance(cfg, dict):
             cfg = {}
-        provider_id = (cfg.get("provider") or "").strip()
-        model = (cfg.get("model") or "").strip()
+        raw_chain = cfg.get("chain")
+        chain = []
+        if isinstance(raw_chain, list):
+            for item in raw_chain:
+                if not isinstance(item, dict):
+                    continue
+                chain.append({
+                    "provider": (item.get("provider") or "").strip(),
+                    "model": (item.get("model") or "").strip(),
+                })
+        elif cfg.get("provider") or cfg.get("model"):
+            # Pre-chain config: surface it as a one-link chain so the console
+            # shows what is configured instead of an empty list. `config.py`
+            # migrates this shape at startup; this keeps a config read before
+            # the migration (a test harness, say) from looking empty.
+            chain = [{
+                "provider": (cfg.get("provider") or "").strip(),
+                "model": (cfg.get("model") or "").strip(),
+            }]
         # Same provider list as the primary chat card, so the two dropdowns
         # always offer identical choices (including expanded custom:<id>).
         primary = cls._chat_capability(local_config)
+        # Same model lists too: start from the vendors' presets and let a
+        # catalog override them, which is what the primary card does. Building
+        # this from the presets alone would leave the fallback on a free-form
+        # model field for a vendor whose models the primary card can list.
+        custom_cards = cls._custom_provider_cards(local_config)
         return {
             "editable": True,
             "enabled": bool(cfg.get("enabled", False)),
-            "current_provider": provider_id,
-            "current_model": model,
             "providers": primary.get("providers", []),
             # The model picker expects {provider_id: [models]}. PROVIDER_MODELS
             # is richer ({provider_id: {label, models, ...}}), so reduce it to
             # just the lists — handing over the raw dict makes the web console
             # call .slice() on a mapping and throw.
-            "provider_models": cls._chat_provider_models(),
-            "max_switches": cfg.get("max_switches", 1),
+            "provider_models": cls._apply_catalog(
+                cls._chat_provider_models(), "text", custom_cards),
+            "chain": chain,
+            # Kept for older clients that still read a single backup model:
+            # link 1 of the chain, so a console that has not been updated to the
+            # chain shape does not show a blank entry.
+            "current_provider": chain[0]["provider"] if chain else "",
+            "current_model": chain[0]["model"] if chain else "",
             # Shown in the UI so it's obvious the fallback is inactive.
             "primary_provider": primary.get("current_provider", ""),
             "primary_model": primary.get("current_model", ""),
@@ -875,7 +1130,9 @@ class ModelsHandler:
             "fallback_provider": predicted["provider"],
             "fallback_model": predicted["model"],
             "providers": providers,
-            "provider_models": cls._VISION_PROVIDER_MODELS,
+            "provider_models": cls._apply_catalog(
+                cls._VISION_PROVIDER_MODELS, "vision", custom_cards
+            ),
         }
 
     @classmethod
@@ -906,7 +1163,7 @@ class ModelsHandler:
             "suggested_provider": suggested,
             "current_model": (local_config.get("voice_to_text_model") or "") if explicit else "",
             "providers": providers,
-            "provider_models": cls._ASR_PROVIDER_MODELS,
+            "provider_models": cls._apply_catalog(cls._ASR_PROVIDER_MODELS, "asr", custom_cards),
         }
 
     @classmethod
@@ -939,7 +1196,7 @@ class ModelsHandler:
             "current_model": (local_config.get("text_to_voice_model") or "") if ui_provider else "",
             "current_voice": (local_config.get("tts_voice_id") or "") if ui_provider else "",
             "providers": providers,
-            "provider_models": cls._TTS_PROVIDER_MODELS,
+            "provider_models": cls._apply_catalog(cls._TTS_PROVIDER_MODELS, "tts", custom_cards),
             "provider_voices": cls._TTS_PROVIDER_VOICES,
             "reply_mode": cls._tts_reply_mode(local_config),
         }
@@ -997,7 +1254,7 @@ class ModelsHandler:
             "current_model": local_config.get("embedding_model", "") or "",
             "current_dim": int(local_config.get("embedding_dimensions") or 0) or None,
             "providers": providers,
-            "provider_models": cls._EMBEDDING_PROVIDER_MODELS,
+            "provider_models": cls._apply_catalog(cls._EMBEDDING_PROVIDER_MODELS, "embedding", custom_cards),
         }
 
     # Auto-fallback order for image generation. Mirrors the global priority
@@ -1105,13 +1362,17 @@ class ModelsHandler:
             "fallback_provider": predicted["provider"],
             "fallback_model": predicted["model"],
             "providers": providers,
-            "provider_models": cls._IMAGE_PROVIDER_MODELS,
+            "provider_models": cls._apply_catalog(cls._IMAGE_PROVIDER_MODELS, "image", custom_cards),
             "runtime_active": True,
         }
 
     # Canonical search provider order. Mirrors PROVIDER_ORDER in
-    # agent/tools/web_search/web_search.py — keep them in sync.
-    _SEARCH_PROVIDERS = ("bocha", "qianfan", "zhipu", "linkai", "anysearch", "serply")
+    # agent/tools/web_search/web_search.py — keep them in sync. The test
+    # tests/test_web_search.py asserts the two are equal, so a provider the
+    # runtime supports but this list omits is a console-side capability gap
+    # (tavily/searxng/keenable were exactly that before this list caught up).
+    _SEARCH_PROVIDERS = ("bocha", "qianfan", "zhipu", "linkai", "anysearch", "serply",
+                         "tavily", "searxng", "keenable")
 
     _SEARCH_PROVIDER_LABELS = {
         "bocha":   {"zh": "博查", "en": "Bocha"},
@@ -1120,6 +1381,9 @@ class ModelsHandler:
         "linkai":  {"zh": "LinkAI", "en": "LinkAI"},
         "anysearch": {"zh": "AnySearch", "en": "AnySearch"},
         "serply":  {"zh": "Serply", "en": "Serply"},
+        "tavily":  {"zh": "Tavily", "en": "Tavily"},
+        "searxng": {"zh": "SearXNG", "en": "SearXNG"},
+        "keenable": {"zh": "Keenable", "en": "Keenable"},
     }
 
     @classmethod
@@ -1145,6 +1409,17 @@ class ModelsHandler:
             block = tools_cfg.get("web_search") or {} if isinstance(tools_cfg, dict) else {}
             return (block.get("serply_api_key") if isinstance(block, dict) else "") or os.environ.get(
                 "SERPLY_API_KEY", "")
+        if provider == "tavily":
+            tools_cfg = local_config.get("tools") or {}
+            block = tools_cfg.get("web_search") or {} if isinstance(tools_cfg, dict) else {}
+            return (block.get("tavily_api_key") if isinstance(block, dict) else "") or os.environ.get(
+                "TAVILY_API_KEY", "")
+        if provider == "keenable":
+            tools_cfg = local_config.get("tools") or {}
+            block = tools_cfg.get("web_search") or {} if isinstance(tools_cfg, dict) else {}
+            return (block.get("keenable_api_key") if isinstance(block, dict) else "") or os.environ.get(
+                "KEENABLE_API_KEY", "")
+        # searxng uses an instance URL, not an API key — handled in _search_capability
         return ""
 
     @classmethod
@@ -1159,11 +1434,28 @@ class ModelsHandler:
         if not isinstance(ws_cfg, dict):
             ws_cfg = {}
 
+        # Providers that can be usable without a key of their own: anysearch and
+        # keenable have a keyless tier behind an explicit opt-in, and searxng is
+        # a self-hosted instance addressed by URL rather than authenticated.
+        anonymous_on = bool(ws_cfg.get("anysearch_anonymous"))
+        keenable_anonymous_on = bool(ws_cfg.get("keenable_anonymous"))
+        searxng_url = (ws_cfg.get("searxng_url") or "").strip()
+
         providers = []
         configured_ids = []
         for pid in cls._SEARCH_PROVIDERS:
-            ok = cls._is_real_key(cls._search_provider_key(pid, local_config))
-            raw_key = cls._search_provider_key(pid, local_config) if ok else ""
+            raw_key = cls._search_provider_key(pid, local_config)
+            if pid == "anysearch":
+                # AnySearch: real key, or an explicit anonymous opt-in.
+                ok = cls._is_real_key(raw_key) or anonymous_on
+            elif pid == "keenable":
+                # Keenable: real key, or an explicit anonymous opt-in.
+                ok = cls._is_real_key(raw_key) or keenable_anonymous_on
+            elif pid == "searxng":
+                # SearXNG: self-hosted, no auth — available once a URL is set.
+                ok = bool(searxng_url)
+            else:
+                ok = cls._is_real_key(raw_key)
             providers.append({
                 "id": pid,
                 "label": cls._SEARCH_PROVIDER_LABELS.get(pid, pid),
@@ -1171,7 +1463,13 @@ class ModelsHandler:
                 # bocha owns its key under tools.web_search; the other three
                 # piggy-back on a model-vendor credential. Frontend uses
                 # this hint to decide which credential editor to surface.
-                "needs_dedicated_key": pid in ("bocha", "anysearch", "serply"),
+                # Lets the frontend badge "匿名/anonymous" only in anonymous mode.
+                "anonymous": pid in ("anysearch", "keenable") and ok and not raw_key,
+                "needs_dedicated_key": pid in ("bocha", "anysearch", "serply", "tavily", "keenable"),
+                "needs_url": pid == "searxng",
+                # SearXNG stores an instance URL (not a secret), so echo it back
+                # verbatim to prefill/edit; other providers mask their key.
+                "url_masked": searxng_url if pid == "searxng" else "",
                 "api_key_masked": ConfigHandler._mask_key(raw_key) if raw_key else "",
             })
             if ok:
@@ -1249,6 +1547,8 @@ class ModelsHandler:
                 return self._handle_set_active_custom_provider(data)
             if action == "set_capability":
                 return self._handle_set_capability(data)
+            if action == "save_catalog":
+                return self._handle_save_catalog(data)
             if action == "set_voice_reply_mode":
                 return self._handle_set_voice_reply_mode(data)
             if action == "set_search_credential":
@@ -1534,6 +1834,7 @@ class ModelsHandler:
                 new_bot_type = "custom"  # revert to legacy
 
         self._persist_custom_providers(remaining, new_bot_type)
+        model_catalog.remove_catalog(f"custom:{provider_id}")
         logger.info(f"[ModelsHandler] custom provider id={provider_id} deleted")
         return json.dumps({"status": "success", "id": provider_id})
 
@@ -1554,6 +1855,25 @@ class ModelsHandler:
         logger.info(f"[ModelsHandler] active custom provider set to id={provider_id}")
         return json.dumps({"status": "success", "active_id": provider_id})
 
+    def _handle_save_catalog(self, data: dict) -> str:
+        """Replace one provider's model catalog wholesale (empty list -> back
+        to presets). Metadata-only: no bridge reset needed, the budget and
+        max_output_tokens resolution read the catalog per call."""
+        provider_id = (data.get("provider_id") or "").strip()
+        if not provider_id:
+            return json.dumps({"status": "error", "message": "provider_id is required"})
+        from channel.web.web_channel import ConfigHandler
+        if (provider_id not in ConfigHandler.PROVIDER_MODELS
+                and not provider_id.startswith("custom:")):
+            return json.dumps({"status": "error", "message": f"unknown provider: {provider_id}"})
+        try:
+            entries = model_catalog.save_catalog(
+                provider_id, data.get("models"), data.get("hidden"))
+        except ValueError as e:
+            return json.dumps({"status": "error", "message": str(e)})
+        logger.info(f"[ModelsHandler] catalog saved: provider={provider_id} models={len(entries)}")
+        return json.dumps({"status": "success", "provider_id": provider_id, "models": entries})
+
     def _handle_set_capability(self, data: dict) -> str:
         capability = (data.get("capability") or "").strip()
         provider_id = (data.get("provider_id") or "").strip()
@@ -1566,7 +1886,7 @@ class ModelsHandler:
                 provider_id,
                 model,
                 bool(data.get("enabled")),
-                data.get("max_switches"),
+                chain=data.get("chain"),
             )
         if capability == "vision":
             return self._set_vision(provider_id, model)
@@ -1714,59 +2034,112 @@ class ModelsHandler:
         self._reset_bridge()
         return json.dumps({"status": "success", "applied": applied})
 
-    def _set_chat_fallback(self, provider_id: str, model: str, enabled: bool,
-                           max_switches=None) -> str:
-        """Persist the backup chat model under ``chat_fallback``.
+    def _normalized_custom_provider(self, provider_id: str):
+        """Resolve a ``custom:<id>`` provider id, or None for a builtin one.
 
-        Validation mirrors ``_set_chat`` (custom:<id> ids included), with two
-        differences: the entry is opt-in via ``enabled``, and turning it on
-        requires both a provider and a model so a half-configured fallback can
-        never hijack a healthy primary model.
+        Returns ``(provider_entry, error_json)``; exactly one is set. Kept
+        separate so a fallback chain can reuse the lookup per link instead of
+        duplicating it.
         """
         from channel.web.web_channel import ConfigHandler
         from channel.web.web_channel import conf
-        custom_provider = None
+        if not provider_id:
+            return None, None
         if provider_id.startswith("custom:"):
             from models.custom_provider import parse_custom_bot_type
             _, custom_id = parse_custom_bot_type(provider_id)
             providers = self._normalize_custom_providers(conf().get("custom_providers"))
             custom_provider = next((p for p in providers if p.get("id") == custom_id), None)
             if custom_provider is None:
-                return json.dumps({"status": "error", "message": f"unknown custom provider id: {custom_id}"})
-        elif provider_id and provider_id not in ConfigHandler.PROVIDER_MODELS:
-            return json.dumps({"status": "error", "message": f"unknown provider: {provider_id}"})
+                return None, json.dumps({"status": "error",
+                                         "message": f"unknown custom provider id: {custom_id}"})
+            return custom_provider, None
+        if provider_id not in ConfigHandler.PROVIDER_MODELS:
+            return None, json.dumps({"status": "error",
+                                     "message": f"unknown provider: {provider_id}"})
+        return None, None
 
-        # Fall back to the custom provider's default model when none is given.
-        if not model and custom_provider:
-            model = custom_provider.get("model") or ""
+    def _set_chat_fallback(self, provider_id: str, model: str, enabled: bool,
+                           chain=None) -> str:
+        """Persist the fallback chain under ``chat_fallback``.
 
-        # Enabling is all-or-nothing; disabling is always allowed (it is the
-        # safe direction, and lets a user clear a broken entry).
-        if enabled and (not provider_id or not model):
+        ``chain`` is an ordered list of ``{"provider", "model"}`` links, tried
+        front to back after the primary model fails a turn for good. It is
+        unbounded: however many links are saved is how many backups a turn
+        gets, so there is no cap to configure (the runtime's own pass limit
+        lives in ``bridge.agent_bridge``).
+
+        For callers still sending the single-model shape (``provider_id`` /
+        ``model``), the pair is folded into a one-link chain, so an older
+        client — including a console that has not been updated to the chain
+        shape — keeps working against the new config. ``bridge/agent_bridge.py``
+        reads the chain, so writing the pre-chain shape here would look saved
+        and never apply.
+
+        Validation mirrors ``_set_chat`` (custom:<id> ids included), with two
+        differences: the chain is opt-in via ``enabled``, and turning it on
+        requires at least one fully specified link so a half-configured
+        fallback can never hijack a healthy primary model. Individual links
+        that are incomplete are dropped rather than rejected — one bad row
+        should not block saving the good ones.
+        """
+        from channel.web.web_channel import conf
+        if chain is not None:
+            if not isinstance(chain, list):
+                return json.dumps({"status": "error", "message": "chain must be a list"})
+            raw_links = chain
+        else:
+            raw_links = [{"provider": provider_id or "", "model": model or ""}]
+
+        links = []
+        for item in raw_links:
+            if not isinstance(item, dict):
+                continue
+            link_provider = (item.get("provider") or "").strip()
+            link_model = (item.get("model") or "").strip()
+            if not link_provider and not link_model:
+                continue  # a row the user added and never filled in
+            custom_provider, err = self._normalized_custom_provider(link_provider)
+            if err:
+                return err
+            # Fall back to the custom provider's default model when none is given.
+            if not link_model and custom_provider:
+                link_model = custom_provider.get("model") or ""
+            if not link_provider or not link_model:
+                continue  # half a link routes nowhere
+            links.append({"provider": link_provider, "model": link_model})
+
+        # Enabling needs at least one usable link; disabling is always allowed
+        # (it is the safe direction, and lets a user clear a broken entry).
+        if enabled and not links:
             return json.dumps({
                 "status": "error",
-                "message": "both a provider and a model are required to enable the fallback",
+                "message": "at least one provider/model pair is required to enable the fallback",
             })
-
-        try:
-            switches = int(max_switches) if max_switches is not None else 1
-        except (TypeError, ValueError):
-            switches = 1
-        # At least one switch, or the fallback could never engage at all.
-        switches = max(1, min(switches, 5))
 
         local_config = conf()
         file_cfg = self._read_file_config()
         payload = {
             "enabled": bool(enabled),
-            "provider": provider_id or "",
-            "model": model or "",
-            "max_switches": switches,
+            "chain": links,
         }
-        # Written as a whole so a stale key from an older shape can't survive.
+        # Written as a whole so a stale key from the pre-chain shape
+        # (provider/model/max_switches) can't survive and win later.
         local_config["chat_fallback"] = dict(payload)
         file_cfg["chat_fallback"] = dict(payload)
         self._write_file_config(file_cfg)
+
+        # Turning the fallback off must take effect now, not on the next run
+        # boundary. A model that had already switched to a backup keeps its
+        # engaged fallback state on the long-lived AgentLLMModel, so clear it
+        # across all live agents — otherwise disabling appears to do nothing and
+        # the backup model keeps answering.
+        if not enabled:
+            try:
+                from bridge.bridge import Bridge
+                Bridge().get_agent_bridge().clear_all_model_fallbacks()
+            except Exception as clear_err:
+                logger.warning(f"[ModelsHandler] failed to clear engaged fallbacks: {clear_err}")
 
         logger.info(f"[ModelsHandler] chat fallback updated: {payload}")
         return json.dumps({"status": "success", "applied": payload})
@@ -1876,13 +2249,24 @@ class ModelsHandler:
         file_cfg = self._read_file_config()
         local_config["voice_to_text"] = provider_id
         file_cfg["voice_to_text"] = provider_id
-        # Only overwrite the model when one is supplied. An empty model means
-        # "keep whatever is configured" so switching provider from the console
-        # never wipes a user's hand-set voice_to_text_model (runtime falls back
-        # to the engine default via `or DEFAULT_ASR_MODEL` regardless).
+        # Normally an empty model means "keep whatever is configured" so
+        # switching provider from the console never wipes a user's hand-set
+        # voice_to_text_model (runtime falls back to the engine default via
+        # `or DEFAULT_ASR_MODEL` regardless). The exception is a provider that
+        # exposes an explicit empty-value option (LinkAI's "默认": the gateway
+        # picks the engine): choosing it is a deliberate "use the gateway
+        # default", so clear the stored model instead of silently keeping the
+        # old id that the gateway would then route by.
+        offers_default = any(
+            (m if isinstance(m, str) else m.get("value", "")) == ""
+            for m in (self._ASR_PROVIDER_MODELS.get(provider_id) or [])
+        )
         if model:
             local_config["voice_to_text_model"] = model
             file_cfg["voice_to_text_model"] = model
+        elif offers_default:
+            local_config["voice_to_text_model"] = ""
+            file_cfg["voice_to_text_model"] = ""
         self._write_file_config(file_cfg)
         logger.info(
             f"[ModelsHandler] asr updated: provider={provider_id!r} "
@@ -1989,13 +2373,50 @@ class ModelsHandler:
     def _handle_set_search_credential(self, data: dict) -> str:
         """Persist a dedicated search-provider key under tools.web_search.
 
-        bocha, anysearch and serply own their keys here; zhipu/qianfan/linkai
-        reuse model-vendor credentials and go through set_provider instead.
+        bocha, anysearch, serply and keenable own their keys here; anysearch
+        and keenable also take an ``anonymous`` flag that, with an empty key,
+        turns on their keyless tier (``<provider>_anonymous``). searxng takes an
+        instance URL instead of a key. zhipu/qianfan/linkai reuse model-vendor
+        credentials and go through set_provider instead.
         """
         from channel.web.web_channel import conf
         provider = (data.get("provider") or "bocha").strip().lower()
-        if provider not in ("bocha", "anysearch", "serply"):
+        if provider not in ("bocha", "anysearch", "serply", "tavily", "searxng", "keenable"):
             return json.dumps({"status": "error", "message": f"unsupported search provider: {provider!r}"})
+
+        if provider in ("anysearch", "keenable"):
+            anonymous = data.get("anonymous", False)
+            api_key = (data.get("api_key") or "").strip() if isinstance(data.get("api_key"), str) else ""
+            key_field = f"{provider}_api_key"
+            anonymous_field = f"{provider}_anonymous"
+            # A key and the keyless tier are mutually exclusive: sending a key
+            # turns the anonymous flag off rather than leaving it on to be picked
+            # up if the key is later cleared.
+            anonymous_on = bool(anonymous and not api_key)
+
+            local_config = conf()
+            file_cfg = self._read_file_config()
+            self._set_nested_namespace_value(local_config, "tools", "web_search", key_field, api_key)
+            self._set_nested_namespace_value(file_cfg, "tools", "web_search", key_field, api_key)
+            self._set_nested_namespace_value(local_config, "tools", "web_search", anonymous_field, anonymous_on)
+            self._set_nested_namespace_value(file_cfg, "tools", "web_search", anonymous_field, anonymous_on)
+            self._write_file_config(file_cfg)
+            logger.info(
+                f"[ModelsHandler] search credential set: {key_field}={'***' if api_key else ''}, "
+                f"{anonymous_field}={anonymous_on}")
+            return json.dumps({"status": "success", "provider": provider})
+
+        if provider == "searxng":
+            # SearXNG uses an instance URL, not an API key.
+            instance_url = (data.get("url") or "").strip() if isinstance(data.get("url"), str) else ""
+            local_config = conf()
+            file_cfg = self._read_file_config()
+            self._set_nested_namespace_value(local_config, "tools", "web_search", "searxng_url", instance_url)
+            self._set_nested_namespace_value(file_cfg, "tools", "web_search", "searxng_url", instance_url)
+            self._write_file_config(file_cfg)
+            logger.info(f"[ModelsHandler] search credential set: searxng_url={'***' if instance_url else ''}")
+            return json.dumps({"status": "success", "provider": provider})
+
         key_field = f"{provider}_api_key"
         api_key = (data.get("api_key") or "").strip() if isinstance(data.get("api_key"), str) else ""
         local_config = conf()

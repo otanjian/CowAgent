@@ -14,15 +14,15 @@ import json
 import pytest
 import web
 
-from channel.web.api import channels as channels_api
-from channel.web.api.channels import ChannelsHandler
+from channel.web import web_channel as channels_api
+from channel.web.web_channel import ChannelsHandler
 
 
 def _dispatch(monkeypatch, body, *, multi_agent):
     """Run ChannelsHandler.POST for ``body`` and record which handler it hit."""
     calls = []
 
-    monkeypatch.setattr(channels_api, "_require_auth", lambda: None)
+    monkeypatch.setattr(channels_api, "_require_platform_console", lambda: None)
     monkeypatch.setattr(web, "header", lambda *a, **k: None)
     monkeypatch.setattr(web, "data", lambda: json.dumps(body).encode("utf-8"))
 
@@ -143,17 +143,21 @@ def _disconnect_env(monkeypatch, tmp_path):
 
 # FORK DIVERGENCE (recorded in
 # openspec/changes/adopt-upstream-web-split/evidence/15-legacy-bootstrap-divergence.md):
-# the two tests below pin upstream's legacy-bootstrap repair: upstream folds a
-# flat ``channel_type`` + credentials from config.json into an explicit
-# ``channel_instances`` record on every team.json write, so deleting the record
-# alone is undone by the next write and disconnect must also prune
-# ``channel_type``. The fork deliberately does NOT synthesize instances from flat
-# credentials -- see
-# ``tests/test_channel_instances.py::test_bootstrap_does_not_synthesize_from_flat_credentials``
-# and ``resolve_channel_instances``' refusal of the legacy fallback -- so the
-# resurrection they guard cannot happen here, and the behaviour under test does
-# not exist in this fork. Skipped rather than rewritten so the divergence stays
-# visible and cheap to re-check on the next upstream sync.
+# upstream's `bootstrap_legacy_instances` folds a flat ``channel_type`` +
+# credentials from config.json into an explicit ``channel_instances`` record on
+# every team.json write, so deleting the record alone is undone by the next
+# write. The fork's `bootstrap_legacy_instances` is a no-op passthrough — it only
+# carries existing records (see
+# ``tests/test_channel_instances.py::test_bootstrap_does_not_synthesize_from_flat_credentials``)
+# and ``resolve_channel_instances`` refuses the legacy ``channel_type`` fallback —
+# so the resurrection this test guards cannot happen here.
+#
+# The *prune* half of the upstream repair is still ported and still needed: it
+# keeps ``channel_type`` honest so a disconnected type does not linger as an
+# "active" card. But it must key off the fork's own notion of what survives (the
+# explicit records), because there are no bootstrapped records to see. The
+# tests below pin the fork's semantics; this one is skipped because its
+# sanity assertion requires bootstrap to have run.
 _LEGACY_BOOTSTRAP_DIVERGENCE = pytest.mark.skip(
     reason="fork never bootstraps channel_instances from flat channel_type "
     "(see test_channel_instances.py::test_bootstrap_does_not_synthesize_from_flat_credentials)"
@@ -186,14 +190,16 @@ def test_disconnecting_bootstrapped_legacy_instance_stays_removed(monkeypatch, t
     assert "feishu" in after  # untouched
 
 
-@_LEGACY_BOOTSTRAP_DIVERGENCE
 def test_disconnecting_one_of_several_keeps_the_type(monkeypatch, tmp_path):
-    from agent import team
     from channel import channel_instances as ci
 
     cfg, config_path = _disconnect_env(monkeypatch, tmp_path)
 
-    # add a second feishu instance so the type has two records
+    # two explicit feishu records: the type must survive removing one of them
+    ci.upsert_instance(
+        cfg, "feishu", "feishu-first", agent_id="default",
+        credentials={"feishu_app_id": "FA1", "feishu_app_secret": "FS1"},
+    )
     ci.upsert_instance(
         cfg, "feishu", "feishu-second", agent_id="cust",
         credentials={"feishu_app_id": "FA2", "feishu_app_secret": "FS2"},
@@ -204,5 +210,26 @@ def test_disconnecting_one_of_several_keeps_the_type(monkeypatch, tmp_path):
 
     import json as _json
     on_disk = _json.loads(config_path.read_text(encoding="utf-8"))
-    # feishu still has the bootstrapped instance, so its type stays
+    # feishu still has feishu-first, so its type stays
     assert "feishu" in on_disk["channel_type"]
+
+
+def test_disconnecting_the_last_of_a_type_prunes_the_type(monkeypatch, tmp_path):
+    from channel import channel_instances as ci
+
+    cfg, config_path = _disconnect_env(monkeypatch, tmp_path)
+
+    ci.upsert_instance(
+        cfg, "feishu", "feishu-only", agent_id="default",
+        credentials={"feishu_app_id": "FA1", "feishu_app_secret": "FS1"},
+    )
+
+    handler = ChannelsHandler()
+    handler._handle_instance_disconnect("feishu", "feishu-only")
+
+    import json as _json
+    on_disk = _json.loads(config_path.read_text(encoding="utf-8"))
+    # no feishu instance is left, so the vestigial channel_type entry goes too
+    assert "feishu" not in on_disk["channel_type"]
+    assert "dingtalk" in on_disk["channel_type"]  # untouched
+

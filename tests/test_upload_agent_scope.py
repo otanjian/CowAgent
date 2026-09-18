@@ -9,6 +9,7 @@ thumbnail. These tests drive a real server because the bug lives in the contract
 between the handler that writes the file and the one that reads it back.
 """
 
+import contextlib
 import json
 import os
 import threading
@@ -48,16 +49,33 @@ def console(tmp_path, monkeypatch):
         path.mkdir(parents=True, exist_ok=True)
 
     registry = SimpleNamespace(
-        get=lambda agent_id=None: SimpleNamespace(workspace=str(workspaces[agent_id]))
+        get=lambda agent_id=None, require_enabled=True: SimpleNamespace(
+            workspace=str(workspaces[agent_id])
+        )
     )
 
     from channel.web import web_channel
 
-    # A console password set by an earlier test would 401 these requests, and
-    # the login flow is not what is under test here.
-    with patch("channel.web.api.files._require_auth"), patch(
-        "agent.registry.get_agent_registry", return_value=registry
-    ):
+    # The fork gates this route through the database identity chain
+    # (``_db_scope`` + the ``_require_*`` helpers) rather than upstream's
+    # ``_require_auth``. Stub the chain so the request reaches the upload
+    # parsing that is actually under test; the identity layer is pinned by
+    # tests/test_knowledge_web.py and tests/test_object_scope.py.
+    @contextlib.contextmanager
+    def _fake_scope():
+        yield SimpleNamespace(tenant_id="tnt_test", user_id="u1")
+
+    with patch("channel.web.web_channel._db_scope", _fake_scope), patch(
+        "channel.web.web_channel._require_chat_csrf"
+    ), patch(
+        "channel.web.web_channel._require_tenant_agent_binding",
+        lambda ctx, agent_id: agent_id,
+    ), patch(
+        "channel.web.web_channel._require_private_owner", lambda ctx, agent_id: None
+    ), patch(
+        "channel.web.web_channel._require_agent_action",
+        lambda ctx, agent_id, *a, **k: None,
+    ), patch("agent.registry.get_agent_registry", return_value=registry):
         app = web_channel.build_app()
         server = make_server("127.0.0.1", 0, app.wsgifunc(), handler_class=_QuietHandler)
         threading.Thread(target=server.serve_forever, daemon=True).start()

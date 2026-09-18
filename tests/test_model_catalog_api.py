@@ -41,14 +41,21 @@ if "web" not in sys.modules:
 
 
 def _providers_with(config, catalog_map=None, hidden_map=None):
-    """Provider overview rows, as the models API returns them."""
-    from channel.web.api import models as models_api
+    """Provider overview rows, as the models API returns them.
+
+    ``web_channel`` is the module the console actually talks to: it re-exports
+    the fork's ``ModelsHandler``, ``conf`` and ``model_catalog``, so these
+    assertions follow the served stack rather than upstream's parallel
+    ``channel/web/api/models.py`` (which the merge left byte-identical and
+    which the live app does not serve).
+    """
+    from channel.web import web_channel as models_api
 
     with patch.object(models_api, "conf", return_value=config), \
             patch("models.custom_provider.conf", return_value=config), \
-            patch("channel.web.api.models.model_catalog.get_catalog_map",
+            patch("channel.web.web_channel.model_catalog.get_catalog_map",
                   return_value=catalog_map or {}), \
-            patch("channel.web.api.models.model_catalog.get_hidden_map",
+            patch("channel.web.web_channel.model_catalog.get_hidden_map",
                   return_value=hidden_map or {}):
         return models_api.ModelsHandler._provider_overview()
 
@@ -62,6 +69,21 @@ def _provider(config, pid, catalog_map=None, hidden_map=None):
 
 class TestSeedRows(unittest.TestCase):
     """`seed` gives the editor the preset base typed with real capabilities."""
+
+    def test_the_assertions_follow_the_served_handler(self):
+        """Guard against a future merge silently re-pointing this file.
+
+        The whole point of the retarget is that these assertions exercise the
+        handler ``build_web_app()`` serves. If a merge ever restores the import
+        of upstream's parallel module, the tests would pass while asserting
+        code the console never runs — so pin the provenance here.
+        """
+        from channel.web import web_channel
+
+        self.assertEqual(
+            web_channel.ModelsHandler.__module__,
+            "channel.web.fork.handlers.models",
+        )
 
     def test_a_builtin_vendor_seeds_its_preset_models(self):
         p = _provider({"zhipu_ai_api_key": "sk-x"}, "zhipu")
@@ -149,22 +171,22 @@ class TestApplyCatalogFiltersByCapability(unittest.TestCase):
     """The chat dropdown only offers text-tagged models from the overlay."""
 
     def test_no_overlay_keeps_the_preset_dropdown(self):
-        from channel.web.api import models as models_api
+        from channel.web import web_channel as models_api
 
         presets = {"zhipu": [{"value": "glm-5.2"}]}
-        with patch("channel.web.api.models.model_catalog.get_catalog_map", return_value={}), \
-                patch("channel.web.api.models.model_catalog.get_hidden_map", return_value={}):
+        with patch("channel.web.web_channel.model_catalog.get_catalog_map", return_value={}), \
+                patch("channel.web.web_channel.model_catalog.get_hidden_map", return_value={}):
             out = models_api.ModelsHandler._apply_catalog(presets, "text")
         self.assertEqual(out["zhipu"], [{"value": "glm-5.2"}])
 
     def test_overlay_narrows_to_text_tagged_effective_models(self):
-        from channel.web.api import models as models_api
+        from channel.web import web_channel as models_api
 
         override = [{"name": "chat-only", "capabilities": ["text"]},
                     {"name": "vec", "capabilities": ["embedding"]}]
-        with patch("channel.web.api.models.model_catalog.get_catalog_map",
+        with patch("channel.web.web_channel.model_catalog.get_catalog_map",
                    return_value={"zhipu": override}), \
-                patch("channel.web.api.models.model_catalog.get_hidden_map", return_value={}):
+                patch("channel.web.web_channel.model_catalog.get_hidden_map", return_value={}):
             out = models_api.ModelsHandler._apply_catalog({}, "text")
         names = [m["value"] for m in out["zhipu"]]
         self.assertIn("chat-only", names)
@@ -177,11 +199,11 @@ class TestSaveCatalogHandler(unittest.TestCase):
     def _post(self, payload):
         import json
 
-        from channel.web.api import models as models_api
+        from channel.web import web_channel as models_api
 
         handler = models_api.ModelsHandler()
         with patch.object(models_api, "conf", return_value={}), \
-                patch("channel.web.api.models.model_catalog.save_catalog",
+                patch("channel.web.web_channel.model_catalog.save_catalog",
                       return_value=payload.get("models") or []) as save:
             raw = handler._handle_save_catalog(payload)
         data = json.loads(raw)

@@ -522,6 +522,8 @@ class HistoryHandler:
         from channel.web.web_channel import _require_read_permission
         from channel.web.web_channel import _require_session_owner
         from channel.web.web_channel import _require_tenant_agent_binding
+        from channel.web.web_channel import _get_workspace_root
+        from channel.web.web_channel import _rewrite_relative_media
         web.header('Content-Type', 'application/json; charset=utf-8')
         web.header('Access-Control-Allow-Origin', '*')
         try:
@@ -551,6 +553,17 @@ class HistoryHandler:
                 for msg in result.get("messages") or []:
                     if msg.get("role") != "assistant":
                         continue
+                    # Same workspace-relative media rewrite the live SSE path
+                    # applies, so images/videos survive a page reload for
+                    # non-default agents.
+                    if isinstance(msg.get("content"), str) and msg["content"]:
+                        try:
+                            msg["content"] = _rewrite_relative_media(
+                                msg["content"],
+                                _get_workspace_root(session_id, agent_id),
+                            )
+                        except Exception as e:
+                            logger.debug(f"[WebChannel] history media rewrite skipped: {e}")
                     _add_subagent_displays(msg.get("steps"))
                     _add_delegate_displays(msg.get("steps"))
                     artifacts = _artifacts_from_steps(msg.get("steps"), session_id)
