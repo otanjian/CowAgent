@@ -28,7 +28,9 @@ from channel.wecom_bot.wecom_bot_crypt import WecomBotCrypt
 from channel.wecom_bot.wecom_bot_message import WecomBotMessage
 from common.expired_dict import ExpiredDict
 from common.log import logger
+from common.runtime_identity import RuntimeIdentity, use_identity
 from common.singleton import singleton
+from common.state_dir import StateDirError
 from common.ws_client_compat import websocket_app_run_forever
 from config import conf
 
@@ -530,6 +532,48 @@ class WecomBotChannel(ChatChannel):
         self.produce(context)
 
     def _build_context(self, body: dict, is_group: bool, default_aeskey: str = ""):
+        """Parse a wecom message body, scoped to this channel instance.
+
+        Inbound media is downloaded while parsing — images inside
+        ``WecomBotMessage``, files and videos in ``prepare()`` — and a download
+        resolves its destination through ``state_dir.tmp_dir()``. The reply path
+        is scoped later in ``ChatChannel._handle``, which is too late: an
+        unscoped parse has no ambient identity, so the download falls back to the
+        process-wide default Agent's workspace — a path the bound (tenant) Agent
+        is not allowed to read, which loses the attachment entirely. Scope the
+        parse to this instance's registered identity so the file lands in the
+        Agent that will actually read it.
+        """
+        try:
+            with use_identity(self._instance_identity()):
+                return self._parse_inbound(body, is_group, default_aeskey)
+        except StateDirError as e:
+            # Fail closed. A bound Agent that cannot be resolved must not
+            # silently degrade into the process-wide default Agent's workspace:
+            # the file would land somewhere the Agent that must read it cannot
+            # reach, recreating the silent loss this scoping exists to prevent.
+            logger.error(
+                f"[WecomBot] Refusing inbound message: bound Agent is not "
+                f"resolvable (instance={getattr(self, 'instance_id', '')!r}, "
+                f"agent={getattr(self, 'bound_agent_id', '')!r}): {e}"
+            )
+            return None
+
+    def _instance_identity(self) -> RuntimeIdentity:
+        """This instance's registered Agent and tenant, for scoping a parse.
+
+        Read back from ``apply_instance`` (the multi-instance path) rather than
+        from the context, which does not exist yet at this point and whose
+        self-reported Agent must not be trusted as an authorization source.
+        Empty values are normalised to ``None`` so a legacy single-instance
+        channel keeps the pre-existing fallback resolution unchanged.
+        """
+        return RuntimeIdentity(
+            agent_id=getattr(self, "bound_agent_id", "") or None,
+            tenant_id=getattr(self, "tenant_id", "") or None,
+        )
+
+    def _parse_inbound(self, body: dict, is_group: bool, default_aeskey: str = ""):
         """Parse a wecom message body into a Context, applying file-cache logic.
 
         Shared by both the websocket (long-connection) and callback (webhook)
