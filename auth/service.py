@@ -63,6 +63,7 @@ from auth.policy import (
     resource_ids_for,
     LEGACY_PERSONAL_MENU_MAP,
 )
+from integrations.external import mcp_identity
 
 
 #: Which console pages/tabs this change actually signs for availability. Keys
@@ -101,6 +102,24 @@ _SIGNED_CONSOLE_PAGES: Dict[str, Dict[str, object]] = {
     # the platform qualification alone.
     "admin.models": {"permission": "", "scope": "tenant", "label": "模型与接入"},
     "admin.channels": {"permission": "", "scope": "platform", "label": "消息渠道"},
+    # 外部系统接入 (change ``add-external-system-access``, task 10.1): one page with
+    # three relative ranges — a member's own mailbox, the tenant's connections, and
+    # the platform MCP service — decided per request by ``auth.object_scope``. The
+    # static scope recorded here is ``tenant`` for the same reason ``admin.models``
+    # records ``tenant``: it is the range the page is *signed* at, a ``platform``
+    # scope is not a business entry point (``console.js`` skips those, so the member
+    # surface would become unreachable), and ``self`` is reserved for the pages that
+    # are a member's own surface rather than one an operator also maintains. What a
+    # caller may actually maintain is reported on the capability slice's own actions.
+    # The read permission is required because the routes require it. Built-in
+    # ``tenant_admin`` / ``member`` now carry ``external.connections.read`` (and
+    # ``manage`` for the admin) out of the box — see ``TENANT_ADMIN_DEFAULT_PERMISSIONS``
+    # / ``MEMBER_DEFAULT_PERMISSIONS`` and migration 30 — so the entry is open for
+    # configuration after upgrade. Callers without the permission still see the
+    # page as unavailable (fail-closed for custom roles that never received it).
+    "admin.external_connections": {
+        "permission": "external.connections.read", "scope": "tenant",
+        "label": "外部系统接入"},
     "admin.logs": {"permission": "", "scope": "platform", "label": "运行日志"},
     "admin.members": {"permission": "tenant.members.read", "scope": "tenant", "label": "成员管理"},
     "admin.roles": {"permission": "tenant.members.read", "scope": "tenant", "label": "角色权限"},
@@ -2196,6 +2215,13 @@ class IdentityService:
         if "tool.execute" not in self.permissions_for(user_id, tenant_id):
             return False
         if resource_id.startswith("mcp:"):
+            # ``mcp:`` is a namespace, not a permission: the branch exists to
+            # recognise a *tenant-owned MCP tool*, and recognizing it proves
+            # nothing. The id names a connection, not a tenant, so the Agent
+            # binding is what decides -- a missing ``agent_id`` is refused
+            # rather than assumed (spec: 工具名称的 mcp 前缀 MUST NOT 作为执行授权).
+            if mcp_identity.split_legacy_id(resource_id) is None:
+                return False
             return bool(agent_id) and str(agent_id) in set(
                 self.tenant_agent_ids(tenant_id))
         return resource_id in self.grantable_resource_ids(
@@ -2510,19 +2536,42 @@ class IdentityService:
                 })
         except Exception:
             pass
-        # MCP tools: namespaced by their connection/server name.
+        # MCP tools: namespaced by their connection/server name. The id is built
+        # by ``mcp_identity`` so both spellings a grant can carry (the file
+        # server behind an existing grant, the connection behind a migrated one)
+        # come out of one definition rather than two f-strings that can drift.
         try:
             from agent.tools.tool_manager import ToolManager
+            from integrations.external import mcp_identity
             tm = ToolManager()
             mcp_instances = getattr(tm, "_mcp_tool_instances", None) or {}
             for tname, mcp_tool in mcp_instances.items():
                 conn = getattr(mcp_tool, "server_name", "default")
+                resource_ids = mcp_identity.aliases(
+                    connection_id="", server_name=conn,
+                    config={"tool_name_prefix": getattr(mcp_tool, "name_prefix", "")},
+                    remote_name=getattr(mcp_tool, "_remote_name", tname))
                 out.append({
-                    "resource_id": f"mcp:{conn}:{tname}",
+                    "resource_id": resource_ids[0],
                     "name": tname,
                     "capability": "tool",
                     "source": f"mcp:{conn}",
                     "description": getattr(mcp_tool, "description", "") or "",
+                })
+        except Exception:
+            pass
+        # External connection tools (OA / personal email). Declared by the type
+        # adapters through the provider registry, so a tool that is listed here
+        # is still re-authorized when it is actually called.
+        try:
+            from integrations.external.tools import declared_tool_projection
+            for item in declared_tool_projection():
+                out.append({
+                    "resource_id": item["resource_id"],
+                    "name": item["name"],
+                    "capability": "tool",
+                    "source": item["source"],
+                    "description": item.get("description", ""),
                 })
         except Exception:
             pass

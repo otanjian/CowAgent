@@ -137,6 +137,16 @@ _mcp_tools = _import_mcp_tools()
 McpTool = _mcp_tools.get('McpTool')
 McpClientRegistry = _mcp_tools.get('McpClientRegistry')
 
+# External-connection tools. ``ExternalConnectionTool`` needs a binding, so
+# ``load_tools`` skips it as a dependency-injected class; the instances are
+# published per actor by ``load_external_tools`` (see
+# ``agent/tools/external/external_tool.py``).
+from agent.tools.external.external_tool import (  # noqa: E402
+    ExternalConnectionTool,
+    external_tools_for,
+    reconcile_external_tools,
+)
+
 # Export all tools (including optional ones that might be None)
 __all__ = [
     'BaseTool',
@@ -162,6 +172,9 @@ __all__ = [
     'BrowserTool',
     'McpTool',
     'TodoTool',
+    'ExternalConnectionTool',
+    'external_tools_for',
+    'reconcile_external_tools',
 ]
 
 """

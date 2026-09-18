@@ -1354,6 +1354,20 @@ class AgentStreamExecutor:
         except Exception as e:
             logger.debug(f"[Agent] MCP sync skipped: {e}")
 
+        # External connections, re-derived for *this* turn's actor. Unlike MCP
+        # (config-derived, same for everyone) this set follows the caller's
+        # permissions and connections, so it is recomputed every turn and can
+        # shrink: a revoked capability leaves the list on the next turn rather
+        # than at the next restart.
+        try:
+            from agent.tools import ToolManager
+            added, removed = ToolManager().sync_external_into_agent(self)
+            if added or removed:
+                logger.info(
+                    f"[Agent] external tools synced: +{added} -{removed}")
+        except Exception as e:
+            logger.debug(f"[Agent] external tool sync skipped: {e}")
+
         # Prepare tool definitions. Prefer get_json_schema() when it yields
         # real properties (lets tools augment schema at runtime), otherwise
         # fall back to the static `tool.params` (MCP tools rely on this).
@@ -2216,8 +2230,13 @@ class AgentStreamExecutor:
         try:
             from agent.tools.mcp.mcp_tool import McpTool
             if isinstance(tool, McpTool):
-                conn = getattr(tool, "server_name", "default")
-                return f"mcp:{conn}:{tool_name}"
+                # ``mcp:<server>:<prefix+tool>`` -- composed by ``mcp_identity``
+                # because this id is the key an administrator grants and an Agent
+                # allowlist quotes, so the prefix arithmetic has to be the same
+                # arithmetic the migration preserved (see task 5.4 / 12.2).
+                from integrations.external import mcp_identity
+                return mcp_identity.legacy_id(
+                    getattr(tool, "server_name", "default"), tool_name)
         except Exception:
             pass
         return f"builtin:{tool_name}"

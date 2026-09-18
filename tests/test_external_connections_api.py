@@ -512,18 +512,97 @@ def test_a_zero_tenant_platform_admin_can_manage_platform_connections(web):
 
 
 def test_a_closed_action_has_no_route_at_all(web):
-    """``test``/``execute`` are undeclared, so no path serves them.
+    """``execute`` has no HTTP address at all.
+
+    Two different gates, and only one of them is a route that exists:
+
+    * ``test``/``runtime`` are *route* actions, because the console has to be
+      able to ask so it can render the deployment's reason. Asking is not
+      running: the service refuses with ``test_not_available`` while the type's
+      readiness class is closed, which the next test pins.
+    * ``execute`` is not a declared route action, so no path serves it. A
+      business action goes through the tool/runtime path, where the risk
+      catalogue and the approval binding live; giving it an HTTP address would
+      create a second entry point that could miss them.
 
     The gate is the *only* refusal that cannot be bypassed by a handler
-    forgetting its own check, so the proof is that the address does not exist.
+    forgetting its own check, so the proof for ``execute`` is that the address
+    does not exist.
     """
     connection_id = _json(web.post("/api/external-connections/tenant", {
         "kind": "erp", "name": "Closed action", "config": ERP_RFC,
     }, token=web.manager_token))["id"]
+    for action in ("invoke", "execute", "run"):
+        response = web.post(
+            "/api/external-connections/tenant/%s/%s" % (connection_id, action),
+            {}, token=web.manager_token)
+        assert response.status == "404 Not Found", action
+
+
+def test_a_test_route_exists_but_is_refused_while_the_type_is_closed(web):
+    """The route answers, and the *deployment switch* is what refuses it.
+
+    Declaring the route must not be mistaken for opening the class: with no
+    readiness configured (the default), the probe is refused with the stable
+    code ``test_not_available`` — not an empty success, and not a 404 that
+    would leave the console unable to explain itself.
+    """
+    connection_id = _json(web.post("/api/external-connections/tenant", {
+        "kind": "erp", "name": "Closed test", "config": ERP_RFC,
+        "secrets": {"password": "S3cret!"},
+    }, token=web.manager_token))["id"]
     response = web.post(
         "/api/external-connections/tenant/%s/test" % connection_id,
         {}, token=web.manager_token)
-    assert response.status == "404 Not Found"
+    assert response.status.startswith("403"), response.status
+    body = _json(response)
+    assert body["code"] == "test_not_available"
+
+
+def test_opening_the_type_switch_makes_the_test_route_reachable(web, monkeypatch):
+    """With the switch on, the refusal changes from the gate to the adapter.
+
+    This proves the two gates are independent: an operator opening the class
+    moves the answer past the deployment gate to the next honest reason (no
+    adapter installed in this build), rather than being masked by it.
+    """
+    from config import conf
+    monkeypatch.setitem(
+        conf().setdefault("external_connections", {}),
+        "readiness", {"erp": {"test": True}})
+    connection_id = _json(web.post("/api/external-connections/tenant", {
+        "kind": "erp", "name": "Open test", "config": ERP_RFC,
+        "secrets": {"password": "S3cret!"},
+    }, token=web.manager_token))["id"]
+    response = web.post(
+        "/api/external-connections/tenant/%s/test" % connection_id,
+        {}, token=web.manager_token)
+    assert not (response.status.startswith("403")
+                and _json(response).get("code") == "test_not_available")
+
+
+def test_a_test_route_never_leaks_the_secret_or_the_target_address(web, monkeypatch):
+    """The runtime projection describes the policy, never a resolved address."""
+    from config import conf
+    monkeypatch.setitem(
+        conf().setdefault("external_connections", {}),
+        "readiness", {"erp": {"test": True}})
+    connection_id = _json(web.post("/api/external-connections/tenant", {
+        "kind": "erp", "name": "Runtime", "config": ERP_RFC,
+        "secrets": {"password": "S3cret!"},
+    }, token=web.manager_token))["id"]
+    response = web.get(
+        "/api/external-connections/tenant/%s/runtime" % connection_id,
+        token=web.manager_token)
+    assert response.status.startswith("200"), response.status
+    raw = response.data.decode("utf-8")
+    assert "S3cret!" not in raw
+    body = _json(response)
+    network = body["limits"]["network"]
+    assert "allow_hosts" in network and "allow_networks" in network
+    # The policy's *rules* are reported; a resolved address is not, so this
+    # endpoint cannot be used to enumerate the internal network.
+    assert "addresses" not in network and "resolved" not in network
 
 
 def test_the_service_and_the_http_layer_share_one_database(web):

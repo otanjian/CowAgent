@@ -21,6 +21,120 @@ from common.log import logger
 _STREAMABLE_HTTP_ALIASES = {"streamable-http", "streamable_http", "streamablehttp", "http"}
 
 
+class McpTransportError(RuntimeError):
+    """A transport/handshake failure with a staged, machine-readable reason.
+
+    ``initialize()`` keeps its historical ``bool`` contract, but the external
+    connection adapter needs to distinguish "the URL was refused by policy"
+    from "TLS failed" from "the executable is missing" so the console can show
+    a stage. Errors carry a stable ``code`` and a deployment ``stage``; the
+    ``detail`` is bounded and must never embed a secret or a raw remote body.
+    """
+
+    def __init__(self, message: str, *, code: str = "protocol_error",
+                 stage: str = "protocol") -> None:
+        super().__init__(message)
+        self.code = str(code)
+        self.stage = str(stage)
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects when a request runs under the deployment policy.
+
+    The policy module re-checks each hop by hand for GETs; a library-managed
+    redirect would do neither and could forward an ``Authorization`` header to
+    a different origin. Returning ``None`` makes urllib raise the 3xx as an
+    ``HTTPError`` instead of following it.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+        return None
+
+
+_NO_REDIRECT_OPENER = None
+_NO_REDIRECT_LOCK = threading.Lock()
+
+
+def _no_redirect_opener():
+    global _NO_REDIRECT_OPENER
+    if _NO_REDIRECT_OPENER is None:
+        with _NO_REDIRECT_LOCK:
+            if _NO_REDIRECT_OPENER is None:
+                _NO_REDIRECT_OPENER = urllib.request.build_opener(
+                    _NoRedirectHandler())
+    return _NO_REDIRECT_OPENER
+
+
+_REDACT_MAX = 200
+
+
+def _redact(value, *, limit: int = _REDACT_MAX) -> str:
+    """A short, single-line, non-secret rendering of a remote error body.
+
+    The external-connection console must never show an unfiltered remote
+    response. Only the shape is kept: type, length and a truncated message
+    with anything that looks like a credential masked.
+    """
+    import re as _re
+    if value is None:
+        return ""
+    text = value if isinstance(value, str) else json.dumps(
+        value, ensure_ascii=False, default=str)
+    text = " ".join(str(text).split())
+    # Mask obvious bearer/basic credentials and long opaque tokens.
+    text = _re.sub(r"(?i)\b(bearer|basic|token|apikey|api_key|secret|password)"
+                   r"\s*[:=]?\s*\S+", r"\1 <redacted>", text)
+    text = _re.sub(r"\b[A-Za-z0-9_\-]{32,}\b", "<redacted>", text)
+    if len(text) > limit:
+        text = text[:limit].rstrip() + "..."
+    return text
+
+
+def _as_transport_error(exc: BaseException) -> McpTransportError:
+    """Normalise anything raised during transport work into a staged error.
+
+    Errors that already carry a ``code``/``stage`` (an ``AdapterError`` from
+    the external context, or a nested :class:`McpTransportError`) pass through
+    unchanged. Everything else is classified so a caller can always report a
+    stage: TLS, DNS/refused connection, protocol shape and dependency failures
+    are told apart instead of collapsing into "failed".
+    """
+    if isinstance(exc, McpTransportError):
+        return exc
+    code = getattr(exc, "code", None)
+    stage = getattr(exc, "stage", None)
+    if code and stage:
+        # An AdapterError (DeadlineExceeded / Cancelled / PolicyRefused) whose
+        # stage vocabulary already matches the probe vocabulary.
+        return McpTransportError(str(exc), code=str(code), stage=str(stage))
+
+    import ssl as _ssl
+    import socket as _socket
+
+    reason = getattr(exc, "reason", None)
+    if isinstance(exc, _ssl.SSLError) or isinstance(reason, _ssl.SSLError):
+        return McpTransportError("the TLS handshake failed",
+                                 code="tls_error", stage="tls")
+    if isinstance(exc, (_socket.gaierror, ConnectionRefusedError,
+                        ConnectionResetError, BrokenPipeError)):
+        return McpTransportError("the endpoint could not be reached",
+                                 code="network_error", stage="network")
+    if isinstance(exc, TimeoutError) or isinstance(reason, TimeoutError):
+        return McpTransportError("the request timed out",
+                                 code="timeout", stage="timeout")
+    if isinstance(exc, urllib.error.HTTPError):
+        return McpTransportError(f"the server returned HTTP {exc.code}",
+                                 code="http_status", stage="protocol")
+    if isinstance(exc, urllib.error.URLError):
+        return McpTransportError("the endpoint could not be reached",
+                                 code="network_error", stage="network")
+    if isinstance(exc, json.JSONDecodeError):
+        return McpTransportError("the server sent an unreadable response",
+                                 code="protocol_error", stage="protocol")
+    return McpTransportError(_redact(str(exc)) or type(exc).__name__,
+                             code="protocol_error", stage="protocol")
+
+
 # System env vars a stdio MCP subprocess legitimately needs to run
 # (node/python/npx toolchains). Everything else is dropped by default so
 # API keys living in the agent's own environment don't leak into servers.
@@ -120,6 +234,16 @@ class McpClient:
         # complete the browser authorization. Callers can surface this state.
         self.needs_auth: bool = False
 
+        #: Optional ExecutionContext carrying the deployment network policy,
+        #: deadline and cancellation flag. Present only when this client was
+        #: built for an external connection (``integrations.external``); a
+        #: plain mcp.json client leaves it None and behaves exactly as before.
+        self._external_ctx = config.get("_external_ctx")
+        #: The most recent staged failure (a :class:`McpTransportError` or the
+        #: info dict), so a caller that only sees ``initialize() == False`` can
+        #: still report *why*. Never contains a secret.
+        self.last_error = None
+
         # Shared state
         self._next_id = 1
         self._id_lock = threading.Lock()
@@ -142,18 +266,30 @@ class McpClient:
     def initialize(self) -> bool:
         """Connect and perform the MCP handshake. Returns True on success."""
         try:
-            if self.transport == "stdio":
-                return self._init_stdio()
-            elif self.transport == "sse":
-                return self._init_sse()
-            elif self.transport == "streamable-http":
-                return self._init_streamable_http()
-            else:
-                logger.warning(f"[MCP:{self.name}] Unknown transport type: {self.transport!r}")
-                return False
+            self.initialize_strict()
+            self.last_error = None
+            return True
         except Exception as e:
+            self.last_error = _as_transport_error(e)
             logger.warning(f"[MCP:{self.name}] Initialization failed: {e}")
             return False
+
+    def initialize_strict(self) -> None:
+        """Like :meth:`initialize` but raises :class:`McpTransportError`.
+
+        The external-connection adapter needs the reason (stage + code) rather
+        than a bare boolean; the legacy loader keeps using ``initialize()``.
+        """
+        if self.transport == "stdio":
+            self._init_stdio()
+        elif self.transport == "sse":
+            self._init_sse()
+        elif self.transport == "streamable-http":
+            self._init_streamable_http()
+        else:
+            raise McpTransportError(
+                f"unknown transport type: {self.transport!r}",
+                code="unsupported_transport", stage="config")
 
     def list_tools(self) -> list:
         """Return the tool list from this server.
@@ -161,30 +297,108 @@ class McpClient:
         Each item is a dict: {"name": str, "description": str, "inputSchema": dict}
         """
         try:
-            resp = self._send_request("tools/list", {})
-            tools = resp.get("result", {}).get("tools", [])
-            return [
-                {
-                    "name": t.get("name", ""),
-                    "description": t.get("description", ""),
-                    "inputSchema": t.get("inputSchema", {}),
-                }
-                for t in tools
-            ]
+            return self.list_tools_strict()
         except Exception as e:
+            self.last_error = _as_transport_error(e)
             logger.warning(f"[MCP:{self.name}] list_tools failed: {e}")
             return []
+
+    def list_tools_strict(self) -> list:
+        """Like :meth:`list_tools` but raises instead of returning ``[]``."""
+        resp = self._send_request("tools/list", {})
+        if "error" in resp:
+            raise McpTransportError(
+                f"tools/list returned an error: {_redact(resp.get('error'))}",
+                code="discovery_failed", stage="protocol")
+        tools = resp.get("result", {}).get("tools", [])
+        return [
+            {
+                "name": t.get("name", ""),
+                "description": t.get("description", ""),
+                "inputSchema": t.get("inputSchema", {}),
+            }
+            for t in tools
+            if isinstance(t, dict)
+        ]
 
     def call_tool(self, name: str, arguments: dict) -> str:
         """Call a tool and return the result as a string."""
         try:
             resp = self._send_request("tools/call", {"name": name, "arguments": arguments})
-            content = resp.get("result", {}).get("content", [])
-            parts = [item.get("text", "") for item in content if item.get("type") == "text"]
-            return "\n".join(parts)
+            return self._text_result(resp)
         except Exception as e:
+            self.last_error = _as_transport_error(e)
             logger.warning(f"[MCP:{self.name}] call_tool({name}) failed: {e}")
             return f"Error: {e}"
+
+    def call_tool_strict(self, name: str, arguments: dict) -> str:
+        """Like :meth:`call_tool` but raises :class:`McpTransportError`."""
+        resp = self._send_request("tools/call", {"name": name, "arguments": arguments})
+        if "error" in resp:
+            raise McpTransportError(
+                f"tools/call returned an error: {_redact(resp.get('error'))}",
+                code="tool_error", stage="protocol")
+        return self._text_result(resp)
+
+    def read_resource_strict(self, uri: str) -> dict:
+        """Read one MCP resource; raises on failure."""
+        resp = self._send_request("resources/read", {"uri": uri})
+        if "error" in resp:
+            raise McpTransportError(
+                f"resources/read returned an error: {_redact(resp.get('error'))}",
+                code="resource_error", stage="protocol")
+        return resp.get("result", {}) or {}
+
+    @staticmethod
+    def _text_result(resp: dict) -> str:
+        content = resp.get("result", {}).get("content", [])
+        parts = [item.get("text", "") for item in content
+                 if isinstance(item, dict) and item.get("type") == "text"]
+        return "\n".join(parts)
+
+    # ------------------------------------------------------------------
+    # Deployment policy / deadline hooks (external connections only)
+    # ------------------------------------------------------------------
+
+    def _policy(self):
+        ctx = self._external_ctx
+        if ctx is None:
+            return None
+        limits = getattr(ctx, "limits", None) or {}
+        return limits.get("policy") if isinstance(limits, dict) else None
+
+    def _check_target(self, url: str, *, secret_bearing: bool = False) -> None:
+        """Re-check a target against the deployment policy, if one applies.
+
+        A no-op for a plain mcp.json client. For an external connection the
+        check runs on the initial URL; redirects are refused outright by
+        :func:`_no_redirect_opener`, so a hop can never silently reach a
+        different address with credentials attached.
+        """
+        ctx = self._external_ctx
+        if ctx is None:
+            return
+        try:
+            ctx.check_alive()
+        except Exception as exc:  # noqa: BLE001 - normalise AdapterError
+            raise McpTransportError(str(exc), code=getattr(exc, "code", "cancelled"),
+                                    stage=getattr(exc, "stage", "timeout")) from exc
+        policy = self._policy()
+        if policy is not None:
+            policy.check(url, secret_bearing=secret_bearing)
+
+    def _open(self, request, *, timeout):
+        """``urlopen`` honouring the external deadline and the no-redirect rule."""
+        ctx = self._external_ctx
+        if ctx is None:
+            return urllib.request.urlopen(request, timeout=timeout)
+        try:
+            ctx.check_alive()
+            effective = ctx.io_timeout(timeout)
+        except Exception as exc:  # noqa: BLE001
+            raise McpTransportError(str(exc), code=getattr(exc, "code", "cancelled"),
+                                    stage=getattr(exc, "stage", "timeout")) from exc
+        return _no_redirect_opener().open(request, timeout=effective)
 
     def shutdown(self):
         """Close the connection / terminate the child process."""
@@ -224,27 +438,46 @@ class McpClient:
     # stdio transport
     # ------------------------------------------------------------------
 
-    def _init_stdio(self) -> bool:
+    def _init_stdio(self) -> None:
+        ctx = self._external_ctx
+        if ctx is not None:
+            try:
+                ctx.check_alive()
+            except Exception as exc:  # noqa: BLE001
+                raise _as_transport_error(exc) from exc
+
         command = self.config.get("command")
         if not command:
-            logger.warning(f"[MCP:{self.name}] stdio config missing 'command'")
-            return False
+            raise McpTransportError("stdio config is missing 'command'",
+                                    code="field_required", stage="config")
 
         if not self._command_allowed(command):
-            return False
+            raise McpTransportError(
+                f"command {command!r} is not in the deployment's allowed list",
+                code="command_not_allowed", stage="config")
 
         args = self.config.get("args", [])
-        env = self._build_stdio_env(self.config.get("env", None))
+        env = self._build_stdio_env(self._stdio_extra_env())
 
-        self._proc = subprocess.Popen(
-            [command] + list(args),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            env=env,
-        )
+        try:
+            self._proc = subprocess.Popen(
+                [command] + list(args),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                env=env,
+            )
+        except FileNotFoundError as e:
+            raise McpTransportError(
+                f"the executable {command!r} was not found",
+                code="dependency_missing", stage="dependency") from e
+        except OSError as e:
+            raise McpTransportError(
+                f"the executable {command!r} could not be started "
+                f"({type(e).__name__})",
+                code="dependency_unavailable", stage="dependency") from e
         logger.debug(f"[MCP:{self.name}] stdio process started (pid={self._proc.pid})")
 
         threading.Thread(
@@ -254,7 +487,38 @@ class McpClient:
             target=self._drain_stdout, daemon=True, name=f"mcp-stdout-{self.name}"
         ).start()
 
-        return self._handshake()
+        self._handshake()
+
+    def _stdio_extra_env(self) -> dict:
+        """The user-declared ``env`` block for a stdio subprocess.
+
+        For an external connection the console stores the values in the ``env``
+        *secret* slot as a JSON object; only the names listed in ``env_keys``
+        are read out of it, so a value the operator did not declare can never
+        reach the child process. A plain mcp.json client keeps its inline
+        ``env`` dict, which is its own explicit authorization.
+        """
+        ctx = self._external_ctx
+        declared = list(self.config.get("env_keys") or [])
+        if ctx is None or not declared:
+            return self.config.get("env") or {}
+
+        raw = ctx.secret("env")
+        if not raw:
+            raise McpTransportError(
+                "the connection declares env_keys but no env secret is stored",
+                code="secret_unavailable", stage="config")
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else dict(raw)
+        except (TypeError, ValueError) as e:
+            raise McpTransportError(
+                "the env secret is not a JSON object of name/value pairs",
+                code="secret_invalid", stage="config") from e
+        if not isinstance(parsed, dict):
+            raise McpTransportError(
+                "the env secret is not a JSON object of name/value pairs",
+                code="secret_invalid", stage="config")
+        return {str(k): str(parsed[k]) for k in declared if k in parsed}
 
     def _command_allowed(self, command: str) -> bool:
         """Check the executable against an optional command allowlist.
@@ -344,19 +608,52 @@ class McpClient:
         timeout is provided.
         """
         effective = timeout if timeout is not None else self._timeout
-        try:
-            line = self._read_queue.get(timeout=effective)
-        except queue.Empty:
-            raise TimeoutError(f"[MCP:{self.name}] stdio read timed out after {effective}s")
+        ctx = self._external_ctx
+        if ctx is None:
+            try:
+                line = self._read_queue.get(timeout=effective)
+            except queue.Empty:
+                raise McpTransportError(
+                    f"the stdio server did not answer within {effective}s",
+                    code="timeout", stage="timeout") from None
+        else:
+            # Under an external connection the wait is sliced so a cancelled or
+            # expired attempt stops blocking promptly instead of holding its
+            # pool slot for the whole per-server timeout.
+            import time as _time
+            deadline = _time.monotonic() + ctx.io_timeout(effective)
+            line = None
+            while True:
+                try:
+                    ctx.check_alive()
+                except Exception as exc:  # noqa: BLE001
+                    raise _as_transport_error(exc) from exc
+                left = deadline - _time.monotonic()
+                if left <= 0:
+                    raise McpTransportError(
+                        "the stdio server did not answer in time",
+                        code="timeout", stage="timeout")
+                try:
+                    line = self._read_queue.get(timeout=min(1.0, left))
+                    break
+                except queue.Empty:
+                    continue
         if not line:
-            raise IOError(f"[MCP:{self.name}] stdio process closed unexpectedly")
+            raise McpTransportError(
+                "the stdio server exited before answering",
+                code="process_exited", stage="dependency")
         return line
 
     def _stdio_send(self, message: dict) -> dict:
         """Send a JSON-RPC message over stdio and read the response."""
         raw = json.dumps(message) + "\n"
-        self._proc.stdin.write(raw)
-        self._proc.stdin.flush()
+        try:
+            self._proc.stdin.write(raw)
+            self._proc.stdin.flush()
+        except (BrokenPipeError, OSError) as e:
+            raise McpTransportError(
+                "the stdio server is no longer writable",
+                code="process_exited", stage="dependency") from e
 
         expected_id = message.get("id")
         while True:
@@ -387,34 +684,39 @@ class McpClient:
     # SSE transport
     # ------------------------------------------------------------------
 
-    def _init_sse(self) -> bool:
+    def _init_sse(self) -> None:
         url = self.config.get("url")
         if not url:
-            logger.warning(f"[MCP:{self.name}] SSE config missing 'url'")
-            return False
+            raise McpTransportError("SSE config is missing 'url'",
+                                    code="field_required", stage="config")
 
         if not self._url_allowed(url):
-            return False
+            raise McpTransportError("the SSE endpoint is not allowed",
+                                    code="target_not_allowed", stage="policy")
 
         self._sse_url = url
 
-        # Read the first SSE event to discover the POST endpoint
-        try:
-            self._post_url = self._sse_discover_endpoint()
-        except Exception as e:
-            logger.warning(f"[MCP:{self.name}] SSE endpoint discovery failed: {e}")
-            return False
+        # An SSE connection may also authenticate with a controlled header
+        # secret; the same header is sent on the discovery GET and on every
+        # POST of the message channel, and nowhere else.
+        extra_headers = self.config.get("headers") or {}
+        if isinstance(extra_headers, dict):
+            self._http_headers = {str(k): str(v) for k, v in extra_headers.items()}
 
-        return self._handshake()
+        # Read the first SSE event to discover the POST endpoint
+        self._post_url = self._sse_discover_endpoint()
+
+        self._handshake()
 
     def _sse_discover_endpoint(self) -> str:
         """Open SSE stream and read the 'endpoint' event to learn the POST URL."""
-        req = urllib.request.Request(
-            self._sse_url,
-            headers={"Accept": "text/event-stream"},
-        )
+        secret_bearing = bool(self._http_headers)
+        self._check_target(self._sse_url, secret_bearing=secret_bearing)
+        headers = {"Accept": "text/event-stream"}
+        headers.update(self._http_headers)
+        req = urllib.request.Request(self._sse_url, headers=headers)
         endpoint = None
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with self._open(req, timeout=10) as resp:
             for raw_line in resp:
                 line = raw_line.decode("utf-8").rstrip("\n\r")
                 if line.startswith("data:"):
@@ -432,23 +734,29 @@ class McpClient:
                         endpoint = urljoin(self._sse_url, data)
                     break
         if not endpoint:
-            raise ValueError(f"[MCP:{self.name}] No endpoint event received from SSE stream")
+            raise McpTransportError("no endpoint event was received from the SSE stream",
+                                    code="endpoint_missing", stage="protocol")
         # Re-validate the server-supplied POST endpoint to block redirects
         # into internal addresses (SSRF guard; no-op when protection is off).
         from agent.tools.utils.url_safety import validate_url_safe
         validate_url_safe(endpoint)
+        self._check_target(endpoint, secret_bearing=True)
         return endpoint
 
     def _sse_send(self, message: dict) -> dict:
         """POST a JSON-RPC message to the server and return the response."""
+        secret_bearing = bool(self._http_headers)
+        self._check_target(self._post_url, secret_bearing=secret_bearing)
         body = json.dumps(message).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        headers.update(self._http_headers)
         req = urllib.request.Request(
             self._post_url,
             data=body,
             method="POST",
-            headers={"Content-Type": "application/json"},
+            headers=headers,
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with self._open(req, timeout=30) as resp:
             raw = resp.read().decode("utf-8")
             return json.loads(raw)
 
@@ -456,14 +764,15 @@ class McpClient:
     # Streamable HTTP transport (MCP spec 2025-03-26)
     # ------------------------------------------------------------------
 
-    def _init_streamable_http(self) -> bool:
+    def _init_streamable_http(self) -> None:
         url = self.config.get("url")
         if not url:
-            logger.warning(f"[MCP:{self.name}] streamable-http config missing 'url'")
-            return False
+            raise McpTransportError("streamable-http config is missing 'url'",
+                                    code="field_required", stage="config")
 
         if not self._url_allowed(url):
-            return False
+            raise McpTransportError("the endpoint is not allowed",
+                                    code="target_not_allowed", stage="policy")
 
         self._http_url = url
         # Allow user-provided headers (e.g. {"Authorization": "Bearer xxx"})
@@ -475,7 +784,8 @@ class McpClient:
         # restart reuses the token instead of forcing re-authorization.
         self._maybe_load_oauth()
 
-        return self._handshake()
+        self._check_target(url, secret_bearing=bool(self._http_headers))
+        self._handshake()
 
     # ------------------------------------------------------------------
     # OAuth helpers (streamable-http only)
@@ -485,6 +795,46 @@ class McpClient:
         """True when the user supplied their own Authorization header."""
         return any(k.lower() == "authorization" for k in self._http_headers)
 
+    def _oauth_store_key(self) -> str:
+        """The key the OAuth token record is stored under for this client.
+
+        A plain mcp.json server keys on its configured name. An external
+        connection must not share that namespace: a token is bound to one
+        connection (and, through the connection row, to one scope/tenant), so
+        the key is derived from the connection id. Two connections therefore
+        never reuse each other's authorization, and a rotation of the
+        connection's identity is a new key.
+        """
+        ctx = self._external_ctx
+        if ctx is None:
+            return self.name
+        return "external:%s:%s" % (ctx.scope or "tenant", ctx.connection_id)
+
+    def _oauth_binding(self) -> dict:
+        """What this client's authorization must be bound to, if anything.
+
+        A plain ``mcp.json`` server has no connection row, so it has nothing to
+        bind to and gets an empty binding — which ``take_pending``'s verifier
+        then refuses. That is the correct direction for a *callback*: the
+        unbound legacy flow keeps working through ``pop_pending``'s path only
+        where no binding was ever required, and an external connection never
+        takes it.
+        """
+        ctx = self._external_ctx
+        if ctx is None:
+            return {}
+        try:
+            from integrations.external.oauth_binding import binding
+        except Exception:  # noqa: BLE001 - no binder, no binding
+            return {}
+        return binding(
+            actor_user_id=getattr(ctx, "actor_user_id", ""),
+            tenant_id=getattr(ctx, "tenant_id", "") or "",
+            scope=getattr(ctx, "scope", ""),
+            connection_id=getattr(ctx, "connection_id", ""),
+            config_version=int(getattr(ctx, "config_version", 0) or 0),
+        )
+
     def _maybe_load_oauth(self) -> None:
         """Attach an OAuthHandler when stored credentials exist for this server."""
         if self._has_static_auth():
@@ -493,16 +843,28 @@ class McpClient:
             from agent.tools.mcp.mcp_oauth import OAuthHandler, load_server_record
         except Exception:
             return
-        rec = load_server_record(self.name)
+        rec = load_server_record(self._oauth_store_key())
         # Only create a handler when we have something to reuse; otherwise it
         # is created lazily on the first 401.
         if rec.get("access_token") or rec.get("client_id"):
             self._oauth = OAuthHandler(
-                server_name=self.name,
+                server_name=self._oauth_store_key(),
                 resource_url=self._http_url,
                 redirect_uri=_oauth_redirect_uri(),
                 scope=self.config.get("scope", ""),
+                binding=self._oauth_binding(),
             )
+            ctx = self._external_ctx
+            if ctx is not None and not self._oauth.is_current(
+                    int(getattr(ctx, "config_version", 0) or 0)):
+                # The connection was edited after this authorization was granted,
+                # so the grant describes a configuration that no longer exists.
+                # Dropping the handler makes the next call re-authorize instead
+                # of presenting a token minted for the old endpoint/scope.
+                logger.info(
+                    f"[MCP:{self.name}] stored authorization belongs to an older "
+                    f"connection version; re-authorization required")
+                self._oauth = None
 
     def _current_bearer(self) -> Optional[str]:
         """Return a valid access token, refreshing if needed."""
@@ -511,7 +873,14 @@ class McpClient:
         return self._oauth.get_valid_access_token()
 
     def _begin_oauth(self, www_authenticate: str = "") -> None:
-        """Kick off the OAuth flow after a 401: discover, register, prompt user."""
+        """Kick off the OAuth flow after a 401: discover, register, prompt user.
+
+        Never reached for an external connection: an interactive flow started
+        from inside a bounded probe or a tool call would be an unbound
+        side effect (no subject, connection version or one-time state), so
+        :meth:`_handle_401` refuses instead and the console asks the operator
+        to authorize the connection explicitly.
+        """
         if self._has_static_auth():
             return
         try:
@@ -522,10 +891,11 @@ class McpClient:
 
         if self._oauth is None:
             self._oauth = OAuthHandler(
-                server_name=self.name,
+                server_name=self._oauth_store_key(),
                 resource_url=self._http_url,
                 redirect_uri=_oauth_redirect_uri(),
                 scope=self.config.get("scope", ""),
+                binding=self._oauth_binding(),
             )
 
         if not self._oauth.ensure_registered(www_authenticate):
@@ -587,12 +957,20 @@ class McpClient:
                 _session_retried=session_retried,
             )
 
+        if self._external_ctx is not None:
+            # An external connection re-authorizes through the console, where
+            # the flow can be bound to the subject, the connection version and
+            # a one-time state. Starting it here would bind none of them.
+            raise McpTransportError(
+                "the connection needs to be authorized again",
+                code="authorization_required", stage="auth")
+
         # No usable token — start (or restart) the interactive OAuth flow.
         self._begin_oauth(www_auth)
-        raise IOError(
-            f"[MCP:{self.name}] streamable-http HTTP 401: authorization required "
-            f"(complete the OAuth flow to enable this server)"
-        )
+        raise McpTransportError(
+            "authorization is required and no stored credential could satisfy "
+            "the request",
+            code="authorization_required", stage="auth")
 
     def _streamable_http_post(
         self,
@@ -635,8 +1013,9 @@ class McpClient:
             headers=headers,
         )
 
+        self._check_target(self._http_url, secret_bearing=bool(headers))
         try:
-            resp = urllib.request.urlopen(req, timeout=30)
+            resp = self._open(req, timeout=30)
         except urllib.error.HTTPError as e:
             # 401 is the spec-compliant "needs authorization" signal.
             if e.code == 401 and not self._has_static_auth():
@@ -652,6 +1031,11 @@ class McpClient:
                 and sid
                 and not _session_retried
                 and message.get("method") != "initialize"
+                # An external connection never resends a message: a 404 can be
+                # produced by an intermediary after the request was received, so
+                # an automatic resend would be exactly the "unconditional
+                # retry" a possibly-applied write must not get.
+                and self._external_ctx is None
             ):
                 try:
                     e.read()
@@ -664,15 +1048,24 @@ class McpClient:
                     _retried=_retried,
                     _session_retried=True,
                 )
-            # Surface the server-provided error body for easier debugging
-            detail = ""
+            # Do not surface the raw remote body: it is unfiltered and may
+            # echo request data. The status and a short reason are enough.
             try:
-                detail = e.read().decode("utf-8", errors="ignore")
+                e.read()
             except Exception:
                 pass
-            raise IOError(
-                f"[MCP:{self.name}] streamable-http HTTP {e.code}: {detail[:200]}"
-            )
+            if e.code in (401, 403):
+                raise McpTransportError(
+                    "the server refused the credential",
+                    code="authorization_failed", stage="auth") from e
+            if 300 <= e.code < 400:
+                raise McpTransportError(
+                    "the server redirected the request, which is not followed "
+                    "for external connections",
+                    code="redirect_refused", stage="policy") from e
+            raise McpTransportError(
+                f"the server returned HTTP {e.code}",
+                code="http_status", stage="protocol") from e
 
         with resp:
             # Capture session id assigned by the server (if any)
@@ -716,16 +1109,13 @@ class McpClient:
             with self._http_lock:
                 if self._http_session_id != expired_session_id:
                     if not self._initialized:
-                        raise IOError(
-                            f"[MCP:{self.name}] failed to reinitialize expired HTTP session"
-                        )
+                        raise McpTransportError(
+                            "failed to reinitialize the expired HTTP session",
+                            code="session_recovery_failed", stage="protocol")
                     return
                 self._http_session_id = None
 
-            if not self._handshake():
-                raise IOError(
-                    f"[MCP:{self.name}] failed to reinitialize expired HTTP session"
-                )
+            self._handshake()
 
     def _read_sse_response(self, resp, expected_id) -> dict:
         """Read an SSE stream and return the first JSON-RPC response with matching id."""
@@ -753,7 +1143,9 @@ class McpClient:
                 data_buf.append(line[len("data:"):].lstrip())
             # Ignore 'event:' / 'id:' lines; we only care about JSON-RPC payloads
 
-        raise IOError(f"[MCP:{self.name}] streamable-http SSE stream closed before response")
+        raise McpTransportError(
+            "the SSE stream closed before a response arrived",
+            code="stream_closed", stage="protocol")
 
     # ------------------------------------------------------------------
     # Common JSON-RPC helpers
@@ -779,7 +1171,8 @@ class McpClient:
     def _send_request(self, method: str, params: dict) -> dict:
         """Send a request and return the full response dict."""
         if not self._initialized and method != "initialize":
-            raise RuntimeError(f"[MCP:{self.name}] Client not initialized")
+            raise McpTransportError("the client is not initialized",
+                                    code="not_initialized", stage="protocol")
 
         message = self._build_request(method, params)
 
@@ -794,7 +1187,9 @@ class McpClient:
         elif self.transport == "streamable-http":
             return self._streamable_http_send(message)
         else:
-            raise ValueError(f"[MCP:{self.name}] Unsupported transport: {self.transport}")
+            raise McpTransportError(
+                f"unsupported transport type: {self.transport!r}",
+                code="unsupported_transport", stage="config")
 
     def _send_notification(self, method: str, params: dict):
         """Fire-and-forget notification (no response expected)."""
@@ -805,15 +1200,19 @@ class McpClient:
             self._proc.stdin.write(raw)
             self._proc.stdin.flush()
         elif self.transport == "sse":
+            self._check_target(self._post_url,
+                               secret_bearing=bool(self._http_headers))
             body = raw.encode("utf-8")
+            headers = {"Content-Type": "application/json"}
+            headers.update(self._http_headers)
             req = urllib.request.Request(
                 self._post_url,
                 data=body,
                 method="POST",
-                headers={"Content-Type": "application/json"},
+                headers=headers,
             )
             try:
-                with urllib.request.urlopen(req, timeout=10):
+                with self._open(req, timeout=10):
                     pass
             except Exception:
                 pass  # notifications are fire-and-forget
@@ -823,8 +1222,13 @@ class McpClient:
             except Exception:
                 pass  # notifications are fire-and-forget
 
-    def _handshake(self) -> bool:
-        """Perform the MCP initialize / notifications/initialized handshake."""
+    def _handshake(self) -> None:
+        """Perform the MCP initialize / notifications/initialized handshake.
+
+        Raises :class:`McpTransportError` on failure so the caller can report
+        the stage; the legacy ``initialize()`` wrapper turns it back into a
+        boolean for the mcp.json loader.
+        """
         init_params = {
             "protocolVersion": "2024-11-05",
             "capabilities": {},
@@ -834,19 +1238,22 @@ class McpClient:
         self._initialized = True
         try:
             resp = self._send_request("initialize", init_params)
+        except McpTransportError:
+            self._initialized = False
+            raise
         except Exception as e:
             self._initialized = False
-            logger.warning(f"[MCP:{self.name}] Handshake initialize failed: {e}")
-            return False
+            raise _as_transport_error(e) from e
 
         if "error" in resp:
             self._initialized = False
-            logger.warning(f"[MCP:{self.name}] Handshake error: {resp['error']}")
-            return False
+            raise McpTransportError(
+                "the server refused the handshake: %s" % _redact(resp.get("error")),
+                code="handshake_refused", stage="protocol")
 
         self._send_notification("notifications/initialized", {})
         logger.debug(f"[MCP:{self.name}] Handshake complete")
-        return True
+        return None
 
 
 class McpClientRegistry:

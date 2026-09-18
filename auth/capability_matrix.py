@@ -368,17 +368,32 @@ SLICES: Tuple[Slice, ...] = (
         "external_connections",
         capability="external-connection-management",
         consumer="external_connections",
-        # No console page yet: the page/entry point is task group 8 of
-        # ``add-external-system-access``, so this slice declares the API the page
-        # will read and stays out of the page projection until then.
-        page=None,
+        # The console page (task group 10 of ``add-external-system-access``): the
+        # "模型与接入 / 外部系统接入" entry, registered as the view
+        # ``external_connections`` in ``console.js`` and served by
+        # ``static/js/external-connections.js``.
+        #
+        # The id is signed rather than left empty so the entry is gated like every
+        # other admin page: ``_viewNavDenied`` and the sidebar gate read
+        # ``console_pages['admin.external_connections']``, and a page the registry
+        # does not sign is deliberately left *as-is* — visible to an identity with
+        # no read grant, and reachable by direct URL. Not signing it would make the
+        # projection silent about a page that exists.
+        page="admin.external_connections",
         scope=frozenset({"platform", "tenant", "personal"}),
-        # Read and config only. ``test`` and ``execute`` are deliberately not
-        # declared: this build has no external-environment acceptance for a real
-        # MCP/ERP/OA/mail round trip (design §7), and an undeclared action cannot
-        # be reached through a route at all. ``registry.capability_projection``
-        # reports that per type with the deployment reason, so the console shows
-        # a closed state rather than a button that always fails.
+        # Read, config, and the two runtime-facing reads the page needs.
+        #
+        # ``test`` and ``runtime`` are declared here as *route* actions, which is
+        # what lets the page ask for a test at all. Whether a test actually runs
+        # is a second, independent gate: ``registry.open_classes(kind)`` reads the
+        # deployment's ``external_connections.readiness`` block (default closed)
+        # and ``service.probe_connection`` refuses with ``test_not_available``
+        # when the type's class is shut. Declaring the route therefore does not
+        # open anything — it only stops the page from being unable to ask, so the
+        # console can render the deployment's real reason instead of a missing
+        # button. ``execute`` is deliberately NOT declared: a business action has
+        # no HTTP entry point at all, it goes through the tool/runtime path where
+        # the risk catalogue and the approval binding live.
         open={
             "catalog": ACCESS_READ,
             "types": ACCESS_READ,
@@ -391,6 +406,18 @@ SLICES: Tuple[Slice, ...] = (
             # resolves, they do not run anything.
             "erp_default": ACCESS_CONFIG,
             "tenant_access": ACCESS_CONFIG,
+            # A bounded connectivity/authentication probe and the runtime limits
+            # projection. Both are reads of the external system's state, not
+            # writes to it, and both are refused by the service when the
+            # deployment has not opened the type's test class.
+            "test": ACCESS_READ,
+            # Testing an unsaved form. Declared as a route action of the same
+            # class as ``test`` — it is the same bounded probe against the same
+            # deployment switch — and the route demands the *manage* permission
+            # because a draft has no saved row whose ownership could authorize
+            # it, so the caller must be the one entitled to define connections.
+            "draft_test": ACCESS_READ,
+            "runtime": ACCESS_READ,
         },
         # The control plane exists and is exercised over the real WSGI app in
         # ``tests/test_external_connections_api.py`` (session-derived ownership,
@@ -414,8 +441,8 @@ SLICES: Tuple[Slice, ...] = (
     ),
 )
 
-_BY_ID: Dict[str, Slice] = {s.id: s for s in SLICES}
 
+_BY_ID: Dict[str, Slice] = {s.id: s for s in SLICES}
 
 def slice_for(slice_id: str) -> Slice:
     try:

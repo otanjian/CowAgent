@@ -661,6 +661,24 @@ def _migrate_scheduled_tasks():
     return run_startup_hook(HOOK_SCHEDULER_TASK_MIGRATION)
 
 
+def _guard_external_store_version():
+    """Refuse a boot that reads the new external-connection store too early.
+
+    Same seam again: the decision (is ``store_version=new`` safe given what the
+    legacy ERP files and per-Agent ``mcp.json`` still hold) lives in
+    ``common/startup_hooks.py`` and ``integrations/external/migration.py``.
+    Unlike the migrations below this one *propagates* its refusal: reading an
+    unimported store loses connections silently, which is not a state to warn
+    about and continue from.
+    """
+    from common.startup_hooks import (
+        HOOK_EXTERNAL_STORE_VERSION,
+        run_startup_hook,
+    )
+
+    return run_startup_hook(HOOK_EXTERNAL_STORE_VERSION)
+
+
 def _warn_if_legacy_workspace_data_exists():
     """Warn if the hardcoded ~/cow default holds data that agent_workspace
     doesn't - e.g. after changing agent_workspace without moving the old
@@ -797,6 +815,7 @@ def run():
         _migrate_team_roster()
         _migrate_conversation_tenancy()
         _migrate_scheduled_tasks()
+        _guard_external_store_version()
         _warn_if_legacy_workspace_data_exists()
         # ctrl + c
         sigterm_handler_wrap(signal.SIGINT)

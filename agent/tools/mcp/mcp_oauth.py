@@ -25,7 +25,7 @@ import time
 import urllib.parse
 import urllib.request
 import urllib.error
-from typing import Optional
+from typing import Callable, Optional
 
 from common.log import logger
 
@@ -102,14 +102,21 @@ def clear_server_record(server_name: str) -> None:
 # ------------------------------------------------------------------
 
 _PENDING_LOCK = threading.Lock()
-_PENDING: dict = {}  # state -> {"handler": OAuthHandler, "created": ts}
+#: state -> {"handler": OAuthHandler, "created": ts, "binding": {...}}.
+#: ``binding`` is the record ``integrations.external.oauth_binding`` builds: who
+#: started the flow, for which connection, at which configuration version. It is
+#: kept here rather than only on the handler so a callback can be *refused*
+#: before the handler is reached, and the state is consumed either way.
+_PENDING: dict = {}
 _PENDING_TTL = 600  # seconds
 
 
-def _register_pending(state: str, handler: "OAuthHandler") -> None:
+def _register_pending(state: str, handler: "OAuthHandler",
+                      binding: Optional[dict] = None) -> None:
     with _PENDING_LOCK:
         _prune_pending_locked()
-        _PENDING[state] = {"handler": handler, "created": time.time()}
+        _PENDING[state] = {"handler": handler, "created": time.time(),
+                           "binding": dict(binding or {})}
 
 
 def _prune_pending_locked() -> None:
@@ -120,10 +127,51 @@ def _prune_pending_locked() -> None:
 
 
 def pop_pending(state: str) -> Optional["OAuthHandler"]:
+    """Pop the pending handler for ``state``, without verifying its binding.
+
+    Kept for callers that have already established the binding themselves, and
+    for the existing tests. Prefer :func:`take_pending`: a callback that pops
+    without verifying is exactly the gap this was built to close.
+    """
+    return take_pending(state)
+
+
+def pending_binding(state: str) -> Optional[dict]:
+    """The binding recorded when ``state`` was issued, if it is still live."""
+    with _PENDING_LOCK:
+        _prune_pending_locked()
+        entry = _PENDING.get(state)
+    return dict(entry["binding"]) if entry else None
+
+
+def take_pending(state: str, verify: Optional[Callable[[dict], tuple]] = None
+                 ) -> Optional["OAuthHandler"]:
+    """Pop a pending authorization, optionally refusing it if it no longer fits.
+
+    ``verify`` receives the recorded binding and returns ``(ok, reason)``. The
+    pop happens **before** the verification and unconditionally, which is
+    deliberate: a callback that fails verification has consumed its state, so a
+    refused authorization cannot be retried against the same one-time value.
+
+    Returns ``None`` both for an unknown/expired state and for a refused one. The
+    distinction is logged and not propagated: a callback that distinguished them
+    in its response would tell an attacker whether a state value ever existed.
+    """
     with _PENDING_LOCK:
         _prune_pending_locked()
         entry = _PENDING.pop(state, None)
-    return entry["handler"] if entry else None
+    if not entry:
+        return None
+    if verify is not None:
+        try:
+            ok, reason = verify(dict(entry.get("binding") or {}))
+        except Exception as exc:  # noqa: BLE001 - a broken check is a refusal
+            logger.warning("[MCP-OAuth] callback verification failed: %s", exc)
+            return None
+        if not ok:
+            logger.warning("[MCP-OAuth] callback refused: %s", reason)
+            return None
+    return entry["handler"]
 
 
 def has_pending() -> bool:
@@ -299,12 +347,18 @@ class OAuthHandler:
     """Drives the OAuth flow and token lifecycle for a single MCP server."""
 
     def __init__(self, server_name: str, resource_url: str, redirect_uri: str,
-                 scope: str = "", client_name: str = "容大AI"):
+                 scope: str = "", client_name: str = "容大AI",
+                 binding: Optional[dict] = None):
         self.server_name = server_name
         self.resource_url = resource_url
         self.redirect_uri = redirect_uri
         self.scope = scope
         self.client_name = client_name
+        #: What this authorization is bound to, from
+        #: ``integrations.external.oauth_binding``. Empty for a plain
+        #: ``mcp.json`` server, which has no connection row to bind to; an
+        #: external connection always supplies one.
+        self.binding: dict = dict(binding or {})
 
         rec = load_server_record(server_name)
         self.metadata: dict = rec.get("metadata", {})
@@ -313,7 +367,33 @@ class OAuthHandler:
         self.access_token: Optional[str] = rec.get("access_token")
         self.refresh_token: Optional[str] = rec.get("refresh_token")
         self.expires_at: float = float(rec.get("expires_at", 0) or 0)
+        # A record written before bindings existed has none, so the stored one
+        # is only adopted when the caller did not bring a fresher one.
+        if not self.binding:
+            self.binding = dict(rec.get("binding") or {})
         self._verifier: Optional[str] = None
+
+    @property
+    def bound_config_version(self) -> int:
+        """The connection version this authorization was started against, or 0."""
+        try:
+            return int(self.binding.get("config_version", 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def is_current(self, config_version: int) -> bool:
+        """Whether a stored authorization still belongs to this connection version.
+
+        A token minted against version *n* must not be presented for version
+        *n+1*: the operator may have changed the endpoint, the client id or the
+        scope, and the old grant says nothing about the new configuration. An
+        unbound handler (a plain ``mcp.json`` server) is always current, because
+        it has no version to disagree with.
+        """
+        bound = self.bound_config_version
+        if not bound:
+            return True
+        return bound == int(config_version or 0)
 
     # --- persistence -------------------------------------------------
 
@@ -326,6 +406,7 @@ class OAuthHandler:
             "access_token": self.access_token,
             "refresh_token": self.refresh_token,
             "expires_at": self.expires_at,
+            "binding": dict(self.binding),
         })
 
     # --- token access ------------------------------------------------
@@ -408,7 +489,12 @@ class OAuthHandler:
         return True
 
     def build_authorization_url(self) -> Optional[str]:
-        """Create an authorization URL and register this handler as pending."""
+        """Create an authorization URL and register this handler as pending.
+
+        The pending record carries this handler's :attr:`binding`, so the
+        callback can refuse a completion that no longer matches the request that
+        started it (see ``integrations.external.oauth_binding``).
+        """
         if not self.metadata.get("authorization_endpoint") or not self.client_id:
             return None
         self._verifier, challenge = _make_pkce()
@@ -425,8 +511,33 @@ class OAuthHandler:
             params["scope"] = self.scope
         # Advertise the resource we intend to access (RFC 8707).
         params["resource"] = self.resource_url
-        _register_pending(state, self)
+        _register_pending(state, self, binding=self.binding)
         return f"{self.metadata['authorization_endpoint']}?{urllib.parse.urlencode(params)}"
+
+    def revoke(self) -> bool:
+        """Forget this server's stored authorization.
+
+        ``clear_server_record`` already existed but had no caller, so there was
+        no way to revoke: a token stayed usable after the reason for it went
+        away. Clearing the record is what makes the next call re-authorize
+        (``authorization_required``) instead of reusing the old grant, which is
+        认证失败 SHALL 要求重新授权, 不返回令牌或沿用失效会话.
+
+        Returns whether anything was actually cleared, so a caller can report
+        "already revoked" rather than claiming a change it did not make.
+        """
+        existed = bool(self.access_token or self.refresh_token or self.client_id)
+        self.access_token = None
+        self.refresh_token = None
+        self.expires_at = 0.0
+        self._verifier = None
+        try:
+            clear_server_record(self.server_name)
+        except Exception as exc:  # noqa: BLE001 - report, do not raise
+            logger.warning(f"[MCP-OAuth:{self.server_name}] revoke failed: {exc}")
+            return False
+        logger.info(f"[MCP-OAuth:{self.server_name}] authorization revoked")
+        return existed
 
     def finish_authorization(self, code: str) -> bool:
         """Exchange an authorization code for tokens."""

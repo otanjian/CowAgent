@@ -258,7 +258,15 @@ class CatalogTests(unittest.TestCase):
             tools = svc._project_tools()
 
         self.assertEqual(calls["load"], 1)
-        self.assertEqual([t["resource_id"] for t in tools], ["builtin:read"])
+        ids = [t["resource_id"] for t in tools]
+        # The built-in tool is there, loaded exactly once and lazily.
+        self.assertIn("builtin:read", ids)
+        self.assertEqual(calls["load"], 1)
+        # The external kinds this build declares are listed too, and separately
+        # from the built-ins: the grant catalogue is stable rather than varying
+        # with whichever connections one tenant happens to have created.
+        self.assertTrue(all(rid.startswith("external:") for rid in ids
+                            if rid != "builtin:read"), ids)
 
 
 class RuntimeAssemblyTests(unittest.TestCase):

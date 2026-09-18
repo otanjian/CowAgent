@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Tuple
 from urllib.parse import urlparse
 
+from integrations.external.adapters.base import adapter_available
 from integrations.external.errors import invalid
 
 # -- kind / scope vocabulary -------------------------------------------------
@@ -75,15 +76,41 @@ REQUIRED_SLOTS: Dict[str, FrozenSet[str]] = {
     KIND_EMAIL: frozenset(),
 }
 
-#: The capability classes the server currently serves per kind.
-#: ``configure`` only: test/execute open with the G2–G4 evidence that this
-#: repository has not produced (design §7). The projection reports the reason
-#: rather than pretending the class is available.
-READINESS_OPEN: Dict[str, FrozenSet[str]] = {
-    KIND_MCP: frozenset({"configure"}),
-    KIND_ERP: frozenset({"configure"}),
-    KIND_OA: frozenset({"configure"}),
-    KIND_EMAIL: frozenset({"configure"}),
+#: Capability classes every kind serves unconditionally. ``configure`` is the
+#: control plane, which is this build's delivered and accepted slice.
+BASELINE_CLASSES: FrozenSet[str] = frozenset({"configure"})
+
+#: Capability classes a kind *can* serve, and which the deployment opens by
+#: policy. This is the server-side type slice switch of design §7: it defaults
+#: to closed, so a deployment that has not accepted the corresponding evidence
+#: reports the class as unavailable with a reason rather than exposing it.
+#:
+#: The code for every class below exists in this build; what the switch gates
+#: is whether *this deployment* has the environment and the accepted evidence
+#: for it. Keeping the gate here (and not as a missing code path) is what makes
+#: "开关默认关闭" a checkable fact rather than a comment.
+OPENABLE_CLASSES: Dict[str, FrozenSet[str]] = {
+    KIND_MCP: frozenset({"test", "read_execute"}),
+    KIND_ERP: frozenset({"test", "read_execute"}),
+    KIND_OA: frozenset({"test", "read_execute", "write_execute"}),
+    KIND_EMAIL: frozenset({"test", "read_execute", "write_execute"}),
+}
+
+#: Classes that additionally require a second, independent acceptance. A
+#: stdio MCP server runs a local program, so its test and execute classes stay
+#: closed even when the deployment opens MCP testing, until the isolation
+#: story is accepted (design §7 "stdio 另有 execution-isolation").
+SECOND_GATE: Dict[str, str] = {
+    # (kind, class) -> the deployment switch that must also be on.
+}
+
+#: Classes that remain closed in this build because the *code* path is not the
+#: thing missing — an external acceptance is. Kept as an explicit list so the
+#: projection can name each one instead of emitting a vague "not ready".
+WITHHELD: Dict[str, FrozenSet[str]] = {
+    # Nothing is withheld by construction. A class is closed because the
+    # deployment has not opened it (see :func:`open_classes`), which is a
+    # configuration fact the console can print and an operator can change.
 }
 
 READINESS_REASON = {
@@ -104,6 +131,13 @@ _MAX_URL = 1024
 _SECRETISH = re.compile(r"(pass|secret|token|key|credential|authorization)", re.I)
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 _EMAIL_ADDR = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+#: What a ``tool_name_prefix`` may contain. Whitespace, the ``:`` id separator
+#: and the ``/`` in a path are excluded: the prefix is prepended to a tool name
+#: that then appears in a prompt, a log line and a grant id, and any of those
+#: three would become ambiguous. Kept next to ``_ENV_NAME`` so the two
+#: "this string becomes part of an identifier" rules read together.
+_TOOL_NAME_PREFIX = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
 
 @dataclass(frozen=True)
@@ -128,7 +162,7 @@ _SPECS: Tuple[TypeSpec, ...] = (
         scopes=frozenset({SCOPE_PLATFORM, SCOPE_TENANT}),
         config_keys=frozenset({
             "transport", "url", "auth", "header_name", "command", "args",
-            "env_keys", "oauth_provider",
+            "env_keys", "oauth_provider", "tool_name_prefix",
         }),
         secret_slots=SLOTS[KIND_MCP],
     ),
@@ -150,7 +184,7 @@ _SPECS: Tuple[TypeSpec, ...] = (
         scopes=frozenset({SCOPE_TENANT}),
         config_keys=frozenset({
             "base_url", "username", "tenant_key", "custom_page_config_id",
-            "app_key", "corp_id",
+            "app_key", "corp_id", "attachment_dirs",
         }),
         secret_slots=SLOTS[KIND_OA],
     ),
@@ -272,6 +306,28 @@ def _string_list(config: Mapping[str, Any], key: str, *, default=(),
     return out
 
 
+def _tool_name_prefix(config: Mapping[str, Any]) -> str:
+    """A validated ``tool_name_prefix``, or ``""`` when absent.
+
+    Returns the empty string rather than raising when the key is missing: the
+    prefix is optional, and "no prefix" is the same as "the empty prefix" for
+    every consumer. A *present but unusable* value is refused, because silently
+    ignoring it would re-name the server's tools — a change to what an existing
+    grant points at, made by a validator.
+    """
+    raw = config.get("tool_name_prefix")
+    if raw is None:
+        return ""
+    text = str(raw).strip()
+    if not text:
+        return ""
+    if not _TOOL_NAME_PREFIX.match(text):
+        raise invalid("tool_name_prefix must be 1-64 characters of letters, "
+                      "digits, dot, dash or underscore", code="field_invalid",
+                      fields={"tool_name_prefix": "invalid"})
+    return text
+
+
 def _http_url(value: str, key: str, *, allow_path: bool = True) -> str:
     """A remote address with no embedded credentials.
 
@@ -318,6 +374,14 @@ def _validate_mcp(config: Mapping[str, Any]) -> Dict[str, Any]:
         raise invalid("transport must be stdio, sse or streamable_http",
                       code="field_invalid", fields={"transport": "invalid"})
     out: Dict[str, Any] = {"transport": transport}
+    # ``tool_name_prefix`` is part of *identity*, not display: the tool name it
+    # composes is the resource id an existing grant and an Agent allowlist quote
+    # (see ``mcp_identity``). It is therefore validated and carried, never
+    # dropped -- a migration that lost it would silently re-name every tool the
+    # server contributes and orphan the grants filed under the old names.
+    prefix = _tool_name_prefix(config)
+    if prefix:
+        out["tool_name_prefix"] = prefix
     if transport == "stdio":
         for forbidden in ("url", "auth", "header_name", "oauth_provider"):
             if config.get(forbidden) not in (None, ""):
@@ -396,6 +460,17 @@ def _validate_oa(config: Mapping[str, Any]) -> Dict[str, Any]:
         value = _string(config, key)
         if value:
             out[key] = value
+    # ``attachment_dirs`` bounds where a fetched attachment may be written. Its
+    # deeper checks (relative, inside the workspace, no duplicates) live in the
+    # adapter's ``validate_config``; the shape check is here so a non-list never
+    # reaches storage.
+    raw_dirs = config.get("attachment_dirs")
+    if raw_dirs not in (None, "", [], {}):
+        if not isinstance(raw_dirs, (list, tuple)):
+            raise invalid("attachment_dirs must be a list", code="field_type",
+                          fields={"attachment_dirs": "type"})
+        out["attachment_dirs"] = [str(entry).strip() for entry in raw_dirs
+                                 if str(entry).strip()]
     # A site URL and account are what "登录型" means; the OpenAPI fields stay
     # optional so a login-only connection can be saved, and the capability
     # projection reports the OpenAPI class as not ready rather than refusing the
@@ -491,6 +566,57 @@ def validate_config(kind: str, config: Optional[Mapping[str, Any]]) -> Dict[str,
     return _VALIDATORS[kind](config)
 
 
+def _readiness_config() -> Mapping[str, Any]:
+    """The deployment's readiness block, re-read on every call.
+
+    Re-read rather than cached so opening a class takes effect without a
+    restart, and so a test can open one for the duration of a case. A
+    misconfigured block is treated as empty (everything closed) rather than
+    raising: an unreadable policy must not become an open one.
+    """
+    try:
+        from config import conf
+        raw = (conf() or {}).get("external_connections") or {}
+        if not isinstance(raw, Mapping):
+            return {}
+        block = raw.get("readiness") or {}
+        return block if isinstance(block, Mapping) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def open_classes(kind: str) -> FrozenSet[str]:
+    """Classes this deployment currently serves for ``kind``.
+
+    ``configure`` is always present. Every other class requires an explicit
+    per-kind opt-in, so the default deployment matches the design's
+    "开关默认关闭":
+
+    ``{"external_connections": {"readiness": {"mcp": {"test": true}}}}``
+    """
+    spec_for(kind)
+    open_now = set(BASELINE_CLASSES)
+    configured = _readiness_config().get(kind) or {}
+    if isinstance(configured, Mapping):
+        allowed = OPENABLE_CLASSES.get(kind, frozenset())
+        for name, value in configured.items():
+            name = str(name)
+            if name in allowed and value is True:
+                open_now.add(name)
+    return frozenset(open_now)
+
+
+def unavailable_reason(kind: str, capability: str) -> str:
+    """Why ``capability`` is closed for ``kind``, in a renderable form."""
+    if capability in BASELINE_CLASSES:
+        return ""
+    if capability not in OPENABLE_CLASSES.get(kind, frozenset()):
+        return "not_supported_by_type"
+    if capability in WITHHELD.get(kind, frozenset()):
+        return "withheld_pending_acceptance"
+    return READINESS_REASON.get(kind, "not_configured")
+
+
 def required_slots(kind: str, config: Mapping[str, Any]) -> FrozenSet[str]:
     """Slots a *saved* connection of this kind needs to be usable.
 
@@ -516,23 +642,71 @@ def required_slots(kind: str, config: Mapping[str, Any]) -> FrozenSet[str]:
 
 
 def capability_projection(kind: str, *, config: Mapping[str, Any],
-                          has_secret: Mapping[str, bool]) -> Dict[str, Any]:
+                          has_secret: Mapping[str, bool],
+                          adapter_present: Optional[bool] = None,
+                          adapter_report: Optional[Mapping[str, Any]] = None
+                          ) -> Dict[str, Any]:
     """What a connection of this kind can do right now, and why not.
 
-    ``configure`` is served everywhere; ``test``/``execute`` are reported as
-    unavailable with the deployment reason, so a console renders the real state
-    instead of a button that always fails.
+    Two independent facts are merged, and they are kept distinguishable:
+
+    * **deployment readiness** — whether this deployment opened the class
+      (:func:`open_classes`). Every kind ships ``configure``; ``test`` and the
+      execution classes are opt-in per deployment.
+    * **this configuration** — whether the adapter exists in the build and
+      whether the connection's required secret slots are filled.
+
+    A class is reported available only when both hold, so a console renders
+    the real state instead of a button that always fails. ``unavailable_reason``
+    names the *first* reason in that order, because "the deployment has not
+    opened MCP testing" and "this connection is missing its password" call for
+    different actions from the reader.
     """
     spec = spec_for(kind)
-    open_classes = sorted(READINESS_OPEN.get(kind, frozenset()))
+    opened = open_classes(kind)
     missing = sorted(slot for slot in required_slots(kind, config or {})
                      if not has_secret.get(slot))
+    adapter_ok = adapter_present
+    if adapter_ok is None:
+        adapter_ok = adapter_available(kind)
+    report = dict(adapter_report or {})
+
+    def _class_state(capability: str) -> Tuple[bool, str]:
+        # ``configure`` is served by the registry itself: its validators are
+        # what produce a saveable connection, and they do not need an adapter.
+        # Reporting it unavailable because a runtime adapter is absent would
+        # contradict the control plane that is already working.
+        if capability == "configure":
+            return True, ""
+        if capability not in opened:
+            return False, unavailable_reason(kind, capability)
+        if not adapter_ok:
+            return False, "adapter_not_installed"
+        if missing:
+            return False, "secret_missing"
+        return True, ""
+
+    states = {name: _class_state(name) for name in
+              ("configure", "test", "read_execute", "write_execute")}
+    executions = [name for name in ("read_execute", "write_execute")
+                  if name in opened]
+    primary_reason = ""
+    for name in ("test", "read_execute", "write_execute"):
+        if not states[name][0]:
+            primary_reason = states[name][1]
+            break
     return {
         "kind": kind,
         "scopes": sorted(spec.scopes),
-        "open": open_classes,
-        "test_available": "test" in open_classes,
-        "execute_available": "execute" in open_classes,
-        "unavailable_reason": READINESS_REASON.get(kind, "not_implemented"),
+        "open": sorted(capability for capability in states if states[capability][0]),
+        "classes": {name: {"available": state[0], "reason": state[1]}
+                    for name, state in states.items()},
+        "test_available": states["test"][0],
+        "execute_available": any(states[name][0] for name in executions),
+        "read_execute_available": states["read_execute"][0],
+        "write_execute_available": states["write_execute"][0],
+        "unavailable_reason": primary_reason,
+        "adapter_present": bool(adapter_ok),
         "missing_secret_slots": missing,
+        "adapter": report,
     }

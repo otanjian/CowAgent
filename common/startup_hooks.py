@@ -38,6 +38,7 @@ HOOK_IDENTITY_MODE_CONSISTENCY = "identity_mode_consistency"
 HOOK_DATABASE_BOOTSTRAP = "database_bootstrap"
 HOOK_TENANT_CONVERSATION_BACKFILL = "tenant_conversation_backfill"
 HOOK_SCHEDULER_TASK_MIGRATION = "scheduler_task_migration"
+HOOK_EXTERNAL_STORE_VERSION = "external_store_version"
 
 #: One-shot initial admin password under the data root (mode 0600).
 BOOTSTRAP_PASSWORD_FILENAME = ".bootstrap_admin_password"
@@ -108,6 +109,11 @@ REQUIRED_HOOKS: Tuple[str, ...] = (
     HOOK_DATABASE_BOOTSTRAP,
     HOOK_TENANT_CONVERSATION_BACKFILL,
     HOOK_SCHEDULER_TASK_MIGRATION,
+    # Not an authorization boundary but the same failure mode: the guard
+    # refuses a boot that would read the new external-connection store while
+    # legacy records are still unimported. A dropped registration would make
+    # that read happen silently, which is the outcome the guard exists to stop.
+    HOOK_EXTERNAL_STORE_VERSION,
 )
 
 
@@ -403,6 +409,78 @@ def _scheduler_task_migration() -> None:
 TASK_STORE_BACKUP_KEEP = 5
 
 
+def _external_store_version_guard() -> None:
+    """Refuse a boot that would read the new store before the import (task 12.3).
+
+    ``store_version`` selects which store the external-connection runtime reads:
+    ``legacy`` (the shipped default), ``dual`` (read legacy, write both), or
+    ``new``. ``new`` is only safe once every importable legacy record has been
+    imported, and this is where that is enforced — the check existed as
+    ``assert_store_version_safe`` but had no caller, so a deployment could set
+    ``new`` and have the runtime read an empty store while the legacy ERP file
+    and per-Agent ``mcp.json`` still held the real connections. The symptom
+    would be "my connections disappeared", with the data still on disk.
+
+    Three deliberate choices:
+
+    * **The default deployment sees nothing.** ``store_version`` defaults to
+      ``legacy``, for which the check is trivially safe, so a normal boot pays
+      only for the configuration read.
+    * **Only ``new`` can refuse the boot.** A scan that fails while the
+      deployment is on ``legacy`` is downgraded to a warning: refusing to boot
+      over an unused store would be an availability bug, while refusing over the
+      store actually being read is the point.
+    * **The refusal names the work.** ``assert_store_version_safe`` raises with
+      the pending and blocking counts, so the operator is told to import first
+      rather than being left with an unexplained exit.
+    """
+    from common.log import logger
+    try:
+        from integrations.external.migration import (
+            STORE_NEW,
+            active_store_version,
+            assert_store_version_safe,
+        )
+        from auth.service import get_identity_service
+
+        if active_store_version() != STORE_NEW:
+            return
+
+        report = assert_store_version_safe(get_identity_service())
+        logger.info(
+            "[App] External-connection store_version=new accepted: %d legacy"
+            " record(s) imported, none pending"
+            % report.get("imported", 0)
+        )
+    except Exception as error:
+        if _external_store_version_is_new():
+            logger.error(
+                "[App] Refusing to start: external-connection store_version=new "
+                "is unsafe (%s). Import the legacy records first "
+                "(python -m cli.cli external-connections import) or set "
+                "store_version back to 'legacy'." % error
+            )
+            raise
+        logger.warning(
+            "[App] External-connection store-version check skipped: %s" % error)
+
+
+def _external_store_version_is_new() -> bool:
+    """Whether the deployment is configured to read the new store.
+
+    Re-read here rather than passed down so the ``except`` path of the guard can
+    distinguish "the deployment asked for ``new`` and it is unsafe" (refuse the
+    boot) from "the scan broke while the deployment reads ``legacy``" (warn).
+    Returns False on any read failure: not knowing the mode means not being
+    entitled to refuse the boot.
+    """
+    try:
+        from integrations.external.migration import STORE_NEW, active_store_version
+        return active_store_version() == STORE_NEW
+    except Exception:  # noqa: BLE001 - cannot read the mode => do not refuse
+        return False
+
+
 def _backup_task_stores(state_dir, agent_ids, plan, *, source: str) -> List[str]:
     """Copy every task store the migration is about to rewrite (task 4.3).
 
@@ -470,6 +548,8 @@ def register_fork_startup_hooks() -> None:
                           _tenant_conversation_backfill, order=20)
     register_startup_hook(HOOK_SCHEDULER_TASK_MIGRATION,
                           _scheduler_task_migration, order=25)
+    register_startup_hook(HOOK_EXTERNAL_STORE_VERSION,
+                          _external_store_version_guard, order=30)
 
 
 register_fork_startup_hooks()

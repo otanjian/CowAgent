@@ -44,12 +44,13 @@ arrive in later task groups with their own acceptance evidence.
 from __future__ import annotations
 
 import json
+import re
 import time
 from contextlib import contextmanager
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from auth.audit import AuditStore
-from integrations.external import registry
+from integrations.external import maintenance, registry
 from integrations.external.errors import (
     conflict,
     forbidden,
@@ -224,7 +225,21 @@ class ExternalConnectionService:
         The reason is the deployment's, not a placeholder: a type whose tenant
         singleton already exists is reported as ``singleton_exists`` so the
         console opens the editor instead of offering a second one.
+
+        A scope in a maintenance window reports ``maintenance_window`` as its
+        reason (task 12.2). That is why the window is surfaced here rather than
+        added as a new route: this projection already answers "may this caller
+        write this scope right now, and if not, why", and "a cutover is running"
+        is an answer to that question, not a new one. The enforcement is in the
+        write methods; this is only so the console shows the reason instead of a
+        save button that fails.
         """
+        try:
+            windows = maintenance.pause_projection(actor_user_id=actor_user_id,
+                                                   tenant_id=tenant_id,
+                                                   service=self)
+        except Exception:  # noqa: BLE001 - an unreadable pause state is display-only
+            windows = {}
         platform_admin = self._is_platform_admin(actor_user_id)
         can_tenant = False
         if tenant_id:
@@ -250,15 +265,25 @@ class ExternalConnectionService:
         for spec in registry.TYPE_SPECS.values():
             scopes = []
             if registry.SCOPE_PLATFORM in spec.scopes:
+                paused = bool(windows.get(registry.SCOPE_PLATFORM, {})
+                              .get("paused"))
                 scopes.append({
                     "scope": registry.SCOPE_PLATFORM,
-                    "available": platform_admin,
-                    "reason": "" if platform_admin else "platform_admin_required",
+                    "available": platform_admin and not paused,
+                    "reason": ("maintenance_window" if paused else
+                               "" if platform_admin else
+                               "platform_admin_required"),
                 })
             if registry.SCOPE_TENANT in spec.scopes:
                 reason = ""
                 if not can_tenant:
                     reason = "management_required"
+                elif bool(windows.get(registry.SCOPE_TENANT, {}).get("paused")):
+                    # Checked before ``singleton_exists``: a paused scope is
+                    # paused for *every* type, and reporting "one already
+                    # exists" would send the operator looking for the wrong
+                    # thing while the cutover is running.
+                    reason = "maintenance_window"
                 elif spec.kind in existing and existing[spec.kind]:
                     reason = "singleton_exists"
                 scopes.append({
@@ -270,6 +295,8 @@ class ExternalConnectionService:
                 reason = ""
                 if not can_personal:
                     reason = "membership_required"
+                elif bool(windows.get(registry.SCOPE_PERSONAL, {}).get("paused")):
+                    reason = "maintenance_window"
                 elif existing.get(spec.kind):
                     reason = "singleton_exists"
                 scopes.append({
@@ -288,7 +315,10 @@ class ExternalConnectionService:
                 "capabilities": registry.capability_projection(
                     spec.kind, config={}, has_secret={}),
             })
-        return {"types": items, "form_version": 1}
+        return {"types": items, "form_version": 1,
+                "maintenance": maintenance.pause_projection(
+                    actor_user_id=actor_user_id, tenant_id=tenant_id,
+                    service=self)}
 
     # -- catalogue ----------------------------------------------------------
 
@@ -429,8 +459,22 @@ class ExternalConnectionService:
                           tenant_id: Optional[str] = None,
                           secrets: Optional[Mapping[str, Any]] = None,
                           idempotency_key: Optional[str] = None,
-                          base_connection_id: Optional[str] = None) -> Dict[str, Any]:
-        """Create one connection in the given scope; ownership is enforced."""
+                          base_connection_id: Optional[str] = None,
+                          connection_id: Optional[str] = None) -> Dict[str, Any]:
+        """Create one connection in the given scope; ownership is enforced.
+
+        ``connection_id`` lets the *migration* reuse the id the legacy store
+        already used (change ``add-external-system-access``, task 12.2: ERP 复用
+        原 ID). Any other reference to that id — a scene's saved default, an
+        operator's runbook, an incident note — keeps pointing at the same
+        connection, instead of silently resolving to nothing after the cutover
+        while the ledger says the import succeeded.
+
+        It is an explicit parameter rather than a caller-supplied field on a
+        generic API on purpose: the console and the HTTP surface never pass it,
+        so a client cannot choose its own primary key, and the one caller that
+        does (the import) is already the caller that knows the legacy id.
+        """
         registry.validate_scope(kind, scope)
         name = self._validated_name(name)
         normalized = registry.validate_config(kind, config)
@@ -438,7 +482,11 @@ class ExternalConnectionService:
         scope_key = _scope_key(scope, tenant_id)
         request_payload = {"scope": scope, "kind": kind, "name": name,
                            "config": normalized, "secrets": dict(secrets or {}),
-                           "base_connection_id": base_connection_id}
+                           "base_connection_id": base_connection_id,
+                           # Part of the fingerprint so a replay of the same
+                           # import cannot be answered with a row created under
+                           # a different id.
+                           "reuse_id": str(connection_id or "")}
         if idempotency_key:
             replay = self._idempotent_replay(
                 actor_user_id=actor_user_id, scope_key=scope_key,
@@ -455,9 +503,25 @@ class ExternalConnectionService:
             if not tenant_id:
                 raise invalid("tenant is required", code="missing_tenant")
             self.require_personal(actor_user_id, tenant_id)
+        self._refuse_if_paused(scope=scope, tenant_id=tenant_id,
+                               what="connection changes")
         owner_user_id = actor_user_id if scope == registry.SCOPE_PERSONAL else None
-        connection_id = "conn_%s" % _random_token()
+        connection_id = _validated_connection_id(connection_id) \
+            or "conn_%s" % _random_token()
         with self._tx() as con:
+            if connection_id:
+                # An explicitly reused id must not collide. Checked rather than
+                # left to the PRIMARY KEY so the refusal is a stable code the
+                # import can report instead of a raw integrity error, and so the
+                # collision is found before anything else in this transaction
+                # has run.
+                taken = con.execute(
+                    "SELECT id FROM external_connections WHERE id=?",
+                    (connection_id,)).fetchone()
+                if taken is not None:
+                    raise conflict(
+                        "connection id is already used",
+                        code="connection_id_taken")
             if base_connection_id is not None:
                 if scope != registry.SCOPE_TENANT or kind != registry.KIND_MCP:
                     raise invalid("only a tenant MCP connection can override a"
@@ -566,6 +630,8 @@ class ExternalConnectionService:
             if not tenant_id:
                 raise invalid("tenant is required", code="missing_tenant")
             self.require_tenant_manage(actor_user_id, tenant_id)
+        self._refuse_if_paused(scope=scope, tenant_id=tenant_id,
+                               what="connection changes")
         with self._tx() as con:
             row = self._row_in_tx(con, connection_id, scope=scope,
                                   tenant_id=tenant_id)
@@ -639,6 +705,8 @@ class ExternalConnectionService:
             if not tenant_id:
                 raise invalid("tenant is required", code="missing_tenant")
             self.require_tenant_manage(actor_user_id, tenant_id)
+        self._refuse_if_paused(scope=scope, tenant_id=tenant_id,
+                               what="connection changes")
         with self._tx() as con:
             row = self._row_in_tx(con, connection_id, scope=scope,
                                   tenant_id=tenant_id)
@@ -679,6 +747,27 @@ class ExternalConnectionService:
             con.commit()
         return {"id": connection_id, "deleted": True}
 
+    def _refuse_if_paused(self, *, scope: str, tenant_id: Optional[str],
+                          what: str) -> None:
+        """Refuse a configuration write while the scope is in a window.
+
+        Called *after* the authority check in every write method, deliberately:
+        a caller who may not manage the scope gets the authority refusal, so the
+        pause state of a scope they cannot see is not reported to them. The
+        window exists to make the cutover's view of "what was here" knowable, and
+        it cannot do that if it also answers "is this tenant migrating" for
+        anyone who asks.
+
+        Read from the store per write rather than cached on the service: the
+        console and the CLI open and close windows in separate processes, so a
+        cached "not paused" would be the one stale answer that silently lets a
+        write through the window.
+        """
+        from integrations.external import maintenance
+
+        maintenance.refuse_if_paused(scope=scope, tenant_id=tenant_id,
+                                     service=self, what=what)
+
     @staticmethod
     def _referenced(references: List[Dict[str, Any]]):
         """Refuse a delete that would orphan live references.
@@ -710,6 +799,8 @@ class ExternalConnectionService:
                         ) -> Dict[str, Any]:
         """Atomically set or clear the tenant's default ERP connection (CAS)."""
         self.require_tenant_manage(actor_user_id, tenant_id)
+        self._refuse_if_paused(scope=registry.SCOPE_TENANT,
+                               tenant_id=tenant_id, what="connection changes")
         scope_key = _scope_key(registry.SCOPE_TENANT, tenant_id)
         with self._tx() as con:
             current = con.execute(
@@ -813,6 +904,8 @@ class ExternalConnectionService:
                             expected_version: int) -> Dict[str, Any]:
         """Atomically remove this tenant's override and fall back to inheriting."""
         self.require_tenant_manage(actor_user_id, tenant_id)
+        self._refuse_if_paused(scope=registry.SCOPE_TENANT,
+                               tenant_id=tenant_id, what="connection changes")
         with self._tx() as con:
             rows = con.execute(
                 "SELECT * FROM external_connections WHERE tenant_id=?"
@@ -871,6 +964,8 @@ class ExternalConnectionService:
         next use, and the revision the console read is enforced.
         """
         self.require_platform_admin(actor_user_id)
+        self._refuse_if_paused(scope=registry.SCOPE_PLATFORM, tenant_id=None,
+                               what="connection changes")
         wanted = sorted({str(t).strip() for t in tenant_ids if str(t).strip()})
         for tenant_id in wanted:
             if not self._store.execute("SELECT 1 FROM tenants WHERE id=? AND active=1",
@@ -1117,8 +1212,28 @@ class ExternalConnectionService:
         Tenant/personal secrets go through the identity credential table; the
         platform secret is read from its own table, so a tenant credential API
         can never return it.
+
+        A personal connection additionally requires the caller to *be* its
+        owner. Without this the resolver would hand a mailbox password to anyone
+        who could name the connection id, and the protection would rest entirely
+        on the listing layer having re-derived the right bindings — a
+        defence-in-depth gap rather than a rule. The row is fetched here rather
+        than in the caller so every present and future call point gets the same
+        check.
         """
         from auth.crypto import decrypt_secret
+
+        if scope == registry.SCOPE_PERSONAL:
+            row = self._store.execute(
+                "SELECT owner_user_id FROM external_connections WHERE id=?",
+                (connection_id,))
+            if not row:
+                raise not_found("secret slot is not configured")
+            owner = row[0]["owner_user_id"]
+            if not actor_user_id or owner != actor_user_id:
+                # ``not_found`` rather than ``forbidden``: another member's
+                # mailbox must not be confirmable by probing id.
+                raise not_found("secret slot is not configured")
 
         ref = self._store.execute(
             "SELECT * FROM external_connection_secret_refs"
@@ -1316,10 +1431,104 @@ class ExternalConnectionService:
             )
             con.commit()
 
+    # -- runtime access ------------------------------------------------------
+
+    def runtime(self):
+        """The adapter-facing runtime over this service.
+
+        A method rather than a module-level singleton so the runtime inherits
+        *this* service's store, clock and audit sink — the console request and
+        the agent call then write to the same database without either reaching
+        for a global.
+        """
+        from integrations.external.runtime import ConnectionRuntime
+        return ConnectionRuntime(self)
+
+    def probe_connection(self, connection_id: str, *, actor_user_id: str,
+                         tenant_id: Optional[str] = None,
+                         agent_id: str = "", run_id: str = "",
+                         draft: bool = False,
+                         expected_version: Optional[int] = None,
+                         record: bool = True) -> Dict[str, Any]:
+        """Bounded connectivity/authentication test for one connection.
+
+        Refused with ``test_not_available`` unless the deployment opened the
+        type's ``test`` class, so this cannot become a way around the slice
+        switch.
+        """
+        return self.runtime().probe(
+            connection_id, actor_user_id=actor_user_id, tenant_id=tenant_id,
+            agent_id=agent_id, run_id=run_id, draft=draft,
+            expected_version=expected_version, record=record)
+
+    def probe_draft(self, kind: str, config: Mapping[str, Any], *,
+                    secrets: Optional[Mapping[str, Any]] = None,
+                    actor_user_id: str, tenant_id: Optional[str] = None,
+                    scope: str = registry.SCOPE_TENANT,
+                    owner_user_id: Optional[str] = None) -> Dict[str, Any]:
+        """Test an unsaved form without persisting the config or the secret.
+
+        The secret values are supplied by the caller and used for this one
+        attempt: they are never written to the credential store, and no test
+        summary is recorded. See :meth:`ConnectionRuntime.probe_draft`.
+        """
+        return self.runtime().probe_draft(
+            kind, config, secrets=secrets, actor_user_id=actor_user_id,
+            tenant_id=tenant_id, scope=scope, owner_user_id=owner_user_id)
+
+    def describe_connection(self, connection_id: str, *,
+                            tenant_id: Optional[str] = None) -> Dict[str, Any]:
+        """Runtime limits, network policy and adapter capabilities."""
+        return self.runtime().describe(connection_id, tenant_id=tenant_id)
+
+    def test_state(self, connection_id: str, *,
+                   tenant_id: Optional[str] = None) -> Dict[str, Any]:
+        """The console's test badge for one connection, version-bound."""
+        from integrations.external.runtime import test_summary_payload
+        record = self.runtime().last_test(connection_id, tenant_id=tenant_id)
+        return test_summary_payload(_now(), record or {})
+
+    def invoke_action(self, connection_id: str, action: str,
+                      params: Mapping[str, Any], *, actor_user_id: str,
+                      tenant_id: Optional[str] = None, agent_id: str = "",
+                      run_id: str = "",
+                      approval: Optional[Mapping[str, Any]] = None):
+        """Run a business action, re-authorizing the connection per call."""
+        from integrations.external.risk import check_invocation
+        return self.runtime().invoke(
+            connection_id, action, params, actor_user_id=actor_user_id,
+            tenant_id=tenant_id, agent_id=agent_id, run_id=run_id,
+            approval=approval, risk_check=check_invocation)
+
 
 def _random_token() -> str:
     import secrets
     return secrets.token_urlsafe(12)
+
+
+#: What an explicitly supplied connection id may look like.
+#:
+#: Deliberately narrower than "any text": the value is the row's primary key,
+#: it is what every stored reference points at, and it ends up in audit targets
+#: and URLs. A legacy id that does not match is *not* an error — the caller
+#: falls back to a generated id and the ledger records the mapping — because
+#: refusing the import over an id shape would leave the record unmigrated, which
+#: is worse than the reference churn the reuse is trying to avoid.
+_CONNECTION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:~-]{0,159}$")
+
+
+def _validated_connection_id(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if not _CONNECTION_ID_PATTERN.match(text):
+        return ""
+    return text
+
+
+def reusable_connection_id(value: Any) -> bool:
+    """Whether ``value`` may be reused as a connection id (used by migration)."""
+    return bool(_validated_connection_id(value))
 
 
 _SERVICE_CACHE: Dict[str, "ExternalConnectionService"] = {}

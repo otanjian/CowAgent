@@ -279,6 +279,152 @@ class ExternalConnectionPersonalDetailHandler:
             return _error("failed to read connection", 500, "internal")
 
 
+class ExternalConnectionTestHandler:
+    """POST a bounded connection test, and GET the recorded test state.
+
+    Why the test is a *route action* and not a hidden side effect of saving
+    --------------------------------------------------------------------
+    Save and test are separate requests on purpose (the spec's "保存和测试分别
+    处理"): a save must never be able to claim connectivity, and a test must not
+    silently write a configuration. This handler therefore touches no
+    configuration at all — it reads the stored connection, runs the adapter's
+    probe under the pool's bounds, and records a redacted summary.
+
+    Three independent gates stand between this route and a real outbound
+    connection, and each has its own refusal code so the console can say which:
+
+    1. the route gate (the caller holds the read permission for this scope);
+    2. ``registry.open_classes(kind)`` — the deployment's readiness switch,
+       default closed, refusing with ``test_not_available``;
+    3. an adapter must exist for the kind (``adapter_not_installed``) and the
+       connection's required secret slots must be filled (``secret_unavailable``,
+       reported per slot by the capability projection).
+
+    The scope is in the path, so ``/personal/...`` can only ever test the
+    caller's own mailbox: the service derives the owner from the session.
+    """
+
+    def GET(self, connection_id: str):
+        ctx, service = _guard(require_tenant=True)
+        try:
+            scope = _scope_of_path()
+            service.get_connection(
+                actor_user_id=ctx.user_id, scope=scope,
+                tenant_id=ctx.tenant_id, connection_id=connection_id)
+            return _ok(service.test_state(connection_id,
+                                          tenant_id=ctx.tenant_id))
+        except ExternalConnectionError as error:
+            _fail(error)
+        except Exception as error:  # noqa: BLE001
+            logger.error("[ExternalConnections] test state failed: %s" % error)
+            return _error("failed to read the test state", 500, "internal")
+
+    def POST(self, connection_id: str):
+        ctx, service = _guard(require_tenant=True)
+        data = _body()
+        try:
+            scope = _scope_of_path()
+            # Authorize the address first: a caller must not learn that a
+            # connection exists in another owner's scope by getting a different
+            # error from the probe than from the read.
+            service.get_connection(
+                actor_user_id=ctx.user_id, scope=scope,
+                tenant_id=ctx.tenant_id, connection_id=connection_id)
+            return _ok(service.probe_connection(
+                connection_id, actor_user_id=ctx.user_id,
+                tenant_id=ctx.tenant_id,
+                expected_version=_version(data) or None))
+        except ExternalConnectionError as error:
+            _fail(error)
+        except Exception as error:  # noqa: BLE001
+            logger.error("[ExternalConnections] test failed: %s" % error)
+            return _error("failed to run the connection test", 500, "internal")
+
+
+class ExternalConnectionDraftTestHandler:
+    """POST a bounded test of an *unsaved* form.
+
+    Why this is its own endpoint rather than a query parameter on the saved
+    test: the two write different things, and the difference is the point.
+
+    * The saved test (``.../<id>/test``) records a redacted summary **bound to
+      the connection's version and secret set**, so the console can show a
+      version-bound badge.
+    * This one records nothing at all. It exists so a person filling in a form
+      can find out whether the address, the credential and the deployment's
+      network policy agree *before* committing anything — which is the only
+      way "保存和测试分别处理" is usable in practice, since otherwise the first
+      feedback arrives after the secret has already been stored.
+
+    What it therefore cannot reach:
+
+    * ``secrets`` here are one-shot values supplied by the caller. They are
+      never written to the credential store, and they are not readable back —
+      the response is a staged result, not a projection of the connection.
+    * No connection row is created or touched. A caller cannot use this
+      endpoint to make a connection exist, to re-point one, or to overwrite a
+      saved connection's tested version.
+
+    It requires the *manage* permission (not merely read) because a draft has
+    no saved row whose ownership could authorize it: the callers entitled to
+    define connections are exactly the callers entitled to test a definition.
+    The deployment's ``test`` class gate and the outbound network policy apply
+    unchanged — "it is only a draft" is not a reason to attempt an address the
+    deployment has not permitted.
+    """
+
+    def POST(self):
+        ctx, service = _guard(require_tenant=True)
+        data = _body()
+        try:
+            kind = str(_require(data, "kind") or "").strip()
+            config = _require(data, "config")
+            if not isinstance(config, dict):
+                raise ExternalConnectionError(
+                    "config must be an object", code="field_type",
+                    fields={"config": "type"})
+            secrets = data.get("secrets") or {}
+            if not isinstance(secrets, dict):
+                raise ExternalConnectionError(
+                    "secrets must be an object", code="field_type",
+                    fields={"secrets": "type"})
+            return _ok(service.probe_draft(
+                kind, config, secrets=secrets, actor_user_id=ctx.user_id,
+                tenant_id=ctx.tenant_id, scope=registry.SCOPE_TENANT,
+                owner_user_id=None))
+        except ExternalConnectionError as error:
+            _fail(error)
+        except Exception as error:  # noqa: BLE001
+            logger.error("[ExternalConnections] draft test failed: %s" % error)
+            return _error("failed to run the connection test", 500, "internal")
+
+
+class ExternalConnectionRuntimeHandler:
+    """GET the runtime limits, network policy and adapter capabilities.
+
+    A read-only projection so the page can explain *before* a test why a type is
+    closed, what the deployment's outbound policy permits, and which secret
+    slots the connection is missing. Deliberately the only place the effective
+    network policy is described to a client — and it is the *policy*, not any
+    resolved address, so it cannot be used to probe the network.
+    """
+
+    def GET(self, connection_id: str):
+        ctx, service = _guard(require_tenant=True)
+        try:
+            scope = _scope_of_path()
+            service.get_connection(
+                actor_user_id=ctx.user_id, scope=scope,
+                tenant_id=ctx.tenant_id, connection_id=connection_id)
+            return _ok(service.describe_connection(connection_id,
+                                                  tenant_id=ctx.tenant_id))
+        except ExternalConnectionError as error:
+            _fail(error)
+        except Exception as error:  # noqa: BLE001
+            logger.error("[ExternalConnections] runtime failed: %s" % error)
+            return _error("failed to read the connection runtime", 500, "internal")
+
+
 # -- writes ----------------------------------------------------------------
 
 class ExternalConnectionTenantWriteHandler:
@@ -472,6 +618,23 @@ def _is_delete_path() -> bool:
 
 def _is_restore_path() -> bool:
     return _path().endswith("/restore-inheritance")
+
+
+def _scope_of_path() -> str:
+    """The scope the request's *path* addresses, not one a body could name.
+
+    The test/runtime handlers serve all three scopes from one class because the
+    operation is identical; the scope still comes from the path segment, so a
+    caller cannot ask for a platform connection's test through the personal
+    route and have the service derive a different owner than the route gate
+    assumed.
+    """
+    path = _path()
+    for scope in (registry.SCOPE_PLATFORM, registry.SCOPE_TENANT,
+                  registry.SCOPE_PERSONAL):
+        if "/%s/" % scope in path:
+            return scope
+    return registry.SCOPE_PERSONAL
 
 
 __all__ = [

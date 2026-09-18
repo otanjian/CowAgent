@@ -59,6 +59,24 @@ def _requires_injected_dependencies(cls) -> bool:
     return False
 
 
+def _resolve_mcp_store(path: str) -> dict:
+    """Ask the migration ledger which ``mcp.json`` entries the control plane owns.
+
+    Kept as a module-level seam so the wiring is testable without an identity
+    database: this is the single call that makes ``ToolManager``'s configuration
+    read scope-aware, and the task is precisely about that call existing.
+
+    Imported lazily and on purpose. ``integrations.external.migration`` reaches
+    for ``conf()``, the connection service and the adapters, and the tool manager
+    is imported on every Agent boot — a failure to import must degrade to "read
+    the file" (the ``legacy`` default) rather than take the boot down.
+    """
+    from auth.service import get_identity_service
+    from integrations.external import migration
+
+    return migration.resolve_mcp_servers(get_identity_service(), path=path)
+
+
 class ToolManager:
     """
     Tool manager for managing tools.
@@ -132,6 +150,11 @@ class ToolManager:
         if not hasattr(self, '_mcp_active_configs'):
             # server_name -> normalized config dict, for diff-based reload.
             self._mcp_active_configs: dict = {}
+        if not hasattr(self, '_mcp_migrated'):
+            # server_name -> the control plane owns this entry, so the file no
+            # longer supplies it. Kept so a refresh log or a diagnostic can say
+            # why a server that is still in mcp.json is not in the tool list.
+            self._mcp_migrated: set = set()
         if not hasattr(self, '_mcp_tool_vectors'):
             # mcp_tool_name -> embedding vector, used by on-demand tool
             # retrieval. Populated lazily on first retrieval so users who
@@ -358,6 +381,13 @@ class ToolManager:
         Load MCP server configs with priority:
           1. ~/cow/mcp.json  (supports both mcpServers and mcp_servers keys)
           2. config.json mcp_servers field (fallback)
+
+        The file's entries are then filtered through the scope-aware connection
+        resolver (:func:`_resolve_mcp_store`): a server the migration ledger has
+        imported into a scope that no longer reads the legacy store is served by
+        the control plane from then on, per tenant, and must not also be
+        registered here from the file. Two copies would be two identities for one
+        server, and the file copy is the one ``mcp.json`` trusts as configuration.
         """
         import os
         import json as _json
@@ -372,12 +402,68 @@ class ToolManager:
                 # DEBUG: with N agents this fires N times for the same shared
                 # mcp.json; the real boot is logged once at INFO further below.
                 logger.debug(f"[ToolManager] Loading MCP config from {mcp_json_path}")
-                return _normalize_mcp_configs(raw)
+                return self._without_migrated_servers(
+                    mcp_json_path, _normalize_mcp_configs(raw))
             except Exception as e:
                 logger.warning(f"[ToolManager] Failed to read {mcp_json_path}: {e}, falling back to config.json")
 
         raw = conf().get("mcp_servers", [])
         return _normalize_mcp_configs(raw)
+
+    def _without_migrated_servers(self, path: str, entries: list) -> list:
+        """Drop the entries the control plane has taken over from the file.
+
+        Filtered by *name* rather than by rebuilding the entries from the
+        resolver's answer: the loader needs every key the file carried, and the
+        server name is the identity the migration preserved (it maps a legacy
+        record to a connection of the same name), so the name is the join key on
+        both sides. A resolver that raises leaves the file read intact — the
+        default ``store_version`` is ``legacy``, so "no answer" means "the file
+        is the answer", not "the server is gone".
+        """
+        self._mcp_migrated = set()
+        try:
+            view = _resolve_mcp_store(path)
+        except Exception as e:  # noqa: BLE001 - the legacy read is the safe default
+            logger.debug(f"[ToolManager] MCP store resolution skipped: {e}")
+            return entries
+        taken = {str(item.get("name") or "")
+                 for item in (view.get("migrated") or ())}
+        taken.discard("")
+        self._mcp_migrated = taken
+        if not taken:
+            return entries
+        kept = [entry for entry in entries
+                if str(entry.get("name") or "") not in taken]
+        logger.info(
+            "[ToolManager] %d MCP server(s) are served by the control plane and "
+            "are no longer read from %s: %s",
+            len(entries) - len(kept), path, sorted(taken))
+        return kept
+
+    def _mcp_migrated_names(self) -> set:
+        """Server names in ``mcp.json`` that the control plane now owns."""
+        return set(getattr(self, "_mcp_migrated", None) or ())
+
+    def _mcp_store_marker(self) -> str:
+        """The resolver's marker for this file, or ``""`` when it has none."""
+        try:
+            return str(_resolve_mcp_store(self._mcp_json_path()).get("marker") or "")
+        except Exception:  # noqa: BLE001 - no marker, no extra refresh trigger
+            return ""
+
+    def _mcp_store_signature(self) -> tuple:
+        """The signature that decides whether a refresh is needed.
+
+        The file's own ``(mtime, sha256)`` cannot see the two changes that matter
+        most to this list: a store switch (which takes entries away from the file)
+        and a console edit of a connection the file once provided. Both move the
+        resolver's marker, so it is part of the signature rather than a second
+        comparison someone has to remember to add.
+        """
+        mtime, digest = self._read_mcp_json_signature()
+        return (mtime, digest, self._mcp_store_marker())
+
 
     def _load_mcp_tools(self):
         """
@@ -396,8 +482,9 @@ class ToolManager:
                 return
             mcp_servers_config = self._load_mcp_configs()
             # Snapshot the signature now so future refresh_mcp_if_changed()
-            # calls can short-circuit when nothing has changed on disk.
-            self._mcp_signature = self._read_mcp_json_signature()
+            # calls can short-circuit when nothing has changed on disk (or in
+            # the control plane behind the file).
+            self._mcp_signature = self._mcp_store_signature()
             self._mcp_active_configs = {
                 cfg.get("name", "<unnamed>"): cfg for cfg in mcp_servers_config
             }
@@ -438,7 +525,7 @@ class ToolManager:
         a single os.stat() — completely free when nothing has changed.
         """
         with self._mcp_lock:
-            new_sig = self._read_mcp_json_signature()
+            new_sig = self._mcp_store_signature()
             if new_sig == self._mcp_signature:
                 return  # no-op fast path
 
@@ -724,18 +811,192 @@ class ToolManager:
 
         return (sorted(added), sorted(removed))
 
-    def _agent_allowed_mcp_names(self, agent) -> Optional[set]:
-        """Return the set of MCP tool names this agent may use, or ``None``.
+    def sync_external_into_agent(self, agent) -> tuple:
+        """Reconcile a live agent's tools with the *caller's* external tools.
 
-        ``None`` means "no allowlist" (all MCP tools allowed); an empty set
-        means the agent allows none. A denylist is honoured too.
+        The mirror of :meth:`sync_mcp_into_agent`, and deliberately not the same
+        thing. MCP tools come from configuration and are the same for everyone;
+        external tools come from the actor's connections, permissions and object
+        scope, and change when any of those change. So this is called per turn
+        (the identity is a per-turn fact) and it stores the result on the agent,
+        never in a manager-level registry: a manager singleton outlives the
+        actor, and a tool left there would appear in the next actor's list.
+
+        A turn for an actor with no external capability therefore *removes* the
+        previous set instead of leaving it: revocation has to take effect at the
+        next turn, not at the next restart (spec: 工具发现不等于调用授权 — and a
+        revoked tool must not even be offered).
+
+        Returns ``(added_names, removed_names)`` for logging.
+        """
+        if agent is None or not hasattr(agent, "tools"):
+            return ([], [])
+
+        # The same boundary as MCP: the Self-Evolution review agent runs with a
+        # deliberately reduced toolset, and an external action reaches someone
+        # else's system, so it must not be silently re-added there.
+        if getattr(agent, "_evolution_restricted", False) or getattr(
+            getattr(agent, "agent", None), "_evolution_restricted", False
+        ):
+            return ([], [])
+
+        from agent.tools.external.external_tool import (
+            ExternalConnectionTool, external_tools_for,
+            reconcile_external_tools)
+        from common.runtime_identity import current_identity
+
+        agent_tools = agent.tools
+        if not isinstance(agent_tools, (dict, list)):
+            return ([], [])
+
+        existing = self._external_names_in(agent_tools)
+        ident = current_identity()
+        tenant_id = str(getattr(ident, "tenant_id", "") or "")
+        user_id = str(getattr(ident, "user_id", "") or "")
+        # The runtime Agent of this turn. Carried into the listing so the
+        # tenant-admin exemption can be evaluated there too — an exemption that
+        # only worked at dispatch would offer the admin nothing to call.
+        agent_id = str(getattr(ident, "agent_id", "") or "")
+        if not tenant_id or not user_id:
+            # No trusted identity: nothing to offer, and anything left over is
+            # removed rather than kept. A tool list is not a place to guess an
+            # actor.
+            wanted: dict = {}
+            to_add, to_remove = [], sorted(existing)
+        else:
+            # Connection-derived MCP tools are discovered in the background,
+            # and the pass that drops a vanished connection's names happens
+            # here — at the same seam, and under the same identity, as the
+            # listing itself. Mirrors refresh_mcp_if_changed() for mcp.json.
+            self.refresh_external_mcp_tools(tenant_id=tenant_id,
+                                            actor_user_id=user_id)
+            candidates = external_tools_for(tenant_id=tenant_id,
+                                            actor_user_id=user_id,
+                                            agent_id=agent_id)
+            # MCP capabilities discovered from a connection carry the remote
+            # tool's own name and schema, so they are re-wrapped before the
+            # reconcile: the wrapper refines what the model reads and inherits
+            # dispatch, authorization and refusal handling unchanged.
+            try:
+                from agent.tools.mcp import external as mcp_external
+                candidates = mcp_external.upgrade_external_mcp_tools(candidates)
+            except Exception as exc:  # noqa: BLE001 - the base tools still work
+                logger.debug(f"[ToolManager] MCP tool upgrade skipped: {exc}")
+            # The allow/deny filter is applied inside the reconcile so the
+            # listing and the removal cannot disagree about what is allowed.
+            wanted, to_add, to_remove = reconcile_external_tools(
+                existing, candidates,
+                allowed=self._agent_allowed_names(agent, set(candidates)))
+
+        allowed = self._agent_allowed_names(agent, set(wanted))
+        if allowed is not None:
+            wanted = {n: t for n, t in wanted.items() if n in allowed}
+
+        # Reconcile as a set difference so the reported add/remove lists describe
+        # what actually changed: a denied tool that was never present is not a
+        # removal, and reporting it as one would make the log lie.
+        existing = self._external_names_in(agent_tools)
+        to_add = sorted(set(wanted) - existing)
+        to_remove = sorted(existing - set(wanted))
+
+        if isinstance(agent_tools, dict):
+            for name in to_remove:
+                agent_tools.pop(name, None)
+            for name in to_add:
+                agent_tools[name] = wanted[name]
+        else:
+            if to_remove:
+                agent.tools = [
+                    t for t in agent_tools
+                    if not (isinstance(t, ExternalConnectionTool)
+                            and t.name in to_remove)
+                ]
+            agent.tools.extend(wanted[name] for name in to_add)
+
+        return (to_add, to_remove)
+
+    @staticmethod
+    def _external_names_in(collection) -> set:
+        """The external tool names present in an agent's tool collection."""
+        from agent.tools.external.external_tool import ExternalConnectionTool
+
+        if isinstance(collection, dict):
+            return {
+                name for name, tool in collection.items()
+                if isinstance(tool, ExternalConnectionTool)
+            }
+        return {
+            tool.name for tool in collection or ()
+            if isinstance(tool, ExternalConnectionTool)
+        }
+
+    def refresh_external_mcp_tools(self, *, tenant_id: str,
+                                   actor_user_id: str = "") -> int:
+        """Reconcile connection-derived MCP discovery with the live connections.
+
+        The MCP counterpart of :meth:`refresh_mcp_if_changed`. Discovery is I/O,
+        so it never runs on this pass: the pass compares each connection's
+        version and credential markers against the memo, drops the memo of
+        connections the tenant no longer has enabled, and starts a bounded
+        background discovery only for a new, edited or re-credentialed one.
+
+        Registration lifetimes are not duplicated here. A discovered tool is an
+        :class:`~agent.tools.external.external_tool.ExternalConnectionTool`, so
+        the per-turn external reconcile in :meth:`sync_external_into_agent`
+        already removes it from every live agent the moment the connection stops
+        being offered, and the call itself is re-authorized inside
+        ``ConnectionRuntime`` regardless of what the tool list says.
+
+        Returns the number of MCP connections considered.
+        """
+        try:
+            from agent.tools.mcp import external as mcp_external
+        except Exception as exc:  # noqa: BLE001 - no module, no discovery
+            logger.debug(f"[ToolManager] external MCP discovery unavailable: {exc}")
+            return 0
+        try:
+            return mcp_external.refresh_tenant_tools(
+                tenant_id=tenant_id, actor_user_id=actor_user_id)
+        except Exception as exc:  # noqa: BLE001 - listing must not fail
+            logger.warning(f"[ToolManager] external MCP discovery failed: {exc}")
+            return 0
+
+    def invalidate_external_mcp_tools(self, *, tenant_id: str = "",
+                                      connection_id: str = "") -> None:
+        """Forget discovered MCP tool identities right now.
+
+        Belongs to the same invalidation family as ``_teardown_mcp_server``:
+        called when a connection is deleted, disabled or re-credentialed
+        outside the turn loop (a console action, a migration), it makes the
+        next listing re-discover instead of waiting for the row comparison to
+        notice. With neither argument, everything is dropped.
+        """
+        try:
+            from agent.tools.mcp import external as mcp_external
+        except Exception:  # noqa: BLE001
+            return
+        if connection_id and tenant_id:
+            mcp_external.forget(tenant_id=tenant_id, connection_id=connection_id)
+        elif tenant_id:
+            mcp_external.forget_tenant(tenant_id)
+        else:
+            mcp_external._reset_for_tests()
+
+    def _agent_allowed_names(self, agent, names: set) -> Optional[set]:
+        """Filter ``names`` through this agent's own tool allow/deny policy.
+
+        ``None`` means "no allowlist" (nothing to filter). Shared by the MCP
+        and the external sync on purpose: an external tool is a tool, so a
+        scene or employee profile that denies a tool must deny it here too —
+        otherwise the external entrance is the way around the policy.
         """
         profile = getattr(agent, "agent_profile", None)
         if profile is None:
             return None
-        from agent.effective_capabilities import resolve_effective_capabilities, is_tool_allowed
+        from agent.effective_capabilities import (
+            resolve_effective_capabilities, is_tool_allowed)
         scene = None
-        if profile.scene_id:
+        if getattr(profile, "scene_id", None):
             try:
                 from scenes.service import find_scene
                 scene, _ = find_scene(profile.scene_id)
@@ -744,9 +1005,15 @@ class ToolManager:
         effective = resolve_effective_capabilities(profile, scene=scene)
         if effective.tools_allowlist is None and not effective.tools_denylist:
             return None
-        return set(
-            name for name in self._mcp_tool_instances if is_tool_allowed(name, effective)
-        )
+        return {name for name in names if is_tool_allowed(name, effective)}
+
+    def _agent_allowed_mcp_names(self, agent) -> Optional[set]:
+        """Return the set of MCP tool names this agent may use, or ``None``.
+
+        ``None`` means "no allowlist" (all MCP tools allowed); an empty set
+        means the agent allows none. A denylist is honoured too.
+        """
+        return self._agent_allowed_names(agent, set(self._mcp_tool_instances))
 
     # ------------------------------------------------------------------
     # On-demand MCP tool retrieval support

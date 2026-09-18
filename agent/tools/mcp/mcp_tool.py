@@ -19,7 +19,12 @@ class McpTool(BaseTool):
         self.server_name = server_name
         # Prefix only the local name; the server still expects its original name.
         self._remote_name = tool_schema["name"]
-        self.name = name_prefix + self._remote_name
+        # Kept as a field as well as folded into ``name``: the composed name is a
+        # tool's *identity* (``mcp:<server>:<tool>`` is the id a grant and an
+        # Agent allowlist quote), so the parts have to be readable back out — see
+        # ``integrations.external.mcp_identity``.
+        self.name_prefix = name_prefix or ""
+        self.name = self.name_prefix + self._remote_name
         self.description = tool_schema.get("description", "")
         self.params = tool_schema.get("inputSchema", {})
 

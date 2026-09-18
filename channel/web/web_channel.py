@@ -82,12 +82,15 @@ from channel.web.admin_handlers import (
 from channel.web.admin_overview import AdminOverviewHandler
 from channel.web.external_connection_handlers import (
     ExternalConnectionCatalogHandler,
+    ExternalConnectionDraftTestHandler,
     ExternalConnectionPersonalDetailHandler,
     ExternalConnectionPersonalWriteHandler,
     ExternalConnectionPlatformDetailHandler,
     ExternalConnectionPlatformWriteHandler,
+    ExternalConnectionRuntimeHandler,
     ExternalConnectionTenantDetailHandler,
     ExternalConnectionTenantWriteHandler,
+    ExternalConnectionTestHandler,
     ExternalConnectionTypesHandler,
 )
 from common import const
@@ -3673,6 +3676,15 @@ class McpOAuthCallbackHandler:
     We exchange the authorization code for tokens and bring the server
     online. Unauthenticated by design: the OAuth `state` param is the
     single-use secret that binds this request to a pending authorization.
+
+    The state alone answers "did this flow exist"; it cannot answer "is the
+    request completing it still the request that started it". That second
+    question is what ``take_pending``'s verifier answers, against the store:
+    the connection must still exist, at the same version, in the same scope,
+    for a subject that still holds the authority they started with. A callback
+    that fails is refused *and* has consumed its state, so a refused
+    authorization cannot be retried against the same one-time value
+    (spec ``mcp-connection-integration``: 回调时已切换租户).
     """
 
     def GET(self):
@@ -3697,15 +3709,18 @@ class McpOAuthCallbackHandler:
             return _page("参数缺失", "回调缺少 code 或 state 参数。")
 
         try:
-            from agent.tools.mcp.mcp_oauth import pop_pending
+            from agent.tools.mcp.mcp_oauth import take_pending
             from agent.tools.mcp.mcp_client import notify_server_authorized
         except Exception as e:
             logger.warning(f"[MCP-OAuth] callback import failed: {e}")
             return _page("内部错误", "OAuth 模块不可用。")
 
-        handler = pop_pending(params.state)
+        handler = take_pending(params.state, verify=_verify_oauth_callback)
         if handler is None:
-            return _page("会话已过期", "授权请求不存在或已过期，请重新触发授权。")
+            # Deliberately one message for "expired", "unknown" and "refused":
+            # distinguishing them would tell a caller whether a state value ever
+            # existed, and which check a refusal came from.
+            return _page("会话已过期", "授权请求不存在、已过期，或与发起时的连接不再匹配。")
 
         try:
             ok = handler.finish_authorization(params.code)
@@ -3722,6 +3737,23 @@ class McpOAuthCallbackHandler:
             "授权成功",
             f"MCP 服务 “{handler.server_name}” 已授权，可以返回聊天继续使用了。",
         )
+
+
+def _verify_oauth_callback(binding: dict):
+    """Is the request completing this flow still the one that started it?
+
+    A thin adapter: the decision lives in
+    ``integrations.external.oauth_binding`` so it can be tested without a
+    browser, a server or a token endpoint. Imported lazily because this module
+    is loaded by the web process while the binding module reaches into the
+    connection service, and a failure to import must be a refusal rather than a
+    500 — an unverifiable callback is exactly what must not be accepted.
+    """
+    try:
+        from integrations.external.oauth_binding import verify_callback
+    except Exception as exc:  # noqa: BLE001 - no verifier, no authorization
+        return False, "the callback verifier is unavailable: %s" % exc
+    return verify_callback(binding)
 
 
 def _is_database_identity() -> bool:

@@ -36,5 +36,4 @@
 - 服务端：`channel/web/route_registry.py`、`auth/store.py`、`auth/service.py`、`auth/capability_matrix.py` 等；连接及秘密元数据归属身份控制库，不归属场景业务库。新增独立连接服务和类型适配器，避免继续扩大 `web_channel.py` 的混合职责。
 - 运行时：`agent/tools/tool_manager.py`、`agent/tools/mcp/`、`Scene/_shared/` 及 SAP/采购场景；新增 OA、邮箱受控工具入口，复用现有 ExecutionRun 和授权链，不把所有秘密注入通用 Bash。
 - 依赖：`audit-log`、`credential-management`、`resource-execution-authorization`、`action-approval`、`resource-quota`、`execution-isolation` 按消费切片核验；Desktop 另需 `desktop-tenant-context` 与原生 broker 路由验收。Web 开放不能代替 Desktop、Channel 或定时任务验收。
-- 与 `port-jeecg-scene-app-engine` 并行：本变更管理连接，不迁移低代码引擎、不占用其业务数据源、不重写其导航分组。双方仅在共享控制台注册点和场景连接解析接口进行合并检查。
 - 本 change 产物定义生产实现与验收范围；生成产物不表示代码已实现、真实外部系统已连通或依赖切片已通过。

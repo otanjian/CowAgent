@@ -216,6 +216,9 @@ MEMBER_DEFAULT_PERMISSIONS: Tuple[str, ...] = (
     "model.read",
     "model.use",
     "chat.use",
+    # 外部系统接入：成员只读本人物件（本人邮箱），租户/平台物件由对象范围拒绝。
+    # 不默认授予 manage：新建租户连接是管理员动作。
+    "external.connections.read",
 )
 
 #: Explicit default set for the built-in ``tenant_admin``. This is the whole
@@ -245,6 +248,11 @@ TENANT_ADMIN_DEFAULT_PERMISSIONS: Tuple[str, ...] = (
     "model.read",
     "model.use",
     "chat.use",
+    # 外部系统接入（change add-external-system-access）：配置面已验收，租户管理员
+    # 必须能打开「外部系统接入」页并维护本租户连接。``test`` 仍不默认授予——测试/
+    # 执行由 readiness 与单独权限控制，默认关闭。
+    "external.connections.read",
+    "external.connections.manage",
 )
 
 #: Permissions a built-in ``tenant_admin`` must keep when edited. These gate the
@@ -522,6 +530,8 @@ BUILTIN_MENU_DEFAULTS: Dict[str, Tuple[str, ...]] = {
     "member": tuple("nav:%s" % pid for pid in (
         "admin.agents", "admin.channels", "admin.memory", "admin.skills",
         "admin.models",
+        # 本人邮箱也走同一页；对象范围限制只看到自己的连接。
+        "admin.external_connections",
         "workbench.agents", "workbench.history", "workbench.knowledge",
         # Self-scoped and reachable before the defaults existed (the compat rule
         # left it open), so seeding the defaults must keep it open: the member
@@ -532,6 +542,7 @@ BUILTIN_MENU_DEFAULTS: Dict[str, Tuple[str, ...]] = {
     "tenant_admin": tuple("nav:%s" % pid for pid in (
         "admin.agents", "admin.channels", "admin.memory", "admin.skills",
         "admin.models",
+        "admin.external_connections",
         "workbench.agents", "workbench.history", "workbench.knowledge",
         "workbench.schedules",
         "workbench.todos",

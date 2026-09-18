@@ -1706,6 +1706,134 @@ def _migration_28(con: sqlite3.Connection) -> None:
 _migrations.append(_migration_28)
 
 
+def _migration_29(con: sqlite3.Connection) -> None:
+    """Per-scope maintenance windows (change ``add-external-system-access``,
+    task 12.2).
+
+    The migration design is 分范围维护窗口迁移: a window pauses configuration
+    writes and new executions for **one scope** — platform, one tenant, or one
+    member's personal connections — so the cutover is not an instance-wide
+    freeze and a tenant that has finished is not held by a tenant that has not.
+
+    ``scope_key`` is the same string the catalogue revisions and the migration
+    ledger key on (``integrations.external.migration.scope_key``), so "which
+    connections does this window hold" is one lookup and cannot disagree with
+    "which connections does this ledger row belong to".
+
+    History is kept rather than overwritten: a closed row is how an operator
+    proves *when* writes were stopped and by whom, which is exactly the kind of
+    statement the cutover record has to make. ``expires_at`` is not optional in
+    practice — :func:`integrations.external.maintenance.begin_window` always
+    sets one — so a crash or a forgotten ``close`` cannot leave a scope paused
+    forever; an expired row simply stops being *active*.
+
+    ``batch_id`` links the window to the migration batch it was opened for, so
+    the import report and the window report can be read together.
+    """
+    con.execute(
+        """
+        CREATE TABLE external_connection_maintenance_windows (
+            window_id  TEXT PRIMARY KEY,
+            scope_key  TEXT NOT NULL,
+            scope      TEXT NOT NULL,
+            tenant_id  TEXT REFERENCES tenants(id),
+            reason     TEXT NOT NULL DEFAULT '',
+            batch_id   TEXT NOT NULL DEFAULT '',
+            opened_by  TEXT NOT NULL,
+            opened_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+            expires_at INTEGER NOT NULL,
+            closed_by  TEXT,
+            closed_at  INTEGER
+        )
+        """
+    )
+    # The hot lookup is "is there an open window for this scope_key", so the
+    # index leads with scope_key and carries the open/expiry columns.
+    con.execute(
+        "CREATE INDEX idx_ext_conn_windows_scope"
+        " ON external_connection_maintenance_windows(scope_key, closed_at,"
+        " expires_at)"
+    )
+
+
+_migrations.append(_migration_29)
+
+
+def _migration_30(con: sqlite3.Connection) -> None:
+    """Open the 外部系统接入 console entry for built-in roles.
+
+    Change ``add-external-system-access`` registers ``admin.external_connections``
+    and the ``external.connections.read`` / ``manage`` catalogue ids, but leaves
+    both the menu grant and the functional permissions *off* the built-in roles
+    so the surface stays fail-closed until configuration is ready. Configuration
+    is now accepted: new tenants pick the page up from ``BUILTIN_MENU_DEFAULTS``
+    and the explicit default permission sets, and an already-provisioned tenant
+    needs this one-shot backfill or the sidebar entry stays hidden forever.
+
+    Two halves, both scoped to the built-in ``member`` / ``tenant_admin`` rows:
+
+    * **Menu grant** — same discipline as ``_migration_27``: only roles that
+      already carry a ``menu`` grant receive ``nav:admin.external_connections``.
+      A role with none is still governed by functional permissions alone; adding
+      a grant would switch gating *on* and hide the rest of its console.
+    * **Permissions** — merge ``external.connections.read`` into both roles and
+      ``external.connections.manage`` into ``tenant_admin`` only. Existing custom
+      edits are preserved (union, never replace); a role that already holds an
+      id is left untouched so a re-run is a no-op. ``external.connections.test``
+      stays off — test/execute remain closed until readiness opens them.
+
+    Custom roles are never touched: an administrator who never granted the page
+    keeps that decision.
+    """
+    import json as _json
+
+    page_grant = "nav:admin.external_connections"
+    perms_by_code = {
+        "member": ("external.connections.read",),
+        "tenant_admin": (
+            "external.connections.read",
+            "external.connections.manage",
+        ),
+    }
+
+    for row in con.execute(
+            "SELECT id, code, tenant_id, permissions_json FROM roles"
+            " WHERE builtin=1 AND code IN ('member', 'tenant_admin')"
+            ).fetchall():
+        if con.execute(
+                "SELECT 1 FROM role_resource_grants WHERE role_id=?"
+                " AND resource_kind='menu'", (row["id"],)).fetchone():
+            con.execute(
+                "INSERT INTO role_resource_grants(id, tenant_id, role_id,"
+                " resource_kind, resource_id, action)"
+                " SELECT ?, ?, ?, 'menu', ?, 'view'"
+                " WHERE NOT EXISTS (SELECT 1 FROM role_resource_grants"
+                "  WHERE role_id=? AND resource_kind='menu' AND resource_id=?)",
+                ("grant-menu-%s-admin.external_connections" % row["id"],
+                 row["tenant_id"], row["id"], page_grant, row["id"],
+                 page_grant),
+            )
+
+        try:
+            perms = _json.loads(row["permissions_json"] or "[]")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(perms, list):
+            continue
+        needed = perms_by_code.get(row["code"], ())
+        missing = [p for p in needed if p not in perms]
+        if not missing:
+            continue
+        con.execute(
+            "UPDATE roles SET permissions_json=?, version=version+1"
+            " WHERE id=?",
+            (_json.dumps(sorted(set(perms) | set(missing))), row["id"]),
+        )
+
+
+_migrations.append(_migration_30)
+
+
 class IdentityStoreError(RuntimeError):
     """Raised when the identity store cannot be opened or migrated."""
 

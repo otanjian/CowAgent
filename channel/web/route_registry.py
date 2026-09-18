@@ -187,6 +187,20 @@ ROUTES: Tuple[RouteEntry, ...] = (
     RouteEntry("/api/external-connections/personal/([^/]+)/delete", "ExternalConnectionPersonalWriteHandler", "fork:external-connections", {"POST": S("external_connections", "delete", permission="", comment="delete my own mailbox connection")}),
     RouteEntry("/api/external-connections/personal/([^/]+)", "ExternalConnectionPersonalDetailHandler", "fork:external-connections", {"GET": S("external_connections", "detail", permission="", comment="my own mailbox detail (another member's answers 404)")}),
     RouteEntry("/api/external-connections/personal", "ExternalConnectionPersonalWriteHandler", "fork:external-connections", {"POST": S("external_connections", "create", permission="", comment="create my own mailbox connection (tenant+owner fixed from the session; one per member)")}),
+    # Test / runtime. Registered per scope, like the detail routes, so the route
+    # gate applies the scope's own policy (a tenant test needs the tenant read
+    # permission, a platform test a platform admin, a personal test only the
+    # owner). The service applies the *second* gate — the deployment's readiness
+    # switch for the type, which defaults closed — so declaring the route does
+    # not make a test runnable. ``runtime`` is a read: the limits, the effective
+    # outbound policy and the adapter's capability reasons.
+    RouteEntry("/api/external-connections/draft-test", "ExternalConnectionDraftTestHandler", "fork:external-connections", {"POST": S("external_connections", "draft_test", policy="tenant", permission="external.connections.manage", comment="test an unsaved form (kind + config + one-shot secrets); persists no connection, no secret and no test record")}),
+    RouteEntry("/api/external-connections/tenant/([^/]+)/test", "ExternalConnectionTestHandler", "fork:external-connections", {"GET": S("external_connections", "test", policy="tenant", comment="the recorded test state for a tenant connection (version- and secret-bound)"), "POST": S("external_connections", "test", policy="tenant", permission="external.connections.manage", comment="run a bounded connectivity/authentication test; refused with test_not_available until the deployment opens the type")}),
+    RouteEntry("/api/external-connections/tenant/([^/]+)/runtime", "ExternalConnectionRuntimeHandler", "fork:external-connections", {"GET": S("external_connections", "runtime", policy="tenant", comment="runtime limits, effective outbound policy and adapter capability reasons")}),
+    RouteEntry("/api/external-connections/platform/([^/]+)/test", "ExternalConnectionTestHandler", "fork:external-connections", {"GET": S("external_connections", "test", policy="platform", permission="", comment="the recorded test state for a platform connection"), "POST": S("external_connections", "test", policy="platform", permission="", comment="run a bounded test for a platform connection (platform admin)")}),
+    RouteEntry("/api/external-connections/platform/([^/]+)/runtime", "ExternalConnectionRuntimeHandler", "fork:external-connections", {"GET": S("external_connections", "runtime", policy="platform", permission="", comment="runtime limits and capability reasons (platform admin)")}),
+    RouteEntry("/api/external-connections/personal/([^/]+)/test", "ExternalConnectionTestHandler", "fork:external-connections", {"GET": S("external_connections", "test", permission="", comment="the recorded test state for my own mailbox"), "POST": S("external_connections", "test", permission="", comment="run a bounded test for my own mailbox (owner fixed from the session)")}),
+    RouteEntry("/api/external-connections/personal/([^/]+)/runtime", "ExternalConnectionRuntimeHandler", "fork:external-connections", {"GET": S("external_connections", "runtime", permission="", comment="runtime limits for my own mailbox")}),
     RouteEntry("/message", "MessageHandler", "upstream", {"POST": P("tenant", comment="send message")}),
     RouteEntry("/upload", "UploadHandler", "upstream", {"POST": P("tenant", comment="file upload")}),
     RouteEntry("/uploads/(.*)", "UploadsHandler", "upstream", {"GET": P("tenant", comment="serve upload (tenant derived from the addressed agent: the console reads this as an <img>/<audio> subresource, which cannot send X-Tenant-ID)", tenant_from_resource=True)}),
@@ -278,7 +292,7 @@ ROUTES: Tuple[RouteEntry, ...] = (
     RouteEntry('/api/procurement/import', 'ProcurementImportHandler', "fork:scenes", {'POST': P('tenant')}),
     RouteEntry('/api/procurement/erp-sync', 'ProcurementErpSyncHandler', "fork:scenes", {'POST': P('tenant')}),
     RouteEntry('/api/erp/connections/options', 'ErpConnectionsOptionsHandler', "fork:scenes", {'GET': P('tenant')}),
-    RouteEntry('/api/erp/connections', 'ErpConnectionsHandler', "fork:scenes", {'GET': P('tenant'), 'POST': P('tenant')}),
+    RouteEntry('/api/erp/connections', 'ErpConnectionsHandler', "fork:scenes", {'GET': P('tenant')}),
     RouteEntry('/api/airbag-scheduling/(.*)', 'AirbagSchedulingHandler', "fork:scenes", {'GET': P('tenant'), 'POST': P('tenant'), 'PUT': P('tenant')}),
     RouteEntry('/api/sap-data-analysis/analyze', 'SceneSapAnalyzeHandler', "fork:scenes", {'POST': P('tenant')}),
     RouteEntry('/api/sap-data-analysis/(.*)/csv', 'SceneSapCsvHandler', "fork:scenes", {'GET': P('tenant')}),

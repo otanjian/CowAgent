@@ -9,6 +9,7 @@ from cli.commands.install import install_browser
 from cli.commands.knowledge import knowledge
 from cli.commands.backup import backup_command, restore_command
 from cli.commands.management import management
+from cli.commands.external_connections import external_connections
 
 
 HELP_TEXT = """Usage: cow COMMAND [ARGS]...
@@ -82,6 +83,7 @@ main.add_command(backup_command)
 main.add_command(restore_command)
 main.add_command(install_browser)
 main.add_command(management)
+main.add_command(external_connections)
 
 
 if __name__ == '__main__':
