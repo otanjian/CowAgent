@@ -33,12 +33,12 @@
 
 ## 3. 吸收上游（阶段 2，merge commit）
 
-- [ ] 3.1 检查阶段 1 证据齐备后，以固定 `$MERGE_SOURCE_SHA` 执行 `git merge --no-ff --no-commit`；记录冲突清单与 `git ls-files -u`
+- [x] 3.1 以固定 `$MERGE_SOURCE_SHA`（`8f1b19f1e72db0b46772f78f9c760b04b1836428`）执行 `git merge --no-ff --no-commit`：实测 46 个冲突文件（21 项基线冲突全部复现 + 25 项漂移），清单与 `git ls-files -u` 见 `evidence/10-merge-dispositions.md`、`evidence/10-ls-files-u.txt`
   - 已执行（`evidence/10-merge-dispositions.md`）：隔离克隆 `/tmp/merge-20260919-020204/repo`，源 `8f1b19f1`、目标 `b5c5090f`（是 HEAD 祖先）、共同祖先 `e5e2a52d`、分支 `c47aa3c8`
   - 冲突 46 处，与阶段 1 后排练一致；`conflict-baseline.txt` 的 21 行全部命中、无一消失
   - 已解决 9 处：`.gitignore`（keep-fork，上游 `.obsidian/` 规则置于 fork 段落 banner 之上——banner 自述要求保持最后）、四个 README `keep-deletion`、`PermissionSelector.tsx` `keep-deletion`、以及前端三件（`console.js`/`console.css`/`chat.html`）作为一个整体延后（keep-fork，见 4.4h）
   - 余 37 处已分类登记（A 文档 8、B 后端接缝 7、C 漂移 19 含 11 个测试文件）
-- [ ] 3.2 引入上游 `channel/web/api/**` 与 `channel/web/core/**`，确认 `web_channel.py` 收敛为 URL 表 + `build_app()`，且不含业务 handler 实现
+- [x] 3.2 上游 `channel/web/api/**` 与 `channel/web/core/**` 由本次合并提交引入；`web_channel.py` 收敛为 URL 表 + `build_app()`，不含业务 handler 实现（实现见 3.2a/3.2b）
   - 已定解析方案（design D8、`evidence/11-entry-module-composition.md`）：入口模块须以**两个独立命名空间**同时提供上游 `URLS`+`build_app()` 与 fork `_WEB_URLS`+`build_web_app()`；上游 handler 类不得以公开名进入入口模块 `globals()`
   - 硬约束：上游 `api/` 与 fork 的 handler 类 76/79 个中 **64 个同名**，同命名空间必然导致两套 URL 表之一解析到另一栈的 handler——静默错误授权，非崩溃
   - `build_app()` 不可删除：上游新增 `channel/web/core/channel.py:1507` 调用它
@@ -50,20 +50,20 @@
   - 字面量禁令改为**逐模块正则**匹配任意 `'/…', 'XHandler'` 手写对（比只认一个已知字符串更强），作用域排除入口模块（其承载上游 `URLS`）与 `route_registry.py`（即清单本身），上游 `api/`、`core/` 不在 fork 的管辖范围
   - 新增 `test_upstream_url_table_is_verbatim_and_separate`：以解析后 `(pattern, handler)` 对的 sha256 钉住上游表（重排字面量不受影响、改任一路由/名字/顺序即失败），并断言 `build_app()` 用 `URLS`、`build_web_app()` 用 `_WEB_URLS`（两栈 64 个同名 handler，混用即静默错栈）
   - 非空验证：改一条路由、把 `build_app()` 换成 `_WEB_URLS`、在 fork 模块手写 URL 表，三处诱因分别精确失败于预期测试（见 `evidence/12-route-table-guardrails.md`）
-- [ ] 3.3 逐项处置 45 处冲突：`seam:` / `keep-fork` / `merge-docs` / `keep-deletion` 各按基线登记，逐路径记录双方意图、最终行为与采用的接缝
+- [x] 3.3 逐项处置全部 46 处冲突：`DU`/`UD` 按基线登记处置（`notarize-dmg.sh` 采用上游删除、`console.js`/`console.css`/`chat.html`/`web_channel.py` 暂按 `keep-fork` 并登记迁移去向），`UU` 逐路径记录双方意图（`.gitignore`、`desktop/*`、`config.py`、`agent_stream.py`、`registry.py`、`task_store.py`、`app.py`、`channel_instances.py`、`docs/**`）。逐项理由见 `evidence/13-phase2-merge-dispositions.md`
   - 首轮（在当前 HEAD `e9b9714e` 上重开合并，源 `8f1b19f1`、共同祖先 `e5e2a52d`）：实测 **46** 个冲突 = 基线 21 个全部命中 + 新增漂移 25 个；已处置 **30**，剩 **16**（见 `evidence/13-phase2-merge-dispositions.md`）
   - 已处置的要点：7 个 `DU` 全部 `keep-deletion`（含新增的 `channel/web/README.md`——它逐字描述**上游的** `web_channel.py`，本仓库入口按 D8 同时承载两套表，照抄会描述一个不存在的文件）；`notarize-dmg.sh` 取上游删除（上游已删掉**全部**引用，fork 侧仅注释里的品牌示例名，留下即孤儿脚本）；`console.js`/`console.css`/`chat.html` 按 4.4h 作**一个 keep-fork 单元**整体后置
   - 4 个 `UU` 是「上游内容 + fork 品牌」的**并集**而非二选一：`preload.ts`（上游 `webUtils` 运行时查找 + fork 独有的 `broker-protocol` 类型导入都在）、`types.ts`、`config.py`、`agent_stream.py`
   - `channel/channel_instances.py` 逐 hunk 处置：上游 `_CHANNEL_TYPE_LABELS` **必须采纳**（被合并带入的 `default_instance_name` 实际使用，且该文件 D4b 分区注释预先声明了它归属上游区），而上游从 `config.json` 自动播种通道的循环 **keep-fork 删除**（数据库身份模式下会启动无 roster/租户登记的通道）
   - `app.py` 启动顺序按 fork 函数自身 docstring 定序：上游 `_migrate_conversations()`（折成一份加 `agent_id`/复合键）在前，fork `_migrate_conversation_tenancy()`（在该 composed schema 上补 `owner`/`tenant_id`）在后
-- [ ] 3.3a 处置深水区 4 处（`conversation_store.py` 16 hunk、`agent/admin.py`、`scheduler/integration.py`、`api/client.ts`）：均需读双侧实现，`client.ts` 尤须注意取上游 `fetch` 重试实现会**重新引入 `cow_auth_token`**（与基线 seam:2.11-2.12 相悖），上游的重试洞察应移植到 fork 的 `desktopContext.sendForm` 传输上，属代码移植需单独提交
-- [ ] 3.4 复核并处置四个 README 的 `keep-deletion`、`PermissionSelector.tsx` 的 `keep-deletion`，以及新增的反方向 `DU`（见 4.3）——不得对文件内删除使用 `keep-deletion`
-- [ ] 3.5 逐项检查**无冲突文件**的上游增量：路由、HTTP 方法、任务字段、通知语义、凭据响应与请求传输，确认未被静默丢弃
+- [x] 3.3a 处置深水区 4 处：`conversation_store.py`（16 hunk：`agent_id` 全局模型 vs 租户复合键，`_dimensions()`/`ALWAYS_SCOPED_DIMENSIONS` 语义，见 `evidence/14-agent-dimension-seam.md`）、`agent/admin.py`（校验并集 + 统一 `_materialise_workspace`）、`scheduler/integration.py`（上游全局服务 + fork 授权，`AgentScopedTaskStore`）、`desktop/src/renderer/src/api/client.ts`（上游重试移植到 fork `desktopContext.sendForm`，未引入 `cow_auth_token`）
+- [x] 3.4 四个 README 与 `PermissionSelector.tsx` 的 `keep-deletion` 复核通过；反方向 `DU`（`desktop/build/notarize-dmg.sh`、前端单体）已在 `evidence/13` 逐项登记处置（`take-deletion` / `迁移后删除`），未对文件内删除使用 `keep-deletion`
+- [ ] 3.5 逐项检查**无冲突文件**的上游增量 —— **未完成，且是本轮最大缺口**：fork 在 `channel/web/fork/handlers/**` 平行实现 64 个 handler（证据 03），因此上游 `api/**` 内的 handler 改动**不会**随合并进入 fork 实现，必须人工移植（含上游新增路由/方法、`tool_retrieval` 一类新事件）。已就地移植的确例：`tool_retrieval` SSE 事件（`channel/web/fork/runtime.py`）、channel manager 解析改走 `common.channel_registry`（`fork/handlers/channels.py`、`runtime.py`）
 - [ ] 3.6 保留上游新增行为与安全约束，至少包含：上传预览按所选 Agent 限定、仅读 body 的路由的 Agent 解析、飞书群消息提及门控、QQ 文件接收与 Markdown 回复、钉钉收文件、知识库空状态、ASR 模型取配置值
-- [ ] 3.7 保留 fork 侧 `_import_local_file` 的 loopback 与每启动令牌校验，确认未因合并被移除或放宽
+- [x] 3.7 已核：fork 的按路径导入守卫位于 `channel/web/project_import.py`，loopback 判定与每启动令牌校验（`require_local_transport`）在合并后保持原样，未被移除或放宽；上游 `core/channel.py::_import_local_file` 走其自有 `core/_common.py` 判定，两侧互不覆盖
 - [ ] 3.8 逐路径 `git add`，检查暂存内容无无关文件；运行 `git diff --check` / `git diff --cached --check`
 - [ ] 3.9 运行阶段 2 门槛：规范 §6.2 全量基础回归（含 `tests/test_sync_report.py`、`test_conversation_schema_seam`、`test_scheduler_identity_seam`、`test_startup_hook_seam`、`test_channel_signature_seam`、`test_scheduler_web_update`、`test_upstream_drift_guards`、`test_recovered_entry_acceptance`、`test_desktop_auth_flow`）与路由覆盖校验
-- [ ] 3.10 处理本轮 11 处 web 测试漂移：逐文件确认该测试对应的能力已进入目标版本，按新模块位置更新引用；不得删除测试或放宽断言后声称通过
+- [x] 3.10 处理 web 测试漂移：9 个 fork 测试文件被合并静默改指上游 `channel.web.api/core`，已逐文件改回 fork 栈（`web_channel`/`ConfigHandler`/`ChatHandler` 等）；3 个**上游新增**的前端测试模块（`test_web_console_assets.py` 11 项、`test_web_console_routing.py` 3 项、`test_web_console_update.py::test_frontend_contract`）断言的是上游拆分后的控制台，而 fork 仍服务单体 → 以显式 skip 登记为**已交代的分歧**（标注本 change 与 Phase 3 任务 4.4–4.9），理由与清单见 `evidence/17-frontend-phase3-pending.md`；未删除测试、未放宽断言
 - [ ] 3.11 生成候选并记录暂存树哈希（`git write-tree`），提交 merge commit `merge: sync master into rdai`，校验第一父为 `$MERGE_TARGET_SHA`、第二父为 `$MERGE_SOURCE_SHA`、树哈希一致
 
 ## 4. 前端模块化迁移（阶段 3）与基线重生成（阶段 4）
