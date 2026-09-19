@@ -1,7 +1,11 @@
 # merge: sync master into rdai
 
+**这一节已不再是待办**：集成方式后来改为本地 `git merge --ff-only` 直接合入 `rdai`
+（见 `tasks.md` 5.9），PR 从未创建。下面保留当时的开 PR 入口以说明原计划；仓库已由
+`otanjian/CowAgent` 改名为 `otanjian/rsmagent`，故该 URL 现走 GitHub 301 重定向。
+
 Open this PR at
-`https://github.com/otanjian/CowAgent/compare/rdai...codex/adopt-upstream-web-split`
+`https://github.com/otanjian/rsmagent/compare/rdai...codex/adopt-upstream-web-split`
 (`gh` is unauthenticated in the authoring environment, so the body is prepared
 here and pasted verbatim.)
 
