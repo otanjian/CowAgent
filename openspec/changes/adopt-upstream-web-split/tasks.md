@@ -195,12 +195,16 @@
   - 未完成：审查人一栏待 PR 评审填写（不在本 change 内自证）
 - [x] 5.8 交付前再次 `git fetch origin master rdai` 并与 `refs.txt` 比较；若 `rdai` 前移则整合新目标并重新验证候选
   - `git fetch` + `git ls-remote` 权威复核（2026-09-19）：`origin/master` = `8f1b19f1`、`origin/rdai` = `b5c5090f`，与 `doc/sync-evidence-2026-09-18/refs.txt` 逐字节一致且**均未前移**，故规范 §7.1 的重新验证不成立；被验证过的候选树仍有效，提交树 `07244685012289d58d5d541b4c6fff632ab4ad21` 与之逐字节一致
-- [~] 5.9 推送同步分支并向 `rdai` 创建 PR，正文用英文含 Summary / Merge evidence / 能力对照 / database 验收 / 冲突决策 / 基线漂移 / 回滚；PR 标题 `merge: sync master into rdai`
-  - **分支已推送**：`codex/adopt-upstream-web-split` → `origin`（`* [new branch]`），跟踪已建立
-  - **PR 正文已备好**：`evidence/22-pr-body.md`（英文，七节齐备），开 PR 时整体粘贴
-  - **PR 尚未创建**：本机 `gh` 未认证且无 `GH_TOKEN`（`gh pr create` 报 `gh auth login`），故未代为创建——这不是可以绕过的步骤，而是需要凭据的人工动作。开 PR 入口：`https://github.com/otanjian/CowAgent/compare/rdai...codex/adopt-upstream-web-split`（`base=rdai`、`head=codex/adopt-upstream-web-split`），标题用 `merge: sync master into rdai`
-  - 交付前的 ref 复核见 5.8：`rdai` 未前移，故 PR 的 base 仍是 `b5c5090f`
-- [ ] 5.10 合入后记录 `rdai` 最终提交，确认固定源 SHA 是其祖先，检查 CI 与冒烟结果；把 `$MERGE_RUN_DIR` 中的证据转存到 PR / CI 制品 / 版本管理目录，不保留临时路径作为唯一证据
+- [x] 5.9 ~~推送同步分支并向 `rdai` 创建 PR~~ **改为直接合入 `rdai`（用户决定，2026-09-19）**
+  - **分支已推送**：`codex/adopt-upstream-web-split` → `origin`（`* [new branch]`），跟踪已建立；该分支后被删除（见下）
+  - **PR 正文已备好**：`evidence/22-pr-body.md`（英文，七节齐备）。**本机 `gh` 未认证**（`gh pr create` 报 `gh auth login`），PR 从未创建
+  - **实际集成方式**：用户指示不再走 PR，改为本地把 `codex/adopt-upstream-web-split` 合入 `rdai`。该分支相对 `rdai` 为 **领先 250 / 落后 0**，故以 `git merge --ff-only` **快进**合入，无冲突、无新提交：`rdai` 由 `b5c5090f` 前进到 `9133816d`
+  - **合并树校验**：`rdai^{tree}` 与分支尖端同为 `f70cdaf6fc99bb7ce5234a0b4e39c758f3590025`，即与刚跑完全量套件（`30 failed / 5775 passed`）的工作树逐字节相同；并在合并树上复跑验收与门禁 `118 passed`
+  - **分支清理**：本地删除 `codex/adopt-upstream-web-split`（用 `git branch -d`，即由 git 自身证明已合入）与三个 `backup/lowcode-*`（`-D`，用户明确选择；这 8 个提交不在任何远端，删除前已记录 SHA：`96b2980d` / `0fdd4ce9` / `614f6497`）
+  - **交付前的 ref 复核见 5.8**：`rdai` 当时未前移，故合并的 base 是 `b5c5090f`
+- [~] 5.10 合入后记录 `rdai` 最终提交，确认固定源 SHA 是其祖先，检查 CI 与冒烟结果；把 `$MERGE_RUN_DIR` 中的证据转存到 PR / CI 制品 / 版本管理目录，不保留临时路径作为唯一证据
+  - **已记录**：`rdai` 最终提交 `9133816d`（快进前为 `b5c5090f`），树 `f70cdaf6fc99bb7ce5234a0b4e39c758f3590025`；固定源 `8f1b19f1`（`origin/master`）是其祖先（经 `163951b5` 的 merge commit）
+  - **未完成**：推送 `rdai` 到 `origin` 与删除远端工作分支遇到网络故障（`github.com:443` 在 2026-09-19 12:47–12:55 多次连接超时，DNS 正常解析、无代理配置）——本地合并与分支清理已完成，远端同步待网络恢复后重试；CI 与冒烟结果因此尚未取得
 
 ## 6. 文档与交接
 
