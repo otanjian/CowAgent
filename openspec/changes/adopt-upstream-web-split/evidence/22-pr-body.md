@@ -50,10 +50,11 @@ verified in an isolated clone**: the conflicts were handled with
 `git read-tree -u --reset <candidate tree>` — so the commit is the tree that was
 tested, not a re-merge that approximates it.
 
-Delivery updates were then applied on top (`4cd86956`, `762c301b`, `ad6f7666`):
-freezing the post-merge baseline, closing the increment adjudication and test
-retargeting, adding the structural invariant gate, and splitting the front-end
-unit out. **All numbers below are for the PR head.**
+Delivery updates were then applied on top (`4cd86956`, `762c301b`, `ad6f7666`,
+`bd44bf1f`): freezing the post-merge baseline, closing the increment
+adjudication and test retargeting, adding the structural invariant gate,
+splitting the front-end unit out, and recording the delivery state. **All
+numbers below are for the PR head.**
 
 Both refs were re-checked at delivery with `git fetch` and `git ls-remote`:
 `master` is `8f1b19f1` and `rdai` is **still** `b5c5090f` — `rdai` has not moved,
@@ -190,7 +191,8 @@ authorization. Each is recorded with its reason in `evidence/21`.
 ## Baseline drift
 
 `scripts/conflict-baseline.txt` is re-frozen for this pair of tips:
-`origin/master@8f1b19f1 × codex/adopt-upstream-web-split@<PR head>`, 46 rows.
+`origin/master@8f1b19f1 × codex/adopt-upstream-web-split@163951b5`, 46 rows — the
+merge commit, matching the header frozen in the file.
 Replaying the real conflict set against it reports 46 known conflicts, an empty
 drift section, and `DELIBERATE_REMOVALS` unchanged at five names — the
 `take-deletion` row for `notarize-dmg.sh` is deliberately *not* a
