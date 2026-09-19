@@ -7,7 +7,7 @@ script still lists has been read against upstream's side and classified as
 another name**, or **deferred with the split console**. Nothing was dropped
 silently, which is what task 3.5 asks for.
 
-    10|Tool: `scripts/migration/measure_backend_increment_gap.py --upstream
+Tool: `scripts/migration/measure_backend_increment_gap.py --upstream
 origin/master`. Its similarity heuristic still reports ~35 rows after this
 round; that is expected and is not the counter — the tables below are.
 
@@ -34,7 +34,7 @@ five routing cases failed (the fork rejected a legacy card's disconnect with
 failed. Both are now closed below. Task 3.10 is done: `grep -rl
 'channel\.web\.api' tests/` returns only docstrings.
 
-    30|Note on the two skipped cases in `test_web_channel_disconnect.py`: upstream's
+Note on the two skipped cases in `test_web_channel_disconnect.py`: upstream's
 resurrection test needs `bootstrap_legacy_instances` to synthesize records from
 flat credentials. The fork's version is a no-op passthrough (evidence/15), so
 the sanity precondition cannot hold and the test stays skipped with that reason
@@ -55,7 +55,7 @@ recorded. The *prune* half is still ported and now has fork-native coverage
    model: the survivor set is built from the fork's explicit records (there are
    no bootstrapped ones), so the keep-branch keys off a surviving record rather
    than a synthesized one. Tested both ways.
-    50|4. **`_channel_instances_view`** — blank credentials now fall back to the global
+4. **`_channel_instances_view`** — blank credentials now fall back to the global
    `config.json` value (mirroring `channel.cfg`), so a secret that lives only in
    the global config renders masked instead of blank; and the card carries
    `instance_name`.
@@ -77,17 +77,37 @@ recorded. The *prune* half is still ported and now has fork-native coverage
    - `HistoryHandler.GET`, so a reopened conversation shows the same URLs;
    - re-exported through `channel.web.web_channel`, which is the seam the fork
      imports such helpers through.
-    75|   Covered by `tests/test_history_agent_workspace.py`
+   Covered by `tests/test_history_agent_workspace.py`
    (`test_history_media_refs_are_rewritten_to_a_servable_url`, and a direct test
    that a ref escaping the workspace root is left literal, since the rewrite
    turns refs into servable URLs).
+
+8. **The search-credential UI was wired to the three new providers.**
+   `_search_capability` advertises nine providers, but the *served* console only
+   knew six: `tavily`/`keenable` fell through to the model-vendor modal and
+   `searxng` had no instance-URL field, so three providers the backend reported
+   as configurable could not be configured from the console.
+   `channel/web/static/js/console.js` now routes the dedicated-credential set
+   (`bocha`, `anysearch`, `serply`, `tavily`, `searxng`, `keenable`) to the
+   credential dialog, posts `url` for `searxng` (pre-filled from `url_masked`,
+   and not treated as a masked sentinel), posts `anonymous: !api_key` for
+   `anysearch`/`keenable` so an empty save reaches their keyless tier, and shows
+   the clear button while that tier is on. Upstream's copy for the three
+   providers was added to the loaded namespace
+   (`static/js/i18n/models-config.js`, all three languages; previously only in
+   the unloaded `core/i18n.js`). Covered by
+   `tests/test_console_search_providers.cjs` (7 cases), with
+   `tests/test_console_i18n_parity.cjs` kept green through the fixture update.
+   The field label follows upstream's `views/models.js` (and the fork's existing
+   `API Key`) in being a literal — `Instance URL` vs `API Key` — rather than a new
+   key, so the Phase 3 port of this dialog stays a no-op.
 
 ## C. Adjudicated: fork-hardened, keep the fork's side
 
 These rows are upstream changes the fork deliberately does **not** take. They
 are recorded here so "absent" stops meaning "maybe dropped".
 
-    85|| method | why the fork keeps its own |
+| method | why the fork keeps its own |
 | --- | --- |
 | `SchedulerToggleHandler.POST`, `SchedulerDeleteHandler.POST`, `SchedulerUpdateHandler.POST` | upstream authenticates with `_require_auth()` and writes through `_global_task_store()`. The fork authorizes first — `_db_scope()` → `_scheduler_access(ctx)` / `_scheduler_actor(ctx)` / `_request_agent_id(body)`, `TaskAuthorizationError` → HTTP, and revision-checked updates. Taking upstream's body would remove the authorization and the optimistic-concurrency check. |
 | `AgentAvatarHandler.GET/POST`, `AgentsHandler.GET` | fork resolves the Agent through `_db_scope` + `_require_tenant_agent_binding` + `_require_agent_action` and serves only tenant-bound Agents; upstream's is `_require_auth()` + registry lookup. |
@@ -124,12 +144,29 @@ and are deferred with it, not dropped: `ConfigHandler.GET`'s
 `web_password_masked` (+ the raw `web_password` in `COW_DESKTOP` mode), read by
 `static/js/views/config.js`, and `_annotate_avatar_revs` /
 `AgentsHandler.GET`'s `avatar_rev`, used for avatar cache-busting in the split
-    140|views. The fork's live console loads neither file (its shell lists
+views. The fork's live console loads neither file (its shell lists
 `js/console.js` and friends), and the fork reaches the same behaviour through
 its own paths: `/auth/*` for account secrets and `AgentAvatarHandler` +
 `_store_avatar` for avatars. They land with tasks 4.4-4.9, together with the
 routes that consume them; taking them earlier would ship fields nothing reads
 and, for `web_password`, a second way to read the console password.
+
+**One deferred row does have a live consumer: the desktop renderer.** The
+`console.js` monolith is the only *web* consumer of these endpoints, but
+`desktop/src/renderer/**` is an independent Electron frontend that the merge
+carried over byte-identically from upstream (its conflicts were `merge`, not
+`keep-fork`), so its next build calls `/api/scheduler/runs`, `/runs/detail`,
+`/runs/delete`, `/scheduler/create`, `/recipients`, `/instances` and
+`/api/sessions/<id>/{context_usage,compact_context}` — eight routes the fork
+backend does not register. The fork's desktop called **none** of them before
+this merge, so this is a front-end/backend gap introduced here, not a missing
+fork feature. The impact is degraded rather than broken: most call sites swallow
+the failure (`.catch(() => [])`), so the new task/run-history and context-usage
+surfaces come up empty instead of erroring, while "delete run" surfaces the
+error. Closing it — either by routing the endpoints under the fork's
+authorization or by degrading the desktop entries — is task 0.6 of
+`adopt-upstream-web-frontend-split`, and the item is listed in that change's
+`evidence/deferred-upstream-frontend.md` §D.
 
 ## F. Route-table diff (task 3.5, "routes")
 
@@ -183,11 +220,12 @@ Targeted run over the touched and adjacent files: **255 passed, 2 skipped**
 Full suite, this tree, `pytest tests/ -q -p no:randomly --ignore=tests/e2e`
 (13:34): **30 failed, 5735 passed, 30 skipped, 423 subtests passed**.
 
-Re-run at delivery (2026-09-19, after this round's gates were added):
-**30 failed, 5749 passed, 30 skipped, 423 subtests passed** — same 30 failures,
-and the +14 passes are exactly the cases this round added
-(`tests/test_web_module_seams.py` 11, `tests/test_change_delta_check.py` +3),
-so the gate work is covered rather than assumed.
+Re-run at delivery (2026-09-19, after this round's gates and the §6.4 acceptance
+were added): **30 failed, 5775 passed, 30 skipped, 423 subtests passed** — same
+30 failures, and the +40 passes are exactly the cases this round added
+(`tests/test_web_module_seams.py` 11, `tests/test_change_delta_check.py` +3,
+`tests/test_web_database_capability_acceptance.py` 26), so the gate and
+acceptance work is covered rather than assumed.
 
 Set-level comparison against the stored pre-merge baseline
 (`/tmp/base_full.fails`, the fork's `65596a99`, 32 failures) — the 30 are exactly
@@ -216,3 +254,19 @@ a divergence already recorded elsewhere:
 No test was deleted or weakened to reach this state; the count of *new* skips is
 one, and it is upstream's legacy-resurrection case whose precondition the fork's
 no-op bootstrap cannot satisfy (§A).
+
+### I.1 §6.4 database acceptance (added after this round)
+
+`evidence/23-database-capability-acceptance.md` runs the norm section 6.4
+two-tenant acceptance over the same tree and records the per-capability result:
+the Web/backend slices pass (26 new cases; 184 passed with the §6.4 starter and
+isolation/recovery suites; the full suite above moves 5749 → 5775), the
+external-condition slices stay not passed
+(one-click update by decision, the console front-end, a real desktop client,
+real personal-channel execution, real inference). Its ten tenant-plane routes
+include `/api/memory`, `/api/scheduler`, `/api/history`, `/api/skills`,
+`/api/knowledge/list`, `/api/agents`, `/api/sessions`, `/api/projects/browse`,
+`/api/workspace/tree` and `/api/tenant/channels`, i.e. the entries this section
+adjudicated as ported or kept. Its `KnownGapAcceptance` case pins §E's unrouted
+rows at runtime: 404 for the update and scheduler-authoring/run-history paths,
+405 for the two context-budget paths the session catch-all swallows.

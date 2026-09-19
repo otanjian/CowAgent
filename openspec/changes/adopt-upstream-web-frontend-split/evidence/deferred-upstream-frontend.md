@@ -41,7 +41,7 @@ A5 的上界是可界定的：每个 fork 模块 = 上游模块 + fork 的 hunk�
 | --- | --- | --- |
 | 模型目录覆盖编辑器（控制台按提供方编辑模型目录） | `a153c2e2`、`6d370cb6`、`ddfbc663`、`9014f356` | **在位**：`ModelsHandler` 的 `_apply_catalog` / `_merged_catalog` / `_handle_save_catalog` 已移植（`evidence/20`），`_PRESET_MODEL_META` 与 `model_catalog.remove_catalog` 同批 |
 | 有序回退链（取代单一备用模型） | `7f98a3db`、`571ffad1` | **在位**：`_chat_fallback_capability` / `_set_chat_fallback` 已按 chain 语义移植（`evidence/20`），`tests/test_chat_model_fallback.py` 覆盖 |
-| 搜索提供方新增（Tavily / SearXNG / Keenable） | `2641d76a`、`18198c14`、`127fa286`、`eaf8410a`、`9f025cba`、`750ef721` | **在位**：`_SEARCH_PROVIDERS` / `_SEARCH_PROVIDER_LABELS` / `_handle_set_search_credential` 已移植（`evidence/20`）；`eaf8410a`（AnySearch）需在裁定中确认是否属同名能力 |
+| 搜索提供方新增（Tavily / SearXNG / Keenable） | `2641d76a`、`18198c14`、`127fa286`、`eaf8410a`、`9f025cba`、`750ef721` | **在位，且控制台入口已补**：`_SEARCH_PROVIDERS` / `_SEARCH_PROVIDER_LABELS` / `_handle_set_search_credential` 已移植（`evidence/20`），凭据弹窗也已接上三个新提供方——SearXNG 走实例 URL 输入（预填 `url_masked`、不作掩码哨兵），anysearch/keenable 留空即匿名，文案补进**已装载**的 `js/i18n/models-config.js`（三语；原先只在未装载的 `core/i18n.js`），见 `adopt-upstream-web-split` `evidence/21` §B8 与 `tests/test_console_search_providers.cjs`。剩余待裁定项只有拆分前端里的编辑器形态（`eaf8410a` 的 AnySearch 同名能力一并核对） |
 | ASR 模型取配置值 | `dc6393a6` | **在位**：`_set_asr` 已移植，LinkAI 的 `voice_to_text_model` 置空即走配置默认值 |
 | 上下文预算与用量 | `a153c2e2`、`2e7899fc`、`60706038`、`258e800c` | **半在**：`agent_max_context_tokens` 的取值与默认在 `ConfigHandler.GET` 位；`/api/sessions/(.*)/context_usage` 与 `compact_context` **未路由**（`evidence/21` §E），属本 change 的接线与后端一起补 |
 | 调度运行历史与运行详情 | `81898611`、`082e1902`、`50a0d89e` | **缺**：`/api/scheduler/runs*`、`create`、`recipients`、`instances` **未路由**（`evidence/21` §E）。fork 的调度控制台是五个既有动词；接上运行历史需同时补路由与授权判定，故裁定成本高于 B1 其余项 |
@@ -85,5 +85,19 @@ A5 的上界是可界定的：每个 fork 模块 = 上游模块 + fork 的 hunk�
 ## D. 不在本表范围
 
 - 后端 handler 增量：由 `adopt-upstream-web-split` 的 `evidence/18` / `20` / `21` 收口；
-- Desktop 渲染进程：`desktop/src/renderer/**` 是独立的 Electron 应用，不装载 Web 控制台的前端，故上游对该目录的改动不因 `console.js` 保留而丢失；
+- Desktop 渲染进程：`desktop/src/renderer/**` 是独立的 Electron 应用，不装载 Web 控制台的前端，故上游对该目录的改动不因 `console.js` 保留而丢失——**正因如此它已在消费 `evidence/21` §E 里未路由的接口，见 D1**；
 - 一键更新 API 的路由：`evidence/21` §E（该 change 未路由，理由是它属拆分后前端）。
+
+### D1. 桌面端消费的未路由接口（本 change 任务 0.6 收口）
+
+上游桌面端随 `adopt-upstream-web-split` 按 `merge` 处置进入（不是 `keep-fork`），而 `desktop/dist` 是 gitignore 产物、由 `desktop/src` 经 vite 构建，故**下一次构建即生效**。它调用下列 fork 后端**未注册**的接口：
+
+| 接口 | 桌面端用途 | fork 端状态 |
+| --- | --- | --- |
+| `/api/scheduler/runs`、`/runs/detail`、`/runs/delete` | 任务页运行历史 / 详情 / 删除 | 未路由（`evidence/21` §E） |
+| `/api/scheduler/create`、`/recipients`、`/instances` | 任务创建、收件人与实例选择 | 同上 |
+| `/api/sessions/<id>/context_usage`、`/compact_context` | 上下文用量环与压缩 | 同上 |
+
+fork 的桌面端在本轮同步前对这 8 条**0 处调用**（`git grep` 于 `b5c5090f` 的 `desktop/src/renderer`），故这是**同步引入的前后端断口**，不是 fork 缺失的能力。表现以降级为主：多数调用点 `.catch(() => [])`，界面呈空态；「删除运行记录」会暴露错误。逐条处置（接上路由与授权判定，或降级/隐藏入口）见任务 0.6，验收见任务 6.5。
+
+运行期形状已由 §6.4 验收实测固定（`adopt-upstream-web-split` `evidence/23` §3 的 `KnownGapAcceptance`）：6 条 scheduler 与 3 条 `/api/update/*` 回答 **404**（确实未注册），而 `/api/sessions/<id>/{context_usage,compact_context}` 被 fork 既有的 `/api/sessions/(.*)` 捕获后回答 **405**——两条路径**不是** 404，收口时不能按"未注册"处理，需在会话详情 handler 上显式拒绝或补服务。

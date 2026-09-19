@@ -30,8 +30,13 @@ Two scope decisions are worth reading before the diff:
    served console is byte-identical to the pre-merge one. Migrating the fork's
    front-end customization onto the split modules is a separate, independently
    reviewable change, delivered as `adopt-upstream-web-frontend-split`.
-2. **No ability is claimed as migrated to database mode.** This round ran the
-   baseline regression and the structural gates, not the two-tenant acceptance.
+2. **The section 6.4 database acceptance was run after the merge, and its
+   result is partial by design.** The Web/backend slices produced all three
+   required kinds of evidence on a two-tenant, multi-user fixture over the real
+   app; the slices that need external conditions (one-click update — routed
+   off by decision, console front-end, a real packaged desktop client, real
+   personal-channel providers, real model inference) stay **not passed** and
+   are listed as such rather than rounded up.
 
 ## Merge evidence
 
@@ -65,13 +70,14 @@ target was needed.
 
 | Check | Result |
 | --- | --- |
-| Full python suite (`pytest tests -q -p no:randomly --ignore=tests/e2e`) | **30 failed / 5749 passed / 30 skipped** |
-| Same suite on the merge commit's tree | 30 failed / 5735 passed — the +14 passes are exactly the cases this round adds (`tests/test_web_module_seams.py` 11, `tests/test_change_delta_check.py` +3) |
+| Full python suite (`pytest tests -q -p no:randomly --ignore=tests/e2e`) | **30 failed / 5775 passed / 30 skipped / 423 subtests passed** |
+| Same suite on the merge commit's tree | 30 failed / 5735 passed — the +40 passes are exactly the cases this round adds (`tests/test_web_module_seams.py` 11, `tests/test_change_delta_check.py` +3, `tests/test_web_database_capability_acceptance.py` 26), and the failing set is identical item for item |
 | Pre-merge baseline (fork `65596a99`) | 32 failures → **zero merge-introduced failures**, and the merge fixes two baseline failures |
 | Route coverage (`scripts/check-route-coverage.py`) | `176 routes (68 upstream, 108 fork), 221 method entries, OK` |
 | Structural invariant (`scripts/check-web-module-seams.py`) | `OK: 22 upstream module(s), 213 fork-only symbol(s), 0 findings` |
 | Baseline coverage (`scripts/check_change_deltas.py`) | `OK (proposed)` — all 46 rows covered |
-| `node --test tests/*.cjs` | Identical to baseline (0 merged-only / 0 base-only) |
+| Database acceptance §6.4 (`tests/test_web_database_capability_acceptance.py`) | **26 passed** (ordered and random); with the §6.4 starter + isolation/recovery suites: **184 passed** |
+| `node --test tests/*.cjs` | Failing set identical to baseline (verified in the same directory), **plus 7 new passing cases** in `tests/test_console_search_providers.cjs` |
 | `openspec validate --strict` | Both changes valid |
 
 The 30 remaining failures are unchanged from the merge candidate and all sit in
@@ -91,7 +97,7 @@ migration has since moved). Per-file attribution is in
 | --- | --- | --- |
 | Chat, streaming, polling | `/chat`, `/stream`, `/poll`, `/message` | Served by the fork stack; session/tenant from the trusted context. **Behaviour unchanged** — the served console is the pre-merge one |
 | Files / workspace | `/upload`, `/api/workspace/*`, `/api/file` | Fork stack. Multipart `agent_id` scoping fixed and regression-tested (`_scoped_agent_id`) |
-| Models & providers | `/config`, `/api/models` | Fork stack. Upstream's increments **ported**: search providers (Tavily / SearXNG / Keenable), ordered chat-fallback chain, per-provider model catalog overlay, ASR model from config, `agent_max_context_tokens` budget |
+| Models & providers | `/config`, `/api/models` | Fork stack. Upstream's increments **ported**: search providers (Tavily / SearXNG / Keenable), ordered chat-fallback chain, per-provider model catalog overlay, ASR model from config, `agent_max_context_tokens` budget. The served console's search-credential dialog was wired to the three new providers in the same round (SearXNG posts an instance URL, anysearch/keenable an empty key that turns their keyless tier on), with upstream's copy added to the loaded i18n namespace — no ported capability is left without an entry point the user can reach |
 | Skills / MCP | `/api/skills`, `/api/skills/content` | Fork stack; per-tenant resource and user-permission checks |
 | Knowledge / memory | `/api/knowledge/*`, `/api/memory*` | Fork stack; personal-memory version protocol kept |
 | Scheduler | `/api/scheduler/*` | Fork stack on the one global task store; upstream's `list_tasks(agent_id, enabled_only)` + created-at-descending sort ported; upstream's per-Agent store shape deliberately not taken |
@@ -114,14 +120,34 @@ nothing to catch. `/api/version` stays and now returns the full payload.
 
 ## Database acceptance (norm section 6.4)
 
-**Not performed in this round, and not claimed.** Section 6.4 requires, per
-capability, three kinds of evidence — positive business success in database
-mode, authorization isolation, and reachability through a real entry point. What
-this round executed is the section 6.2 baseline regression plus the structural
-and route gates listed above; no two-tenant acceptance instance was built.
+**Performed on the delivered candidate: the Web/backend slices pass, the
+external-condition slices do not.** Section 6.4 requires, per capability, three
+kinds of evidence — positive business success in database mode, authorization
+isolation, and reachability through a real entry point. The acceptance was run
+over an independent identity database with **two tenants** (`acme`, `globex`),
+each with an administrator and an ordinary member, driving the **real
+`build_web_app()`** WSGI application. Full per-capability judgement and the
+commands are in
+`openspec/changes/adopt-upstream-web-split/evidence/23-database-capability-acceptance.md`.
 
-So this PR must not be read as "master's capabilities are now available in
-database mode". Supporting facts for the narrower claim it does make:
+| Evidence class | Result |
+| --- | --- |
+| Positive business success | Platform plane (models/config/channels/logs) reads and writes round-trip for the platform admin; the three ported search providers, the ordered chat-fallback chain and the per-provider catalog overlay all round-trip through `POST /api/models`; tenant plane answers the member with a real `status=success` payload on ten entries |
+| Authorization isolation | Tenant admin and plain member 403 on every platform entry, platform write 403, anonymous 401, foreign-tenant member 403, missing tenant selection 400 |
+| Link completeness | Registry has **zero `closed` policies**; the routes this console keeps unrouted answer 404, and the two context-budget paths are swallowed by the session catch-all as 405 rather than being silently opened |
+
+New cases: `tests/test_web_database_capability_acceptance.py` — **26 passed**
+(in both ordered and random runs). The section 6.4 starter suites plus the
+related isolation/recovery suites run together: **184 passed**.
+
+**Not passed, and not claimed:** one-click update (the three `/api/update/*`
+routes stay unrouted by decision; 404 at runtime), console front-end
+modularization (deferred to `adopt-upstream-web-frontend-split`), Desktop (its
+slice stays `accepted=false`; the eight renderer-consumed routes are unrouted),
+personal-channel **execution** (no real provider round-trip), and real model
+inference / voice specials. So this PR must not be read as "master's
+capabilities are now available in database mode" or "all capabilities pass".
+The narrower claims it does support:
 
 - the merge adds **no** new externally reachable ability to the fork: the 12
   upstream routes were each classified, and the fork's authorization decisions
@@ -134,8 +160,8 @@ database mode". Supporting facts for the narrower claim it does make:
 - the new web-layer invariant gate fails if a fork symbol is ever written back
   into an upstream module.
 
-`openspec/changes/adopt-upstream-web-split/tasks.md` section 5 carries this as
-an explicit, un-ticked block with the reason, rather than a silent omission.
+`openspec/changes/adopt-upstream-web-split/tasks.md` section 5 records the
+performed and the still-open parts explicitly rather than as a silent omission.
 
 ## Conflict decisions
 
@@ -238,9 +264,28 @@ Two gates changed with the baseline:
    adjudications, the override map, the `manifest.json` drift gate, deleting
    `console.js` / `console.css`, the `.cjs` and browser acceptance, and
    un-skipping the three front-end tests.
-2. **Database capability acceptance (norm §6.4)** — see above.
+2. **Database capability acceptance (norm §6.4)** — the Web/backend slices were
+   accepted (see above); the external-condition slices (one-click update, the
+   console front-end, a real packaged desktop client, real personal-channel
+   execution, real inference) remain not passed and are listed per capability in
+   `evidence/23` §2/§5.
 3. **The 30 pre-existing test failures** — attributed per file in `evidence/21`;
    none is caused by this merge.
+4. **The desktop renderer's new screens against deferred endpoints** — the merged
+   `desktop/src/renderer/**` (upstream's, so its next build ships) calls eight
+   routes this backend does not register: `/api/scheduler/{runs,runs/detail,
+   runs/delete,create,recipients,instances}` and
+   `/api/sessions/<id>/{context_usage,compact_context}`. The fork's desktop
+   called none of them before this merge, so this PR leaves a front-end/backend
+   gap: those screens come up empty (most call sites swallow the failure) and
+   "delete run" surfaces an error. The acceptance run records the exact runtime
+   shape: the nine `/api/update/*` and scheduler-authoring/run-history paths are
+   404, while the two context-budget paths are captured by the session
+   catch-all and answer 405. It is recorded in `evidence/21` §E and
+   assigned to task 0.6 of `adopt-upstream-web-frontend-split` — route the
+   endpoints with the fork's authorization, or degrade the desktop entries. It
+   is **not** a missing fork capability and not a security loosening; nothing
+   was routed to satisfy a UI.
 
 ## Evidence index
 

@@ -7,8 +7,11 @@
 - [ ] 0.1 确认前置在位：上游 `channel/web/static/js/{core,chat,views}/**`、`channel/web/static/css/*`、`chat.html` shell 与 `templates/**` 已在工作树，且 `channel/web/static/js/console.js` / `console.css` 仍在（`adopt-upstream-web-split` 按 `UD` + `keep-fork` 登记）
 - [ ] 0.2 确认 `scripts/migration/{port_frontend,verify_frontend_port,build_frontend_adjudication,analyze_frontend_divergence}.py` 可重复运行，且以固定上游 `8f1b19f1` 为输入；记录本轮输入的 ref 三元组（base / upstream / fork）
 - [ ] 0.3 冻结本轮 fork 独有行基线：`console.js` 5222 行、`console.css` 1361 行（合计 6583），作为「零未交代」的分母
-- [ ] 0.4 逐条登记 Phase 3 期间被延后的上游前端增量（拆分 shell、地址栏路由、`?v=` 版本戳、一键更新菜单、`views/knowledge.js` 空状态修复等），作为交付时必须收口或显式转交的清单
+- [x] 0.4 逐条登记 Phase 3 期间被延后的上游前端增量（拆分 shell、地址栏路由、`?v=` 版本戳、一键更新菜单、`views/knowledge.js` 空状态修复等），作为交付时必须收口或显式转交的清单
+  - 已产出 `evidence/deferred-upstream-frontend.md`：§A 结构类（A1–A5，含 A5 上界 = 98 处裁定区域）、§B1 已只缺 UI（后端半边已在位，逐条给提交与现状）、§B2 纯前端修复 14 条、§C 与裁定清单的收口判据、§D1 桌面端未路由接口。生成命令按 §A 头部可重跑，不手抄
 - [ ] 0.5 说明与 `scripts/conflict-baseline.txt` 的范围边界：该基线是父 change `adopt-upstream-web-split` 的冲突集，本 change 只认领其中的前端三行（`channel/web/chat.html`、`channel/web/static/js/console.js`、`channel/web/static/css/console.css`，均为 `keep-fork`），并在任务 5.3 完成删除后更新它们的处置。基线的三条后端 `seam:` 行由父 change 负责，不在本 change 范围：`agent/memory/conversation_store.py`（`seam:conversation-store`）、`agent/tools/scheduler/integration.py`（`seam:scheduler`）、`tests/test_scheduler_web_update.py`（`seam:scheduler`）
+- [ ] 0.6 收口**桌面端消费的未路由接口**（父 change `evidence/21` §E 登记）：`desktop/src/renderer/**` 随本轮同步按上游版本合并（`merge` 处置，非 `keep-fork`），其新界面调用 `/api/scheduler/runs`、`/runs/detail`、`/runs/delete`、`create`、`recipients`、`instances` 与 `/api/sessions/<id>/{context_usage,compact_context}` 共 8 条 fork 后端未路由的接口，而 fork 的桌面端此前 0 处调用。逐条二选一：接上路由与授权判定，或在桌面端降级/隐藏入口；不得以「属拆分后前端」为由留空。清单与影响见本 change `evidence/deferred-upstream-frontend.md` §D
+  - 运行期形状已由父 change 的 §6.4 验收实测固定（`evidence/23` §3）：6 条 scheduler 路径回答 **404**；`/api/sessions/<id>/{context_usage,compact_context}` 被既有 `/api/sessions/(.*)` 捕获后回答 **405**——这两条不是「未注册」，收口时须在会话详情 handler 上显式拒绝或补服务
 
 ## 1. 覆盖映射接线（先接线，后删除）
 
@@ -51,6 +54,7 @@
 - [ ] 6.2 浏览器验收：登录（含凭据提交路径）、上下文切换、流式请求、上传回读、下载预览；记录成功与拒绝两侧结果
 - [ ] 6.3 解除因该分歧而加的 skip：`tests/test_web_console_assets.py`、`tests/test_web_console_routing.py`、`tests/test_web_console_update.py::test_frontend_contract`；`tests/test_tool_display.py`、`tests/test_personal_console_frontend.py` 改指新模块位置，不得删除测试或放宽断言
 - [ ] 6.4 复跑全量回归与 `scripts/check-route-coverage.py`，确认后端路由与授权语义未因前端切换发生变化
+- [ ] 6.5 桌面端验收：以本 change 产出（含 0.6 的结论）构建 `desktop/`（`desktop/dist` 为 gitignore 产物，由 `desktop/src` 经 vite 构建），逐项确认任务页运行历史/详情/删除、任务创建与收件人/实例选择、上下文用量与压缩在 fork 后端的**真实**结果（可用则成功路径，不可用则确认降级为空态/隐藏而非报错），记录两侧证据
 
 ## 7. 文档与交付
 

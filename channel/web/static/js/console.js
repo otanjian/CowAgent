@@ -13509,8 +13509,15 @@ function openSearchAddProviderPicker(missingProviders) {
     });
 }
 
+// Search providers that own a dedicated credential — an API key, or SearXNG's
+// instance URL. The rest (zhipu/qianfan/linkai) reuse a model-vendor
+// credential and keep the vendor modal. Mirrors the backend's
+// `needs_dedicated_key` / `needs_url` flags in ModelsHandler._search_capability,
+// so a provider the runtime supports can always be configured here.
+const DEDICATED_SEARCH_CREDENTIALS = ['bocha', 'anysearch', 'serply', 'tavily', 'searxng', 'keenable'];
+
 function _launchSearchProviderConfig(providerId, providerMeta) {
-    if (providerId === 'bocha' || providerId === 'anysearch' || providerId === 'serply') {
+    if (DEDICATED_SEARCH_CREDENTIALS.indexOf(providerId) !== -1) {
         openSearchKeyModal(providerId, providerMeta);
     } else {
         openVendorModal(providerId, () => loadModelsView({ preserveScroll: true }));
@@ -13551,20 +13558,34 @@ function openSearchKeyModal(providerId, providerMeta) {
     const existing = document.getElementById('search-key-modal');
     if (existing) existing.remove();
 
-    let masked = (providerMeta && providerMeta.api_key_masked) || '';
-    if (!masked) {
-        const searchCap = (modelsState && modelsState.capabilities && modelsState.capabilities.search) || {};
-        const bocha = (searchCap.providers || []).find(p => p.id === providerId);
-        if (bocha && bocha.api_key_masked) masked = bocha.api_key_masked;
+    const searchCap = (modelsState && modelsState.capabilities && modelsState.capabilities.search) || {};
+    const provider = (searchCap.providers || []).find(p => p.id === providerId);
+    const isSearxng = providerId === 'searxng';
+    // SearXNG holds an instance URL (echoed back verbatim in url_masked); the
+    // rest hold a masked API key. Resolve whichever applies as the field value.
+    let masked;
+    if (isSearxng) {
+        masked = (providerMeta && providerMeta.url_masked) || (provider && provider.url_masked) || '';
+    } else {
+        masked = (providerMeta && providerMeta.api_key_masked) || '';
+        if (!masked && provider && provider.api_key_masked) masked = provider.api_key_masked;
     }
     const hasKey = !!masked;
-    const clearBtnHtml = hasKey
+    // anysearch/keenable can be on without a key (their keyless tier), and that
+    // state still needs the clear button so it can be turned back off.
+    const isAnonymous = (providerId === 'anysearch' || providerId === 'keenable')
+        && !!((providerMeta && providerMeta.anonymous) || (provider && provider.anonymous));
+    const clearBtnHtml = (hasKey || isAnonymous)
         ? `<button type="button" id="search-key-clear"
                   class="px-3 py-1.5 rounded-md text-xs text-red-500 dark:text-red-400
                          hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer transition-colors">
               ${t('models_clear_credential')}
            </button>`
         : '';
+    // Saving empty on anysearch turns its keyless tier on, so say so.
+    const descText = providerId === 'anysearch'
+        ? t('models_search_anysearch_desc') + ' ' + t('models_search_anysearch_anon_hint')
+        : t('models_search_' + providerId + '_desc');
 
     const modal = document.createElement('div');
     modal.id = 'search-key-modal';
@@ -13574,15 +13595,15 @@ function openSearchKeyModal(providerId, providerMeta) {
              class="bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10
                     w-full max-w-md mx-4 p-6 shadow-xl">
             <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-1">${t('models_search_' + providerId + '_title')}</h3>
-            <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">${t('models_search_' + providerId + '_desc')}</p>
-            <label class="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5">API Key</label>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">${descText}</p>
+            <label class="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5">${isSearxng ? 'Instance URL' : 'API Key'}</label>
             <input id="search-key-input" type="text" autocomplete="off" data-1p-ignore data-lpignore="true"
                    class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600
                           bg-slate-50 dark:bg-white/5 text-sm text-slate-800 dark:text-slate-100
-                          focus:outline-none focus:border-primary-500 font-mono ${hasKey ? 'cfg-key-masked' : ''}"
+                          focus:outline-none focus:border-primary-500 ${isSearxng ? '' : 'font-mono'} ${(hasKey && !isSearxng) ? 'cfg-key-masked' : ''}"
                    value="${escapeHtml(masked)}"
-                   data-masked="${hasKey ? '1' : ''}"
-                   placeholder="sk-..." />
+                   data-masked="${(hasKey && !isSearxng) ? '1' : ''}"
+                   placeholder="${isSearxng ? 'https://searxng.example.com' : 'sk-...'}" />
             <div class="flex items-center justify-between gap-3 mt-5">
                 <div>${clearBtnHtml}</div>
                 <div class="flex items-center gap-3">
@@ -13645,14 +13666,42 @@ function _saveSearchKey(providerId) {
         return;
     }
     const apiKey = input.value.trim();
+
+    // anysearch and keenable hold a key *or* run on their keyless tier: saving
+    // with an empty key is what turns the anonymous mode on.
+    if (providerId === 'anysearch' || providerId === 'keenable') {
+        _postSearchCredential({
+            action: 'set_search_credential',
+            provider: providerId,
+            api_key: apiKey,
+            anonymous: !apiKey,
+        });
+        return;
+    }
+
+    // SearXNG is addressed by an instance URL rather than authenticated by a key.
+    if (providerId === 'searxng') {
+        if (!apiKey) {
+            input.focus();  // empty is a no-op; the clear button empties the URL
+            return;
+        }
+        _postSearchCredential({ action: 'set_search_credential', provider: providerId, url: apiKey });
+        return;
+    }
+
     if (!apiKey) {
         input.focus();
         return;
     }
+    _postSearchCredential({ action: 'set_search_credential', provider: providerId, api_key: apiKey });
+}
+
+// POST one credential change and close the dialog on success.
+function _postSearchCredential(body) {
     fetch('/api/models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'set_search_credential', provider: providerId, api_key: apiKey }),
+        body: JSON.stringify(body),
     }).then(r => r.json()).then(data => {
         if (data.status === 'success') {
             const modal = document.getElementById('search-key-modal');
@@ -13663,17 +13712,13 @@ function _saveSearchKey(providerId) {
 }
 
 function _clearSearchKey(providerId) {
-    fetch('/api/models', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'set_search_credential', provider: providerId, api_key: '' }),
-    }).then(r => r.json()).then(data => {
-        if (data.status === 'success') {
-            const modal = document.getElementById('search-key-modal');
-            if (modal) modal.remove();
-            loadModelsView({ preserveScroll: true });
-        }
-    });
+    // SearXNG is cleared by emptying its instance URL, not an API key. For
+    // anysearch/keenable an empty key with `anonymous` absent also turns the
+    // keyless tier back off, which is what the clear button means there.
+    const body = providerId === 'searxng'
+        ? { action: 'set_search_credential', provider: providerId, url: '' }
+        : { action: 'set_search_credential', provider: providerId, api_key: '' };
+    _postSearchCredential(body);
 }
 
 function renderCapabilityBody(def, cap, body) {

@@ -156,17 +156,42 @@
 
 ## 5. database 能力验收与交付（阶段 5）
 
-> **状态说明（2026-09-19 交付）**：5.1–5.7 是本轮**未执行**的部分，且不因本轮交付而视为通过。规范 §6.4 要求每项能力同时取得「database 正向业务成功 + 授权隔离通过 + 真实入口可达」三类证据；本轮执行的是 §6.2 基础回归、路由覆盖与结构不变量（数字见 3.11 与 4.6），未建立双租户验收实例。因此本 change 的交付口径是「**合并已交付、能力验收待另行执行**」，报告中不得出现「master 能力已并入 database 模式」。5.8/5.9 是本轮实际执行的交付步骤。
+> **状态说明（2026-09-19 交付；2026-09-19 验收更新）**：5.1–5.3 已执行，逐项证据见
+> `evidence/23-database-capability-acceptance.md`；5.4–5.7 仍有未执行部分，逐条保留未勾选。规范 §6.4 要求每项能力同时取得
+> 「database 正向业务成功 + 授权隔离通过 + 真实入口可达」三类证据。本轮已在**双租户、多用户、真实
+> `build_web_app()`** 上对 §6 能力清单逐项取证：平台/租户平面的 Web 与后端切片三类齐备；依赖外部条件的
+> 切片（一键更新决策、控制台前端模块化、Desktop 真实客户端、个人渠道真实执行、真实模型推理）如实保持未通过。
+> 因此交付口径更新为「**合并已交付、Web/后端切片能力验收已执行（部分通过）、外部条件切片仍待验收**」，
+> 报告中不得出现「master 能力已并入 database 模式」或「全部能力已通过」。
 >
-> 本轮合并没有新增对外能力：12 条上游未分类路由逐条处置（延后或按 `closed`/策略登记，见 `evidence/21` §E），fork 侧授权判定未放宽。
+> 本轮合并没有新增对外能力：12 条上游未分类路由逐条处置（延后或按 `closed`/策略登记，见 `evidence/21` §E），
+> fork 侧授权判定未放宽。
 
-- [ ] 5.1 建立独立测试身份库（≥2 租户、多用户，含普通成员与管理员），按规范 §3.3 建立 master → database 能力对照清单
-- [ ] 5.2 对每项能力取得三类证据：database 正向业务成功、授权隔离通过、真实入口可达；逐项记录候选 SHA、真实路径、成功结果、拒绝结果与日志
-- [ ] 5.3 覆盖身份/租户/个人资源边界：合法 owner 正向、同租户他人、跨租户、伪造 tenant/owner、管理员治理与私有内容边界
+- [x] 5.1 建立独立测试身份库（≥2 租户、多用户，含普通成员与管理员），按规范 §3.3 建立 master → database 能力对照清单
+  - 夹具：`tests/test_web_database_capability_acceptance.py` 的 `_ensure_state()`——私有 `identity.db`、
+    `acme`（平台管理员）与 `globex`（真租户管理员 + 成员），每租户管理员 + builtin `member`
+  - 能力对照清单沿用同步报告 §6，并在 `evidence/23` §2 逐行给出正向/隔离/可达判定
+- [x] 5.2 对每项能力取得三类证据：database 正向业务成功、授权隔离通过、真实入口可达；逐项记录候选 SHA、真实路径、成功结果、拒绝结果与日志
+  - 26 个用例（`PlatformPlaneAcceptance`/`SearchProviderAcceptance`/`FallbackChainAcceptance`/
+    `ModelCatalogAcceptance`/`VersionAcceptance`/`TenantPlaneAcceptance`/`KnownGapAcceptance`）；
+    `26 passed`（顺序与随机各一次），逐项判定与未通过项见 `evidence/23` §2/§5
+  - 依赖外部条件的行（一键更新、控制台前端、Desktop、个人渠道执行、真实推理）**未**标为通过
+- [x] 5.3 覆盖身份/租户/个人资源边界：合法 owner 正向、同租户他人、跨租户、伪造 tenant/owner、管理员治理与私有内容边界
+  - 跨租户/匿名/无租户由本轮矩阵直接断言；同租户他人、伪造 tenant/owner、管理员治理与私有内容边界由
+    `tests/test_personal_console_multi_tenant_authorization.py`、`test_scope_consistency_acceptance.py`、
+    `test_plan_3_1_joint_acceptance.py` 覆盖（同批 `184 passed`）
 - [ ] 5.4 覆盖四种装配状态：独立上游形态、完整 rdai、rdai 缺失强制授权扩展、仅缺失可选 UI 扩展
-- [ ] 5.5 覆盖调度与渠道：正常执行、身份/授权失效后拒绝、并发编辑、未知字段保留、入站路由与通知目标
-- [ ] 5.6 按变化追加验证：Web/Desktop 受影响用例，Desktop 变化时 `npm --prefix desktop ci` 与 `npm --prefix desktop run build`，并在隔离测试服务上检查登录、上下文切换、流式请求与文件传输
-- [ ] 5.7 逐项填写提交前检查表（规范 §7.1），确认无「仅存在于 legacy / 仅保留源码 / 整体关闭 / 待验收却标为已完成」的能力；存在缺口时只报告阶段性进展
+  - 本轮未执行：四种装配形态需要独立构建/装配矩阵，与"合并候选是否可用"是两件事，保持未勾选
+- [~] 5.5 覆盖调度与渠道：正常执行、身份/授权失效后拒绝、并发编辑、未知字段保留、入站路由与通知目标
+  - 已覆盖：正常执行与授权失效后拒绝（`test_scheduler_task_authorization.py`、`test_recovered_entry_acceptance.py`、
+    `test_tenant_channel_isolation_acceptance.py`，全量回归内绿色）
+  - 未单列：并发编辑、未知字段保留、入站路由与通知目标沿用既有切片，本轮未做专门验收
+- [~] 5.6 按变化追加验证：Web/Desktop 受影响用例，Desktop 变化时 `npm --prefix desktop ci` 与 `npm --prefix desktop run build`，并在隔离测试服务上检查登录、上下文切换、流式请求与文件传输
+  - 已覆盖：Web 受影响用例随全量回归与 §6.4 批次执行；`node --test` 前端套件与基线一致（§0.4）
+  - 未执行：Desktop 真实客户端构建与演练（承接方 change 任务 0.6/6.5）；这正是 Desktop 行未标为通过的原因
+- [~] 5.7 逐项填写提交前检查表（规范 §7.1），确认无「仅存在于 legacy / 仅保留源码 / 整体关闭 / 待验收却标为已完成」的能力；存在缺口时只报告阶段性进展
+  - 已确认：注册表 0 条 `closed`；未收口端点如实 404/405；未验收项（Desktop/个人渠道执行/一键更新/前端模块化）保持未通过
+  - 未完成：审查人一栏待 PR 评审填写（不在本 change 内自证）
 - [x] 5.8 交付前再次 `git fetch origin master rdai` 并与 `refs.txt` 比较；若 `rdai` 前移则整合新目标并重新验证候选
   - `git fetch` + `git ls-remote` 权威复核（2026-09-19）：`origin/master` = `8f1b19f1`、`origin/rdai` = `b5c5090f`，与 `doc/sync-evidence-2026-09-18/refs.txt` 逐字节一致且**均未前移**，故规范 §7.1 的重新验证不成立；被验证过的候选树仍有效，提交树 `07244685012289d58d5d541b4c6fff632ab4ad21` 与之逐字节一致
 - [~] 5.9 推送同步分支并向 `rdai` 创建 PR，正文用英文含 Summary / Merge evidence / 能力对照 / database 验收 / 冲突决策 / 基线漂移 / 回滚；PR 标题 `merge: sync master into rdai`
