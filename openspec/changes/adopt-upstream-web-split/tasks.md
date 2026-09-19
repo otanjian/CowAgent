@@ -169,7 +169,11 @@
 - [ ] 5.7 逐项填写提交前检查表（规范 §7.1），确认无「仅存在于 legacy / 仅保留源码 / 整体关闭 / 待验收却标为已完成」的能力；存在缺口时只报告阶段性进展
 - [x] 5.8 交付前再次 `git fetch origin master rdai` 并与 `refs.txt` 比较；若 `rdai` 前移则整合新目标并重新验证候选
   - `git fetch` + `git ls-remote` 权威复核（2026-09-19）：`origin/master` = `8f1b19f1`、`origin/rdai` = `b5c5090f`，与 `doc/sync-evidence-2026-09-18/refs.txt` 逐字节一致且**均未前移**，故规范 §7.1 的重新验证不成立；被验证过的候选树仍有效，提交树 `07244685012289d58d5d541b4c6fff632ab4ad21` 与之逐字节一致
-- [x] 5.9 推送同步分支并向 `rdai` 创建 PR，正文用英文含 Summary / Merge evidence / 能力对照 / database 验收 / 冲突决策 / 基线漂移 / 回滚；PR 标题 `merge: sync master into rdai`
+- [~] 5.9 推送同步分支并向 `rdai` 创建 PR，正文用英文含 Summary / Merge evidence / 能力对照 / database 验收 / 冲突决策 / 基线漂移 / 回滚；PR 标题 `merge: sync master into rdai`
+  - **分支已推送**：`codex/adopt-upstream-web-split` → `origin`（`* [new branch]`），跟踪已建立
+  - **PR 正文已备好**：`evidence/22-pr-body.md`（英文，七节齐备），开 PR 时整体粘贴
+  - **PR 尚未创建**：本机 `gh` 未认证且无 `GH_TOKEN`（`gh pr create` 报 `gh auth login`），故未代为创建——这不是可以绕过的步骤，而是需要凭据的人工动作。开 PR 入口：`https://github.com/otanjian/CowAgent/compare/rdai...codex/adopt-upstream-web-split`（`base=rdai`、`head=codex/adopt-upstream-web-split`），标题用 `merge: sync master into rdai`
+  - 交付前的 ref 复核见 5.8：`rdai` 未前移，故 PR 的 base 仍是 `b5c5090f`
 - [ ] 5.10 合入后记录 `rdai` 最终提交，确认固定源 SHA 是其祖先，检查 CI 与冒烟结果；把 `$MERGE_RUN_DIR` 中的证据转存到 PR / CI 制品 / 版本管理目录，不保留临时路径作为唯一证据
 
 ## 6. 文档与交接
