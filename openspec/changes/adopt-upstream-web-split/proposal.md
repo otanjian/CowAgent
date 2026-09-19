@@ -11,7 +11,7 @@
 - **采用上游模块布局作为 fork Web 后端结构**：`channel/web/api/<view>.py` 承载上游 handler，`channel/web/core/*.py` 承载共享管道；`web_channel.py` 收敛为「URL 表 + `build_app()`」，与上游形态一致。
 - **fork 授权与身份逻辑迁入 fork 自有接缝模块**：把 `web_channel.py` 中 fork 新增私有 helper（约 186 个，含 29 个 `_require_*` / `_authorize_*`）与 fork 专有 handler 移出上游文件，按域归入 fork 模块（如 `channel/web/fork/authorization.py`、`fork/handlers/*.py`），上游 `api/` 模块内 MUST NOT 出现 fork 专有分支。
 - **路由权威清单跨拆分模块解析**：`route_registry.py`（现有 447 行）改为从拆分后的模块命名空间解析 handler 名称，保留 `source`（`upstream` / `fork:<area>`）登记与三腿覆盖不变量校验；fork 扩展路由继续经扩展注册，不编辑上游路由字面量。
-- **前端模块化布局拆为独立 change**：`adopt-upstream-web-frontend-split` 承接 Phase 3（采用上游 `static/js/{core,views,chat}/*` 与 `static/css/*`、98 处前端裁定、覆盖映射、删除 `console.js` / `console.css`）。本 change 因此只交付后端接缝与合并，前端沿用既有单体并按 `keep-fork` 显式登记（D5 备选③ 的合法路径），被延后的上游前端增量逐条记录在该 change 内。
+- **前端模块化布局拆为独立 change**：`adopt-upstream-web-frontend-split` 承接 Phase 3（采用上游 `static/js/{core,views,chat}/*` 与 `static/css/*`、前端逐处裁定（移交时 98 处，刷新后 109 处）、覆盖映射、删除 `console.js` / `console.css`）。本 change 因此只交付后端接缝与合并，前端沿用既有单体并按 `keep-fork` 显式登记（D5 备选③ 的合法路径），被延后的上游前端增量逐条记录在该 change 内。
 - **删除决策复核**：`console.js` / `console.css` 由「fork 修改 / 上游删除」的 `DU` 形态转为「上游删除且 fork 迁移完成」，按基线登记新处置，`DELIBERATE_REMOVALS` 既有五项保持不变。
 - **重新生成冲突基线**：新一轮排练（此时上游已拆分）实际冲突集重新登记处置，24 处漂移项逐条给出 `seam:` / `keep-fork` / `merge-docs` 决策，消除未点名漂移。
 - **完成本轮同步交付**：在最终候选上跑通双侧回归与 database 能力验收后，按 `doc/master合并到rdai分支规范.md` 提交 merge commit 并向 `rdai` 提 PR。

@@ -35,8 +35,8 @@
       14006
     ],
     "fork_range": [
-      19771,
-      19777
+      19816,
+      19822
     ],
     "status": "skipped",
     "reason": "fork edit crosses an upstream module boundary"
@@ -931,8 +931,8 @@
       13853
     ],
     "fork_range": [
-      18400,
-      18597
+      18445,
+      18642
     ],
     "status": "skipped",
     "reason": "no verified context around the insertion point"
@@ -945,8 +945,8 @@
       13883
     ],
     "fork_range": [
-      18612,
-      18631
+      18657,
+      18676
     ],
     "status": "skipped",
     "reason": "splice left the module unparseable"
@@ -959,8 +959,8 @@
       13886
     ],
     "fork_range": [
-      18634,
-      18636
+      18679,
+      18681
     ],
     "status": "skipped",
     "reason": "splice left the module unparseable"
@@ -973,8 +973,8 @@
       13888
     ],
     "fork_range": [
-      18638,
-      18698
+      18683,
+      18743
     ],
     "status": "skipped",
     "reason": "splice left the module unparseable"
@@ -987,8 +987,8 @@
       13897
     ],
     "fork_range": [
-      18700,
-      18704
+      18745,
+      18749
     ],
     "status": "skipped",
     "reason": "splice left the module unparseable"
@@ -1001,8 +1001,8 @@
       13932
     ],
     "fork_range": [
-      18706,
-      18725
+      18751,
+      18770
     ],
     "status": "skipped",
     "reason": "no verified context: upstream rewrote the surrounding code"
@@ -1015,8 +1015,8 @@
       13933
     ],
     "fork_range": [
-      18727,
-      18734
+      18772,
+      18779
     ],
     "status": "skipped",
     "reason": "splice left the module unparseable"
@@ -1029,8 +1029,8 @@
       13935
     ],
     "fork_range": [
-      18737,
-      18740
+      18782,
+      18785
     ],
     "status": "applied",
     "reason": null
@@ -1043,8 +1043,8 @@
       13942
     ],
     "fork_range": [
-      18743,
-      18755
+      18788,
+      18800
     ],
     "status": "skipped",
     "reason": "splice left the module unparseable"
@@ -1057,8 +1057,8 @@
       13943
     ],
     "fork_range": [
-      18757,
-      18761
+      18802,
+      18806
     ],
     "status": "skipped",
     "reason": "splice left the module unparseable"
@@ -1071,8 +1071,8 @@
       13947
     ],
     "fork_range": [
-      18763,
-      18762
+      18808,
+      18807
     ],
     "status": "skipped",
     "reason": "splice left the module unparseable"
@@ -1085,8 +1085,8 @@
       13951
     ],
     "fork_range": [
-      18766,
-      18767
+      18811,
+      18812
     ],
     "status": "applied",
     "reason": null
@@ -1099,8 +1099,8 @@
       13958
     ],
     "fork_range": [
-      18770,
-      18790
+      18815,
+      18835
     ],
     "status": "applied",
     "reason": null
@@ -1113,8 +1113,8 @@
       13968
     ],
     "fork_range": [
-      18800,
-      18812
+      18845,
+      18857
     ],
     "status": "skipped",
     "reason": "splice left the module unparseable"
@@ -1127,8 +1127,8 @@
       13971
     ],
     "fork_range": [
-      18815,
-      18816
+      18860,
+      18861
     ],
     "status": "applied",
     "reason": null
@@ -1141,8 +1141,8 @@
       13973
     ],
     "fork_range": [
-      18818,
-      18818
+      18863,
+      18863
     ],
     "status": "applied",
     "reason": null
@@ -1155,8 +1155,8 @@
       13977
     ],
     "fork_range": [
-      18823,
-      18823
+      18868,
+      18868
     ],
     "status": "skipped",
     "reason": "splice left the module unparseable"
@@ -1169,8 +1169,8 @@
       13981
     ],
     "fork_range": [
-      18825,
-      19165
+      18870,
+      19210
     ],
     "status": "skipped",
     "reason": "no verified context: upstream rewrote the surrounding code"
@@ -1183,8 +1183,8 @@
       13983
     ],
     "fork_range": [
-      19167,
-      19168
+      19212,
+      19213
     ],
     "status": "skipped",
     "reason": "no verified context: upstream rewrote the surrounding code"
@@ -1197,8 +1197,8 @@
       13985
     ],
     "fork_range": [
-      19170,
-      19169
+      19215,
+      19214
     ],
     "status": "skipped",
     "reason": "no verified context: upstream rewrote the surrounding code"
@@ -1211,8 +1211,8 @@
       13986
     ],
     "fork_range": [
-      19171,
-      19763
+      19216,
+      19808
     ],
     "status": "skipped",
     "reason": "no verified context around the insertion point"
@@ -1813,8 +1813,8 @@
       12863
     ],
     "fork_range": [
-      17352,
-      17355
+      17397,
+      17400
     ],
     "status": "skipped",
     "reason": "no verified context around the insertion point"
@@ -1827,8 +1827,8 @@
       12874
     ],
     "fork_range": [
-      17366,
-      17366
+      17411,
+      17411
     ],
     "status": "skipped",
     "reason": "no verified context: upstream rewrote the surrounding code"
@@ -1841,8 +1841,8 @@
       12882
     ],
     "fork_range": [
-      17374,
-      17375
+      17419,
+      17420
     ],
     "status": "applied",
     "reason": null
@@ -1855,8 +1855,8 @@
       12884
     ],
     "fork_range": [
-      17377,
-      17377
+      17422,
+      17422
     ],
     "status": "applied",
     "reason": null
@@ -1869,8 +1869,8 @@
       12892
     ],
     "fork_range": [
-      17386,
-      17387
+      17431,
+      17432
     ],
     "status": "skipped",
     "reason": "no verified context around the insertion point"
@@ -2863,8 +2863,8 @@
       12316
     ],
     "fork_range": [
-      16715,
-      16725
+      16760,
+      16770
     ],
     "status": "applied",
     "reason": null
@@ -2877,8 +2877,8 @@
       12377
     ],
     "fork_range": [
-      16787,
-      16789
+      16832,
+      16834
     ],
     "status": "applied",
     "reason": null
@@ -2891,8 +2891,8 @@
       12435
     ],
     "fork_range": [
-      16847,
-      16847
+      16892,
+      16892
     ],
     "status": "applied",
     "reason": null
@@ -2905,8 +2905,8 @@
       12436
     ],
     "fork_range": [
-      16849,
-      16851
+      16894,
+      16896
     ],
     "status": "applied",
     "reason": null
@@ -2919,8 +2919,8 @@
       12441
     ],
     "fork_range": [
-      16857,
-      16857
+      16902,
+      16902
     ],
     "status": "applied",
     "reason": null
@@ -2933,8 +2933,8 @@
       12446
     ],
     "fork_range": [
-      16859,
-      16870
+      16904,
+      16915
     ],
     "status": "applied",
     "reason": null
@@ -2947,8 +2947,8 @@
       12505
     ],
     "fork_range": [
-      16930,
-      16934
+      16975,
+      16979
     ],
     "status": "applied",
     "reason": null
@@ -2961,8 +2961,8 @@
       12510
     ],
     "fork_range": [
-      16939,
-      16939
+      16984,
+      16984
     ],
     "status": "applied",
     "reason": null
@@ -2975,8 +2975,8 @@
       12539
     ],
     "fork_range": [
-      16969,
-      16969
+      17014,
+      17014
     ],
     "status": "applied",
     "reason": null
@@ -2989,8 +2989,8 @@
       12541
     ],
     "fork_range": [
-      16972,
-      16978
+      17017,
+      17023
     ],
     "status": "skipped",
     "reason": "splice left the module unparseable"
@@ -3003,8 +3003,8 @@
       12542
     ],
     "fork_range": [
-      16980,
-      16982
+      17025,
+      17027
     ],
     "status": "skipped",
     "reason": "splice left the module unparseable"
@@ -3017,8 +3017,8 @@
       12543
     ],
     "fork_range": [
-      16984,
-      16984
+      17029,
+      17029
     ],
     "status": "applied",
     "reason": null
@@ -3031,8 +3031,8 @@
       12545
     ],
     "fork_range": [
-      16987,
-      16987
+      17032,
+      17032
     ],
     "status": "applied",
     "reason": null
@@ -3045,8 +3045,8 @@
       12547
     ],
     "fork_range": [
-      16990,
-      16990
+      17035,
+      17035
     ],
     "status": "applied",
     "reason": null
@@ -3059,8 +3059,8 @@
       11380
     ],
     "fork_range": [
-      14877,
-      15289
+      14922,
+      15334
     ],
     "status": "applied",
     "reason": null
@@ -3073,8 +3073,8 @@
       11388
     ],
     "fork_range": [
-      15296,
-      15782
+      15341,
+      15827
     ],
     "status": "applied",
     "reason": null
@@ -3087,8 +3087,8 @@
       11396
     ],
     "fork_range": [
-      15788,
-      15789
+      15833,
+      15834
     ],
     "status": "applied",
     "reason": null
@@ -3101,8 +3101,8 @@
       11415
     ],
     "fork_range": [
-      15809,
-      15820
+      15854,
+      15865
     ],
     "status": "skipped",
     "reason": "no verified context around the insertion point"
@@ -3115,8 +3115,8 @@
       11482
     ],
     "fork_range": [
-      15875,
-      15879
+      15920,
+      15924
     ],
     "status": "skipped",
     "reason": "no verified context: upstream rewrote the surrounding code"
@@ -3129,8 +3129,8 @@
       11490
     ],
     "fork_range": [
-      15886,
-      15887
+      15931,
+      15932
     ],
     "status": "skipped",
     "reason": "splice left the module unparseable"
@@ -3143,8 +3143,8 @@
       11527
     ],
     "fork_range": [
-      15924,
-      15925
+      15969,
+      15970
     ],
     "status": "skipped",
     "reason": "no verified context: upstream rewrote the surrounding code"
@@ -3507,8 +3507,8 @@
       12910
     ],
     "fork_range": [
-      17405,
-      17405
+      17450,
+      17450
     ],
     "status": "applied",
     "reason": null
@@ -3521,8 +3521,8 @@
       12934
     ],
     "fork_range": [
-      17429,
-      17429
+      17474,
+      17474
     ],
     "status": "applied",
     "reason": null
@@ -3535,8 +3535,8 @@
       12935
     ],
     "fork_range": [
-      17431,
-      17474
+      17476,
+      17519
     ],
     "status": "applied",
     "reason": null
@@ -3549,8 +3549,8 @@
       12947
     ],
     "fork_range": [
-      17486,
-      17486
+      17531,
+      17531
     ],
     "status": "applied",
     "reason": null
@@ -3563,8 +3563,8 @@
       12949
     ],
     "fork_range": [
-      17489,
-      17489
+      17534,
+      17534
     ],
     "status": "applied",
     "reason": null
@@ -3577,8 +3577,8 @@
       12952
     ],
     "fork_range": [
-      17492,
-      17495
+      17537,
+      17540
     ],
     "status": "applied",
     "reason": null
@@ -3591,8 +3591,8 @@
       13109
     ],
     "fork_range": [
-      17653,
-      17653
+      17698,
+      17698
     ],
     "status": "applied",
     "reason": null
@@ -3605,8 +3605,8 @@
       13114
     ],
     "fork_range": [
-      17659,
-      17659
+      17704,
+      17704
     ],
     "status": "applied",
     "reason": null
@@ -3619,8 +3619,8 @@
       13361
     ],
     "fork_range": [
-      17907,
-      17907
+      17952,
+      17952
     ],
     "status": "applied",
     "reason": null
@@ -3633,8 +3633,8 @@
       13452
     ],
     "fork_range": [
-      17998,
-      17998
+      18043,
+      18043
     ],
     "status": "applied",
     "reason": null
@@ -3708,6 +3708,188 @@
     ],
     "status": "applied",
     "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10015,
+      10014
+    ],
+    "fork_range": [
+      13512,
+      13518
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10016,
+      10016
+    ],
+    "fork_range": [
+      13520,
+      13520
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10057,
+      10058
+    ],
+    "fork_range": [
+      13561,
+      13560
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10060,
+      10061
+    ],
+    "fork_range": [
+      13562,
+      13571
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10064,
+      10064
+    ],
+    "fork_range": [
+      13574,
+      13578
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10071,
+      10070
+    ],
+    "fork_range": [
+      13585,
+      13588
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10080,
+      10081
+    ],
+    "fork_range": [
+      13598,
+      13599
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10085,
+      10085
+    ],
+    "fork_range": [
+      13603,
+      13603
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10087,
+      10088
+    ],
+    "fork_range": [
+      13605,
+      13606
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10151,
+      10150
+    ],
+    "fork_range": [
+      13669,
+      13691
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10155,
+      10154
+    ],
+    "fork_range": [
+      13696,
+      13700
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10158,
+      10158
+    ],
+    "fork_range": [
+      13704,
+      13704
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10169,
+      10179
+    ],
+    "fork_range": [
+      13715,
+      13721
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
   },
   {
     "source": "console.js",
@@ -4907,8 +5089,8 @@
       12625
     ],
     "fork_range": [
-      17069,
-      17074
+      17114,
+      17119
     ],
     "status": "applied",
     "reason": null
@@ -4921,8 +5103,8 @@
       12629
     ],
     "fork_range": [
-      17078,
-      17078
+      17123,
+      17123
     ],
     "status": "skipped",
     "reason": "no verified context: upstream rewrote the surrounding code"
@@ -4935,8 +5117,8 @@
       12653
     ],
     "fork_range": [
-      17102,
-      17102
+      17147,
+      17147
     ],
     "status": "applied",
     "reason": null
@@ -4949,8 +5131,8 @@
       12659
     ],
     "fork_range": [
-      17107,
-      17107
+      17152,
+      17152
     ],
     "status": "applied",
     "reason": null
@@ -4963,8 +5145,8 @@
       12661
     ],
     "fork_range": [
-      17110,
-      17124
+      17155,
+      17169
     ],
     "status": "applied",
     "reason": null
@@ -4977,8 +5159,8 @@
       12676
     ],
     "fork_range": [
-      17140,
-      17146
+      17185,
+      17191
     ],
     "status": "applied",
     "reason": null
@@ -4991,8 +5173,8 @@
       12679
     ],
     "fork_range": [
-      17150,
-      17150
+      17195,
+      17195
     ],
     "status": "applied",
     "reason": null
@@ -5005,8 +5187,8 @@
       12705
     ],
     "fork_range": [
-      17177,
-      17183
+      17222,
+      17228
     ],
     "status": "applied",
     "reason": null
@@ -5019,8 +5201,8 @@
       12717
     ],
     "fork_range": [
-      17196,
-      17196
+      17241,
+      17241
     ],
     "status": "applied",
     "reason": null
@@ -5033,8 +5215,8 @@
       12726
     ],
     "fork_range": [
-      17205,
-      17205
+      17250,
+      17250
     ],
     "status": "skipped",
     "reason": "splice left the module unparseable"
@@ -5047,8 +5229,8 @@
       12729
     ],
     "fork_range": [
-      17207,
-      17208
+      17252,
+      17253
     ],
     "status": "skipped",
     "reason": "splice left the module unparseable"
@@ -5061,8 +5243,8 @@
       12732
     ],
     "fork_range": [
-      17211,
-      17211
+      17256,
+      17256
     ],
     "status": "skipped",
     "reason": "splice left the module unparseable"
@@ -5075,8 +5257,8 @@
       12735
     ],
     "fork_range": [
-      17214,
-      17214
+      17259,
+      17259
     ],
     "status": "applied",
     "reason": null
@@ -5089,8 +5271,8 @@
       12740
     ],
     "fork_range": [
-      17219,
-      17219
+      17264,
+      17264
     ],
     "status": "applied",
     "reason": null
@@ -5103,8 +5285,8 @@
       12771
     ],
     "fork_range": [
-      17250,
-      17259
+      17295,
+      17304
     ],
     "status": "applied",
     "reason": null

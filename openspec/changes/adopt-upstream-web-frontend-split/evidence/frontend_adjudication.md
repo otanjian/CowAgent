@@ -1,13 +1,13 @@
 # Frontend adjudication worklist
 
-98 regions where the fork's console edit and upstream's refactor
+109 regions where the fork's console edit and upstream's refactor
 collide. For each: choose `fork`, `upstream`, or `merged`, and record why.
 Auto-transplanting the fork's function is not used here on purpose: it would
 silently drop upstream's change to the same code.
 
 ## `channel/web/static/js/core/auth.js` — 16 region(s)
 
-### symbol `_identityMode` (console lines 18400–18597, base lines 13854–13853)
+### symbol `_identityMode` (console lines 18445–18642, base lines 13854–13853)
 
 - reason deferred: no verified context around the insertion point
 - decision: `TBD`
@@ -58,7 +58,7 @@ function _openNavArea(area, path) {
 ```
 </details>
 
-### symbol `showLoginScreen` (console lines 18612–18631, base lines 13868–13883)
+### symbol `showLoginScreen` (console lines 18657–18676, base lines 13868–13883)
 
 - reason deferred: splice left the module unparseable
 - decision: `TBD`
@@ -140,7 +140,7 @@ function showLoginScreen() {
 ```
 </details>
 
-### symbol `_submitAccountLogin` (console lines 18634–18636, base lines 13886–13886)
+### symbol `_submitAccountLogin` (console lines 18679–18681, base lines 13886–13886)
 
 - reason deferred: splice left the module unparseable
 - decision: `TBD`
@@ -154,7 +154,7 @@ async function _submitAccountLogin(event) {
 ```
 </details>
 
-### symbol `_submitAccountLogin` (console lines 18638–18698, base lines 13888–13888)
+### symbol `_submitAccountLogin` (console lines 18683–18743, base lines 13888–13888)
 
 - reason deferred: splice left the module unparseable
 - decision: `TBD`
@@ -205,7 +205,7 @@ async function _submitAccountLogin(event) {
 ```
 </details>
 
-### symbol `_afterLogin` (console lines 18700–18704, base lines 13890–13897)
+### symbol `_afterLogin` (console lines 18745–18749, base lines 13890–13897)
 
 - reason deferred: splice left the module unparseable
 - decision: `TBD`
@@ -221,7 +221,7 @@ function _afterLogin() {
 ```
 </details>
 
-### symbol `_showTenantPicker` (console lines 18706–18725, base lines 13899–13932)
+### symbol `_showTenantPicker` (console lines 18751–18770, base lines 13899–13932)
 
 - reason deferred: no verified context: upstream rewrote the surrounding code
 - decision: `TBD`
@@ -252,7 +252,7 @@ function _showTenantPicker(tenants, currentId) {
 ```
 </details>
 
-### symbol `_showTenantPicker` (console lines 18727–18734, base lines 13934–13933)
+### symbol `_showTenantPicker` (console lines 18772–18779, base lines 13934–13933)
 
 - reason deferred: splice left the module unparseable
 - decision: `TBD`
@@ -271,7 +271,7 @@ function _showTenantPicker(tenants, currentId) {
 ```
 </details>
 
-### symbol `handleLogout` (console lines 18743–18755, base lines 13938–13942)
+### symbol `handleLogout` (console lines 18788–18800, base lines 13938–13942)
 
 - reason deferred: splice left the module unparseable
 - decision: `TBD`
@@ -346,7 +346,7 @@ function initApp() {
 ```
 </details>
 
-### symbol `handleLogout` (console lines 18757–18761, base lines 13944–13943)
+### symbol `handleLogout` (console lines 18802–18806, base lines 13944–13943)
 
 - reason deferred: splice left the module unparseable
 - decision: `TBD`
@@ -413,7 +413,7 @@ function initApp() {
 ```
 </details>
 
-### symbol `handleLogout` (console lines 18763–18762, base lines 13945–13947)
+### symbol `handleLogout` (console lines 18808–18807, base lines 13945–13947)
 
 - reason deferred: splice left the module unparseable
 - decision: `TBD`
@@ -475,7 +475,7 @@ function initApp() {
 ```
 </details>
 
-### symbol `initApp` (console lines 18800–18812, base lines 13968–13968)
+### symbol `initApp` (console lines 18845–18857, base lines 13968–13968)
 
 - reason deferred: splice left the module unparseable
 - decision: `TBD`
@@ -538,7 +538,7 @@ function initApp() {
 ```
 </details>
 
-### symbol `initApp` (console lines 18823–18823, base lines 13978–13977)
+### symbol `initApp` (console lines 18868–18868, base lines 13978–13977)
 
 - reason deferred: splice left the module unparseable
 - decision: `TBD`
@@ -589,7 +589,7 @@ function initApp() {
 ```
 </details>
 
-### symbol `initApp` (console lines 18825–19165, base lines 13979–13981)
+### symbol `initApp` (console lines 18870–19210, base lines 13979–13981)
 
 - reason deferred: no verified context: upstream rewrote the surrounding code
 - decision: `TBD`
@@ -679,7 +679,7 @@ function initApp() {
 ```
 </details>
 
-### symbol `openAccountProfile` (console lines 19167–19168, base lines 13983–13983)
+### symbol `openAccountProfile` (console lines 19212–19213, base lines 13983–13983)
 
 - reason deferred: no verified context: upstream rewrote the surrounding code
 - decision: `TBD`
@@ -692,7 +692,7 @@ function initApp() {
 ```
 </details>
 
-### symbol `openAccountProfile` (console lines 19170–19169, base lines 13985–13985)
+### symbol `openAccountProfile` (console lines 19215–19214, base lines 13985–13985)
 
 - reason deferred: no verified context: upstream rewrote the surrounding code
 - decision: `TBD`
@@ -703,7 +703,7 @@ function initApp() {
 ```
 </details>
 
-### symbol `openAccountProfile` (console lines 19171–19763, base lines 13987–13986)
+### symbol `openAccountProfile` (console lines 19216–19808, base lines 13987–13986)
 
 - reason deferred: no verified context around the insertion point
 - decision: `TBD`
@@ -1575,6 +1575,752 @@ loadAgentCatalog();
 ```
 </details>
 
+## `channel/web/static/js/views/models.js` — 11 region(s)
+
+### symbol `openSearchAddProviderPicker` (console lines 13512–13518, base lines 10015–10014)
+
+- reason deferred: no verified context around the insertion point
+- decision: `TBD`
+
+<details><summary>fork's version</summary>
+
+```javascript
+// Search providers that own a dedicated credential — an API key, or SearXNG's
+// instance URL. The rest (zhipu/qianfan/linkai) reuse a model-vendor
+// credential and keep the vendor modal. Mirrors the backend's
+// `needs_dedicated_key` / `needs_url` flags in ModelsHandler._search_capability,
+// so a provider the runtime supports can always be configured here.
+const DEDICATED_SEARCH_CREDENTIALS = ['bocha', 'anysearch', 'serply', 'tavily', 'searxng', 'keenable'];
+
+```
+</details>
+
+<details><summary>upstream's version of `openSearchAddProviderPicker`</summary>
+
+```javascript
+function openSearchAddProviderPicker(missingProviders) {
+    if (!missingProviders || missingProviders.length === 0) return;
+    if (missingProviders.length === 1) {
+        _launchSearchProviderConfig(missingProviders[0].id);
+        return;
+    }
+
+    const existing = document.getElementById('search-add-modal');
+    if (existing) existing.remove();
+
+    const rows = missingProviders.map(p => `
+        <button type="button" data-pid="${p.id}"
+                class="w-full flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer
+                       bg-slate-50 dark:bg-white/5 hover:bg-slate-100 dark:hover:bg-white/10
+                       text-sm text-slate-700 dark:text-slate-200 transition-colors">
+            <span>${escapeHtml(localizedLabel(p.label))}</span>
+            <i class="fas fa-chevron-right text-[10px] text-slate-400"></i>
+        </button>
+    `).join('');
+
+    const modal = document.createElement('div');
+    modal.id = 'search-add-modal';
+    modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm';
+    modal.innerHTML = `
+        <div class="bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10
+                    w-full max-w-md mx-4 p-6 shadow-xl">
+            <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-1">${t('models_search_add_provider')}</h3>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">${t('models_search_add_desc')}</p>
+            <div class="space-y-2">${rows}</div>
+            <div class="flex items-center justify-end mt-5">
+                <button type="button" onclick="document.getElementById('search-add-modal').remove()"
+                        class="px-3 py-1.5 rounded-md text-sm text-slate-600 dark:text-slate-300
+                               hover:bg-slate-100 dark:hover:bg-white/5 transition-colors">
+                    ${t('cancel')}
+                </button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    modal.querySelectorAll('[data-pid]').forEach(el => {
+        el.addEventListener('click', () => {
+            const pid = el.getAttribute('data-pid');
+            modal.remove();
+            _launchSearchProviderConfig(pid);
+        });
+```
+</details>
+
+### symbol `_launchSearchProviderConfig` (console lines 13520–13520, base lines 10016–10016)
+
+- reason deferred: no verified context: upstream rewrote the surrounding code
+- decision: `TBD`
+
+<details><summary>fork's version</summary>
+
+```javascript
+    if (DEDICATED_SEARCH_CREDENTIALS.indexOf(providerId) !== -1) {
+```
+</details>
+
+<details><summary>upstream's version of `_launchSearchProviderConfig`</summary>
+
+```javascript
+function _launchSearchProviderConfig(providerId, providerMeta) {
+    // Providers that hold their own credential (dedicated key or, for SearXNG,
+    // an instance URL) use the bespoke search-key modal. zhipu/qianfan/linkai
+    // reuse a model-vendor key and go through the vendor modal instead.
+    if (['bocha', 'anysearch', 'serply', 'tavily', 'searxng', 'keenable'].includes(providerId)) {
+        openSearchKeyModal(providerId, providerMeta);
+    } else {
+        openVendorModal(providerId, () => loadModelsView({ preserveScroll: true }));
+    }
+}
+
+
+function saveSearchCapability() {
+    const strategyDd = document.getElementById('cap-search-strategy');
+    const providerDd = document.getElementById('cap-search-provider');
+    // 如果策略下拉框的值是空（待配置），默认使用 'auto'
+    const strategy = strategyDd ? (getDropdownValue(strategyDd) || 'auto') : 'auto';
+    const provider = (strategy === 'fixed' && providerDd) ? getDropdownValue(providerDd) : '';
+
+    fetch('/api/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            action: 'set_capability',
+            capability: 'search',
+            strategy,
+            provider,
+        }),
+    }).then(r => r.json()).then(data => {
+        if (data.status === 'success') {
+            showStatus('cap-search-status', 'models_save_success', false);
+            setTimeout(() => loadModelsView({ preserveScroll: true }), 400);
+        } else {
+            console.log('[saveSearchCapability] Error:', data.message);
+            showStatus('cap-search-status', 'models_save_failed', true);
+        }
+    }).catch(() => showStatus('cap-search-status', 'models_save_failed', true));
+}
+
+
+// Minimal bocha API-key modal. Reuses the existing vendor-modal markup
+// helpers would be nice, but bocha isn't in PROVIDER_MODELS (it's not a
+// model vendor), so we render a tiny dedicated dialog.
+// For search vendors that hold their own keys.
+
+```
+</details>
+
+### symbol `searchCap` (console lines 13561–13560, base lines 10057–10058)
+
+- reason deferred: no verified context: upstream rewrote the surrounding code
+- decision: `TBD`
+
+<details><summary>fork's version</summary>
+
+```javascript
+```
+</details>
+
+<details><summary>upstream's version of `searchCap`</summary>
+
+```javascript
+        const searchCap = (modelsState && modelsState.capabilities && modelsState.capabilities.search) || {};
+    const prov = (searchCap.providers || []).find(p => p.id === providerId);
+    const isSearxng = providerId === 'searxng';
+    // SearXNG holds an instance URL (echoed back verbatim in url_masked); the
+    // rest hold a masked API key. Resolve whichever applies as the field value.
+    let masked;
+    if (isSearxng) {
+        masked = (providerMeta && providerMeta.url_masked) || (prov && prov.url_masked) || '';
+    } else {
+        masked = (providerMeta && providerMeta.api_key_masked) || '';
+        if (!masked && prov && prov.api_key_masked) masked = prov.api_key_masked;
+    }
+    // SearXNG URL is not masked, so it's safe to keep editable (not a sentinel).
+    const hasKey = !!masked;
+    const isAnonymous = (providerId === 'anysearch' || providerId === 'keenable')
+        && !!((providerMeta && providerMeta.anonymous) || (prov && prov.anonymous));
+    const clearBtnHtml = (hasKey || isAnonymous)
+        ? `<button type="button" id="search-key-clear"
+                  class="px-3 py-1.5 rounded-md text-xs text-red-500 dark:text-red-400
+                         hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer transition-colors">
+              ${t('models_clear_credential')}
+           </button>`
+        : '';
+    let descText = t('models_search_' + providerId + '_desc');
+    if (providerId === 'anysearch') {
+        const hint = currentLang === 'zh'
+            ? '（留空可启用匿名模式，每日有免费额度）'
+            : '(Leave blank to enable anonymous mode with daily free quota)';
+        descText = descText + ' ' + hint;
+    }
+    const modal = document.createElement('div');
+    modal.id = 'search-key-modal';
+    modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm';
+    modal.innerHTML = `
+        <div id="search-key-modal-card"
+             class="bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10
+                    w-full max-w-md mx-4 p-6 shadow-xl">
+            <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-1">${t('models_search_' + providerId + '_title')}</h3>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">${descText}</p>
+            <label class="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5">${providerId === 'searxng' ? 'Instance URL' : 'API Key'}</label>
+            <input id="search-key-input" type="text" autocomplete="off" data-1p-ignore data-lpignore="true"
+                   class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600
+                          bg-slate-50 dark:bg-white/5 text-sm text-slate-800 dark:text-slate-100
+                          focus:outline-none focus:border-primary-500 ${isSearxng ? '' : 'font-mono'} ${(hasKey && !isSearxng) ? 'cfg-key-masked' : ''}"
+                   value="${escapeHtml(masked)}"
+```
+</details>
+
+### symbol `provider` (console lines 13562–13571, base lines 10060–10061)
+
+- reason deferred: no verified context: upstream rewrote the surrounding code
+- decision: `TBD`
+
+<details><summary>fork's version</summary>
+
+```javascript
+    const provider = (searchCap.providers || []).find(p => p.id === providerId);
+    const isSearxng = providerId === 'searxng';
+    // SearXNG holds an instance URL (echoed back verbatim in url_masked); the
+    // rest hold a masked API key. Resolve whichever applies as the field value.
+    let masked;
+    if (isSearxng) {
+        masked = (providerMeta && providerMeta.url_masked) || (provider && provider.url_masked) || '';
+    } else {
+        masked = (providerMeta && providerMeta.api_key_masked) || '';
+        if (!masked && provider && provider.api_key_masked) masked = provider.api_key_masked;
+```
+</details>
+
+<details><summary>upstream's version of `provider`</summary>
+
+```javascript
+    const provider = (strategy === 'fixed' && providerDd) ? getDropdownValue(providerDd) : '';
+
+    fetch('/api/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            action: 'set_capability',
+            capability: 'search',
+            strategy,
+            provider,
+        }),
+    }).then(r => r.json()).then(data => {
+        if (data.status === 'success') {
+            showStatus('cap-search-status', 'models_save_success', false);
+            setTimeout(() => loadModelsView({ preserveScroll: true }), 400);
+        } else {
+            console.log('[saveSearchCapability] Error:', data.message);
+            showStatus('cap-search-status', 'models_save_failed', true);
+        }
+    }).catch(() => showStatus('cap-search-status', 'models_save_failed', true));
+}
+
+
+// Minimal bocha API-key modal. Reuses the existing vendor-modal markup
+// helpers would be nice, but bocha isn't in PROVIDER_MODELS (it's not a
+// model vendor), so we render a tiny dedicated dialog.
+// For search vendors that hold their own keys.
+
+
+function openSearchKeyModal(providerId, providerMeta) {
+    const existing = document.getElementById('search-key-modal');
+    if (existing) existing.remove();
+
+        const searchCap = (modelsState && modelsState.capabilities && modelsState.capabilities.search) || {};
+    const prov = (searchCap.providers || []).find(p => p.id === providerId);
+    const isSearxng = providerId === 'searxng';
+    // SearXNG holds an instance URL (echoed back verbatim in url_masked); the
+    // rest hold a masked API key. Resolve whichever applies as the field value.
+    let masked;
+    if (isSearxng) {
+        masked = (providerMeta && providerMeta.url_masked) || (prov && prov.url_masked) || '';
+    } else {
+        masked = (providerMeta && providerMeta.api_key_masked) || '';
+        if (!masked && prov && prov.api_key_masked) masked = prov.api_key_masked;
+    }
+```
+</details>
+
+### symbol `masked` (console lines 13574–13578, base lines 10064–10064)
+
+- reason deferred: no verified context: upstream rewrote the surrounding code
+- decision: `TBD`
+
+<details><summary>fork's version</summary>
+
+```javascript
+    // anysearch/keenable can be on without a key (their keyless tier), and that
+    // state still needs the clear button so it can be turned back off.
+    const isAnonymous = (providerId === 'anysearch' || providerId === 'keenable')
+        && !!((providerMeta && providerMeta.anonymous) || (provider && provider.anonymous));
+    const clearBtnHtml = (hasKey || isAnonymous)
+```
+</details>
+
+<details><summary>upstream's version of `masked`</summary>
+
+```javascript
+        masked = (providerMeta && providerMeta.url_masked) || (prov && prov.url_masked) || '';
+    } else {
+        masked = (providerMeta && providerMeta.api_key_masked) || '';
+        if (!masked && prov && prov.api_key_masked) masked = prov.api_key_masked;
+    }
+    // SearXNG URL is not masked, so it's safe to keep editable (not a sentinel).
+    const hasKey = !!masked;
+    const isAnonymous = (providerId === 'anysearch' || providerId === 'keenable')
+        && !!((providerMeta && providerMeta.anonymous) || (prov && prov.anonymous));
+    const clearBtnHtml = (hasKey || isAnonymous)
+        ? `<button type="button" id="search-key-clear"
+                  class="px-3 py-1.5 rounded-md text-xs text-red-500 dark:text-red-400
+                         hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer transition-colors">
+              ${t('models_clear_credential')}
+           </button>`
+        : '';
+    let descText = t('models_search_' + providerId + '_desc');
+    if (providerId === 'anysearch') {
+        const hint = currentLang === 'zh'
+            ? '（留空可启用匿名模式，每日有免费额度）'
+            : '(Leave blank to enable anonymous mode with daily free quota)';
+        descText = descText + ' ' + hint;
+    }
+    const modal = document.createElement('div');
+    modal.id = 'search-key-modal';
+    modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm';
+    modal.innerHTML = `
+        <div id="search-key-modal-card"
+             class="bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10
+                    w-full max-w-md mx-4 p-6 shadow-xl">
+            <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-1">${t('models_search_' + providerId + '_title')}</h3>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">${descText}</p>
+            <label class="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5">${providerId === 'searxng' ? 'Instance URL' : 'API Key'}</label>
+            <input id="search-key-input" type="text" autocomplete="off" data-1p-ignore data-lpignore="true"
+                   class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600
+                          bg-slate-50 dark:bg-white/5 text-sm text-slate-800 dark:text-slate-100
+                          focus:outline-none focus:border-primary-500 ${isSearxng ? '' : 'font-mono'} ${(hasKey && !isSearxng) ? 'cfg-key-masked' : ''}"
+                   value="${escapeHtml(masked)}"
+                   data-masked="${(hasKey && !isSearxng) ? '1' : ''}"
+                   placeholder="${isSearxng ? 'https://searxng.example.com' : 'sk-...'}" />
+            <div class="flex items-center justify-between gap-3 mt-5">
+                <div>${clearBtnHtml}</div>
+                <div class="flex items-center gap-3">
+                    <button type="button" onclick="document.getElementById('search-key-modal').remove()"
+                            class="px-3 py-1.5 rounded-md text-sm text-slate-600 dark:text-slate-300
+```
+</details>
+
+### symbol `clearBtnHtml` (console lines 13585–13588, base lines 10071–10070)
+
+- reason deferred: no verified context around the insertion point
+- decision: `TBD`
+
+<details><summary>fork's version</summary>
+
+```javascript
+    // Saving empty on anysearch turns its keyless tier on, so say so.
+    const descText = providerId === 'anysearch'
+        ? t('models_search_anysearch_desc') + ' ' + t('models_search_anysearch_anon_hint')
+        : t('models_search_' + providerId + '_desc');
+```
+</details>
+
+<details><summary>upstream's version of `clearBtnHtml`</summary>
+
+```javascript
+    const clearBtnHtml = (hasKey || isAnonymous)
+        ? `<button type="button" id="search-key-clear"
+                  class="px-3 py-1.5 rounded-md text-xs text-red-500 dark:text-red-400
+                         hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer transition-colors">
+              ${t('models_clear_credential')}
+           </button>`
+        : '';
+    let descText = t('models_search_' + providerId + '_desc');
+    if (providerId === 'anysearch') {
+        const hint = currentLang === 'zh'
+            ? '（留空可启用匿名模式，每日有免费额度）'
+            : '(Leave blank to enable anonymous mode with daily free quota)';
+        descText = descText + ' ' + hint;
+    }
+    const modal = document.createElement('div');
+    modal.id = 'search-key-modal';
+    modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm';
+    modal.innerHTML = `
+        <div id="search-key-modal-card"
+             class="bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10
+                    w-full max-w-md mx-4 p-6 shadow-xl">
+            <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-1">${t('models_search_' + providerId + '_title')}</h3>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">${descText}</p>
+            <label class="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5">${providerId === 'searxng' ? 'Instance URL' : 'API Key'}</label>
+            <input id="search-key-input" type="text" autocomplete="off" data-1p-ignore data-lpignore="true"
+                   class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600
+                          bg-slate-50 dark:bg-white/5 text-sm text-slate-800 dark:text-slate-100
+                          focus:outline-none focus:border-primary-500 ${isSearxng ? '' : 'font-mono'} ${(hasKey && !isSearxng) ? 'cfg-key-masked' : ''}"
+                   value="${escapeHtml(masked)}"
+                   data-masked="${(hasKey && !isSearxng) ? '1' : ''}"
+                   placeholder="${isSearxng ? 'https://searxng.example.com' : 'sk-...'}" />
+            <div class="flex items-center justify-between gap-3 mt-5">
+                <div>${clearBtnHtml}</div>
+                <div class="flex items-center gap-3">
+                    <button type="button" onclick="document.getElementById('search-key-modal').remove()"
+                            class="px-3 py-1.5 rounded-md text-sm text-slate-600 dark:text-slate-300
+                                   hover:bg-slate-100 dark:hover:bg-white/5 transition-colors">
+                        ${t('cancel')}
+                    </button>
+                    <button type="button" onclick="_saveSearchKey('${providerId}')"
+                            class="px-4 py-1.5 rounded-md bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium
+                                   cursor-pointer transition-colors">
+                        ${t('save')}
+                    </button>
+                </div>
+```
+</details>
+
+### symbol `clearBtnHtml` (console lines 13598–13599, base lines 10080–10081)
+
+- reason deferred: no verified context: upstream rewrote the surrounding code
+- decision: `TBD`
+
+<details><summary>fork's version</summary>
+
+```javascript
+            <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">${descText}</p>
+            <label class="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5">${isSearxng ? 'Instance URL' : 'API Key'}</label>
+```
+</details>
+
+<details><summary>upstream's version of `clearBtnHtml`</summary>
+
+```javascript
+    const clearBtnHtml = (hasKey || isAnonymous)
+        ? `<button type="button" id="search-key-clear"
+                  class="px-3 py-1.5 rounded-md text-xs text-red-500 dark:text-red-400
+                         hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer transition-colors">
+              ${t('models_clear_credential')}
+           </button>`
+        : '';
+    let descText = t('models_search_' + providerId + '_desc');
+    if (providerId === 'anysearch') {
+        const hint = currentLang === 'zh'
+            ? '（留空可启用匿名模式，每日有免费额度）'
+            : '(Leave blank to enable anonymous mode with daily free quota)';
+        descText = descText + ' ' + hint;
+    }
+    const modal = document.createElement('div');
+    modal.id = 'search-key-modal';
+    modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm';
+    modal.innerHTML = `
+        <div id="search-key-modal-card"
+             class="bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10
+                    w-full max-w-md mx-4 p-6 shadow-xl">
+            <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-1">${t('models_search_' + providerId + '_title')}</h3>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">${descText}</p>
+            <label class="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5">${providerId === 'searxng' ? 'Instance URL' : 'API Key'}</label>
+            <input id="search-key-input" type="text" autocomplete="off" data-1p-ignore data-lpignore="true"
+                   class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600
+                          bg-slate-50 dark:bg-white/5 text-sm text-slate-800 dark:text-slate-100
+                          focus:outline-none focus:border-primary-500 ${isSearxng ? '' : 'font-mono'} ${(hasKey && !isSearxng) ? 'cfg-key-masked' : ''}"
+                   value="${escapeHtml(masked)}"
+                   data-masked="${(hasKey && !isSearxng) ? '1' : ''}"
+                   placeholder="${isSearxng ? 'https://searxng.example.com' : 'sk-...'}" />
+            <div class="flex items-center justify-between gap-3 mt-5">
+                <div>${clearBtnHtml}</div>
+                <div class="flex items-center gap-3">
+                    <button type="button" onclick="document.getElementById('search-key-modal').remove()"
+                            class="px-3 py-1.5 rounded-md text-sm text-slate-600 dark:text-slate-300
+                                   hover:bg-slate-100 dark:hover:bg-white/5 transition-colors">
+                        ${t('cancel')}
+                    </button>
+                    <button type="button" onclick="_saveSearchKey('${providerId}')"
+                            class="px-4 py-1.5 rounded-md bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium
+                                   cursor-pointer transition-colors">
+                        ${t('save')}
+                    </button>
+                </div>
+```
+</details>
+
+### symbol `clearBtnHtml` (console lines 13603–13603, base lines 10085–10085)
+
+- reason deferred: no verified context: upstream rewrote the surrounding code
+- decision: `TBD`
+
+<details><summary>fork's version</summary>
+
+```javascript
+                          focus:outline-none focus:border-primary-500 ${isSearxng ? '' : 'font-mono'} ${(hasKey && !isSearxng) ? 'cfg-key-masked' : ''}"
+```
+</details>
+
+<details><summary>upstream's version of `clearBtnHtml`</summary>
+
+```javascript
+    const clearBtnHtml = (hasKey || isAnonymous)
+        ? `<button type="button" id="search-key-clear"
+                  class="px-3 py-1.5 rounded-md text-xs text-red-500 dark:text-red-400
+                         hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer transition-colors">
+              ${t('models_clear_credential')}
+           </button>`
+        : '';
+    let descText = t('models_search_' + providerId + '_desc');
+    if (providerId === 'anysearch') {
+        const hint = currentLang === 'zh'
+            ? '（留空可启用匿名模式，每日有免费额度）'
+            : '(Leave blank to enable anonymous mode with daily free quota)';
+        descText = descText + ' ' + hint;
+    }
+    const modal = document.createElement('div');
+    modal.id = 'search-key-modal';
+    modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm';
+    modal.innerHTML = `
+        <div id="search-key-modal-card"
+             class="bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10
+                    w-full max-w-md mx-4 p-6 shadow-xl">
+            <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-1">${t('models_search_' + providerId + '_title')}</h3>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">${descText}</p>
+            <label class="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5">${providerId === 'searxng' ? 'Instance URL' : 'API Key'}</label>
+            <input id="search-key-input" type="text" autocomplete="off" data-1p-ignore data-lpignore="true"
+                   class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600
+                          bg-slate-50 dark:bg-white/5 text-sm text-slate-800 dark:text-slate-100
+                          focus:outline-none focus:border-primary-500 ${isSearxng ? '' : 'font-mono'} ${(hasKey && !isSearxng) ? 'cfg-key-masked' : ''}"
+                   value="${escapeHtml(masked)}"
+                   data-masked="${(hasKey && !isSearxng) ? '1' : ''}"
+                   placeholder="${isSearxng ? 'https://searxng.example.com' : 'sk-...'}" />
+            <div class="flex items-center justify-between gap-3 mt-5">
+                <div>${clearBtnHtml}</div>
+                <div class="flex items-center gap-3">
+                    <button type="button" onclick="document.getElementById('search-key-modal').remove()"
+                            class="px-3 py-1.5 rounded-md text-sm text-slate-600 dark:text-slate-300
+                                   hover:bg-slate-100 dark:hover:bg-white/5 transition-colors">
+                        ${t('cancel')}
+                    </button>
+                    <button type="button" onclick="_saveSearchKey('${providerId}')"
+                            class="px-4 py-1.5 rounded-md bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium
+                                   cursor-pointer transition-colors">
+                        ${t('save')}
+                    </button>
+                </div>
+```
+</details>
+
+### symbol `clearBtnHtml` (console lines 13605–13606, base lines 10087–10088)
+
+- reason deferred: no verified context: upstream rewrote the surrounding code
+- decision: `TBD`
+
+<details><summary>fork's version</summary>
+
+```javascript
+                   data-masked="${(hasKey && !isSearxng) ? '1' : ''}"
+                   placeholder="${isSearxng ? 'https://searxng.example.com' : 'sk-...'}" />
+```
+</details>
+
+<details><summary>upstream's version of `clearBtnHtml`</summary>
+
+```javascript
+    const clearBtnHtml = (hasKey || isAnonymous)
+        ? `<button type="button" id="search-key-clear"
+                  class="px-3 py-1.5 rounded-md text-xs text-red-500 dark:text-red-400
+                         hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer transition-colors">
+              ${t('models_clear_credential')}
+           </button>`
+        : '';
+    let descText = t('models_search_' + providerId + '_desc');
+    if (providerId === 'anysearch') {
+        const hint = currentLang === 'zh'
+            ? '（留空可启用匿名模式，每日有免费额度）'
+            : '(Leave blank to enable anonymous mode with daily free quota)';
+        descText = descText + ' ' + hint;
+    }
+    const modal = document.createElement('div');
+    modal.id = 'search-key-modal';
+    modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm';
+    modal.innerHTML = `
+        <div id="search-key-modal-card"
+             class="bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10
+                    w-full max-w-md mx-4 p-6 shadow-xl">
+            <h3 class="text-lg font-semibold text-slate-800 dark:text-slate-100 mb-1">${t('models_search_' + providerId + '_title')}</h3>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mb-4">${descText}</p>
+            <label class="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5">${providerId === 'searxng' ? 'Instance URL' : 'API Key'}</label>
+            <input id="search-key-input" type="text" autocomplete="off" data-1p-ignore data-lpignore="true"
+                   class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600
+                          bg-slate-50 dark:bg-white/5 text-sm text-slate-800 dark:text-slate-100
+                          focus:outline-none focus:border-primary-500 ${isSearxng ? '' : 'font-mono'} ${(hasKey && !isSearxng) ? 'cfg-key-masked' : ''}"
+                   value="${escapeHtml(masked)}"
+                   data-masked="${(hasKey && !isSearxng) ? '1' : ''}"
+                   placeholder="${isSearxng ? 'https://searxng.example.com' : 'sk-...'}" />
+            <div class="flex items-center justify-between gap-3 mt-5">
+                <div>${clearBtnHtml}</div>
+                <div class="flex items-center gap-3">
+                    <button type="button" onclick="document.getElementById('search-key-modal').remove()"
+                            class="px-3 py-1.5 rounded-md text-sm text-slate-600 dark:text-slate-300
+                                   hover:bg-slate-100 dark:hover:bg-white/5 transition-colors">
+                        ${t('cancel')}
+                    </button>
+                    <button type="button" onclick="_saveSearchKey('${providerId}')"
+                            class="px-4 py-1.5 rounded-md bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium
+                                   cursor-pointer transition-colors">
+                        ${t('save')}
+                    </button>
+                </div>
+```
+</details>
+
+### symbol `_saveSearchKey` (console lines 13669–13691, base lines 10151–10150)
+
+- reason deferred: no verified context around the insertion point
+- decision: `TBD`
+
+<details><summary>fork's version</summary>
+
+```javascript
+
+    // anysearch and keenable hold a key *or* run on their keyless tier: saving
+    // with an empty key is what turns the anonymous mode on.
+    if (providerId === 'anysearch' || providerId === 'keenable') {
+        _postSearchCredential({
+            action: 'set_search_credential',
+            provider: providerId,
+            api_key: apiKey,
+            anonymous: !apiKey,
+        });
+        return;
+    }
+
+    // SearXNG is addressed by an instance URL rather than authenticated by a key.
+    if (providerId === 'searxng') {
+        if (!apiKey) {
+            input.focus();  // empty is a no-op; the clear button empties the URL
+            return;
+        }
+        _postSearchCredential({ action: 'set_search_credential', provider: providerId, url: apiKey });
+        return;
+    }
+
+```
+</details>
+
+<details><summary>upstream's version of `_saveSearchKey`</summary>
+
+```javascript
+function _saveSearchKey(providerId) {
+    const input = document.getElementById('search-key-input');
+    if (!input) return;
+    if (input.dataset.masked === '1') {
+        const modal = document.getElementById('search-key-modal');
+        if (modal) modal.remove();
+        return;
+    }
+    const apiKey = input.value.trim();
+
+    // anysearch and keenable: saving with an empty key enables the anonymous tier.
+    if (providerId === 'anysearch' || providerId === 'keenable') {
+    fetch('/api/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            action: 'set_search_credential',
+            provider: providerId,
+            api_key: apiKey,
+            anonymous: !apiKey, // ← 字段名必须是 anonymous；留空保存 = 启用匿名（表第 2 行）
+        }),
+    }).then(r => r.json()).then(data => {
+        if (data.status === 'success') {
+            const modal = document.getElementById('search-key-modal');
+            if (modal) modal.remove();
+            loadModelsView({ preserveScroll: true });
+        }
+    });
+    return;
+}
+
+    if (providerId === 'searxng') {
+        // SearXNG uses an instance URL, not an API key. Empty input is a no-op
+        // here (use the clear button to remove it).
+    if (!apiKey) {
+        input.focus();
+        return;
+    }
+    fetch('/api/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'set_search_credential',
+                provider: providerId,
+                url: apiKey, // reuse the input value as the URL
+```
+</details>
+
+### symbol `_clearSearchKey` (console lines 13715–13721, base lines 10169–10179)
+
+- reason deferred: no verified context: upstream rewrote the surrounding code
+- decision: `TBD`
+
+<details><summary>fork's version</summary>
+
+```javascript
+    // SearXNG is cleared by emptying its instance URL, not an API key. For
+    // anysearch/keenable an empty key with `anonymous` absent also turns the
+    // keyless tier back off, which is what the clear button means there.
+    const body = providerId === 'searxng'
+        ? { action: 'set_search_credential', provider: providerId, url: '' }
+        : { action: 'set_search_credential', provider: providerId, api_key: '' };
+    _postSearchCredential(body);
+```
+</details>
+
+<details><summary>upstream's version of `_clearSearchKey`</summary>
+
+```javascript
+function _clearSearchKey(providerId) {
+    // SearXNG is cleared by emptying its instance URL, not an API key.
+    const payload = (providerId === 'searxng')
+        ? { action: 'set_search_credential', provider: providerId, url: '' }
+        : { action: 'set_search_credential', provider: providerId, api_key: '' };
+    fetch('/api/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    }).then(r => r.json()).then(data => {
+        if (data.status === 'success') {
+            const modal = document.getElementById('search-key-modal');
+            if (modal) modal.remove();
+            loadModelsView({ preserveScroll: true });
+        }
+    });
+}
+
+function renderCapabilityBody(def, cap, body) {
+    if (def.id === 'search') {
+        renderSearchCapability(def, cap, body);
+        return;
+    }
+
+    // Editable cards: provider dropdown + (optional) model dropdown + save row
+    const providerOpts = buildCapabilityProviderOptions(def, cap);
+    const providerHtml = `
+        <div>
+            <label class="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5">${t('models_provider')}</label>
+            <div id="cap-${def.id}-provider" class="cfg-dropdown" tabindex="0">
+                <div class="cfg-dropdown-selected">
+                    <span class="cfg-dropdown-text">--</span>
+                    <i class="fas fa-chevron-down cfg-dropdown-arrow"></i>
+                </div>
+                <div class="cfg-dropdown-menu"></div>
+            </div>
+        </div>`;
+
+    // The model-picker container is always emitted so the provider-change
+    // handler can show/hide it; for `auto` capabilities it starts hidden and
+    // gets toggled by setCapabilityModelPickerVisible.
+    const modelHtml = def.needsModel ? `
+        <div id="cap-${def.id}-model-wrap">
+            <label class="block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5">${t('models_model')}</label>
+            <div id="cap-${def.id}-model" class="cfg-dropdown" tabindex="0">
+```
+</details>
+
 ## `channel/web/static/js/core/nav.js` — 9 region(s)
 
 ### symbol `initTaskNotifyToggles` (console lines 1494–1508, base lines 1717–1717)
@@ -1727,7 +2473,7 @@ window.addEventListener('resize', syncSidebarToggleState);
 ```
 </details>
 
-### symbol `navigateTo` (console lines 17352–17355, base lines 12864–12863)
+### symbol `navigateTo` (console lines 17397–17400, base lines 12864–12863)
 
 - reason deferred: no verified context around the insertion point
 - decision: `TBD`
@@ -1787,7 +2533,7 @@ function navigateTo(viewId, tab) {
 ```
 </details>
 
-### symbol `navigateTo` (console lines 17366–17366, base lines 12874–12874)
+### symbol `navigateTo` (console lines 17411–17411, base lines 12874–12874)
 
 - reason deferred: no verified context: upstream rewrote the surrounding code
 - decision: `TBD`
@@ -1844,7 +2590,7 @@ function navigateTo(viewId, tab) {
 ```
 </details>
 
-### symbol `navigateTo` (console lines 17386–17387, base lines 12893–12892)
+### symbol `navigateTo` (console lines 17431–17432, base lines 12893–12892)
 
 - reason deferred: no verified context around the insertion point
 - decision: `TBD`
@@ -2726,7 +3472,7 @@ function loadHistory(page) {
 
 ## `channel/web/static/js/views/channels.js` — 4 region(s)
 
-### symbol `channelRenderList` (console lines 15809–15820, base lines 11416–11415)
+### symbol `channelRenderList` (console lines 15854–15865, base lines 11416–11415)
 
 - reason deferred: no verified context around the insertion point
 - decision: `TBD`
@@ -2800,7 +3546,7 @@ function renderActiveChannels() {
 ```
 </details>
 
-### symbol `hasFields` (console lines 15875–15879, base lines 11470–11482)
+### symbol `hasFields` (console lines 15920–15924, base lines 11470–11482)
 
 - reason deferred: no verified context: upstream rewrote the surrounding code
 - decision: `TBD`
@@ -2867,7 +3613,7 @@ function renderActiveChannels() {
 ```
 </details>
 
-### symbol `hasFields` (console lines 15886–15887, base lines 11489–11490)
+### symbol `hasFields` (console lines 15931–15932, base lines 11489–11490)
 
 - reason deferred: splice left the module unparseable
 - decision: `TBD`
@@ -2931,7 +3677,7 @@ function renderActiveChannels() {
 ```
 </details>
 
-### symbol `hasFields` (console lines 15924–15925, base lines 11527–11527)
+### symbol `hasFields` (console lines 15969–15970, base lines 11527–11527)
 
 - reason deferred: no verified context: upstream rewrote the surrounding code
 - decision: `TBD`
@@ -3371,7 +4117,7 @@ async function skillReadContent(name) {
 
 ## `channel/web/static/js/views/tasks.js` — 4 region(s)
 
-### symbol `runKey` (console lines 17078–17078, base lines 12629–12629)
+### symbol `runKey` (console lines 17123–17123, base lines 12629–12629)
 
 - reason deferred: no verified context: upstream rewrote the surrounding code
 - decision: `TBD`
@@ -3383,7 +4129,7 @@ async function skillReadContent(name) {
 ```
 </details>
 
-### symbol `owner` (console lines 17205–17205, base lines 12726–12726)
+### symbol `owner` (console lines 17250–17250, base lines 12726–12726)
 
 - reason deferred: splice left the module unparseable
 - decision: `TBD`
@@ -3446,7 +4192,7 @@ function deleteRunRecord(run, card) {
 ```
 </details>
 
-### symbol `owner` (console lines 17207–17208, base lines 12728–12729)
+### symbol `owner` (console lines 17252–17253, base lines 12728–12729)
 
 - reason deferred: splice left the module unparseable
 - decision: `TBD`
@@ -3510,7 +4256,7 @@ function deleteRunRecord(run, card) {
 ```
 </details>
 
-### symbol `owner` (console lines 17211–17211, base lines 12732–12732)
+### symbol `owner` (console lines 17256–17256, base lines 12732–12732)
 
 - reason deferred: splice left the module unparseable
 - decision: `TBD`
@@ -3769,7 +4515,7 @@ document.addEventListener('visibilitychange', () => {
 ```
 </details>
 
-### symbol `_resolveOneShotTenantSwitch` (console lines 19771–19777, base lines 13994–14006)
+### symbol `_resolveOneShotTenantSwitch` (console lines 19816–19822, base lines 13994–14006)
 
 - reason deferred: fork edit crosses an upstream module boundary
 - decision: `TBD`
@@ -4061,7 +4807,7 @@ function writeScopedPreference(key, value) {
 
 ## `channel/web/static/js/views/channels-feishu.js` — 2 region(s)
 
-### symbol `pollFeishuRegisterStatus` (console lines 16972–16978, base lines 12542–12541)
+### symbol `pollFeishuRegisterStatus` (console lines 17017–17023, base lines 12542–12541)
 
 - reason deferred: splice left the module unparseable
 - decision: `TBD`
@@ -4130,7 +4876,7 @@ function pollFeishuRegisterStatus(statusId) {
 ```
 </details>
 
-### symbol `pollFeishuRegisterStatus` (console lines 16980–16982, base lines 12543–12542)
+### symbol `pollFeishuRegisterStatus` (console lines 17025–17027, base lines 12543–12542)
 
 - reason deferred: splice left the module unparseable
 - decision: `TBD`
@@ -4676,3 +5422,4 @@ function autoResizeComposer() {
 /** Shrink the composer back to its resting height after the text is consumed. */
 ```
 </details>
+

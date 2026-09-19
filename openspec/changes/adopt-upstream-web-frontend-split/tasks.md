@@ -4,12 +4,15 @@
 
 ## 0. 承接状态与前置
 
-- [ ] 0.1 确认前置在位：上游 `channel/web/static/js/{core,chat,views}/**`、`channel/web/static/css/*`、`chat.html` shell 与 `templates/**` 已在工作树，且 `channel/web/static/js/console.js` / `console.css` 仍在（`adopt-upstream-web-split` 按 `UD` + `keep-fork` 登记）
-- [ ] 0.2 确认 `scripts/migration/{port_frontend,verify_frontend_port,build_frontend_adjudication,analyze_frontend_divergence}.py` 可重复运行，且以固定上游 `8f1b19f1` 为输入；记录本轮输入的 ref 三元组（base / upstream / fork）
-- [ ] 0.3 冻结本轮 fork 独有行基线：`console.js` 5222 行、`console.css` 1361 行（合计 6583），作为「零未交代」的分母
+- [x] 0.1 确认前置在位：上游 `channel/web/static/js/{core,chat,views}/**`、`channel/web/static/css/*`、`chat.html` shell 与 `templates/**` 已在工作树，且 `channel/web/static/js/console.js` / `console.css` 仍在（`adopt-upstream-web-split` 按 `UD` + `keep-fork` 登记）
+  - 2026-09-19 实测：`channel/web/static/js/{core,chat,views}`、`channel/web/static/css`、`chat.html`、`templates/` 均在位；`console.js`（20229 行）/`console.css`（6048 行）保留
+- [x] 0.2 确认 `scripts/migration/{port_frontend,verify_frontend_port,build_frontend_adjudication,analyze_frontend_divergence}.py` 可重复运行，且以固定上游 `8f1b19f1` 为输入；记录本轮输入的 ref 三元组（base / upstream / fork）
+  - 三元组已冻结并写入 `evidence/inherited-state.md`：`base=e5e2a52d`、`upstream=8f1b19f1`、`fork=c6eb33db`。三个脚本均接受 `FORK_{BASE,UPSTREAM,FORK}_REF` 覆盖，默认 `FORK_FORK_REF=HEAD`，故重跑必须显式指定 `c6eb33db`，否则分母随 HEAD 漂移
+- [x] 0.3 冻结本轮 fork 独有行基线：`console.js` 5255 行、`console.css` 1361 行（合计 6616），作为「零未交代」的分母
+  - 冻结于 `fork=c6eb33db`：3508 已入移植产出、3108 在裁定清单上，`verify_frontend_port.py` 报 `PASS: 6616/6616`、`0 UNACCOUNTED`。父 change `evidence/09-*` 的 98 处 / 6583 行是**旧基线**实测值（收口提交 `c6eb33db` 再次改动了 `console.js`：三个搜索提供方的凭据弹窗接线），不作为本 change 的输入；刷新记录与命令见 `evidence/inherited-state.md`
 - [x] 0.4 逐条登记 Phase 3 期间被延后的上游前端增量（拆分 shell、地址栏路由、`?v=` 版本戳、一键更新菜单、`views/knowledge.js` 空状态修复等），作为交付时必须收口或显式转交的清单
-  - 已产出 `evidence/deferred-upstream-frontend.md`：§A 结构类（A1–A5，含 A5 上界 = 98 处裁定区域）、§B1 已只缺 UI（后端半边已在位，逐条给提交与现状）、§B2 纯前端修复 14 条、§C 与裁定清单的收口判据、§D1 桌面端未路由接口。生成命令按 §A 头部可重跑，不手抄
-- [ ] 0.5 说明与 `scripts/conflict-baseline.txt` 的范围边界：该基线是父 change `adopt-upstream-web-split` 的冲突集，本 change 只认领其中的前端三行（`channel/web/chat.html`、`channel/web/static/js/console.js`、`channel/web/static/css/console.css`，均为 `keep-fork`），并在任务 5.3 完成删除后更新它们的处置。基线的三条后端 `seam:` 行由父 change 负责，不在本 change 范围：`agent/memory/conversation_store.py`（`seam:conversation-store`）、`agent/tools/scheduler/integration.py`（`seam:scheduler`）、`tests/test_scheduler_web_update.py`（`seam:scheduler`）
+  - 已产出 `evidence/deferred-upstream-frontend.md`：§A 结构类（A1–A5，含 A5 上界 = 109 处裁定区域）、§B1 已只缺 UI（后端半边已在位，逐条给提交与现状）、§B2 纯前端修复 14 条、§C 与裁定清单的收口判据、§D1 桌面端未路由接口。生成命令按 §A 头部可重跑，不手抄
+- [x] 0.5 说明与 `scripts/conflict-baseline.txt` 的范围边界：该基线是父 change `adopt-upstream-web-split` 的冲突集，本 change 只认领其中的前端三行（`channel/web/chat.html`、`channel/web/static/js/console.js`、`channel/web/static/css/console.css`，均为 `keep-fork`），并在任务 5.3 完成删除后更新它们的处置。基线的三条后端 `seam:` 行由父 change 负责，不在本 change 范围：`agent/memory/conversation_store.py`（`seam:conversation-store`）、`agent/tools/scheduler/integration.py`（`seam:scheduler`）、`tests/test_scheduler_web_update.py`（`seam:scheduler`）
 - [ ] 0.6 收口**桌面端消费的未路由接口**（父 change `evidence/21` §E 登记）：`desktop/src/renderer/**` 随本轮同步按上游版本合并（`merge` 处置，非 `keep-fork`），其新界面调用 `/api/scheduler/runs`、`/runs/detail`、`/runs/delete`、`create`、`recipients`、`instances` 与 `/api/sessions/<id>/{context_usage,compact_context}` 共 8 条 fork 后端未路由的接口，而 fork 的桌面端此前 0 处调用。逐条二选一：接上路由与授权判定，或在桌面端降级/隐藏入口；不得以「属拆分后前端」为由留空。清单与影响见本 change `evidence/deferred-upstream-frontend.md` §D
   - 运行期形状已由父 change 的 §6.4 验收实测固定（`evidence/23` §3）：6 条 scheduler 路径回答 **404**；`/api/sessions/<id>/{context_usage,compact_context}` 被既有 `/api/sessions/(.*)` 捕获后回答 **405**——这两条不是「未注册」，收口时须在会话详情 handler 上显式拒绝或补服务
 
@@ -20,9 +23,9 @@
 - [ ] 1.3 接线后单体仍在，逐场景对照迁移前后行为一致（登录、上下文切换、流式请求、上传回读、下载预览）
 - [ ] 1.4 判定 `core/i18n.js` 的处置：该模块为反向差异（fork 把翻译移出到 `static/js/i18n/`），不可按「移植 diff」处理，需单独裁定并记录装载方式
 
-## 2. 98 处裁定（4.4c）
+## 2. 109 处裁定（4.4c）
 
-- [ ] 2.1 逐处裁定 `frontend_adjudication.md` 的 98 个区域（JS 87 + CSS 8 + 跨边界 3，跨 23 个模块），每处记录 `fork` / `upstream` / `merged` 与理由；集中处优先：`core/auth.js` 16、`views/agents.js` 12、`core/nav.js` 9、`views/sessions.js` 7、`core/i18n.js` 6
+- [ ] 2.1 逐处裁定 `frontend_adjudication.md` 的 109 个区域（JS 98 + CSS 8 + 跨边界 3，跨 23 个模块），每处记录 `fork` / `upstream` / `merged` 与理由；集中处优先：`core/auth.js` 16、`views/agents.js` 12、`views/models.js` 11、`core/nav.js` 9、`views/sessions.js` 7、`core/i18n.js` 6
 - [ ] 2.2 裁定不得整函数照抄：须检查上游在同区域的改动是否携带功能或安全修复，避免以 fork 版本整体覆盖；被否决一侧的处置须写明
 - [ ] 2.3 裁定结果并入移植器输入后重跑 `port_frontend.py`，产出确定性（重复运行逐字节一致）
 - [ ] 2.4 以 `verify_frontend_port.py` 复核零未交代，并自行复跑 `node --check`（不采信移植器自述）
@@ -43,7 +46,7 @@
 
 ## 5. 删除单体（4.4g/4.4h）
 
-- [ ] 5.1 **删除前置条件**：2.1 的 98 处裁定全部完成且 2.4 报零未交代。在此之前不得删除 `console.js` / `console.css`
+- [ ] 5.1 **删除前置条件**：2.1 的 109 处裁定全部完成且 2.4 报零未交代。在此之前不得删除 `console.js` / `console.css`
 - [ ] 5.2 删除 `console.js` / `console.css`，不留兼容层；确认无上游视图模块（`js/views/*.js`、`js/core/*.js`、`js/chat/*.js`、`css/*.css`）被 fork 原地编辑
 - [ ] 5.3 更新 `scripts/conflict-baseline.txt` 中该 `UD` 行的处置：由「keep-fork + Phase 3 完成前不得按删除处置」改为删除留痕并指向替代模块；`DELIBERATE_REMOVALS` 五项保持不变
 - [ ] 5.4 确认缺少 fork 前端模块时独立上游形态仍可组装：上游视图保持可用，不白屏、不报错

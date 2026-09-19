@@ -107,8 +107,8 @@
     },
     "channel/web/static/js/fork/views/models.js": {
       "upstream_path": "channel/web/static/js/views/models.js",
-      "applied": 2,
-      "skipped": 0
+      "applied": 4,
+      "skipped": 11
     },
     "channel/web/static/js/fork/views/sessions.js": {
       "upstream_path": "channel/web/static/js/views/sessions.js",
@@ -1621,6 +1621,237 @@
         "    }).catch(() => _memoryRefusal(null));",
         "}",
         ""
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/models.js",
+      "base_range": [
+        10015,
+        10014
+      ],
+      "added": 7,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [
+        "function _launchSearchProviderConfig(providerId, providerMeta) {",
+        "    if (providerId === 'bocha' || providerId === 'anysearch' || providerId === 'serply') {",
+        "        openSearchKeyModal(providerId, providerMeta);"
+      ],
+      "fork_sample": [
+        "// Search providers that own a dedicated credential \u2014 an API key, or SearXNG's",
+        "// instance URL. The rest (zhipu/qianfan/linkai) reuse a model-vendor",
+        "// credential and keep the vendor modal. Mirrors the backend's"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/models.js",
+      "base_range": [
+        10016,
+        10016
+      ],
+      "added": 1,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "    if (providerId === 'bocha' || providerId === 'anysearch' || providerId === 'serply') {",
+        "        openSearchKeyModal(providerId, providerMeta);",
+        "    } else {"
+      ],
+      "fork_sample": [
+        "    if (DEDICATED_SEARCH_CREDENTIALS.indexOf(providerId) !== -1) {",
+        "        openSearchKeyModal(providerId, providerMeta);",
+        "    } else {"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/models.js",
+      "base_range": [
+        10057,
+        10058
+      ],
+      "added": 0,
+      "removed": 2,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "    let masked = (providerMeta && providerMeta.api_key_masked) || '';",
+        "    if (!masked) {",
+        "        const searchCap = (modelsState && modelsState.capabilities && modelsState.capabilities.search) || {};"
+      ],
+      "fork_sample": [
+        "    const searchCap = (modelsState && modelsState.capabilities && modelsState.capabilities.search) || {};",
+        "    const provider = (searchCap.providers || []).find(p => p.id === providerId);",
+        "    const isSearxng = providerId === 'searxng';"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/models.js",
+      "base_range": [
+        10060,
+        10061
+      ],
+      "added": 10,
+      "removed": 2,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "        const bocha = (searchCap.providers || []).find(p => p.id === providerId);",
+        "        if (bocha && bocha.api_key_masked) masked = bocha.api_key_masked;",
+        "    }"
+      ],
+      "fork_sample": [
+        "    const provider = (searchCap.providers || []).find(p => p.id === providerId);",
+        "    const isSearxng = providerId === 'searxng';",
+        "    // SearXNG holds an instance URL (echoed back verbatim in url_masked); the"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/models.js",
+      "base_range": [
+        10064,
+        10064
+      ],
+      "added": 5,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "    const clearBtnHtml = hasKey",
+        "        ? `<button type=\"button\" id=\"search-key-clear\"",
+        "                  class=\"px-3 py-1.5 rounded-md text-xs text-red-500 dark:text-red-400"
+      ],
+      "fork_sample": [
+        "    // anysearch/keenable can be on without a key (their keyless tier), and that",
+        "    // state still needs the clear button so it can be turned back off.",
+        "    const isAnonymous = (providerId === 'anysearch' || providerId === 'keenable')"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/models.js",
+      "base_range": [
+        10071,
+        10070
+      ],
+      "added": 4,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [
+        "",
+        "    const modal = document.createElement('div');",
+        "    modal.id = 'search-key-modal';"
+      ],
+      "fork_sample": [
+        "    // Saving empty on anysearch turns its keyless tier on, so say so.",
+        "    const descText = providerId === 'anysearch'",
+        "        ? t('models_search_anysearch_desc') + ' ' + t('models_search_anysearch_anon_hint')"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/models.js",
+      "base_range": [
+        10080,
+        10081
+      ],
+      "added": 2,
+      "removed": 2,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "            <p class=\"text-xs text-slate-500 dark:text-slate-400 mb-4\">${t('models_search_' + providerId + '_desc')}</p>",
+        "            <label class=\"block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5\">API Key</label>",
+        "            <input id=\"search-key-input\" type=\"text\" autocomplete=\"off\" data-1p-ignore data-lpignore=\"true\""
+      ],
+      "fork_sample": [
+        "            <p class=\"text-xs text-slate-500 dark:text-slate-400 mb-4\">${descText}</p>",
+        "            <label class=\"block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5\">${isSearxng ? 'Instance URL' : 'API Key'}</label>",
+        "            <input id=\"search-key-input\" type=\"text\" autocomplete=\"off\" data-1p-ignore data-lpignore=\"true\""
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/models.js",
+      "base_range": [
+        10085,
+        10085
+      ],
+      "added": 1,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "                          focus:outline-none focus:border-primary-500 font-mono ${hasKey ? 'cfg-key-masked' : ''}\"",
+        "                   value=\"${escapeHtml(masked)}\"",
+        "                   data-masked=\"${hasKey ? '1' : ''}\""
+      ],
+      "fork_sample": [
+        "                          focus:outline-none focus:border-primary-500 ${isSearxng ? '' : 'font-mono'} ${(hasKey && !isSearxng) ? 'cfg-key-masked' : ''}\"",
+        "                   value=\"${escapeHtml(masked)}\"",
+        "                   data-masked=\"${(hasKey && !isSearxng) ? '1' : ''}\""
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/models.js",
+      "base_range": [
+        10087,
+        10088
+      ],
+      "added": 2,
+      "removed": 2,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "                   data-masked=\"${hasKey ? '1' : ''}\"",
+        "                   placeholder=\"sk-...\" />",
+        "            <div class=\"flex items-center justify-between gap-3 mt-5\">"
+      ],
+      "fork_sample": [
+        "                   data-masked=\"${(hasKey && !isSearxng) ? '1' : ''}\"",
+        "                   placeholder=\"${isSearxng ? 'https://searxng.example.com' : 'sk-...'}\" />",
+        "            <div class=\"flex items-center justify-between gap-3 mt-5\">"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/models.js",
+      "base_range": [
+        10151,
+        10150
+      ],
+      "added": 23,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [
+        "    if (!apiKey) {",
+        "        input.focus();",
+        "        return;"
+      ],
+      "fork_sample": [
+        "",
+        "    // anysearch and keenable hold a key *or* run on their keyless tier: saving",
+        "    // with an empty key is what turns the anonymous mode on."
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/models.js",
+      "base_range": [
+        10169,
+        10179
+      ],
+      "added": 7,
+      "removed": 11,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "    fetch('/api/models', {",
+        "        method: 'POST',",
+        "        headers: { 'Content-Type': 'application/json' },"
+      ],
+      "fork_sample": [
+        "    // SearXNG is cleared by emptying its instance URL, not an API key. For",
+        "    // anysearch/keenable an empty key with `anonymous` absent also turns the",
+        "    // keyless tier back off, which is what the clear button means there."
       ]
     },
     {

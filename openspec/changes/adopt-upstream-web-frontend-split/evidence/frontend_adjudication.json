@@ -88,8 +88,8 @@
       14006
     ],
     "fork_range": [
-      19771,
-      19777
+      19816,
+      19822
     ],
     "reason": "fork edit crosses an upstream module boundary",
     "symbol": "_resolveOneShotTenantSwitch",
@@ -806,8 +806,8 @@
       13853
     ],
     "fork_range": [
-      18400,
-      18597
+      18445,
+      18642
     ],
     "reason": "no verified context around the insertion point",
     "symbol": "_identityMode",
@@ -1023,8 +1023,8 @@
       13883
     ],
     "fork_range": [
-      18612,
-      18631
+      18657,
+      18676
     ],
     "reason": "splice left the module unparseable",
     "symbol": "showLoginScreen",
@@ -1108,8 +1108,8 @@
       13886
     ],
     "fork_range": [
-      18634,
-      18636
+      18679,
+      18681
     ],
     "reason": "splice left the module unparseable",
     "symbol": "_submitAccountLogin",
@@ -1130,8 +1130,8 @@
       13888
     ],
     "fork_range": [
-      18638,
-      18698
+      18683,
+      18743
     ],
     "reason": "splice left the module unparseable",
     "symbol": "_submitAccountLogin",
@@ -1210,8 +1210,8 @@
       13897
     ],
     "fork_range": [
-      18700,
-      18704
+      18745,
+      18749
     ],
     "reason": "splice left the module unparseable",
     "symbol": "_afterLogin",
@@ -1234,8 +1234,8 @@
       13932
     ],
     "fork_range": [
-      18706,
-      18725
+      18751,
+      18770
     ],
     "reason": "no verified context: upstream rewrote the surrounding code",
     "symbol": "_showTenantPicker",
@@ -1273,8 +1273,8 @@
       13933
     ],
     "fork_range": [
-      18727,
-      18734
+      18772,
+      18779
     ],
     "reason": "splice left the module unparseable",
     "symbol": "_showTenantPicker",
@@ -1300,8 +1300,8 @@
       13942
     ],
     "fork_range": [
-      18743,
-      18755
+      18788,
+      18800
     ],
     "reason": "splice left the module unparseable",
     "symbol": "handleLogout",
@@ -1378,8 +1378,8 @@
       13943
     ],
     "fork_range": [
-      18757,
-      18761
+      18802,
+      18806
     ],
     "reason": "splice left the module unparseable",
     "symbol": "handleLogout",
@@ -1448,8 +1448,8 @@
       13947
     ],
     "fork_range": [
-      18763,
-      18762
+      18808,
+      18807
     ],
     "reason": "splice left the module unparseable",
     "symbol": "handleLogout",
@@ -1512,8 +1512,8 @@
       13968
     ],
     "fork_range": [
-      18800,
-      18812
+      18845,
+      18857
     ],
     "reason": "splice left the module unparseable",
     "symbol": "initApp",
@@ -1578,8 +1578,8 @@
       13977
     ],
     "fork_range": [
-      18823,
-      18823
+      18868,
+      18868
     ],
     "reason": "splice left the module unparseable",
     "symbol": "initApp",
@@ -1632,8 +1632,8 @@
       13981
     ],
     "fork_range": [
-      18825,
-      19165
+      18870,
+      19210
     ],
     "reason": "no verified context: upstream rewrote the surrounding code",
     "symbol": "initApp",
@@ -2026,8 +2026,8 @@
       13983
     ],
     "fork_range": [
-      19167,
-      19168
+      19212,
+      19213
     ],
     "reason": "no verified context: upstream rewrote the surrounding code",
     "symbol": "openAccountProfile",
@@ -2047,8 +2047,8 @@
       13985
     ],
     "fork_range": [
-      19170,
-      19169
+      19215,
+      19214
     ],
     "reason": "no verified context: upstream rewrote the surrounding code",
     "symbol": "openAccountProfile",
@@ -2065,8 +2065,8 @@
       13986
     ],
     "fork_range": [
-      19171,
-      19763
+      19216,
+      19808
     ],
     "reason": "no verified context around the insertion point",
     "symbol": "openAccountProfile",
@@ -3182,8 +3182,8 @@
       12863
     ],
     "fork_range": [
-      17352,
-      17355
+      17397,
+      17400
     ],
     "reason": "no verified context around the insertion point",
     "symbol": "navigateTo",
@@ -3245,8 +3245,8 @@
       12874
     ],
     "fork_range": [
-      17366,
-      17366
+      17411,
+      17411
     ],
     "reason": "no verified context: upstream rewrote the surrounding code",
     "symbol": "navigateTo",
@@ -3305,8 +3305,8 @@
       12892
     ],
     "fork_range": [
-      17386,
-      17387
+      17431,
+      17432
     ],
     "reason": "no verified context around the insertion point",
     "symbol": "navigateTo",
@@ -5292,8 +5292,8 @@
       12541
     ],
     "fork_range": [
-      16972,
-      16978
+      17017,
+      17023
     ],
     "reason": "splice left the module unparseable",
     "symbol": "pollFeishuRegisterStatus",
@@ -5364,8 +5364,8 @@
       12542
     ],
     "fork_range": [
-      16980,
-      16982
+      17025,
+      17027
     ],
     "reason": "splice left the module unparseable",
     "symbol": "pollFeishuRegisterStatus",
@@ -5432,8 +5432,8 @@
       11415
     ],
     "fork_range": [
-      15809,
-      15820
+      15854,
+      15865
     ],
     "reason": "no verified context around the insertion point",
     "symbol": "channelRenderList",
@@ -5509,8 +5509,8 @@
       11482
     ],
     "fork_range": [
-      15875,
-      15879
+      15920,
+      15924
     ],
     "reason": "no verified context: upstream rewrote the surrounding code",
     "symbol": "hasFields",
@@ -5579,8 +5579,8 @@
       11490
     ],
     "fork_range": [
-      15886,
-      15887
+      15931,
+      15932
     ],
     "reason": "splice left the module unparseable",
     "symbol": "hasFields",
@@ -5646,8 +5646,8 @@
       11527
     ],
     "fork_range": [
-      15924,
-      15925
+      15969,
+      15970
     ],
     "reason": "no verified context: upstream rewrote the surrounding code",
     "symbol": "hasFields",
@@ -6510,6 +6510,782 @@
       "    }).catch(() => {});",
       "}",
       ""
+    ],
+    "decision": null,
+    "rationale": null
+  },
+  {
+    "source": "console.js",
+    "upstream_module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10015,
+      10014
+    ],
+    "fork_range": [
+      13512,
+      13518
+    ],
+    "reason": "no verified context around the insertion point",
+    "symbol": "openSearchAddProviderPicker",
+    "fork_region": [
+      "// Search providers that own a dedicated credential \u2014 an API key, or SearXNG's",
+      "// instance URL. The rest (zhipu/qianfan/linkai) reuse a model-vendor",
+      "// credential and keep the vendor modal. Mirrors the backend's",
+      "// `needs_dedicated_key` / `needs_url` flags in ModelsHandler._search_capability,",
+      "// so a provider the runtime supports can always be configured here.",
+      "const DEDICATED_SEARCH_CREDENTIALS = ['bocha', 'anysearch', 'serply', 'tavily', 'searxng', 'keenable'];",
+      ""
+    ],
+    "upstream_symbol_excerpt": [
+      "function openSearchAddProviderPicker(missingProviders) {",
+      "    if (!missingProviders || missingProviders.length === 0) return;",
+      "    if (missingProviders.length === 1) {",
+      "        _launchSearchProviderConfig(missingProviders[0].id);",
+      "        return;",
+      "    }",
+      "",
+      "    const existing = document.getElementById('search-add-modal');",
+      "    if (existing) existing.remove();",
+      "",
+      "    const rows = missingProviders.map(p => `",
+      "        <button type=\"button\" data-pid=\"${p.id}\"",
+      "                class=\"w-full flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer",
+      "                       bg-slate-50 dark:bg-white/5 hover:bg-slate-100 dark:hover:bg-white/10",
+      "                       text-sm text-slate-700 dark:text-slate-200 transition-colors\">",
+      "            <span>${escapeHtml(localizedLabel(p.label))}</span>",
+      "            <i class=\"fas fa-chevron-right text-[10px] text-slate-400\"></i>",
+      "        </button>",
+      "    `).join('');",
+      "",
+      "    const modal = document.createElement('div');",
+      "    modal.id = 'search-add-modal';",
+      "    modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm';",
+      "    modal.innerHTML = `",
+      "        <div class=\"bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10",
+      "                    w-full max-w-md mx-4 p-6 shadow-xl\">",
+      "            <h3 class=\"text-lg font-semibold text-slate-800 dark:text-slate-100 mb-1\">${t('models_search_add_provider')}</h3>",
+      "            <p class=\"text-xs text-slate-500 dark:text-slate-400 mb-4\">${t('models_search_add_desc')}</p>",
+      "            <div class=\"space-y-2\">${rows}</div>",
+      "            <div class=\"flex items-center justify-end mt-5\">",
+      "                <button type=\"button\" onclick=\"document.getElementById('search-add-modal').remove()\"",
+      "                        class=\"px-3 py-1.5 rounded-md text-sm text-slate-600 dark:text-slate-300",
+      "                               hover:bg-slate-100 dark:hover:bg-white/5 transition-colors\">",
+      "                    ${t('cancel')}",
+      "                </button>",
+      "            </div>",
+      "        </div>",
+      "    `;",
+      "    document.body.appendChild(modal);",
+      "    modal.querySelectorAll('[data-pid]').forEach(el => {",
+      "        el.addEventListener('click', () => {",
+      "            const pid = el.getAttribute('data-pid');",
+      "            modal.remove();",
+      "            _launchSearchProviderConfig(pid);",
+      "        });"
+    ],
+    "decision": null,
+    "rationale": null
+  },
+  {
+    "source": "console.js",
+    "upstream_module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10016,
+      10016
+    ],
+    "fork_range": [
+      13520,
+      13520
+    ],
+    "reason": "no verified context: upstream rewrote the surrounding code",
+    "symbol": "_launchSearchProviderConfig",
+    "fork_region": [
+      "    if (DEDICATED_SEARCH_CREDENTIALS.indexOf(providerId) !== -1) {"
+    ],
+    "upstream_symbol_excerpt": [
+      "function _launchSearchProviderConfig(providerId, providerMeta) {",
+      "    // Providers that hold their own credential (dedicated key or, for SearXNG,",
+      "    // an instance URL) use the bespoke search-key modal. zhipu/qianfan/linkai",
+      "    // reuse a model-vendor key and go through the vendor modal instead.",
+      "    if (['bocha', 'anysearch', 'serply', 'tavily', 'searxng', 'keenable'].includes(providerId)) {",
+      "        openSearchKeyModal(providerId, providerMeta);",
+      "    } else {",
+      "        openVendorModal(providerId, () => loadModelsView({ preserveScroll: true }));",
+      "    }",
+      "}",
+      "",
+      "",
+      "function saveSearchCapability() {",
+      "    const strategyDd = document.getElementById('cap-search-strategy');",
+      "    const providerDd = document.getElementById('cap-search-provider');",
+      "    // \u5982\u679c\u7b56\u7565\u4e0b\u62c9\u6846\u7684\u503c\u662f\u7a7a\uff08\u5f85\u914d\u7f6e\uff09\uff0c\u9ed8\u8ba4\u4f7f\u7528 'auto'",
+      "    const strategy = strategyDd ? (getDropdownValue(strategyDd) || 'auto') : 'auto';",
+      "    const provider = (strategy === 'fixed' && providerDd) ? getDropdownValue(providerDd) : '';",
+      "",
+      "    fetch('/api/models', {",
+      "        method: 'POST',",
+      "        headers: { 'Content-Type': 'application/json' },",
+      "        body: JSON.stringify({",
+      "            action: 'set_capability',",
+      "            capability: 'search',",
+      "            strategy,",
+      "            provider,",
+      "        }),",
+      "    }).then(r => r.json()).then(data => {",
+      "        if (data.status === 'success') {",
+      "            showStatus('cap-search-status', 'models_save_success', false);",
+      "            setTimeout(() => loadModelsView({ preserveScroll: true }), 400);",
+      "        } else {",
+      "            console.log('[saveSearchCapability] Error:', data.message);",
+      "            showStatus('cap-search-status', 'models_save_failed', true);",
+      "        }",
+      "    }).catch(() => showStatus('cap-search-status', 'models_save_failed', true));",
+      "}",
+      "",
+      "",
+      "// Minimal bocha API-key modal. Reuses the existing vendor-modal markup",
+      "// helpers would be nice, but bocha isn't in PROVIDER_MODELS (it's not a",
+      "// model vendor), so we render a tiny dedicated dialog.",
+      "// For search vendors that hold their own keys.",
+      ""
+    ],
+    "decision": null,
+    "rationale": null
+  },
+  {
+    "source": "console.js",
+    "upstream_module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10057,
+      10058
+    ],
+    "fork_range": [
+      13561,
+      13560
+    ],
+    "reason": "no verified context: upstream rewrote the surrounding code",
+    "symbol": "searchCap",
+    "fork_region": [],
+    "upstream_symbol_excerpt": [
+      "        const searchCap = (modelsState && modelsState.capabilities && modelsState.capabilities.search) || {};",
+      "    const prov = (searchCap.providers || []).find(p => p.id === providerId);",
+      "    const isSearxng = providerId === 'searxng';",
+      "    // SearXNG holds an instance URL (echoed back verbatim in url_masked); the",
+      "    // rest hold a masked API key. Resolve whichever applies as the field value.",
+      "    let masked;",
+      "    if (isSearxng) {",
+      "        masked = (providerMeta && providerMeta.url_masked) || (prov && prov.url_masked) || '';",
+      "    } else {",
+      "        masked = (providerMeta && providerMeta.api_key_masked) || '';",
+      "        if (!masked && prov && prov.api_key_masked) masked = prov.api_key_masked;",
+      "    }",
+      "    // SearXNG URL is not masked, so it's safe to keep editable (not a sentinel).",
+      "    const hasKey = !!masked;",
+      "    const isAnonymous = (providerId === 'anysearch' || providerId === 'keenable')",
+      "        && !!((providerMeta && providerMeta.anonymous) || (prov && prov.anonymous));",
+      "    const clearBtnHtml = (hasKey || isAnonymous)",
+      "        ? `<button type=\"button\" id=\"search-key-clear\"",
+      "                  class=\"px-3 py-1.5 rounded-md text-xs text-red-500 dark:text-red-400",
+      "                         hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer transition-colors\">",
+      "              ${t('models_clear_credential')}",
+      "           </button>`",
+      "        : '';",
+      "    let descText = t('models_search_' + providerId + '_desc');",
+      "    if (providerId === 'anysearch') {",
+      "        const hint = currentLang === 'zh'",
+      "            ? '\uff08\u7559\u7a7a\u53ef\u542f\u7528\u533f\u540d\u6a21\u5f0f\uff0c\u6bcf\u65e5\u6709\u514d\u8d39\u989d\u5ea6\uff09'",
+      "            : '(Leave blank to enable anonymous mode with daily free quota)';",
+      "        descText = descText + ' ' + hint;",
+      "    }",
+      "    const modal = document.createElement('div');",
+      "    modal.id = 'search-key-modal';",
+      "    modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm';",
+      "    modal.innerHTML = `",
+      "        <div id=\"search-key-modal-card\"",
+      "             class=\"bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10",
+      "                    w-full max-w-md mx-4 p-6 shadow-xl\">",
+      "            <h3 class=\"text-lg font-semibold text-slate-800 dark:text-slate-100 mb-1\">${t('models_search_' + providerId + '_title')}</h3>",
+      "            <p class=\"text-xs text-slate-500 dark:text-slate-400 mb-4\">${descText}</p>",
+      "            <label class=\"block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5\">${providerId === 'searxng' ? 'Instance URL' : 'API Key'}</label>",
+      "            <input id=\"search-key-input\" type=\"text\" autocomplete=\"off\" data-1p-ignore data-lpignore=\"true\"",
+      "                   class=\"w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600",
+      "                          bg-slate-50 dark:bg-white/5 text-sm text-slate-800 dark:text-slate-100",
+      "                          focus:outline-none focus:border-primary-500 ${isSearxng ? '' : 'font-mono'} ${(hasKey && !isSearxng) ? 'cfg-key-masked' : ''}\"",
+      "                   value=\"${escapeHtml(masked)}\""
+    ],
+    "decision": null,
+    "rationale": null
+  },
+  {
+    "source": "console.js",
+    "upstream_module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10060,
+      10061
+    ],
+    "fork_range": [
+      13562,
+      13571
+    ],
+    "reason": "no verified context: upstream rewrote the surrounding code",
+    "symbol": "provider",
+    "fork_region": [
+      "    const provider = (searchCap.providers || []).find(p => p.id === providerId);",
+      "    const isSearxng = providerId === 'searxng';",
+      "    // SearXNG holds an instance URL (echoed back verbatim in url_masked); the",
+      "    // rest hold a masked API key. Resolve whichever applies as the field value.",
+      "    let masked;",
+      "    if (isSearxng) {",
+      "        masked = (providerMeta && providerMeta.url_masked) || (provider && provider.url_masked) || '';",
+      "    } else {",
+      "        masked = (providerMeta && providerMeta.api_key_masked) || '';",
+      "        if (!masked && provider && provider.api_key_masked) masked = provider.api_key_masked;"
+    ],
+    "upstream_symbol_excerpt": [
+      "    const provider = (strategy === 'fixed' && providerDd) ? getDropdownValue(providerDd) : '';",
+      "",
+      "    fetch('/api/models', {",
+      "        method: 'POST',",
+      "        headers: { 'Content-Type': 'application/json' },",
+      "        body: JSON.stringify({",
+      "            action: 'set_capability',",
+      "            capability: 'search',",
+      "            strategy,",
+      "            provider,",
+      "        }),",
+      "    }).then(r => r.json()).then(data => {",
+      "        if (data.status === 'success') {",
+      "            showStatus('cap-search-status', 'models_save_success', false);",
+      "            setTimeout(() => loadModelsView({ preserveScroll: true }), 400);",
+      "        } else {",
+      "            console.log('[saveSearchCapability] Error:', data.message);",
+      "            showStatus('cap-search-status', 'models_save_failed', true);",
+      "        }",
+      "    }).catch(() => showStatus('cap-search-status', 'models_save_failed', true));",
+      "}",
+      "",
+      "",
+      "// Minimal bocha API-key modal. Reuses the existing vendor-modal markup",
+      "// helpers would be nice, but bocha isn't in PROVIDER_MODELS (it's not a",
+      "// model vendor), so we render a tiny dedicated dialog.",
+      "// For search vendors that hold their own keys.",
+      "",
+      "",
+      "function openSearchKeyModal(providerId, providerMeta) {",
+      "    const existing = document.getElementById('search-key-modal');",
+      "    if (existing) existing.remove();",
+      "",
+      "        const searchCap = (modelsState && modelsState.capabilities && modelsState.capabilities.search) || {};",
+      "    const prov = (searchCap.providers || []).find(p => p.id === providerId);",
+      "    const isSearxng = providerId === 'searxng';",
+      "    // SearXNG holds an instance URL (echoed back verbatim in url_masked); the",
+      "    // rest hold a masked API key. Resolve whichever applies as the field value.",
+      "    let masked;",
+      "    if (isSearxng) {",
+      "        masked = (providerMeta && providerMeta.url_masked) || (prov && prov.url_masked) || '';",
+      "    } else {",
+      "        masked = (providerMeta && providerMeta.api_key_masked) || '';",
+      "        if (!masked && prov && prov.api_key_masked) masked = prov.api_key_masked;",
+      "    }"
+    ],
+    "decision": null,
+    "rationale": null
+  },
+  {
+    "source": "console.js",
+    "upstream_module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10064,
+      10064
+    ],
+    "fork_range": [
+      13574,
+      13578
+    ],
+    "reason": "no verified context: upstream rewrote the surrounding code",
+    "symbol": "masked",
+    "fork_region": [
+      "    // anysearch/keenable can be on without a key (their keyless tier), and that",
+      "    // state still needs the clear button so it can be turned back off.",
+      "    const isAnonymous = (providerId === 'anysearch' || providerId === 'keenable')",
+      "        && !!((providerMeta && providerMeta.anonymous) || (provider && provider.anonymous));",
+      "    const clearBtnHtml = (hasKey || isAnonymous)"
+    ],
+    "upstream_symbol_excerpt": [
+      "        masked = (providerMeta && providerMeta.url_masked) || (prov && prov.url_masked) || '';",
+      "    } else {",
+      "        masked = (providerMeta && providerMeta.api_key_masked) || '';",
+      "        if (!masked && prov && prov.api_key_masked) masked = prov.api_key_masked;",
+      "    }",
+      "    // SearXNG URL is not masked, so it's safe to keep editable (not a sentinel).",
+      "    const hasKey = !!masked;",
+      "    const isAnonymous = (providerId === 'anysearch' || providerId === 'keenable')",
+      "        && !!((providerMeta && providerMeta.anonymous) || (prov && prov.anonymous));",
+      "    const clearBtnHtml = (hasKey || isAnonymous)",
+      "        ? `<button type=\"button\" id=\"search-key-clear\"",
+      "                  class=\"px-3 py-1.5 rounded-md text-xs text-red-500 dark:text-red-400",
+      "                         hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer transition-colors\">",
+      "              ${t('models_clear_credential')}",
+      "           </button>`",
+      "        : '';",
+      "    let descText = t('models_search_' + providerId + '_desc');",
+      "    if (providerId === 'anysearch') {",
+      "        const hint = currentLang === 'zh'",
+      "            ? '\uff08\u7559\u7a7a\u53ef\u542f\u7528\u533f\u540d\u6a21\u5f0f\uff0c\u6bcf\u65e5\u6709\u514d\u8d39\u989d\u5ea6\uff09'",
+      "            : '(Leave blank to enable anonymous mode with daily free quota)';",
+      "        descText = descText + ' ' + hint;",
+      "    }",
+      "    const modal = document.createElement('div');",
+      "    modal.id = 'search-key-modal';",
+      "    modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm';",
+      "    modal.innerHTML = `",
+      "        <div id=\"search-key-modal-card\"",
+      "             class=\"bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10",
+      "                    w-full max-w-md mx-4 p-6 shadow-xl\">",
+      "            <h3 class=\"text-lg font-semibold text-slate-800 dark:text-slate-100 mb-1\">${t('models_search_' + providerId + '_title')}</h3>",
+      "            <p class=\"text-xs text-slate-500 dark:text-slate-400 mb-4\">${descText}</p>",
+      "            <label class=\"block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5\">${providerId === 'searxng' ? 'Instance URL' : 'API Key'}</label>",
+      "            <input id=\"search-key-input\" type=\"text\" autocomplete=\"off\" data-1p-ignore data-lpignore=\"true\"",
+      "                   class=\"w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600",
+      "                          bg-slate-50 dark:bg-white/5 text-sm text-slate-800 dark:text-slate-100",
+      "                          focus:outline-none focus:border-primary-500 ${isSearxng ? '' : 'font-mono'} ${(hasKey && !isSearxng) ? 'cfg-key-masked' : ''}\"",
+      "                   value=\"${escapeHtml(masked)}\"",
+      "                   data-masked=\"${(hasKey && !isSearxng) ? '1' : ''}\"",
+      "                   placeholder=\"${isSearxng ? 'https://searxng.example.com' : 'sk-...'}\" />",
+      "            <div class=\"flex items-center justify-between gap-3 mt-5\">",
+      "                <div>${clearBtnHtml}</div>",
+      "                <div class=\"flex items-center gap-3\">",
+      "                    <button type=\"button\" onclick=\"document.getElementById('search-key-modal').remove()\"",
+      "                            class=\"px-3 py-1.5 rounded-md text-sm text-slate-600 dark:text-slate-300"
+    ],
+    "decision": null,
+    "rationale": null
+  },
+  {
+    "source": "console.js",
+    "upstream_module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10071,
+      10070
+    ],
+    "fork_range": [
+      13585,
+      13588
+    ],
+    "reason": "no verified context around the insertion point",
+    "symbol": "clearBtnHtml",
+    "fork_region": [
+      "    // Saving empty on anysearch turns its keyless tier on, so say so.",
+      "    const descText = providerId === 'anysearch'",
+      "        ? t('models_search_anysearch_desc') + ' ' + t('models_search_anysearch_anon_hint')",
+      "        : t('models_search_' + providerId + '_desc');"
+    ],
+    "upstream_symbol_excerpt": [
+      "    const clearBtnHtml = (hasKey || isAnonymous)",
+      "        ? `<button type=\"button\" id=\"search-key-clear\"",
+      "                  class=\"px-3 py-1.5 rounded-md text-xs text-red-500 dark:text-red-400",
+      "                         hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer transition-colors\">",
+      "              ${t('models_clear_credential')}",
+      "           </button>`",
+      "        : '';",
+      "    let descText = t('models_search_' + providerId + '_desc');",
+      "    if (providerId === 'anysearch') {",
+      "        const hint = currentLang === 'zh'",
+      "            ? '\uff08\u7559\u7a7a\u53ef\u542f\u7528\u533f\u540d\u6a21\u5f0f\uff0c\u6bcf\u65e5\u6709\u514d\u8d39\u989d\u5ea6\uff09'",
+      "            : '(Leave blank to enable anonymous mode with daily free quota)';",
+      "        descText = descText + ' ' + hint;",
+      "    }",
+      "    const modal = document.createElement('div');",
+      "    modal.id = 'search-key-modal';",
+      "    modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm';",
+      "    modal.innerHTML = `",
+      "        <div id=\"search-key-modal-card\"",
+      "             class=\"bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10",
+      "                    w-full max-w-md mx-4 p-6 shadow-xl\">",
+      "            <h3 class=\"text-lg font-semibold text-slate-800 dark:text-slate-100 mb-1\">${t('models_search_' + providerId + '_title')}</h3>",
+      "            <p class=\"text-xs text-slate-500 dark:text-slate-400 mb-4\">${descText}</p>",
+      "            <label class=\"block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5\">${providerId === 'searxng' ? 'Instance URL' : 'API Key'}</label>",
+      "            <input id=\"search-key-input\" type=\"text\" autocomplete=\"off\" data-1p-ignore data-lpignore=\"true\"",
+      "                   class=\"w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600",
+      "                          bg-slate-50 dark:bg-white/5 text-sm text-slate-800 dark:text-slate-100",
+      "                          focus:outline-none focus:border-primary-500 ${isSearxng ? '' : 'font-mono'} ${(hasKey && !isSearxng) ? 'cfg-key-masked' : ''}\"",
+      "                   value=\"${escapeHtml(masked)}\"",
+      "                   data-masked=\"${(hasKey && !isSearxng) ? '1' : ''}\"",
+      "                   placeholder=\"${isSearxng ? 'https://searxng.example.com' : 'sk-...'}\" />",
+      "            <div class=\"flex items-center justify-between gap-3 mt-5\">",
+      "                <div>${clearBtnHtml}</div>",
+      "                <div class=\"flex items-center gap-3\">",
+      "                    <button type=\"button\" onclick=\"document.getElementById('search-key-modal').remove()\"",
+      "                            class=\"px-3 py-1.5 rounded-md text-sm text-slate-600 dark:text-slate-300",
+      "                                   hover:bg-slate-100 dark:hover:bg-white/5 transition-colors\">",
+      "                        ${t('cancel')}",
+      "                    </button>",
+      "                    <button type=\"button\" onclick=\"_saveSearchKey('${providerId}')\"",
+      "                            class=\"px-4 py-1.5 rounded-md bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium",
+      "                                   cursor-pointer transition-colors\">",
+      "                        ${t('save')}",
+      "                    </button>",
+      "                </div>"
+    ],
+    "decision": null,
+    "rationale": null
+  },
+  {
+    "source": "console.js",
+    "upstream_module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10080,
+      10081
+    ],
+    "fork_range": [
+      13598,
+      13599
+    ],
+    "reason": "no verified context: upstream rewrote the surrounding code",
+    "symbol": "clearBtnHtml",
+    "fork_region": [
+      "            <p class=\"text-xs text-slate-500 dark:text-slate-400 mb-4\">${descText}</p>",
+      "            <label class=\"block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5\">${isSearxng ? 'Instance URL' : 'API Key'}</label>"
+    ],
+    "upstream_symbol_excerpt": [
+      "    const clearBtnHtml = (hasKey || isAnonymous)",
+      "        ? `<button type=\"button\" id=\"search-key-clear\"",
+      "                  class=\"px-3 py-1.5 rounded-md text-xs text-red-500 dark:text-red-400",
+      "                         hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer transition-colors\">",
+      "              ${t('models_clear_credential')}",
+      "           </button>`",
+      "        : '';",
+      "    let descText = t('models_search_' + providerId + '_desc');",
+      "    if (providerId === 'anysearch') {",
+      "        const hint = currentLang === 'zh'",
+      "            ? '\uff08\u7559\u7a7a\u53ef\u542f\u7528\u533f\u540d\u6a21\u5f0f\uff0c\u6bcf\u65e5\u6709\u514d\u8d39\u989d\u5ea6\uff09'",
+      "            : '(Leave blank to enable anonymous mode with daily free quota)';",
+      "        descText = descText + ' ' + hint;",
+      "    }",
+      "    const modal = document.createElement('div');",
+      "    modal.id = 'search-key-modal';",
+      "    modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm';",
+      "    modal.innerHTML = `",
+      "        <div id=\"search-key-modal-card\"",
+      "             class=\"bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10",
+      "                    w-full max-w-md mx-4 p-6 shadow-xl\">",
+      "            <h3 class=\"text-lg font-semibold text-slate-800 dark:text-slate-100 mb-1\">${t('models_search_' + providerId + '_title')}</h3>",
+      "            <p class=\"text-xs text-slate-500 dark:text-slate-400 mb-4\">${descText}</p>",
+      "            <label class=\"block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5\">${providerId === 'searxng' ? 'Instance URL' : 'API Key'}</label>",
+      "            <input id=\"search-key-input\" type=\"text\" autocomplete=\"off\" data-1p-ignore data-lpignore=\"true\"",
+      "                   class=\"w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600",
+      "                          bg-slate-50 dark:bg-white/5 text-sm text-slate-800 dark:text-slate-100",
+      "                          focus:outline-none focus:border-primary-500 ${isSearxng ? '' : 'font-mono'} ${(hasKey && !isSearxng) ? 'cfg-key-masked' : ''}\"",
+      "                   value=\"${escapeHtml(masked)}\"",
+      "                   data-masked=\"${(hasKey && !isSearxng) ? '1' : ''}\"",
+      "                   placeholder=\"${isSearxng ? 'https://searxng.example.com' : 'sk-...'}\" />",
+      "            <div class=\"flex items-center justify-between gap-3 mt-5\">",
+      "                <div>${clearBtnHtml}</div>",
+      "                <div class=\"flex items-center gap-3\">",
+      "                    <button type=\"button\" onclick=\"document.getElementById('search-key-modal').remove()\"",
+      "                            class=\"px-3 py-1.5 rounded-md text-sm text-slate-600 dark:text-slate-300",
+      "                                   hover:bg-slate-100 dark:hover:bg-white/5 transition-colors\">",
+      "                        ${t('cancel')}",
+      "                    </button>",
+      "                    <button type=\"button\" onclick=\"_saveSearchKey('${providerId}')\"",
+      "                            class=\"px-4 py-1.5 rounded-md bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium",
+      "                                   cursor-pointer transition-colors\">",
+      "                        ${t('save')}",
+      "                    </button>",
+      "                </div>"
+    ],
+    "decision": null,
+    "rationale": null
+  },
+  {
+    "source": "console.js",
+    "upstream_module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10085,
+      10085
+    ],
+    "fork_range": [
+      13603,
+      13603
+    ],
+    "reason": "no verified context: upstream rewrote the surrounding code",
+    "symbol": "clearBtnHtml",
+    "fork_region": [
+      "                          focus:outline-none focus:border-primary-500 ${isSearxng ? '' : 'font-mono'} ${(hasKey && !isSearxng) ? 'cfg-key-masked' : ''}\""
+    ],
+    "upstream_symbol_excerpt": [
+      "    const clearBtnHtml = (hasKey || isAnonymous)",
+      "        ? `<button type=\"button\" id=\"search-key-clear\"",
+      "                  class=\"px-3 py-1.5 rounded-md text-xs text-red-500 dark:text-red-400",
+      "                         hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer transition-colors\">",
+      "              ${t('models_clear_credential')}",
+      "           </button>`",
+      "        : '';",
+      "    let descText = t('models_search_' + providerId + '_desc');",
+      "    if (providerId === 'anysearch') {",
+      "        const hint = currentLang === 'zh'",
+      "            ? '\uff08\u7559\u7a7a\u53ef\u542f\u7528\u533f\u540d\u6a21\u5f0f\uff0c\u6bcf\u65e5\u6709\u514d\u8d39\u989d\u5ea6\uff09'",
+      "            : '(Leave blank to enable anonymous mode with daily free quota)';",
+      "        descText = descText + ' ' + hint;",
+      "    }",
+      "    const modal = document.createElement('div');",
+      "    modal.id = 'search-key-modal';",
+      "    modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm';",
+      "    modal.innerHTML = `",
+      "        <div id=\"search-key-modal-card\"",
+      "             class=\"bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10",
+      "                    w-full max-w-md mx-4 p-6 shadow-xl\">",
+      "            <h3 class=\"text-lg font-semibold text-slate-800 dark:text-slate-100 mb-1\">${t('models_search_' + providerId + '_title')}</h3>",
+      "            <p class=\"text-xs text-slate-500 dark:text-slate-400 mb-4\">${descText}</p>",
+      "            <label class=\"block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5\">${providerId === 'searxng' ? 'Instance URL' : 'API Key'}</label>",
+      "            <input id=\"search-key-input\" type=\"text\" autocomplete=\"off\" data-1p-ignore data-lpignore=\"true\"",
+      "                   class=\"w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600",
+      "                          bg-slate-50 dark:bg-white/5 text-sm text-slate-800 dark:text-slate-100",
+      "                          focus:outline-none focus:border-primary-500 ${isSearxng ? '' : 'font-mono'} ${(hasKey && !isSearxng) ? 'cfg-key-masked' : ''}\"",
+      "                   value=\"${escapeHtml(masked)}\"",
+      "                   data-masked=\"${(hasKey && !isSearxng) ? '1' : ''}\"",
+      "                   placeholder=\"${isSearxng ? 'https://searxng.example.com' : 'sk-...'}\" />",
+      "            <div class=\"flex items-center justify-between gap-3 mt-5\">",
+      "                <div>${clearBtnHtml}</div>",
+      "                <div class=\"flex items-center gap-3\">",
+      "                    <button type=\"button\" onclick=\"document.getElementById('search-key-modal').remove()\"",
+      "                            class=\"px-3 py-1.5 rounded-md text-sm text-slate-600 dark:text-slate-300",
+      "                                   hover:bg-slate-100 dark:hover:bg-white/5 transition-colors\">",
+      "                        ${t('cancel')}",
+      "                    </button>",
+      "                    <button type=\"button\" onclick=\"_saveSearchKey('${providerId}')\"",
+      "                            class=\"px-4 py-1.5 rounded-md bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium",
+      "                                   cursor-pointer transition-colors\">",
+      "                        ${t('save')}",
+      "                    </button>",
+      "                </div>"
+    ],
+    "decision": null,
+    "rationale": null
+  },
+  {
+    "source": "console.js",
+    "upstream_module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10087,
+      10088
+    ],
+    "fork_range": [
+      13605,
+      13606
+    ],
+    "reason": "no verified context: upstream rewrote the surrounding code",
+    "symbol": "clearBtnHtml",
+    "fork_region": [
+      "                   data-masked=\"${(hasKey && !isSearxng) ? '1' : ''}\"",
+      "                   placeholder=\"${isSearxng ? 'https://searxng.example.com' : 'sk-...'}\" />"
+    ],
+    "upstream_symbol_excerpt": [
+      "    const clearBtnHtml = (hasKey || isAnonymous)",
+      "        ? `<button type=\"button\" id=\"search-key-clear\"",
+      "                  class=\"px-3 py-1.5 rounded-md text-xs text-red-500 dark:text-red-400",
+      "                         hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer transition-colors\">",
+      "              ${t('models_clear_credential')}",
+      "           </button>`",
+      "        : '';",
+      "    let descText = t('models_search_' + providerId + '_desc');",
+      "    if (providerId === 'anysearch') {",
+      "        const hint = currentLang === 'zh'",
+      "            ? '\uff08\u7559\u7a7a\u53ef\u542f\u7528\u533f\u540d\u6a21\u5f0f\uff0c\u6bcf\u65e5\u6709\u514d\u8d39\u989d\u5ea6\uff09'",
+      "            : '(Leave blank to enable anonymous mode with daily free quota)';",
+      "        descText = descText + ' ' + hint;",
+      "    }",
+      "    const modal = document.createElement('div');",
+      "    modal.id = 'search-key-modal';",
+      "    modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm';",
+      "    modal.innerHTML = `",
+      "        <div id=\"search-key-modal-card\"",
+      "             class=\"bg-white dark:bg-[#1A1A1A] rounded-xl border border-slate-200 dark:border-white/10",
+      "                    w-full max-w-md mx-4 p-6 shadow-xl\">",
+      "            <h3 class=\"text-lg font-semibold text-slate-800 dark:text-slate-100 mb-1\">${t('models_search_' + providerId + '_title')}</h3>",
+      "            <p class=\"text-xs text-slate-500 dark:text-slate-400 mb-4\">${descText}</p>",
+      "            <label class=\"block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5\">${providerId === 'searxng' ? 'Instance URL' : 'API Key'}</label>",
+      "            <input id=\"search-key-input\" type=\"text\" autocomplete=\"off\" data-1p-ignore data-lpignore=\"true\"",
+      "                   class=\"w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-600",
+      "                          bg-slate-50 dark:bg-white/5 text-sm text-slate-800 dark:text-slate-100",
+      "                          focus:outline-none focus:border-primary-500 ${isSearxng ? '' : 'font-mono'} ${(hasKey && !isSearxng) ? 'cfg-key-masked' : ''}\"",
+      "                   value=\"${escapeHtml(masked)}\"",
+      "                   data-masked=\"${(hasKey && !isSearxng) ? '1' : ''}\"",
+      "                   placeholder=\"${isSearxng ? 'https://searxng.example.com' : 'sk-...'}\" />",
+      "            <div class=\"flex items-center justify-between gap-3 mt-5\">",
+      "                <div>${clearBtnHtml}</div>",
+      "                <div class=\"flex items-center gap-3\">",
+      "                    <button type=\"button\" onclick=\"document.getElementById('search-key-modal').remove()\"",
+      "                            class=\"px-3 py-1.5 rounded-md text-sm text-slate-600 dark:text-slate-300",
+      "                                   hover:bg-slate-100 dark:hover:bg-white/5 transition-colors\">",
+      "                        ${t('cancel')}",
+      "                    </button>",
+      "                    <button type=\"button\" onclick=\"_saveSearchKey('${providerId}')\"",
+      "                            class=\"px-4 py-1.5 rounded-md bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium",
+      "                                   cursor-pointer transition-colors\">",
+      "                        ${t('save')}",
+      "                    </button>",
+      "                </div>"
+    ],
+    "decision": null,
+    "rationale": null
+  },
+  {
+    "source": "console.js",
+    "upstream_module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10151,
+      10150
+    ],
+    "fork_range": [
+      13669,
+      13691
+    ],
+    "reason": "no verified context around the insertion point",
+    "symbol": "_saveSearchKey",
+    "fork_region": [
+      "",
+      "    // anysearch and keenable hold a key *or* run on their keyless tier: saving",
+      "    // with an empty key is what turns the anonymous mode on.",
+      "    if (providerId === 'anysearch' || providerId === 'keenable') {",
+      "        _postSearchCredential({",
+      "            action: 'set_search_credential',",
+      "            provider: providerId,",
+      "            api_key: apiKey,",
+      "            anonymous: !apiKey,",
+      "        });",
+      "        return;",
+      "    }",
+      "",
+      "    // SearXNG is addressed by an instance URL rather than authenticated by a key.",
+      "    if (providerId === 'searxng') {",
+      "        if (!apiKey) {",
+      "            input.focus();  // empty is a no-op; the clear button empties the URL",
+      "            return;",
+      "        }",
+      "        _postSearchCredential({ action: 'set_search_credential', provider: providerId, url: apiKey });",
+      "        return;",
+      "    }",
+      ""
+    ],
+    "upstream_symbol_excerpt": [
+      "function _saveSearchKey(providerId) {",
+      "    const input = document.getElementById('search-key-input');",
+      "    if (!input) return;",
+      "    if (input.dataset.masked === '1') {",
+      "        const modal = document.getElementById('search-key-modal');",
+      "        if (modal) modal.remove();",
+      "        return;",
+      "    }",
+      "    const apiKey = input.value.trim();",
+      "",
+      "    // anysearch and keenable: saving with an empty key enables the anonymous tier.",
+      "    if (providerId === 'anysearch' || providerId === 'keenable') {",
+      "    fetch('/api/models', {",
+      "        method: 'POST',",
+      "        headers: { 'Content-Type': 'application/json' },",
+      "        body: JSON.stringify({",
+      "            action: 'set_search_credential',",
+      "            provider: providerId,",
+      "            api_key: apiKey,",
+      "            anonymous: !apiKey, // \u2190 \u5b57\u6bb5\u540d\u5fc5\u987b\u662f anonymous\uff1b\u7559\u7a7a\u4fdd\u5b58 = \u542f\u7528\u533f\u540d\uff08\u8868\u7b2c 2 \u884c\uff09",
+      "        }),",
+      "    }).then(r => r.json()).then(data => {",
+      "        if (data.status === 'success') {",
+      "            const modal = document.getElementById('search-key-modal');",
+      "            if (modal) modal.remove();",
+      "            loadModelsView({ preserveScroll: true });",
+      "        }",
+      "    });",
+      "    return;",
+      "}",
+      "",
+      "    if (providerId === 'searxng') {",
+      "        // SearXNG uses an instance URL, not an API key. Empty input is a no-op",
+      "        // here (use the clear button to remove it).",
+      "    if (!apiKey) {",
+      "        input.focus();",
+      "        return;",
+      "    }",
+      "    fetch('/api/models', {",
+      "        method: 'POST',",
+      "        headers: { 'Content-Type': 'application/json' },",
+      "            body: JSON.stringify({",
+      "                action: 'set_search_credential',",
+      "                provider: providerId,",
+      "                url: apiKey, // reuse the input value as the URL"
+    ],
+    "decision": null,
+    "rationale": null
+  },
+  {
+    "source": "console.js",
+    "upstream_module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      10169,
+      10179
+    ],
+    "fork_range": [
+      13715,
+      13721
+    ],
+    "reason": "no verified context: upstream rewrote the surrounding code",
+    "symbol": "_clearSearchKey",
+    "fork_region": [
+      "    // SearXNG is cleared by emptying its instance URL, not an API key. For",
+      "    // anysearch/keenable an empty key with `anonymous` absent also turns the",
+      "    // keyless tier back off, which is what the clear button means there.",
+      "    const body = providerId === 'searxng'",
+      "        ? { action: 'set_search_credential', provider: providerId, url: '' }",
+      "        : { action: 'set_search_credential', provider: providerId, api_key: '' };",
+      "    _postSearchCredential(body);"
+    ],
+    "upstream_symbol_excerpt": [
+      "function _clearSearchKey(providerId) {",
+      "    // SearXNG is cleared by emptying its instance URL, not an API key.",
+      "    const payload = (providerId === 'searxng')",
+      "        ? { action: 'set_search_credential', provider: providerId, url: '' }",
+      "        : { action: 'set_search_credential', provider: providerId, api_key: '' };",
+      "    fetch('/api/models', {",
+      "        method: 'POST',",
+      "        headers: { 'Content-Type': 'application/json' },",
+      "        body: JSON.stringify(payload),",
+      "    }).then(r => r.json()).then(data => {",
+      "        if (data.status === 'success') {",
+      "            const modal = document.getElementById('search-key-modal');",
+      "            if (modal) modal.remove();",
+      "            loadModelsView({ preserveScroll: true });",
+      "        }",
+      "    });",
+      "}",
+      "",
+      "function renderCapabilityBody(def, cap, body) {",
+      "    if (def.id === 'search') {",
+      "        renderSearchCapability(def, cap, body);",
+      "        return;",
+      "    }",
+      "",
+      "    // Editable cards: provider dropdown + (optional) model dropdown + save row",
+      "    const providerOpts = buildCapabilityProviderOptions(def, cap);",
+      "    const providerHtml = `",
+      "        <div>",
+      "            <label class=\"block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5\">${t('models_provider')}</label>",
+      "            <div id=\"cap-${def.id}-provider\" class=\"cfg-dropdown\" tabindex=\"0\">",
+      "                <div class=\"cfg-dropdown-selected\">",
+      "                    <span class=\"cfg-dropdown-text\">--</span>",
+      "                    <i class=\"fas fa-chevron-down cfg-dropdown-arrow\"></i>",
+      "                </div>",
+      "                <div class=\"cfg-dropdown-menu\"></div>",
+      "            </div>",
+      "        </div>`;",
+      "",
+      "    // The model-picker container is always emitted so the provider-change",
+      "    // handler can show/hide it; for `auto` capabilities it starts hidden and",
+      "    // gets toggled by setCapabilityModelPickerVisible.",
+      "    const modelHtml = def.needsModel ? `",
+      "        <div id=\"cap-${def.id}-model-wrap\">",
+      "            <label class=\"block text-sm font-medium text-slate-600 dark:text-slate-400 mb-1.5\">${t('models_model')}</label>",
+      "            <div id=\"cap-${def.id}-model\" class=\"cfg-dropdown\" tabindex=\"0\">"
     ],
     "decision": null,
     "rationale": null
@@ -7637,8 +8413,8 @@
       12629
     ],
     "fork_range": [
-      17078,
-      17078
+      17123,
+      17123
     ],
     "reason": "no verified context: upstream rewrote the surrounding code",
     "symbol": "runKey",
@@ -7657,8 +8433,8 @@
       12726
     ],
     "fork_range": [
-      17205,
-      17205
+      17250,
+      17250
     ],
     "reason": "splice left the module unparseable",
     "symbol": "owner",
@@ -7723,8 +8499,8 @@
       12729
     ],
     "fork_range": [
-      17207,
-      17208
+      17252,
+      17253
     ],
     "reason": "splice left the module unparseable",
     "symbol": "owner",
@@ -7790,8 +8566,8 @@
       12732
     ],
     "fork_range": [
-      17211,
-      17211
+      17256,
+      17256
     ],
     "reason": "splice left the module unparseable",
     "symbol": "owner",

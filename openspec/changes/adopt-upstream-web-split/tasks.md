@@ -120,6 +120,7 @@
 - [x] 4.4b 生成人工裁定工作清单与独立复核（不得静默丢弃）
   - `build_frontend_adjudication.py` → `frontend_adjudication.json` / `.md`：98 处（JS 87 + CSS 8 + 跨边界 3），跨 23 个模块；47 处附上游同名符号内容
   - `verify_frontend_port.py` 以 **fork 独有行**为准核对：`console.js` 5222 行、`console.css` 1361 行，共 6583 行**零未交代**（3505 已入产出，3078 在清单上）；并自行复跑 `node --check`，不依赖移植器自述
+  - **基线已在移交后刷新**：上述 98 处 / 6583 行是本 change 执行 4.4a/4.4b 时（`fork=4cd829ff`）的实测值。收口提交 `c6eb33db` 再次改动了 `channel/web/static/js/console.js`（三个搜索提供方的凭据弹窗接线），故承接方以 `fork=c6eb33db` 重跑后的输入是 **109 处（JS 98 + CSS 8 + 跨边界 3）/ 6616 行**，命令与三元组见 `adopt-upstream-web-frontend-split` 的 `evidence/inherited-state.md`「基线刷新记录」。重跑必须显式指定三个 ref（默认 `FORK_FORK_REF=HEAD` 会随 HEAD 漂移）
   - **已否决「自动整函数移植」**：对 87 处 JS 中的 56 处可机械适用，但会整体覆盖上游同名函数、静默丢弃上游在该函数内的改动，正是规范禁止的失血方向；反向取上游则丢弃 fork 定制。故每处必须人工裁定
   - 证据 `evidence/09-frontend-port-verification.md`
 - [~] 4.4c **已移交 `adopt-upstream-web-frontend-split`（任务 2.x）** 逐处裁定 98 个冲突区域（`frontend_adjudication.md`），每处记录 `fork` / `upstream` / `merged` 与理由；裁定结果并入移植器输入后重跑，并以 `verify_frontend_port.py` 复核零未交代
@@ -129,7 +130,7 @@
 - [~] 4.4e **已移交 `adopt-upstream-web-frontend-split`（任务 4.x）** 以 `node --check` 校验全部产出模块，并以 `tools/check-load-order.mjs` 校验 fork 实际装载顺序（装载顺序须在 4.4 覆盖映射接入后才有意义）
 - [~] 4.4f **已移交 `adopt-upstream-web-frontend-split`（任务 4.3）** 处置 `static/js/doc-editor.js`、`workspace.js` 与上游 `assets/js/doc-editor.js` 的重叠：若为上游文件的 fork 版则纳入覆盖映射，而非留在 fork 专有清单
 - [~] 4.4g **已移交 `adopt-upstream-web-frontend-split`（任务 5.x）** 删除 `console.js` / `console.css`，不留兼容层；确认无上游视图模块（`js/views/*.js`、`js/core/*.js`、`js/chat/*.js`、`css/*.css`）被 fork 原地编辑
-- [~] 4.4h **已移交 `adopt-upstream-web-frontend-split`（任务 5.1）** **删除前置条件**：4.4c 的 98 处裁定全部完成。在此之前不得删除 `console.js` / `console.css`，合并也不得对该 `DU` 按删除处置（否则丢弃未迁出的 fork 前端）
+- [~] 4.4h **已移交 `adopt-upstream-web-frontend-split`（任务 5.1）** **删除前置条件**：4.4c 的待裁定区域全部完成（移交时的 98 处已在其内刷新为 109 处，见上方 4.4a 备注）。在此之前不得删除 `console.js` / `console.css`，合并也不得对该 `DU` 按删除处置（否则丢弃未迁出的 fork 前端）
 - [~] 4.5 **已移交 `adopt-upstream-web-frontend-split`（任务 6.x）** 运行 `.cjs` 与浏览器验收：`node --test tests/test_fork_fragments.cjs`、`node --test tests/test_execution_permission_ui.cjs`，以及登录、上下文切换、流式请求、上传回读、下载预览
 - [x] 4.6 为 D4 的上游模块集合与 fork 专有符号集合编写结构不变量校验，且可独立运行并在注入违规时失败
   - `scripts/check-web-module-seams.py`（可 `--root` 指向任意树，故测试能对副本注入违规）：显式声明上游模块集合（`channel/web/api/**`、`core/**`、`web_channel.py`、`README.md`，共 22 个），并报告「位于上游区域却不在声明集合内」的模块——上游新增模块时该集合必须被更新，而不是被静默吸收

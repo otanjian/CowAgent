@@ -140,7 +140,7 @@
 
 **理由**：D5 的备选③ 已把这条路径写成合法，并附条件——「必须显式改为 `keep-fork` 基线决策并逐条列出被丢弃的上游增量，不得默认发生」。该条件成立：基线有显式登记，增量有逐条清单。而继续在前端未迁移的情况下阻塞交付，代价是把已解冲突、回归已绿（30 失败 / 5735 通过，与合并候选一致）、路由覆盖校验通过的合并挂在一次纯结构改造之后；保留单体不改变合并后的线上行为——控制台逐字节相同，且 `keep-fork` 使该决定可回退。
 
-**代价（显式登记，非默认）**：合并后一段时间内不在 fork 控制台生效的上游前端增量：① 拆分 shell（`chat.html` 结构与脚本顺序）；② 地址栏路由词汇（`#/…`）；③ `assets/js|css/**` 按 mtime 的 `?v=` 版本戳；④ 一键更新菜单（`id="update-menu"`、`/api/update/check|start`，该 API 在本 change 中也未路由，见 `evidence/21` §E）；⑤ 上游落在拆分模块内的功能与修复，其中已确认为修复的有 `views/knowledge.js` 的知识库空状态（`cbe14fd1` / `d081f65d`）。⑤ 的上界由移植产出界定：每个 fork 模块 = 上游模块 + fork 的 hunk，被丢弃的即 98 处待裁定区域，清单在 `frontend_adjudication.md`。
+**代价（显式登记，非默认）**：合并后一段时间内不在 fork 控制台生效的上游前端增量：① 拆分 shell（`chat.html` 结构与脚本顺序）；② 地址栏路由词汇（`#/…`）；③ `assets/js|css/**` 按 mtime 的 `?v=` 版本戳；④ 一键更新菜单（`id="update-menu"`、`/api/update/check|start`，该 API 在本 change 中也未路由，见 `evidence/21` §E）；⑤ 上游落在拆分模块内的功能与修复，其中已确认为修复的有 `views/knowledge.js` 的知识库空状态（`cbe14fd1` / `d081f65d`）。⑤ 的上界由移植产出界定：每个 fork 模块 = 上游模块 + fork 的 hunk，被丢弃的即待裁定区域（移交时 98 处，刷新到收口提交 `c6eb33db` 后为 109 处，见 `adopt-upstream-web-frontend-split` 的 `evidence/inherited-state.md`），清单在 `frontend_adjudication.md`。
 
 **随之调整**：`specs/web-console-module-seams` 不再包含「前端采用模块化布局」一条（移入前端 change 的 capability），该 spec 的 purpose 与「布局与接缝约束可执行校验」一条同步收窄为后端；本 change 的阶段 3 门槛、风险条目与 Open Questions 中前端相关项随任务一并移交，见 `tasks.md` 第 4 节的移交说明。
 
