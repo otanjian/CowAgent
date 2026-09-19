@@ -40,8 +40,23 @@ import sys
 
 DEFAULT_CHANGE = "fork-decoupling-and-tenant-hardening"
 #: Dispositions ``scripts/sync_report.py`` understands; anything else is a typo
-#: that would silently drop the file from the coverage report.
-KNOWN_DISPOSITIONS = {"keep-deletion", "keep-fork", "merge-docs"}
+#: that would silently drop the file from the coverage report. The vocabulary was
+#: extended with the sync baseline (D7 of ``adopt-upstream-web-split``) to cover
+#: the cases the original three could not name:
+#:
+#: * ``merge``         both sides' changes are carried in one file, so neither
+#:                     "keep one side" nor "docs only" describes the result;
+#: * ``retarget``      the file is a fork test the merge silently re-pointed at
+#:                     upstream's split modules; the fork's stack is the target;
+#: * ``take-deletion`` upstream deleted the file and the fork's edit is moot --
+#:                     the mirror of ``keep-deletion``, and kept distinct from it
+#:                     precisely so it does *not* join DELIBERATE_REMOVALS.
+KNOWN_DISPOSITIONS = {"keep-deletion", "keep-fork", "merge-docs",
+                      "merge", "retarget", "take-deletion"}
+#: A seam reference names the module that owns the seam (``seam:scheduler``),
+#: or -- in baselines predating the module naming -- the task number that does
+#: (``seam:8.3``). Both forms are accepted; only a bare ``seam:`` is malformed.
+SEAM_REFERENCE = re.compile(r"seam:[A-Za-z0-9][A-Za-z0-9._-]*$")
 #: Delta operations this checker knows how to verify.
 KNOWN_OPERATIONS = {"ADDED", "MODIFIED", "REMOVED"}
 
@@ -216,7 +231,7 @@ def check_conflict_coverage(root: pathlib.Path, baseline: pathlib.Path,
     for _hunks, _status, path, disposition in ((r[0], r[1], r[2], r[3])
                                                for r in rows):
         if disposition.startswith("seam:"):
-            if not re.match(r"seam:[0-9]", disposition):
+            if not SEAM_REFERENCE.match(disposition):
                 problems.append(f"{path}: malformed seam reference {disposition!r}")
             elif path not in body:
                 problems.append(

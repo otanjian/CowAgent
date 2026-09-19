@@ -1,0 +1,17 @@
+# Regenerated output, deliberately not committed.
+#
+# ``fork-frontend/`` is the module tree ``scripts/migration/port_frontend.py``
+# produces from the fork's own ``console.js`` / ``console.css``. Committing it
+# would add ~1 MB of output that is reproducible byte-for-byte from the script
+# (that determinism is itself a requirement), and its whitespace is inherited
+# verbatim from the monolith — "cleaning" it would break the verbatim-slice
+# guarantee the port relies on.
+#
+# Regenerate with:
+#   FORK_MIGRATION_WORKDIR=openspec/changes/adopt-upstream-web-frontend-split/evidence \
+#     ./.venv/bin/python scripts/migration/port_frontend.py
+#
+# What *is* committed alongside this file is the input to the adjudication --
+# the 98 hand-decision regions and the per-cluster worklist -- because the
+# deferred-increment claim is bounded by that list.
+fork-frontend/

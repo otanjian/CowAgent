@@ -110,6 +110,9 @@ that silently writes your git configuration is a surprise, not a convenience.)
    upstream moved). Do not silently drop a baseline entry.
 3. The five deliberate removals are re-confirmed, not re-applied blindly
    (`scripts/conflict-baseline.txt`, "Deliberate removals").
-4. `scripts/check-route-coverage.py` and the test suite pass (see §10 of the
-   change's `evidence.md` for the exact commands).
+4. `scripts/check-route-coverage.py`, `scripts/check-web-module-seams.py` and the
+   test suite pass (see §10 of the change's `evidence.md` for the exact
+   commands). The seam gate is the one that matters after an upstream merge:
+   it fails when a fork symbol has been written into an upstream module, which
+   is how the next sync turns back into a whole-file conflict.
 

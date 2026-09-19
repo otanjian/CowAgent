@@ -22,6 +22,13 @@
 #            retired `notarize-dmg.sh` and split the console monoliths, so the
 #            deletion/modification direction now has to be classified, not only
 #            "fork deleted / upstream modified".
+#   note     the front-end rows (`chat.html`, both console monoliths) stay
+#            `keep-fork` for this change and are migrated to CHG
+#            adopt-upstream-web-frontend-split (design D9 of this change): the
+#            merge ships the backend seam with the console byte-identical to the
+#            pre-merge one, and the front-end unit is closed by that change. The
+#            upstream front-end increments deliberately not served here are
+#            itemised in that change's evidence/deferred-upstream-frontend.md.
 #
 # Columns: hunks <TAB> status <TAB> path <TAB> disposition
 #   status: UU = both modified, DU = deleted by fork / modified upstream,
@@ -47,10 +54,10 @@
 1	UU	agent/tools/scheduler/task_store.py	merge	disjoint additions: fork revision/lease guards, upstream `_DescStr` sorter
 2	UU	app.py	merge	upstream `_migrate_conversations()` first (folds per-Agent stores), fork `_migrate_conversation_tenancy()` second (fills owner/tenant on the composed schema)
 2	UU	channel/channel_instances.py	merge	per hunk: adopt upstream `_CHANNEL_TYPE_LABELS` (D4b upstream region); keep-fork on the flat-credential bootstrap
-10	UU	channel/web/chat.html	keep-fork	Phase 3 unit: becomes upstream's shell + the server-side override map after 4.4c-4.4h (evidence/17)
+10	UU	channel/web/chat.html	keep-fork	Phase 3 unit, migrated to CHG adopt-upstream-web-frontend-split (task 1.x): becomes upstream's shell + the server-side override map there (evidence/17, D9)
 0	DU	channel/web/README.md	keep-deletion	re-decided: it documents *upstream's* entry module ("the URL table and nothing else: 77 routes"), which this fork's D8 entry module is not
-0	UD	channel/web/static/css/console.css	keep-fork	delete after Phase 3 (4.4h); never taken as a deletion while fork rules remain in it
-0	UD	channel/web/static/js/console.js	keep-fork	delete after Phase 3 (4.4h); never taken as a deletion while fork rules remain in it
+0	UD	channel/web/static/css/console.css	keep-fork	migrated to CHG adopt-upstream-web-frontend-split (task 5.x): deleted there after the 98 adjudications land; never taken as a deletion while fork rules remain in it (D9)
+0	UD	channel/web/static/js/console.js	keep-fork	migrated to CHG adopt-upstream-web-frontend-split (task 5.x): deleted there after the 98 adjudications land; never taken as a deletion while fork rules remain in it (D9)
 0	DU	channel/web/static/vendor/README.md	keep-deletion	the README decision (9.7) applies to vendored docs too
 3	UU	channel/web/web_channel.py	keep-fork	fork side is the D8 entry module carrying both `URLS`/`build_app()` and `_WEB_URLS`/`build_web_app()` (evidence/11)
 1	UU	config.py	merge	upstream `default_agent_name` / `agent_bindings` / context-token text + all of the fork's `personal_assistant_*` key groups

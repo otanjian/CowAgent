@@ -134,6 +134,16 @@
 
 **证据与代价**：见 `evidence/11-entry-module-composition.md`。该解析改动运行时装配而非仅内容，故须作为独立可评审提交落地，并配套跑路由覆盖校验与 `test_route_registry.py`、`test_upstream_core_seams.py`、`test_channel_signature_seam.py`、`test_http_policy.py` 及 §6.2 全量回归。
 
+### D9 — 前端迁移（原阶段 3）拆为独立 change，本 change 按 D5 备选③ 交付
+
+**决定**：本 change 交付「后端接缝 + 合并」，不再承担前端模块化迁移。前端迁移由新 change `adopt-upstream-web-frontend-split` 承接（capability `web-console-frontend-modules`）。`console.js` / `console.css` 与 `chat.html` 在本 change 内按 `keep-fork` 保留并继续服务；冲突基线对该 `UD` 行的处置写明「Phase 3 完成前不得按删除处置」，被延后的上游前端增量逐条记录在前端 change 的 `evidence/deferred-upstream-frontend.md`。
+
+**理由**：D5 的备选③ 已把这条路径写成合法，并附条件——「必须显式改为 `keep-fork` 基线决策并逐条列出被丢弃的上游增量，不得默认发生」。该条件成立：基线有显式登记，增量有逐条清单。而继续在前端未迁移的情况下阻塞交付，代价是把已解冲突、回归已绿（30 失败 / 5735 通过，与合并候选一致）、路由覆盖校验通过的合并挂在一次纯结构改造之后；保留单体不改变合并后的线上行为——控制台逐字节相同，且 `keep-fork` 使该决定可回退。
+
+**代价（显式登记，非默认）**：合并后一段时间内不在 fork 控制台生效的上游前端增量：① 拆分 shell（`chat.html` 结构与脚本顺序）；② 地址栏路由词汇（`#/…`）；③ `assets/js|css/**` 按 mtime 的 `?v=` 版本戳；④ 一键更新菜单（`id="update-menu"`、`/api/update/check|start`，该 API 在本 change 中也未路由，见 `evidence/21` §E）；⑤ 上游落在拆分模块内的功能与修复，其中已确认为修复的有 `views/knowledge.js` 的知识库空状态（`cbe14fd1` / `d081f65d`）。⑤ 的上界由移植产出界定：每个 fork 模块 = 上游模块 + fork 的 hunk，被丢弃的即 98 处待裁定区域，清单在 `frontend_adjudication.md`。
+
+**随之调整**：`specs/web-console-module-seams` 不再包含「前端采用模块化布局」一条（移入前端 change 的 capability），该 spec 的 purpose 与「布局与接缝约束可执行校验」一条同步收窄为后端；本 change 的阶段 3 门槛、风险条目与 Open Questions 中前端相关项随任务一并移交，见 `tasks.md` 第 4 节的移交说明。
+
 ## Risks / Trade-offs
 
 - [迁移期间行为漂移（授权判定在移动中语义改变）] → 迁移提交必须保持既有接缝测试与权限隔离测试通过（`test_identity_resource_authorization.py`、`test_http_policy.py`、`test_route_registry.py`、`test_upstream_core_seams.py`），并以「迁移前后同一请求的授权结果一致」为验收，而非仅「测试仍绿」。
@@ -159,9 +169,8 @@
 `git merge --no-ff --no-commit $MERGE_SOURCE_SHA`；`web_channel.py` 收敛为 URL 表 + `build_app()`，采用上游 `api/`+`core/`；逐项按基线处置冲突；`route_registry.py` 改为跨模块解析 handler 命名空间。
 门槛：45 处冲突全部解决且有登记依据；基础回归（规范 §6.2 全量）+ 路由覆盖通过；`test_no_resurrection_legacy_identity.py` 与漂移守护通过。
 
-**阶段 3 — 前端模块化迁移**
-采用上游 `static/js/{core,chat,views}`、`static/css/*`、`chat.html` shell 与 `templates/**`（全部不改动）；以 `scripts/migration/port_frontend.py` 生成 `static/js/fork/**`、`static/css/fork/**`，并由覆盖映射在服务端组装时取代对应上游模块（D5）；删除 `console.js` / `console.css`；`static/js/fragments.js` 的挂载语义保留。
-门槛：移植器可重跑且逐字节一致；`node --check` 全部通过；`node --test tests/test_fork_fragments.cjs`、`tests/test_execution_permission_ui.cjs` 通过；`tools/check-load-order.mjs` 通过；浏览器验收覆盖登录、上下文切换、流式请求与文件传输；`chat.html` 采用上游结构后 fork 片段仍装载；`static/js/fork/manifest.json` 漂移门禁可独立运行并在上游变更时失败。
+**阶段 3 — 前端模块化迁移（已移交 `adopt-upstream-web-frontend-split`，见 D9）**
+原阶段内容（采用上游 `static/js/{core,chat,views}`、`static/css/*`、`chat.html` shell 与 `templates/**`；生成 `static/js/fork/**`、`static/css/fork/**` 并经覆盖映射装载；删除 `console.js` / `console.css`；`manifest.json` 漂移门禁）连同其门槛整体移交该 change。本 change 不再以阶段 3 为交付前置；前端相关任务与风险条目已在该 change 的 `tasks.md` / `design.md` 中重建。
 
 **阶段 4 — 结构不变量落地与基线重生成**
 新增上游模块零 fork 分支的可执行校验（D4）；重新生成 `scripts/conflict-baseline.txt`，登记 24 处漂移与新的双向 `DU`。
@@ -176,5 +185,5 @@
 
 - fork 授权模块与新 fork handler 模块的**具体文件划分与命名**，在阶段 1 首个任务中按实际耦合度确定（不影响不变量判据——判据依赖 D4 的显式符号集合，而非文件划分）。**已定**：见 D2 —— `channel/web/fork/**` 包，`common.py`（共享管道）、`authorization.py`（授权 helper）、`handlers/<view>.py`（按上游 `api/` 视图划分的平行实现）。
 - `desktop/build/notarize-dmg.sh`（上游删除 / fork 修改）的最终处置，在阶段 2 按基线复核该 fork 修改是否仍必要；属 `DU` 登记项，不改变本方案结构。
-- `static/js/doc-editor.js`、`workspace.js` 与上游 `assets/js/doc-editor.js` 的关系：若它们实为上游文件的 fork 版，应纳入覆盖映射而非留在 fork 专有清单；在阶段 3 首个任务中判定。
-- `core/i18n.js` 的方向性异常（fork 净删 1295 行、增 79 行，翻译移至 `static/js/i18n/`）：该模块不可按「移植 diff」处理，需先阅读确认 fork 意图后再决定其在覆盖映射中的处置。
+- `static/js/doc-editor.js`、`workspace.js` 与上游 `assets/js/doc-editor.js` 的关系：若它们实为上游文件的 fork 版，应纳入覆盖映射而非留在 fork 专有清单。**已移交** `adopt-upstream-web-frontend-split`。
+- `core/i18n.js` 的方向性异常（fork 净删 1295 行、增 79 行，翻译移至 `static/js/i18n/`）：该模块不可按「移植 diff」处理。**已移交** `adopt-upstream-web-frontend-split`。

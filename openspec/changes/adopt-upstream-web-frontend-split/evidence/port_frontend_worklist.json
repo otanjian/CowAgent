@@ -1,0 +1,2075 @@
+{
+  "applied": {
+    "channel/web/static/js/fork/chat/composer-input.js": {
+      "upstream_path": "channel/web/static/js/chat/composer-input.js",
+      "applied": 1,
+      "skipped": 1
+    },
+    "channel/web/static/js/fork/chat/message-actions.js": {
+      "upstream_path": "channel/web/static/js/chat/message-actions.js",
+      "applied": 2,
+      "skipped": 0
+    },
+    "channel/web/static/js/fork/chat/new-chat.js": {
+      "upstream_path": "channel/web/static/js/chat/new-chat.js",
+      "applied": 11,
+      "skipped": 4
+    },
+    "channel/web/static/js/fork/chat/render.js": {
+      "upstream_path": "channel/web/static/js/chat/render.js",
+      "applied": 4,
+      "skipped": 4
+    },
+    "channel/web/static/js/fork/chat/send.js": {
+      "upstream_path": "channel/web/static/js/chat/send.js",
+      "applied": 10,
+      "skipped": 1
+    },
+    "channel/web/static/js/fork/chat/session-settings.js": {
+      "upstream_path": "channel/web/static/js/chat/session-settings.js",
+      "applied": 10,
+      "skipped": 2
+    },
+    "channel/web/static/js/fork/chat/state.js": {
+      "upstream_path": "channel/web/static/js/chat/state.js",
+      "applied": 9,
+      "skipped": 1
+    },
+    "channel/web/static/js/fork/chat/workspace-selector.js": {
+      "upstream_path": "channel/web/static/js/chat/workspace-selector.js",
+      "applied": 3,
+      "skipped": 0
+    },
+    "channel/web/static/js/fork/core/auth.js": {
+      "upstream_path": "channel/web/static/js/core/auth.js",
+      "applied": 5,
+      "skipped": 16
+    },
+    "channel/web/static/js/fork/core/i18n.js": {
+      "upstream_path": "channel/web/static/js/core/i18n.js",
+      "applied": 13,
+      "skipped": 6
+    },
+    "channel/web/static/js/fork/core/nav.js": {
+      "upstream_path": "channel/web/static/js/core/nav.js",
+      "applied": 19,
+      "skipped": 9
+    },
+    "channel/web/static/js/fork/core/notify.js": {
+      "upstream_path": "channel/web/static/js/core/notify.js",
+      "applied": 1,
+      "skipped": 0
+    },
+    "channel/web/static/js/fork/core/theme.js": {
+      "upstream_path": "channel/web/static/js/core/theme.js",
+      "applied": 2,
+      "skipped": 2
+    },
+    "channel/web/static/js/fork/core/version.js": {
+      "upstream_path": "channel/web/static/js/core/version.js",
+      "applied": 1,
+      "skipped": 2
+    },
+    "channel/web/static/js/fork/views/agents.js": {
+      "upstream_path": "channel/web/static/js/views/agents.js",
+      "applied": 50,
+      "skipped": 12
+    },
+    "channel/web/static/js/fork/views/channels-feishu.js": {
+      "upstream_path": "channel/web/static/js/views/channels-feishu.js",
+      "applied": 12,
+      "skipped": 2
+    },
+    "channel/web/static/js/fork/views/channels.js": {
+      "upstream_path": "channel/web/static/js/views/channels.js",
+      "applied": 3,
+      "skipped": 4
+    },
+    "channel/web/static/js/fork/views/config.js": {
+      "upstream_path": "channel/web/static/js/views/config.js",
+      "applied": 12,
+      "skipped": 4
+    },
+    "channel/web/static/js/fork/views/doc-viewers.js": {
+      "upstream_path": "channel/web/static/js/views/doc-viewers.js",
+      "applied": 9,
+      "skipped": 0
+    },
+    "channel/web/static/js/fork/views/knowledge.js": {
+      "upstream_path": "channel/web/static/js/views/knowledge.js",
+      "applied": 10,
+      "skipped": 0
+    },
+    "channel/web/static/js/fork/views/memory.js": {
+      "upstream_path": "channel/web/static/js/views/memory.js",
+      "applied": 1,
+      "skipped": 2
+    },
+    "channel/web/static/js/fork/views/models.js": {
+      "upstream_path": "channel/web/static/js/views/models.js",
+      "applied": 2,
+      "skipped": 0
+    },
+    "channel/web/static/js/fork/views/sessions.js": {
+      "upstream_path": "channel/web/static/js/views/sessions.js",
+      "applied": 62,
+      "skipped": 7
+    },
+    "channel/web/static/js/fork/views/skills.js": {
+      "upstream_path": "channel/web/static/js/views/skills.js",
+      "applied": 12,
+      "skipped": 4
+    },
+    "channel/web/static/js/fork/views/tasks.js": {
+      "upstream_path": "channel/web/static/js/views/tasks.js",
+      "applied": 11,
+      "skipped": 4
+    },
+    "channel/web/static/css/fork/agents.css": {
+      "upstream_path": "channel/web/static/css/agents.css",
+      "applied": 6,
+      "skipped": 2
+    },
+    "channel/web/static/css/fork/base.css": {
+      "upstream_path": "channel/web/static/css/base.css",
+      "applied": 1,
+      "skipped": 2
+    },
+    "channel/web/static/css/fork/chat.css": {
+      "upstream_path": "channel/web/static/css/chat.css",
+      "applied": 3,
+      "skipped": 0
+    },
+    "channel/web/static/css/fork/components.css": {
+      "upstream_path": "channel/web/static/css/components.css",
+      "applied": 1,
+      "skipped": 0
+    },
+    "channel/web/static/css/fork/sessions.css": {
+      "upstream_path": "channel/web/static/css/sessions.css",
+      "applied": 60,
+      "skipped": 4
+    }
+  },
+  "skipped": [
+    {
+      "source": "console.js",
+      "upstream_module": null,
+      "base_range": [
+        3037,
+        3043
+      ],
+      "added": 3,
+      "removed": 7,
+      "reason": "fork edit crosses an upstream module boundary",
+      "modules": [
+        "channel/web/static/js/views/agents.js",
+        "channel/web/static/js/chat/new-chat.js"
+      ],
+      "base_sample": [
+        "    activeAgentId = agentId;",
+        "    localStorage.setItem('cow_active_agent', activeAgentId);",
+        "    // Switching starts a clean conversation owned by the chosen Agent rather"
+      ],
+      "fork_sample": [
+        "    // Use the same guarded, freshly validated start as the workbench. A cancel",
+        "    // must keep the current owner, and a switch must not inherit its project.",
+        "    return startChatWithAgent(agentId);"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": null,
+      "base_range": [
+        3609,
+        3610
+      ],
+      "added": 40,
+      "removed": 2,
+      "reason": "fork edit crosses an upstream module boundary",
+      "modules": [
+        "channel/web/static/js/views/config.js",
+        "channel/web/static/js/views/sessions.js"
+      ],
+      "base_sample": [
+        "// Start polling immediately so scheduler/push messages are received at any time",
+        "startPolling();",
+        ""
+      ],
+      "fork_sample": [
+        "// Load the public brand snapshot and apply it once the DOM is ready. This",
+        "// drives the sidebar / login / welcome / favicon / title from the SAME source",
+        "// the published brand uses, independent of the legacy /config.title projection."
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": null,
+      "base_range": [
+        13994,
+        14006
+      ],
+      "added": 7,
+      "removed": 13,
+      "reason": "fork edit crosses an upstream module boundary",
+      "modules": [
+        "channel/web/static/js/core/theme.js",
+        "channel/web/static/js/core/auth.js"
+      ],
+      "base_sample": [
+        "fetch('/auth/check').then(r => r.json()).then(data => {",
+        "    if (data.auth_required && !data.authenticated) {",
+        "        showLoginScreen();"
+      ],
+      "fork_sample": [
+        "// Wire the change-password form submit (single submission).",
+        "(function () {",
+        "    const form = document.getElementById('account-password-form');"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/chat/composer-input.js",
+      "base_range": [
+        5320,
+        5337
+      ],
+      "added": 1,
+      "removed": 18,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "document.querySelectorAll('.example-card').forEach(card => {",
+        "    card.addEventListener('click', () => {",
+        "        // data-send overrides the visible text (e.g. show \"\u67e5\u770b\u5168\u90e8\u547d\u4ee4\" but send \"/help\")"
+      ],
+      "fork_sample": [
+        "bindWelcomeSuggestions(messagesDiv);",
+        "",
+        "// Voice-message variant of sendMessage(): renders a playable audio bubble"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/chat/new-chat.js",
+      "base_range": [
+        7119,
+        7121
+      ],
+      "added": 5,
+      "removed": 3,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "/* The session-panel \"\u65b0\u5bf9\u8bdd\" button. With a single Agent there is nobody to",
+        "   choose between, so it just starts a chat. With several, it opens a menu: pick",
+        "   an Agent for a solo chat, or open the team picker for a group chat. */"
+      ],
+      "fork_sample": [
+        "/* The session-panel \"\u65b0\u5bf9\u8bdd\" button. Starting a chat is never a decision: the",
+        "   button opens one with the default-anchored Agent straight away, so a tenant",
+        "   that owns several Agents does not gate the primary action on a picker."
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/chat/new-chat.js",
+      "base_range": [
+        7235,
+        7300
+      ],
+      "added": 1,
+      "removed": 66,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "    const ws = document.createElement('div');",
+        "    ws.id = 'welcome-screen';",
+        "    ws.className = 'flex flex-col items-center justify-center h-full px-6 pb-16';"
+      ],
+      "fork_sample": [
+        "    renderWelcomeScreen();",
+        "    renderComposerIdentity();",
+        "    if (currentView !== 'chat') navigateTo('chat');"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/chat/new-chat.js",
+      "base_range": [
+        7339,
+        7338
+      ],
+      "added": 4,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [
+        "}",
+        "",
+        "// ====================================================================="
+      ],
+      "fork_sample": [
+        "    } else {",
+        "        // The list is hidden; mark it dirty so the next visit re-reads it.",
+        "        _historyDirty = true;"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/chat/new-chat.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 1,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "    if (_historyVisible) {",
+        "        if (optimistic) {",
+        "            loadSessionList(() => _addOptimisticSessionItem(newSid));"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/chat/render.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 6,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "    const historySessionId = sessionId;",
+        "    const historyAgentId = activeAgentId;",
+        "    const historyEpoch = _authEpoch;"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/chat/render.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 10,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "    return ready.then(() => {",
+        "        if (!current()) return;",
+        "        return fetch(`/api/history?session_id=${encodeURIComponent(historySessionId)}&agent_id=${encodeURIComponent(historyAgentId)}&page=${page}&page_size=20`)"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/chat/render.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 1,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "        });",
+        "    })",
+        "        .catch(error => {"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/chat/render.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 1,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "        });",
+        "}",
+        ""
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/chat/send.js",
+      "base_range": [
+        6394,
+        6394
+      ],
+      "added": 1,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "                        sessionTitleOf(sessionId) || 'CowAgent',",
+        "                        firstLineSnippet(data.content),",
+        "                        sessionId"
+      ],
+      "fork_sample": [
+        "                        sessionTitleOf(sessionId) || PRODUCT_NAME,",
+        "                        firstLineSnippet(data.content),",
+        "                        sessionId"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/chat/session-settings.js",
+      "base_range": [
+        4739,
+        4739
+      ],
+      "added": 0,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "    _renderPermissionChip();",
+        "    _renderModelChip();",
+        "    renderComposerIdentity();"
+      ],
+      "fork_sample": [
+        "    _renderModelChip();",
+        "    renderComposerIdentity();",
+        "}"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/chat/session-settings.js",
+      "base_range": [
+        4742,
+        4765
+      ],
+      "added": 0,
+      "removed": 24,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "}",
+        "",
+        "function _renderPermissionChip() {"
+      ],
+      "fork_sample": [
+        "}",
+        "",
+        "function _renderModelChip() {"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/chat/state.js",
+      "base_range": [
+        3598,
+        3597
+      ],
+      "added": 2,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [
+        "",
+        "fetch('/config').then(r => r.json()).then(data => {",
+        "    if (data.status === 'success') {"
+      ],
+      "fork_sample": [
+        "let _historyLoadSeq = 0;",
+        "let _historyLoadContext = '';",
+        ""
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/auth.js",
+      "base_range": [
+        13854,
+        13853
+      ],
+      "added": 198,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [
+        "function toggleLoginPassword() {",
+        "    const input = document.getElementById('login-password');",
+        "    const icon = document.querySelector('#login-toggle-pwd i');"
+      ],
+      "fork_sample": [
+        "function _identityMode() {",
+        "    return 'database';",
+        "}"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/auth.js",
+      "base_range": [
+        13899,
+        13932
+      ],
+      "added": 20,
+      "removed": 34,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "        fetch('/auth/login', {",
+        "            method: 'POST',",
+        "            headers: {'Content-Type': 'application/json'},"
+      ],
+      "fork_sample": [
+        "function _showTenantPicker(tenants, currentId) {",
+        "    _clearTenantPicker();",
+        "    const tenantGroup = document.getElementById('login-tenant-group');"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/auth.js",
+      "base_range": [
+        13979,
+        13981
+      ],
+      "added": 341,
+      "removed": 3,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "    fetch('/api/version').then(r => r.json()).then(data => {",
+        "        APP_VERSION = `v${data.version}`;",
+        "        document.getElementById('sidebar-version').textContent = `CowAgent ${APP_VERSION}`;"
+      ],
+      "fork_sample": [
+        "    fetch('/api/version').then(async response => {",
+        "        if (!response.ok) throw new Error('Version unavailable');",
+        "        const data = await response.json();"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/auth.js",
+      "base_range": [
+        13983,
+        13983
+      ],
+      "added": 2,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "        document.getElementById('sidebar-version').textContent = 'CowAgent';",
+        "    });",
+        "    chatInput.focus();"
+      ],
+      "fork_sample": [
+        "        _accountText('account-profile-status', t('account_profile_error'));",
+        "        _accountHidden('account-profile-status', false);",
+        "    });"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/auth.js",
+      "base_range": [
+        13985,
+        13985
+      ],
+      "added": 0,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "    chatInput.focus();",
+        "}",
+        ""
+      ],
+      "fork_sample": [
+        "}",
+        "",
+        "function renderAccountProfile() {"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/auth.js",
+      "base_range": [
+        13987,
+        13986
+      ],
+      "added": 593,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [
+        "",
+        "// =====================================================================",
+        "// Initialization"
+      ],
+      "fork_sample": [
+        "",
+        "function renderAccountProfile() {",
+        "    const box = document.getElementById('account-profile-content');"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/auth.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 20,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "    if (typeof closeAppearancePreferences === 'function') closeAppearancePreferences(false);",
+        "    _invalidateAccountIdentity('unauthenticated');",
+        "    _accountAppVisible = false;"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/auth.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 3,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "async function _submitAccountLogin(event) {",
+        "    event.preventDefault();",
+        "    if (_accountWritePending || _pendingTenantPicker) return false;"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/auth.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 61,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "    const userInput = document.getElementById('login-username');",
+        "    if (!pwdInput?.value) return false;",
+        "    const epoch = _authEpoch;"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/auth.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 5,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "function _afterLogin() {",
+        "    _clearTenantPicker();",
+        "    _resetHistorySearch();"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/auth.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 8,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "    const enter = event => {",
+        "        event.preventDefault();",
+        "        if (epoch !== _authEpoch || !_pendingTenantPicker || _accountWritePending) return false;"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/auth.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 13,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "async function handleLogout() {",
+        "    if (_accountWritePending || !((_accountState.authRequired && _accountState.authenticated)",
+        "            || _accountState.phase === 'logout_error')) return;"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/auth.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 5,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "    } catch (_) {",
+        "        if (epoch === _authEpoch) _accountState = _emptyAccount('logout_error');",
+        "    } finally {"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/auth.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 0,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "}",
+        "window.handleLogout = handleLogout;",
+        ""
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/auth.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 13,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "    const epoch = _authEpoch;",
+        "    // Top-level variables were read before authentication. Restore the actual",
+        "    // account/tenant selections only now, then resolve the Agent before any"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/auth.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 1,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "    });",
+        "",
+        "    fetch('/api/version').then(async response => {"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/i18n.js",
+      "base_range": [
+        13,
+        1253
+      ],
+      "added": 16,
+      "removed": 1241,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "const I18N = {",
+        "    zh: {",
+        "        console: '\u63a7\u5236\u53f0',"
+      ],
+      "fork_sample": [
+        "// The language dictionaries live in per-domain namespace files under",
+        "// static/js/i18n/ (change fork-decoupling-and-tenant-hardening, task 8.5) so",
+        "// fork and upstream key edits no longer land in the same literal. Each file"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/i18n.js",
+      "base_range": [
+        1457,
+        1456
+      ],
+      "added": 3,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [
+        "}",
+        "",
+        "// Floating tooltip portal for [data-tip-key] elements. Tooltip nodes are"
+      ],
+      "fork_sample": [
+        "    // Re-render the fork/identity views through the view registry (task 8.6).",
+        "    // Their `repaint` is the lightweight in-memory reload they used to get here.",
+        "    _repaintRegisteredView(currentView);"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/i18n.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 2,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "    window.__cowLang__ = currentLang;",
+        "    try {",
+        "        localStorage.setItem('cow_lang', currentLang);"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/i18n.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 2,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "        languageStorageFailed = localStorage.getItem('cow_lang') !== currentLang;",
+        "    } catch (_) { languageStorageFailed = true; }",
+        "    applyI18n();"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/i18n.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 3,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "    if (writeToBackend) {",
+        "        // Sync language choice to backend first, then trigger dynamic views",
+        "        // reload to avoid race conditions on API endpoints."
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/i18n.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 3,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "    } else {",
+        "        try { rerenderDynamicViews(); } catch (e) {}",
+        "    }"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/nav.js",
+      "base_range": [
+        1717,
+        1717
+      ],
+      "added": 15,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "let currentView = 'chat';",
+        "",
+        "function navigateTo(viewId) {"
+      ],
+      "fork_sample": [
+        "// =====================================================================",
+        "// Console view registry (change fork-decoupling-and-tenant-hardening, task 8.6)",
+        "// ====================================================================="
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/nav.js",
+      "base_range": [
+        1719,
+        1720
+      ],
+      "added": 10,
+      "removed": 2,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "function navigateTo(viewId) {",
+        "    if (!VIEW_META[viewId]) return;",
+        "    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));"
+      ],
+      "fork_sample": [
+        "function _registeredConsoleView(viewId) {",
+        "    return CONSOLE_VIEW_REGISTRY.find(entry => entry.id === viewId) || null;",
+        "}"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/nav.js",
+      "base_range": [
+        1781,
+        1782
+      ],
+      "added": 9,
+      "removed": 2,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "document.querySelectorAll('.sidebar-item').forEach(item => {",
+        "    item.addEventListener('click', () => navigateTo(item.dataset.view));",
+        "});"
+      ],
+      "fork_sample": [
+        "// Ensure closed groups are excluded from the tab order (run after the items",
+        "// get their default tabIndex so it is authoritative).",
+        "_syncMenuGroupFocusability();"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/nav.js",
+      "base_range": [
+        1785,
+        1784
+      ],
+      "added": 9,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [
+        "window.addEventListener('resize', () => {",
+        "    if (window.innerWidth >= 1024) {",
+        "        document.getElementById('sidebar').classList.remove('-translate-x-full');"
+      ],
+      "fork_sample": [
+        "function syncSidebarToggleState() {",
+        "    const expanded = window.innerWidth >= 1024",
+        "        ? !document.getElementById('app').classList.contains('sidebar-collapsed')"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/nav.js",
+      "base_range": [
+        1786,
+        1785
+      ],
+      "added": 1,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [
+        "    if (window.innerWidth >= 1024) {",
+        "        document.getElementById('sidebar').classList.remove('-translate-x-full');",
+        "        document.getElementById('sidebar-overlay').classList.add('hidden');"
+      ],
+      "fork_sample": [
+        "    closeAccountMenu();",
+        "    if (window.innerWidth >= 1024) {",
+        "        document.getElementById('sidebar').classList.remove('-translate-x-full');"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/nav.js",
+      "base_range": [
+        12864,
+        12863
+      ],
+      "added": 4,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [
+        "    // An open document editor is about to be replaced by another view, which",
+        "    // would drop the edit with nothing on screen to say so.",
+        "    if (!docGuardUnsaved(() => navigateTo(viewId))) return;"
+      ],
+      "fork_sample": [
+        "    // Previously-visible but not-yet-enabled targets (menu placeholders) are",
+        "    // routed by the base handler to a clear \"not available\" view instead of a",
+        "    // silent no-op. Do not early-return here."
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/nav.js",
+      "base_range": [
+        12874,
+        12874
+      ],
+      "added": 1,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "    if (viewId === 'config') { loadConfigView(); switchConfigTab('basic'); }",
+        "    else if (viewId === 'skills') { resetSkillViewer(); loadSkillsView(); }",
+        "    else if (viewId === 'memory') {"
+      ],
+      "fork_sample": [
+        "    if (viewId === 'config') { enterConfigView(); }",
+        "    else if (viewId === 'skills') { resetSkillViewer(); loadSkillsView(); }",
+        "    else if (viewId === 'memory') {"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/nav.js",
+      "base_range": [
+        12893,
+        12892
+      ],
+      "added": 2,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [
+        "    else if (viewId === 'logs') startLogStream();",
+        "};",
+        ""
+      ],
+      "fork_sample": [
+        "    // `todo` is a fork view and loads through the registry in the base",
+        "    // navigateTo (task 8.6), so it is not hard-coded here anymore.",
+        "    else if (viewId === 'logs') startLogStream();"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/nav.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 158,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "    // A denied or unavailable target keeps no current marker on the account panel",
+        "    // either: the account panel no longer claims a current item.",
+        "    document.getElementById('breadcrumb-group').textContent = t('nav_system');"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/theme.js",
+      "base_range": [
+        1516,
+        1516
+      ],
+      "added": 5,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "let currentTheme = localStorage.getItem('cow_theme') || 'dark';",
+        "",
+        "function applyTheme() {"
+      ],
+      "fork_sample": [
+        "// The pre-paint controller owns state; this is a resolved-mode projection for",
+        "// existing console consumers, not a second persisted preference.",
+        "let currentTheme = (window.CowAppearance && window.CowAppearance.getState"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/theme.js",
+      "base_range": [
+        1534,
+        1536
+      ],
+      "added": 48,
+      "removed": 3,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "    currentTheme = currentTheme === 'dark' ? 'light' : 'dark';",
+        "    localStorage.setItem('cow_theme', currentTheme);",
+        "    applyTheme();"
+      ],
+      "fork_sample": [
+        "    window.CowAppearance.setMode(currentTheme === 'dark' ? 'light' : 'dark');",
+        "}",
+        ""
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/version.js",
+      "base_range": [
+        2,
+        2
+      ],
+      "added": 1,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "   CowAgent Console - Main Application Script",
+        "   ===================================================================== */",
+        ""
+      ],
+      "fork_sample": [
+        "   \u5bb9\u5927AI Console - Main Application Script",
+        "   ===================================================================== */",
+        ""
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/core/version.js",
+      "base_range": [
+        9,
+        8
+      ],
+      "added": 892,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [
+        "",
+        "// =====================================================================",
+        "// i18n"
+      ],
+      "fork_sample": [
+        "",
+        "// Startup reads must not stop the UI when browser storage is unavailable.",
+        "// Business writes and authentication storage keep their existing behavior."
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/agents.js",
+      "base_range": [
+        1860,
+        1860
+      ],
+      "added": 1,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "    // uploaded picture, so the instance's own Agent wears the CowAgent face.",
+        "    // Added Agents keep the initial-disc fallback so a team stays distinguishable.",
+        "    if (agent && agent.id && agent.id === defaultAgentId) {"
+      ],
+      "fork_sample": [
+        "    // uploaded picture, so the instance's own Agent wears the product mark.",
+        "    // Added Agents keep the initial-disc fallback so a team stays distinguishable.",
+        "    if (agent && agent.id && (agent.is_default || agent.id === defaultAgentId)) {"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/agents.js",
+      "base_range": [
+        1862,
+        1863
+      ],
+      "added": 2,
+      "removed": 2,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "    if (agent && agent.id && agent.id === defaultAgentId) {",
+        "        return `<img class=\"${cls}\" src=\"assets/logo.jpg\" alt=\"\">`;",
+        "    }"
+      ],
+      "fork_sample": [
+        "    if (agent && agent.id && (agent.is_default || agent.id === defaultAgentId)) {",
+        "        return `<img class=\"${cls} agent-avatar-brand\" src=\"${effectiveLogoUrl()}\" alt=\"\">`;",
+        "    }"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/agents.js",
+      "base_range": [
+        2968,
+        2968
+      ],
+      "added": 1,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "            + enabledAgents().map(agent => `",
+        "                <button type=\"button\" class=\"composer-menu-item agent-row${agent.id === activeAgentId ? ' current' : ''}\"",
+        "                        onclick=\"pickComposerAgent('${escapeHtml(agent.id)}')\">"
+      ],
+      "fork_sample": [
+        "            + availableChatAgents().map(agent => `",
+        "                <button type=\"button\" class=\"composer-menu-item agent-row${agent.id === activeAgentId ? ' current' : ''}\"",
+        "                        onclick=\"pickComposerAgent('${escapeHtml(agent.id)}')\">"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/agents.js",
+      "base_range": [
+        2978,
+        2978
+      ],
+      "added": 1,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "    const candidates = enabledAgents().filter(a => a.id !== activeAgentId && !taken.has(a.id));",
+        "",
+        "    // A group chat first lists the teammates already in the conversation (the"
+      ],
+      "fork_sample": [
+        "    const candidates = availableChatAgents().filter(a => a.id !== activeAgentId && !taken.has(a.id));",
+        "",
+        "    // A group chat first lists the teammates already in the conversation (the"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/agents.js",
+      "base_range": [
+        3102,
+        3102
+      ],
+      "added": 1,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "            _sessCfg = { model: data.model, permission: data.permission, team: data.team };",
+        "            renderComposerIdentity();",
+        "            // Inviting or removing someone changes whether one model can speak"
+      ],
+      "fork_sample": [
+        "            _sessCfg = { model: data.model, team: data.team };",
+        "            renderComposerIdentity();",
+        "            // Inviting or removing someone changes whether one model can speak"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/agents.js",
+      "base_range": [
+        3202,
+        3203
+      ],
+      "added": 0,
+      "removed": 2,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "",
+        "loadAgentCatalog();",
+        ""
+      ],
+      "fork_sample": [
+        "",
+        "// =====================================================================",
+        "// Markdown Renderer"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/agents.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 19,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "    const ready = () => {",
+        "        if (installedSkills.length && installedTools.length) { render(); return; }",
+        "        Promise.all(["
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/agents.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 56,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "        pane.innerHTML = `<div class=\"agent-cap-title\">${escapeHtml(t('agents_tasks_label'))}</div>`;",
+        "        const wrap = document.createElement('div');",
+        "        wrap.className = 'agent-task-list';"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/agents.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 17,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "            const checkbox = card.querySelector('#' + toggleId);",
+        "            if (checkbox) checkbox.addEventListener('change', function() {",
+        "                const newEnabled = this.checked;"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/agents.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 38,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "// In-flight guard so a double-click on a card cannot spawn two session",
+        "// switches. Reset on every completed start / cancellation / error.",
+        "let _agentStartInFlight = null;"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/agents.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 62,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "        focusChatComposer();",
+        "    } catch (err) {",
+        "        if (_agentStartInFlight === attempt && attempt.context === _wbContext()) {"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/agents.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 2,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "    const agent = findAgent(activeAgentId) || { id: activeAgentId || defaultAgentId, name: activeAgentId || 'Agent' };",
+        "    paintChatAgentIdentity(agent);",
+        "    const wrap = document.getElementById('composer-identity');"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/channels-feishu.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 7,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "                if (_feishuScanTarget) {",
+        "                    // A tenant scan persists itself: the grant the server minted",
+        "                    // for this scan authorizes the create, so there is no second"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/channels-feishu.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 3,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "                }",
+        "                _feishuRegisterHandle = '';",
+        "                _feishuScanTarget = '';"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/channels.js",
+      "base_range": [
+        11416,
+        11415
+      ],
+      "added": 12,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [
+        "}",
+        "",
+        "function renderActiveChannels() {"
+      ],
+      "fork_sample": [
+        "}",
+        "",
+        "// Shared channel-card shell for the platform (instance) page and the tenant"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/channels.js",
+      "base_range": [
+        11470,
+        11482
+      ],
+      "added": 5,
+      "removed": 13,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "        card.innerHTML = `",
+        "            <div class=\"flex items-center gap-4${hasFields || weixinWaiting || wecomNeedsCreds || isFeishu || multiAgentMode() ? ' mb-5' : ''}\">",
+        "                <div class=\"w-10 h-10 rounded-xl bg-${ch.color}-50 dark:bg-${ch.color}-900/20 flex items-center justify-center flex-shrink-0\">"
+      ],
+      "fork_sample": [
+        "        card.innerHTML = buildChannelCardShell({",
+        "            iid, label, icon: ch.icon, color: ch.color,",
+        "            statusDot, statusText, subtitle: iid,"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/channels.js",
+      "base_range": [
+        11527,
+        11527
+      ],
+      "added": 2,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "            </div>` : '')}`;",
+        "",
+        "        container.appendChild(card);"
+      ],
+      "fork_sample": [
+        "            </div>` : '')}`,",
+        "        });",
+        ""
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/channels.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 2,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "                </button>`,",
+        "            bodyHtml: `",
+        "            ${multiAgentMode() ? `<div class=\"channel-agent-bind\">"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/config.js",
+      "base_range": [
+        3599,
+        3599
+      ],
+      "added": 5,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "fetch('/config').then(r => r.json()).then(data => {",
+        "    if (data.status === 'success') {",
+        "        appConfig = data;"
+      ],
+      "fork_sample": [
+        "function restoreChatState() {",
+        "    const epoch = _authEpoch, owner = activeAgentId, sid = sessionId;",
+        "    const current = () => epoch === _authEpoch && owner === activeAgentId && sid === sessionId;"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/config.js",
+      "base_range": [
+        3602,
+        3603
+      ],
+      "added": 3,
+      "removed": 2,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "        const title = data.title || 'CowAgent';",
+        "        document.getElementById('welcome-title').textContent = title;",
+        "        initConfigView(data);"
+      ],
+      "fork_sample": [
+        "            appConfig.title = productTitle(data.title);",
+        "            const welcomeTitle = document.getElementById('welcome-title');",
+        "            if (welcomeTitle) welcomeTitle.innerHTML = productTitleHTML(appConfig.title);"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/config.js",
+      "base_range": [
+        3607,
+        3607
+      ],
+      "added": 2,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "}).catch(() => { loadHistory(1); });",
+        "",
+        "// Start polling immediately so scheduler/push messages are received at any time"
+      ],
+      "fork_sample": [
+        "    }).catch(() => { if (current()) loadHistory(1); });",
+        "}",
+        ""
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/config.js",
+      "base_range": [
+        9005,
+        9004
+      ],
+      "added": 549,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [
+        "// =====================================================================",
+        "// Skills View",
+        "// ====================================================================="
+      ],
+      "fork_sample": [
+        "// Enter \u6a21\u578b\u4e0e\u63a5\u5165 in whichever shape the caller is entitled to. A platform",
+        "// admin gets the tabbed page (\u57fa\u7840\u914d\u7f6e / \u6a21\u578b\u914d\u7f6e) exactly as before; anyone",
+        "// else gets the authorized-model catalog and *no* tab strip, because both tabs"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/memory.js",
+      "base_range": [
+        9286,
+        9285
+      ],
+      "added": 41,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [
+        "function loadMemoryView(page) {",
+        "    page = page || 1;",
+        "    memoryPage = page;"
+      ],
+      "fork_sample": [
+        "/**",
+        " * Render a refused memory read as a terminal state instead of an empty folder.",
+        " *"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/memory.js",
+      "base_range": [
+        9351,
+        9351
+      ],
+      "added": 1,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "    }).catch(() => {});",
+        "}",
+        ""
+      ],
+      "fork_sample": [
+        "    }).catch(() => _memoryRefusal(null));",
+        "}",
+        ""
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/sessions.js",
+      "base_range": [
+        7342,
+        7342
+      ],
+      "added": 1,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "// Session Panel",
+        "// =====================================================================",
+        ""
+      ],
+      "fork_sample": [
+        "// Session History (workbench page)",
+        "// =====================================================================",
+        ""
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/sessions.js",
+      "base_range": [
+        7437,
+        7437
+      ],
+      "added": 0,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "    set('session-toggle-btn', 'session_history', 'bottom');",
+        "    set('workspace-toggle-btn', 'ws_toggle', 'bottom');",
+        "    // Optimize / mic buttons carry state-dependent tooltips managed in their"
+      ],
+      "fork_sample": [
+        "    set('workspace-toggle-btn', 'ws_toggle', 'bottom');",
+        "    // The history page's inline refresh button carries a translated tooltip.",
+        "    const historyRefresh = document.querySelector('.history-refresh-btn');"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/sessions.js",
+      "base_range": [
+        7446,
+        7448
+      ],
+      "added": 2,
+      "removed": 3,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "    // The permission / model chips carry translated labels and tooltips, so they",
+        "    // are repainted here too (this runs on every language switch).",
+        "    _renderPermissionChip();"
+      ],
+      "fork_sample": [
+        "    // The model chip carries translated labels and tooltips, so it is repainted",
+        "    // here too (this runs on every language switch).",
+        "    _renderModelChip();"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/sessions.js",
+      "base_range": [
+        7945,
+        7945
+      ],
+      "added": 1,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "    localStorage.setItem(activeSessionStorageKey(), sessionId);",
+        "    refreshWorkspaceSelector();",
+        "    refreshSessionSettings();"
+      ],
+      "fork_sample": [
+        "    writeScopedPreference(activeSessionStorageKey(), sessionId);",
+        "    refreshWorkspaceSelector();",
+        "    refreshSessionSettings();"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/sessions.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 504,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "// Refresh the list for session operations that happen while the user may not be",
+        "// on the history page: reload only if it is the active view, otherwise mark it",
+        "// dirty so the next visit re-reads."
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/sessions.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 5,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "            // Late / stale result: the page changed or the identity moved on.",
+        "            if (!current()) return;",
+        "            // Editing can begin after this request was sent. Defer its result"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/sessions.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 17,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "                _historyRequestController = null;",
+        "                _historyDirty = true;",
+        "                _setHistoryState('');"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/skills.js",
+      "base_range": [
+        9122,
+        9130
+      ],
+      "added": 1,
+      "removed": 9,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "                <button",
+        "                    role=\"switch\"",
+        "                    data-skill-switch"
+      ],
+      "fork_sample": [
+        "                ${switchMarkup}",
+        "            </div>",
+        "            <p class=\"text-xs text-slate-400 dark:text-slate-500 line-clamp-2\">${escapeHtml(sk.description || '--')}</p>"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/skills.js",
+      "base_range": [
+        9139,
+        9139
+      ],
+      "added": 1,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "    card.onclick = () => openSkillFile(sk.name);",
+        "    const sw = card.querySelector('[data-skill-switch]');",
+        "    if (sw) {"
+      ],
+      "fork_sample": [
+        "    card.onclick = () => openResourceDetail('skill', sk);",
+        "    const sw = card.querySelector('[data-skill-switch]');",
+        "    if (sw) {"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/skills.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 6,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "        if (data.status !== 'success') {",
+        "            if (card) card.style.opacity = '1';",
+        "            alert(currentLang === 'zh' ? '\u64cd\u4f5c\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u518d\u8bd5' : 'Operation failed, please try again');"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/skills.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 1,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "        return true;",
+        "    })",
+        "    .catch(() => {"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/tasks.js",
+      "base_range": [
+        12629,
+        12629
+      ],
+      "added": 1,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "                body: JSON.stringify({task_id: task.id, agent_id: task.agent_id || ''})",
+        "            }).then(r => r.json()).then(res => {",
+        "                if (res.status !== 'success') throw new Error(res.message || t('task_run_failed'));"
+      ],
+      "fork_sample": [
+        "                body: JSON.stringify({task_id: task.id, run_key: runKey, agent_id: task.agent_id || ''})",
+        "            }).then(r => r.json()).then(res => {",
+        "                if (res.status !== 'success') throw new Error(res.message || t('task_run_failed'));"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/tasks.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 1,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "                    ${caps.run ? `<button type=\"button\" class=\"task-run-now px-2 py-1 rounded-md text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-500/10 transition-colors\">",
+        "                        <i class=\"fas fa-play mr-1\"></i>${t('task_run_now')}",
+        "                    </button>` : ''}"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/tasks.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 2,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "                    </button>` : ''}",
+        "                    ${caps.manage ? `<label class=\"relative inline-flex items-center cursor-pointer\" for=\"${toggleId}\">",
+        "                        <input type=\"checkbox\" id=\"${toggleId}\" class=\"sr-only peer\" ${isEnabled ? 'checked' : ''}>"
+      ]
+    },
+    {
+      "source": "console.js",
+      "upstream_module": "channel/web/static/js/views/tasks.js",
+      "base_range": [
+        0,
+        -1
+      ],
+      "added": 1,
+      "removed": 0,
+      "reason": "splice left the module unparseable",
+      "base_sample": [],
+      "fork_sample": [
+        "                    </label>` : ''}",
+        "                </div>`;",
+        "            const runButton = card.querySelector('.task-run-now');"
+      ]
+    },
+    {
+      "source": "console.css",
+      "upstream_module": "channel/web/static/css/agents.css",
+      "base_range": [
+        3378,
+        3377
+      ],
+      "added": 335,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [
+        ".agent-modal-foot {",
+        "    display: flex; align-items: center; gap: 10px;",
+        "    padding: 16px 24px 20px; border-top: 1px solid #f1f5f9;"
+      ],
+      "fork_sample": [
+        "",
+        "/* ---- Role create/edit page (replaces modal for roles) ---- */",
+        ".role-editor {"
+      ]
+    },
+    {
+      "source": "console.css",
+      "upstream_module": "channel/web/static/css/agents.css",
+      "base_range": [
+        3672,
+        3671
+      ],
+      "added": 572,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [],
+      "fork_sample": [
+        "",
+        "/* =================================================================== */",
+        "/* Agent Workbench (\u5de5\u4f5c\u53f0 \u2192 \u667a\u80fd\u4f53)                                   */"
+      ]
+    },
+    {
+      "source": "console.css",
+      "upstream_module": "channel/web/static/css/base.css",
+      "base_range": [
+        2,
+        2
+      ],
+      "added": 1,
+      "removed": 1,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "   CowAgent Console Styles",
+        "   ===================================================================== */",
+        ""
+      ],
+      "fork_sample": [
+        "   \u5bb9\u5927AI Console Styles",
+        "   ===================================================================== */",
+        ""
+      ]
+    },
+    {
+      "source": "console.css",
+      "upstream_module": "channel/web/static/css/base.css",
+      "base_range": [
+        636,
+        637
+      ],
+      "added": 2,
+      "removed": 2,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        ".menu-group-items { max-height: 0; overflow: hidden; transition: max-height 0.25s ease-out; }",
+        ".menu-group.open .menu-group-items { max-height: 2000px; transition: max-height 0.35s ease-in; }",
+        ".menu-group .chevron { transition: transform 0.25s ease; }"
+      ],
+      "fork_sample": [
+        ".menu-group-items { max-height: 0; overflow: hidden; transition: max-height 0.25s ease-out; visibility: hidden; }",
+        ".menu-group.open .menu-group-items { max-height: 2000px; transition: max-height 0.35s ease-in; visibility: visible; }",
+        ".menu-group .chevron { transition: transform 0.25s ease; }"
+      ]
+    },
+    {
+      "source": "console.css",
+      "upstream_module": "channel/web/static/css/sessions.css",
+      "base_range": [
+        66,
+        65
+      ],
+      "added": 32,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [
+        ".sidebar-item.active {",
+        "    background: rgba(255, 255, 255, 0.08);",
+        "    color: #FFFFFF;"
+      ],
+      "fork_sample": [
+        ".sidebar-brand {",
+        "    display: flex;",
+        "    align-items: center;"
+      ]
+    },
+    {
+      "source": "console.css",
+      "upstream_module": "channel/web/static/css/sessions.css",
+      "base_range": [
+        603,
+        605
+      ],
+      "added": 4,
+      "removed": 3,
+      "reason": "no verified context: upstream rewrote the surrounding code",
+      "base_sample": [
+        "/* Session panel overlay (mobile only, click to close) */",
+        ".session-panel-overlay {",
+        "    display: none;"
+      ],
+      "fork_sample": [
+        "/* Archived sessions dialog (reuses the confirm overlay shell) */",
+        ".archived-sessions-modal {",
+        "    width: 520px;"
+      ]
+    },
+    {
+      "source": "console.css",
+      "upstream_module": "channel/web/static/css/sessions.css",
+      "base_range": [
+        633,
+        632
+      ],
+      "added": 7,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [
+        "}",
+        "",
+        "/* Menu Groups */"
+      ],
+      "fork_sample": [
+        ".archived-session-row:hover { background: rgba(0, 0, 0, .03); }",
+        ".dark .archived-session-row:hover { background: rgba(255, 255, 255, .05); }",
+        ".archived-session-copy {"
+      ]
+    },
+    {
+      "source": "console.css",
+      "upstream_module": "channel/web/static/css/sessions.css",
+      "base_range": [
+        634,
+        633
+      ],
+      "added": 41,
+      "removed": 0,
+      "reason": "no verified context around the insertion point",
+      "base_sample": [
+        "",
+        "/* Menu Groups */",
+        ".menu-group-items { max-height: 0; overflow: hidden; transition: max-height 0.25s ease-out; }"
+      ],
+      "fork_sample": [
+        ".archived-session-title {",
+        "    font-size: 13px;",
+        "    color: #1f2937;"
+      ]
+    }
+  ],
+  "unowned": []
+}

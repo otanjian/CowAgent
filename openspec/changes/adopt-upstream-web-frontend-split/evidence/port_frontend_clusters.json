@@ -1,0 +1,6218 @@
+[
+  {
+    "source": "console.js",
+    "module": null,
+    "base_range": [
+      3037,
+      3043
+    ],
+    "fork_range": [
+      4413,
+      4415
+    ],
+    "status": "skipped",
+    "reason": "fork edit crosses an upstream module boundary"
+  },
+  {
+    "source": "console.js",
+    "module": null,
+    "base_range": [
+      3609,
+      3610
+    ],
+    "fork_range": [
+      5053,
+      5092
+    ],
+    "status": "skipped",
+    "reason": "fork edit crosses an upstream module boundary"
+  },
+  {
+    "source": "console.js",
+    "module": null,
+    "base_range": [
+      13994,
+      14006
+    ],
+    "fork_range": [
+      19771,
+      19777
+    ],
+    "status": "skipped",
+    "reason": "fork edit crosses an upstream module boundary"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/composer-input.js",
+    "base_range": [
+      5096,
+      5095
+    ],
+    "fork_range": [
+      6580,
+      6581
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/composer-input.js",
+    "base_range": [
+      5320,
+      5337
+    ],
+    "fork_range": [
+      6806,
+      6806
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/message-actions.js",
+    "base_range": [
+      5376,
+      5376
+    ],
+    "fork_range": [
+      6845,
+      6845
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/message-actions.js",
+    "base_range": [
+      5393,
+      5393
+    ],
+    "fork_range": [
+      6862,
+      6862
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/new-chat.js",
+    "base_range": [
+      7119,
+      7121
+    ],
+    "fork_range": [
+      8673,
+      8677
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/new-chat.js",
+    "base_range": [
+      7123,
+      7124
+    ],
+    "fork_range": [
+      8679,
+      8687
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/new-chat.js",
+    "base_range": [
+      7128,
+      7128
+    ],
+    "fork_range": [
+      8691,
+      8698
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/new-chat.js",
+    "base_range": [
+      7140,
+      7140
+    ],
+    "fork_range": [
+      8710,
+      8709
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/new-chat.js",
+    "base_range": [
+      7147,
+      7147
+    ],
+    "fork_range": [
+      8716,
+      8716
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/new-chat.js",
+    "base_range": [
+      7186,
+      7186
+    ],
+    "fork_range": [
+      8755,
+      8755
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/new-chat.js",
+    "base_range": [
+      7200,
+      7200
+    ],
+    "fork_range": [
+      8769,
+      8769
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/new-chat.js",
+    "base_range": [
+      7209,
+      7209
+    ],
+    "fork_range": [
+      8778,
+      8778
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/new-chat.js",
+    "base_range": [
+      7221,
+      7220
+    ],
+    "fork_range": [
+      8790,
+      8790
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/new-chat.js",
+    "base_range": [
+      7228,
+      7228
+    ],
+    "fork_range": [
+      8798,
+      8803
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/new-chat.js",
+    "base_range": [
+      7235,
+      7300
+    ],
+    "fork_range": [
+      8810,
+      8810
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/new-chat.js",
+    "base_range": [
+      7302,
+      7318
+    ],
+    "fork_range": [
+      8812,
+      8811
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/new-chat.js",
+    "base_range": [
+      7321,
+      7332
+    ],
+    "fork_range": [
+      8814,
+      8818
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/new-chat.js",
+    "base_range": [
+      7334,
+      7333
+    ],
+    "fork_range": [
+      8820,
+      8820
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/new-chat.js",
+    "base_range": [
+      7339,
+      7338
+    ],
+    "fork_range": [
+      8826,
+      8829
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/render.js",
+    "base_range": [
+      6980,
+      6980
+    ],
+    "fork_range": [
+      8512,
+      8517
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/render.js",
+    "base_range": [
+      6982,
+      6982
+    ],
+    "fork_range": [
+      8519,
+      8523
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/render.js",
+    "base_range": [
+      6991,
+      6992
+    ],
+    "fork_range": [
+      8532,
+      8541
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/render.js",
+    "base_range": [
+      6996,
+      6997
+    ],
+    "fork_range": [
+      8545,
+      8545
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/render.js",
+    "base_range": [
+      7091,
+      7090
+    ],
+    "fork_range": [
+      8639,
+      8639
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/render.js",
+    "base_range": [
+      7092,
+      7092
+    ],
+    "fork_range": [
+      8641,
+      8645
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/render.js",
+    "base_range": [
+      7094,
+      7093
+    ],
+    "fork_range": [
+      8647,
+      8647
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/render.js",
+    "base_range": [
+      7096,
+      7096
+    ],
+    "fork_range": [
+      8650,
+      8650
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/send.js",
+    "base_range": [
+      5579,
+      5579
+    ],
+    "fork_range": [
+      7048,
+      7048
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/send.js",
+    "base_range": [
+      5595,
+      5595
+    ],
+    "fork_range": [
+      7064,
+      7064
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/send.js",
+    "base_range": [
+      5620,
+      5619
+    ],
+    "fork_range": [
+      7089,
+      7128
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/send.js",
+    "base_range": [
+      5621,
+      5620
+    ],
+    "fork_range": [
+      7130,
+      7133
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/send.js",
+    "base_range": [
+      5627,
+      5626
+    ],
+    "fork_range": [
+      7140,
+      7153
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/send.js",
+    "base_range": [
+      5678,
+      5678
+    ],
+    "fork_range": [
+      7205,
+      7205
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/send.js",
+    "base_range": [
+      5696,
+      5696
+    ],
+    "fork_range": [
+      7223,
+      7223
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/send.js",
+    "base_range": [
+      6009,
+      6011
+    ],
+    "fork_range": [
+      7536,
+      7539
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/send.js",
+    "base_range": [
+      6013,
+      6013
+    ],
+    "fork_range": [
+      7541,
+      7541
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/send.js",
+    "base_range": [
+      6154,
+      6155
+    ],
+    "fork_range": [
+      7682,
+      7687
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/send.js",
+    "base_range": [
+      6394,
+      6394
+    ],
+    "fork_range": [
+      7926,
+      7926
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/session-settings.js",
+    "base_range": [
+      4709,
+      4710
+    ],
+    "fork_range": [
+      6269,
+      6268
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/session-settings.js",
+    "base_range": [
+      4718,
+      4718
+    ],
+    "fork_range": [
+      6276,
+      6276
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/session-settings.js",
+    "base_range": [
+      4730,
+      4729
+    ],
+    "fork_range": [
+      6288,
+      6289
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/session-settings.js",
+    "base_range": [
+      4733,
+      4732
+    ],
+    "fork_range": [
+      6293,
+      6293
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/session-settings.js",
+    "base_range": [
+      4734,
+      4734
+    ],
+    "fork_range": [
+      6295,
+      6295
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/session-settings.js",
+    "base_range": [
+      4739,
+      4739
+    ],
+    "fork_range": [
+      6300,
+      6299
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/session-settings.js",
+    "base_range": [
+      4742,
+      4765
+    ],
+    "fork_range": [
+      6302,
+      6301
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/session-settings.js",
+    "base_range": [
+      4795,
+      4851
+    ],
+    "fork_range": [
+      6331,
+      6335
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/session-settings.js",
+    "base_range": [
+      4859,
+      4859
+    ],
+    "fork_range": [
+      6343,
+      6351
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/session-settings.js",
+    "base_range": [
+      4864,
+      4871
+    ],
+    "fork_range": [
+      6356,
+      6356
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/session-settings.js",
+    "base_range": [
+      4945,
+      4946
+    ],
+    "fork_range": [
+      6430,
+      6430
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/session-settings.js",
+    "base_range": [
+      4954,
+      4954
+    ],
+    "fork_range": [
+      6438,
+      6438
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/state.js",
+    "base_range": [
+      3529,
+      3529
+    ],
+    "fork_range": [
+      4935,
+      4935
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/state.js",
+    "base_range": [
+      3531,
+      3531
+    ],
+    "fork_range": [
+      4937,
+      4937
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/state.js",
+    "base_range": [
+      3543,
+      3542
+    ],
+    "fork_range": [
+      4949,
+      4961
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/state.js",
+    "base_range": [
+      3546,
+      3545
+    ],
+    "fork_range": [
+      4965,
+      4981
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/state.js",
+    "base_range": [
+      3585,
+      3585
+    ],
+    "fork_range": [
+      5021,
+      5021
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/state.js",
+    "base_range": [
+      3588,
+      3588
+    ],
+    "fork_range": [
+      5024,
+      5024
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/state.js",
+    "base_range": [
+      3598,
+      3597
+    ],
+    "fork_range": [
+      5034,
+      5035
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/state.js",
+    "base_range": [
+      3616,
+      3615
+    ],
+    "fork_range": [
+      5098,
+      5175
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/state.js",
+    "base_range": [
+      4128,
+      4128
+    ],
+    "fork_range": [
+      5688,
+      5688
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/state.js",
+    "base_range": [
+      4133,
+      4133
+    ],
+    "fork_range": [
+      5693,
+      5693
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/workspace-selector.js",
+    "base_range": [
+      4412,
+      4411
+    ],
+    "fork_range": [
+      5972,
+      5973
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/workspace-selector.js",
+    "base_range": [
+      4420,
+      4419
+    ],
+    "fork_range": [
+      5982,
+      5982
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/chat/workspace-selector.js",
+    "base_range": [
+      4509,
+      4513
+    ],
+    "fork_range": [
+      6072,
+      6073
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13854,
+      13853
+    ],
+    "fork_range": [
+      18400,
+      18597
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13868,
+      13883
+    ],
+    "fork_range": [
+      18612,
+      18631
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13886,
+      13886
+    ],
+    "fork_range": [
+      18634,
+      18636
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13888,
+      13888
+    ],
+    "fork_range": [
+      18638,
+      18698
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13890,
+      13897
+    ],
+    "fork_range": [
+      18700,
+      18704
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13899,
+      13932
+    ],
+    "fork_range": [
+      18706,
+      18725
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13934,
+      13933
+    ],
+    "fork_range": [
+      18727,
+      18734
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13936,
+      13935
+    ],
+    "fork_range": [
+      18737,
+      18740
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13938,
+      13942
+    ],
+    "fork_range": [
+      18743,
+      18755
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13944,
+      13943
+    ],
+    "fork_range": [
+      18757,
+      18761
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13945,
+      13947
+    ],
+    "fork_range": [
+      18763,
+      18762
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13951,
+      13951
+    ],
+    "fork_range": [
+      18766,
+      18767
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13954,
+      13958
+    ],
+    "fork_range": [
+      18770,
+      18790
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13968,
+      13968
+    ],
+    "fork_range": [
+      18800,
+      18812
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13971,
+      13971
+    ],
+    "fork_range": [
+      18815,
+      18816
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13973,
+      13973
+    ],
+    "fork_range": [
+      18818,
+      18818
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13978,
+      13977
+    ],
+    "fork_range": [
+      18823,
+      18823
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13979,
+      13981
+    ],
+    "fork_range": [
+      18825,
+      19165
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13983,
+      13983
+    ],
+    "fork_range": [
+      19167,
+      19168
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13985,
+      13985
+    ],
+    "fork_range": [
+      19170,
+      19169
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/auth.js",
+    "base_range": [
+      13987,
+      13986
+    ],
+    "fork_range": [
+      19171,
+      19763
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/i18n.js",
+    "base_range": [
+      13,
+      1253
+    ],
+    "fork_range": [
+      906,
+      921
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/i18n.js",
+    "base_range": [
+      1272,
+      1272
+    ],
+    "fork_range": [
+      940,
+      940
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/i18n.js",
+    "base_range": [
+      1277,
+      1276
+    ],
+    "fork_range": [
+      945,
+      948
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/i18n.js",
+    "base_range": [
+      1320,
+      1320
+    ],
+    "fork_range": [
+      992,
+      991
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/i18n.js",
+    "base_range": [
+      1323,
+      1323
+    ],
+    "fork_range": [
+      994,
+      994
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/i18n.js",
+    "base_range": [
+      1326,
+      1325
+    ],
+    "fork_range": [
+      997,
+      998
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/i18n.js",
+    "base_range": [
+      1328,
+      1330
+    ],
+    "fork_range": [
+      1001,
+      1009
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/i18n.js",
+    "base_range": [
+      1338,
+      1337
+    ],
+    "fork_range": [
+      1017,
+      1031
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/i18n.js",
+    "base_range": [
+      1339,
+      1338
+    ],
+    "fork_range": [
+      1033,
+      1034
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/i18n.js",
+    "base_range": [
+      1340,
+      1339
+    ],
+    "fork_range": [
+      1036,
+      1037
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/i18n.js",
+    "base_range": [
+      1342,
+      1342
+    ],
+    "fork_range": [
+      1040,
+      1041
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/i18n.js",
+    "base_range": [
+      1345,
+      1346
+    ],
+    "fork_range": [
+      1044,
+      1046
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/i18n.js",
+    "base_range": [
+      1350,
+      1349
+    ],
+    "fork_range": [
+      1050,
+      1052
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/i18n.js",
+    "base_range": [
+      1368,
+      1369
+    ],
+    "fork_range": [
+      1071,
+      1072
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/i18n.js",
+    "base_range": [
+      1371,
+      1371
+    ],
+    "fork_range": [
+      1074,
+      1073
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/i18n.js",
+    "base_range": [
+      1389,
+      1430
+    ],
+    "fork_range": [
+      1091,
+      1090
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/i18n.js",
+    "base_range": [
+      1434,
+      1433
+    ],
+    "fork_range": [
+      1094,
+      1100
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/i18n.js",
+    "base_range": [
+      1438,
+      1437
+    ],
+    "fork_range": [
+      1105,
+      1111
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/i18n.js",
+    "base_range": [
+      1457,
+      1456
+    ],
+    "fork_range": [
+      1131,
+      1133
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1706,
+      1714
+    ],
+    "fork_range": [
+      1454,
+      1491
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1717,
+      1717
+    ],
+    "fork_range": [
+      1494,
+      1508
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1719,
+      1720
+    ],
+    "fork_range": [
+      1510,
+      1519
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1724,
+      1723
+    ],
+    "fork_range": [
+      1523,
+      1822
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1725,
+      1725
+    ],
+    "fork_range": [
+      1824,
+      1825
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1727,
+      1726
+    ],
+    "fork_range": [
+      1827,
+      1984
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1732,
+      1732
+    ],
+    "fork_range": [
+      1990,
+      1989
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1734,
+      1733
+    ],
+    "fork_range": [
+      1991,
+      1997
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1735,
+      1735
+    ],
+    "fork_range": [
+      1999,
+      1999
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1737,
+      1736
+    ],
+    "fork_range": [
+      2001,
+      2014
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1738,
+      1743
+    ],
+    "fork_range": [
+      2016,
+      2015
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1745,
+      1747
+    ],
+    "fork_range": [
+      2017,
+      2020
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1755,
+      1754
+    ],
+    "fork_range": [
+      2028,
+      2029
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1758,
+      1757
+    ],
+    "fork_range": [
+      2033,
+      2084
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1759,
+      1758
+    ],
+    "fork_range": [
+      2086,
+      2091
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1767,
+      1766
+    ],
+    "fork_range": [
+      2100,
+      2100
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1771,
+      1770
+    ],
+    "fork_range": [
+      2105,
+      2105
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1773,
+      1772
+    ],
+    "fork_range": [
+      2108,
+      2149
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1776,
+      1775
+    ],
+    "fork_range": [
+      2153,
+      2155
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1777,
+      1777
+    ],
+    "fork_range": [
+      2157,
+      2200
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1781,
+      1782
+    ],
+    "fork_range": [
+      2204,
+      2212
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1785,
+      1784
+    ],
+    "fork_range": [
+      2215,
+      2223
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      1786,
+      1785
+    ],
+    "fork_range": [
+      2225,
+      2225
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      12864,
+      12863
+    ],
+    "fork_range": [
+      17352,
+      17355
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      12874,
+      12874
+    ],
+    "fork_range": [
+      17366,
+      17366
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      12882,
+      12882
+    ],
+    "fork_range": [
+      17374,
+      17375
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      12884,
+      12884
+    ],
+    "fork_range": [
+      17377,
+      17377
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/nav.js",
+    "base_range": [
+      12893,
+      12892
+    ],
+    "fork_range": [
+      17386,
+      17387
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/notify.js",
+    "base_range": [
+      1544,
+      1545
+    ],
+    "fork_range": [
+      1292,
+      1293
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/theme.js",
+    "base_range": [
+      1516,
+      1516
+    ],
+    "fork_range": [
+      1193,
+      1197
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/theme.js",
+    "base_range": [
+      1518,
+      1529
+    ],
+    "fork_range": [
+      1199,
+      1220
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/theme.js",
+    "base_range": [
+      1533,
+      1532
+    ],
+    "fork_range": [
+      1224,
+      1235
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/theme.js",
+    "base_range": [
+      1534,
+      1536
+    ],
+    "fork_range": [
+      1237,
+      1284
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/version.js",
+    "base_range": [
+      2,
+      2
+    ],
+    "fork_range": [
+      2,
+      2
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/version.js",
+    "base_range": [
+      8,
+      7
+    ],
+    "fork_range": [
+      8,
+      8
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/core/version.js",
+    "base_range": [
+      9,
+      8
+    ],
+    "fork_range": [
+      10,
+      901
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      1800,
+      1799
+    ],
+    "fork_range": [
+      2240,
+      2246
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      1802,
+      1802
+    ],
+    "fork_range": [
+      2249,
+      2268
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      1806,
+      1805
+    ],
+    "fork_range": [
+      2272,
+      2281
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      1807,
+      1808
+    ],
+    "fork_range": [
+      2283,
+      2292
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      1812,
+      1812
+    ],
+    "fork_range": [
+      2296,
+      2314
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      1860,
+      1860
+    ],
+    "fork_range": [
+      2362,
+      2362
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      1862,
+      1863
+    ],
+    "fork_range": [
+      2364,
+      2365
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      1896,
+      1895
+    ],
+    "fork_range": [
+      2398,
+      2418
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      1897,
+      1896
+    ],
+    "fork_range": [
+      2420,
+      2425
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      1900,
+      1899
+    ],
+    "fork_range": [
+      2429,
+      2429
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      1901,
+      1901
+    ],
+    "fork_range": [
+      2431,
+      2432
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      1904,
+      1905
+    ],
+    "fork_range": [
+      2435,
+      2461
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      1909,
+      1910
+    ],
+    "fork_range": [
+      2465,
+      2472
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      1912,
+      1912
+    ],
+    "fork_range": [
+      2474,
+      2474
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      1939,
+      1938
+    ],
+    "fork_range": [
+      2501,
+      2501
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      1970,
+      1969
+    ],
+    "fork_range": [
+      2533,
+      2836
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2006,
+      2006
+    ],
+    "fork_range": [
+      2873,
+      2873
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2009,
+      2009
+    ],
+    "fork_range": [
+      2876,
+      2877
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2104,
+      2103
+    ],
+    "fork_range": [
+      2972,
+      2982
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2118,
+      2117
+    ],
+    "fork_range": [
+      2997,
+      3035
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2147,
+      2146
+    ],
+    "fork_range": [
+      3065,
+      3065
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2150,
+      2149
+    ],
+    "fork_range": [
+      3069,
+      3070
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2158,
+      2158
+    ],
+    "fork_range": [
+      3079,
+      3079
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2165,
+      2164
+    ],
+    "fork_range": [
+      3086,
+      3089
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2193,
+      2193
+    ],
+    "fork_range": [
+      3118,
+      3118
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2201,
+      2200
+    ],
+    "fork_range": [
+      3126,
+      3135
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2202,
+      2201
+    ],
+    "fork_range": [
+      3137,
+      3181
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2237,
+      2236
+    ],
+    "fork_range": [
+      3217,
+      3240
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2275,
+      2275
+    ],
+    "fork_range": [
+      3279,
+      3279
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2279,
+      2278
+    ],
+    "fork_range": [
+      3283,
+      3286
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2282,
+      2281
+    ],
+    "fork_range": [
+      3290,
+      3292
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2283,
+      2282
+    ],
+    "fork_range": [
+      3294,
+      3295
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2298,
+      2298
+    ],
+    "fork_range": [
+      3311,
+      3342
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2300,
+      2302
+    ],
+    "fork_range": [
+      3344,
+      3343
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2304,
+      2305
+    ],
+    "fork_range": [
+      3345,
+      3346
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2310,
+      2310
+    ],
+    "fork_range": [
+      3351,
+      3389
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2314,
+      2315
+    ],
+    "fork_range": [
+      3393,
+      3411
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2318,
+      2322
+    ],
+    "fork_range": [
+      3414,
+      3469
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2324,
+      2323
+    ],
+    "fork_range": [
+      3471,
+      3487
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2444,
+      2445
+    ],
+    "fork_range": [
+      3608,
+      3608
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2502,
+      2501
+    ],
+    "fork_range": [
+      3665,
+      3666
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2505,
+      2504
+    ],
+    "fork_range": [
+      3670,
+      3675
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2592,
+      2591
+    ],
+    "fork_range": [
+      3763,
+      3868
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2645,
+      2645
+    ],
+    "fork_range": [
+      3922,
+      3922
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2649,
+      2649
+    ],
+    "fork_range": [
+      3926,
+      3926
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2654,
+      2654
+    ],
+    "fork_range": [
+      3931,
+      3931
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2791,
+      2792
+    ],
+    "fork_range": [
+      4068,
+      4105
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2794,
+      2795
+    ],
+    "fork_range": [
+      4107,
+      4109
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2798,
+      2797
+    ],
+    "fork_range": [
+      4112,
+      4173
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2807,
+      2807
+    ],
+    "fork_range": [
+      4183,
+      4183
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2813,
+      2813
+    ],
+    "fork_range": [
+      4189,
+      4189
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2913,
+      2912
+    ],
+    "fork_range": [
+      4289,
+      4290
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2916,
+      2919
+    ],
+    "fork_range": [
+      4294,
+      4296
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2925,
+      2925
+    ],
+    "fork_range": [
+      4302,
+      4301
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2968,
+      2968
+    ],
+    "fork_range": [
+      4344,
+      4344
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      2978,
+      2978
+    ],
+    "fork_range": [
+      4354,
+      4354
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      3102,
+      3102
+    ],
+    "fork_range": [
+      4474,
+      4474
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      3181,
+      3181
+    ],
+    "fork_range": [
+      4553,
+      4557
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      3183,
+      3184
+    ],
+    "fork_range": [
+      4559,
+      4595
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      3190,
+      3193
+    ],
+    "fork_range": [
+      4601,
+      4601
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      3198,
+      3198
+    ],
+    "fork_range": [
+      4606,
+      4606
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/agents.js",
+    "base_range": [
+      3202,
+      3203
+    ],
+    "fork_range": [
+      4610,
+      4609
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels-feishu.js",
+    "base_range": [
+      12317,
+      12316
+    ],
+    "fork_range": [
+      16715,
+      16725
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels-feishu.js",
+    "base_range": [
+      12378,
+      12377
+    ],
+    "fork_range": [
+      16787,
+      16789
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels-feishu.js",
+    "base_range": [
+      12435,
+      12435
+    ],
+    "fork_range": [
+      16847,
+      16847
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels-feishu.js",
+    "base_range": [
+      12437,
+      12436
+    ],
+    "fork_range": [
+      16849,
+      16851
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels-feishu.js",
+    "base_range": [
+      12442,
+      12441
+    ],
+    "fork_range": [
+      16857,
+      16857
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels-feishu.js",
+    "base_range": [
+      12443,
+      12446
+    ],
+    "fork_range": [
+      16859,
+      16870
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels-feishu.js",
+    "base_range": [
+      12506,
+      12505
+    ],
+    "fork_range": [
+      16930,
+      16934
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels-feishu.js",
+    "base_range": [
+      12510,
+      12510
+    ],
+    "fork_range": [
+      16939,
+      16939
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels-feishu.js",
+    "base_range": [
+      12540,
+      12539
+    ],
+    "fork_range": [
+      16969,
+      16969
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels-feishu.js",
+    "base_range": [
+      12542,
+      12541
+    ],
+    "fork_range": [
+      16972,
+      16978
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels-feishu.js",
+    "base_range": [
+      12543,
+      12542
+    ],
+    "fork_range": [
+      16980,
+      16982
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels-feishu.js",
+    "base_range": [
+      12544,
+      12543
+    ],
+    "fork_range": [
+      16984,
+      16984
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels-feishu.js",
+    "base_range": [
+      12546,
+      12545
+    ],
+    "fork_range": [
+      16987,
+      16987
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels-feishu.js",
+    "base_range": [
+      12548,
+      12547
+    ],
+    "fork_range": [
+      16990,
+      16990
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels.js",
+    "base_range": [
+      11380,
+      11380
+    ],
+    "fork_range": [
+      14877,
+      15289
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels.js",
+    "base_range": [
+      11387,
+      11388
+    ],
+    "fork_range": [
+      15296,
+      15782
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels.js",
+    "base_range": [
+      11394,
+      11396
+    ],
+    "fork_range": [
+      15788,
+      15789
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels.js",
+    "base_range": [
+      11416,
+      11415
+    ],
+    "fork_range": [
+      15809,
+      15820
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels.js",
+    "base_range": [
+      11470,
+      11482
+    ],
+    "fork_range": [
+      15875,
+      15879
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels.js",
+    "base_range": [
+      11489,
+      11490
+    ],
+    "fork_range": [
+      15886,
+      15887
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/channels.js",
+    "base_range": [
+      11527,
+      11527
+    ],
+    "fork_range": [
+      15924,
+      15925
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/config.js",
+    "base_range": [
+      3599,
+      3599
+    ],
+    "fork_range": [
+      5037,
+      5041
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/config.js",
+    "base_range": [
+      3602,
+      3603
+    ],
+    "fork_range": [
+      5044,
+      5046
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/config.js",
+    "base_range": [
+      3607,
+      3607
+    ],
+    "fork_range": [
+      5050,
+      5051
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/config.js",
+    "base_range": [
+      8374,
+      8373
+    ],
+    "fork_range": [
+      10726,
+      10729
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/config.js",
+    "base_range": [
+      8430,
+      8429
+    ],
+    "fork_range": [
+      10786,
+      10786
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/config.js",
+    "base_range": [
+      8470,
+      8469
+    ],
+    "fork_range": [
+      10827,
+      10827
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/config.js",
+    "base_range": [
+      8553,
+      8556
+    ],
+    "fork_range": [
+      10911,
+      10913
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/config.js",
+    "base_range": [
+      8559,
+      8558
+    ],
+    "fork_range": [
+      10916,
+      10916
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/config.js",
+    "base_range": [
+      8565,
+      8592
+    ],
+    "fork_range": [
+      10923,
+      10936
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/config.js",
+    "base_range": [
+      8924,
+      8924
+    ],
+    "fork_range": [
+      11268,
+      11268
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/config.js",
+    "base_range": [
+      8927,
+      8927
+    ],
+    "fork_range": [
+      11271,
+      11271
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/config.js",
+    "base_range": [
+      8930,
+      8982
+    ],
+    "fork_range": [
+      11274,
+      11274
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/config.js",
+    "base_range": [
+      8993,
+      8992
+    ],
+    "fork_range": [
+      11285,
+      11309
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/config.js",
+    "base_range": [
+      8994,
+      8994
+    ],
+    "fork_range": [
+      11311,
+      11311
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/config.js",
+    "base_range": [
+      8999,
+      8998
+    ],
+    "fork_range": [
+      11316,
+      11316
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/config.js",
+    "base_range": [
+      9005,
+      9004
+    ],
+    "fork_range": [
+      11323,
+      11871
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/doc-viewers.js",
+    "base_range": [
+      9418,
+      9419
+    ],
+    "fork_range": [
+      12605,
+      12609
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/doc-viewers.js",
+    "base_range": [
+      9421,
+      9421
+    ],
+    "fork_range": [
+      12611,
+      12614
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/doc-viewers.js",
+    "base_range": [
+      9423,
+      9422
+    ],
+    "fork_range": [
+      12616,
+      12811
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/doc-viewers.js",
+    "base_range": [
+      9426,
+      9428
+    ],
+    "fork_range": [
+      12815,
+      12816
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/doc-viewers.js",
+    "base_range": [
+      9433,
+      9432
+    ],
+    "fork_range": [
+      12821,
+      12821
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/doc-viewers.js",
+    "base_range": [
+      9434,
+      9435
+    ],
+    "fork_range": [
+      12823,
+      12825
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/doc-viewers.js",
+    "base_range": [
+      9438,
+      9437
+    ],
+    "fork_range": [
+      12828,
+      12836
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/doc-viewers.js",
+    "base_range": [
+      9439,
+      9439
+    ],
+    "fork_range": [
+      12838,
+      12838
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/doc-viewers.js",
+    "base_range": [
+      9454,
+      9454
+    ],
+    "fork_range": [
+      12853,
+      12862
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/knowledge.js",
+    "base_range": [
+      12910,
+      12910
+    ],
+    "fork_range": [
+      17405,
+      17405
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/knowledge.js",
+    "base_range": [
+      12934,
+      12934
+    ],
+    "fork_range": [
+      17429,
+      17429
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/knowledge.js",
+    "base_range": [
+      12936,
+      12935
+    ],
+    "fork_range": [
+      17431,
+      17474
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/knowledge.js",
+    "base_range": [
+      12947,
+      12947
+    ],
+    "fork_range": [
+      17486,
+      17486
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/knowledge.js",
+    "base_range": [
+      12950,
+      12949
+    ],
+    "fork_range": [
+      17489,
+      17489
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/knowledge.js",
+    "base_range": [
+      12952,
+      12952
+    ],
+    "fork_range": [
+      17492,
+      17495
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/knowledge.js",
+    "base_range": [
+      13110,
+      13109
+    ],
+    "fork_range": [
+      17653,
+      17653
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/knowledge.js",
+    "base_range": [
+      13115,
+      13114
+    ],
+    "fork_range": [
+      17659,
+      17659
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/knowledge.js",
+    "base_range": [
+      13362,
+      13361
+    ],
+    "fork_range": [
+      17907,
+      17907
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/knowledge.js",
+    "base_range": [
+      13452,
+      13452
+    ],
+    "fork_range": [
+      17998,
+      17998
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/memory.js",
+    "base_range": [
+      9286,
+      9285
+    ],
+    "fork_range": [
+      12432,
+      12472
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/memory.js",
+    "base_range": [
+      9289,
+      9291
+    ],
+    "fork_range": [
+      12476,
+      12478
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/memory.js",
+    "base_range": [
+      9351,
+      9351
+    ],
+    "fork_range": [
+      12538,
+      12538
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      9539,
+      9538
+    ],
+    "fork_range": [
+      12947,
+      12954
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/models.js",
+    "base_range": [
+      9587,
+      9586
+    ],
+    "fork_range": [
+      13003,
+      13083
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7342,
+      7342
+    ],
+    "fork_range": [
+      8833,
+      8833
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7345,
+      7353
+    ],
+    "fork_range": [
+      8836,
+      8841
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7357,
+      7415
+    ],
+    "fork_range": [
+      8845,
+      8844
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7437,
+      7437
+    ],
+    "fork_range": [
+      8866,
+      8865
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7439,
+      7438
+    ],
+    "fork_range": [
+      8867,
+      8869
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7446,
+      7448
+    ],
+    "fork_range": [
+      8877,
+      8878
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7456,
+      7455
+    ],
+    "fork_range": [
+      8886,
+      8886
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7512,
+      7511
+    ],
+    "fork_range": [
+      8943,
+      9137
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7514,
+      7514
+    ],
+    "fork_range": [
+      9140,
+      9149
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7516,
+      7515
+    ],
+    "fork_range": [
+      9151,
+      9153
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7518,
+      7517
+    ],
+    "fork_range": [
+      9156,
+      9161
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7519,
+      7519
+    ],
+    "fork_range": [
+      9163,
+      9163
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7522,
+      7522
+    ],
+    "fork_range": [
+      9166,
+      9669
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7524,
+      7523
+    ],
+    "fork_range": [
+      9671,
+      9679
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7525,
+      7524
+    ],
+    "fork_range": [
+      9681,
+      9683
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7528,
+      7527
+    ],
+    "fork_range": [
+      9687,
+      9709
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7529,
+      7530
+    ],
+    "fork_range": [
+      9711,
+      9716
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7532,
+      7531
+    ],
+    "fork_range": [
+      9718,
+      9722
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7533,
+      7533
+    ],
+    "fork_range": [
+      9724,
+      9740
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7540,
+      7539
+    ],
+    "fork_range": [
+      9747,
+      9747
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7552,
+      7551
+    ],
+    "fork_range": [
+      9760,
+      9762
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7553,
+      7552
+    ],
+    "fork_range": [
+      9764,
+      9764
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7554,
+      7553
+    ],
+    "fork_range": [
+      9766,
+      9773
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7555,
+      7555
+    ],
+    "fork_range": [
+      9775,
+      9777
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7609,
+      7608
+    ],
+    "fork_range": [
+      9831,
+      9831
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7611,
+      7611
+    ],
+    "fork_range": [
+      9834,
+      9836
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7616,
+      7615
+    ],
+    "fork_range": [
+      9841,
+      9844
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7670,
+      7671
+    ],
+    "fork_range": [
+      9899,
+      9898
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7681,
+      7680
+    ],
+    "fork_range": [
+      9908,
+      9908
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7730,
+      7730
+    ],
+    "fork_range": [
+      9958,
+      9958
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7736,
+      7736
+    ],
+    "fork_range": [
+      9964,
+      9964
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7751,
+      7751
+    ],
+    "fork_range": [
+      9979,
+      9979
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7756,
+      7755
+    ],
+    "fork_range": [
+      9984,
+      10064
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7768,
+      7769
+    ],
+    "fork_range": [
+      10077,
+      10076
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7783,
+      7782
+    ],
+    "fork_range": [
+      10090,
+      10092
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7784,
+      7783
+    ],
+    "fork_range": [
+      10094,
+      10094
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7785,
+      7788
+    ],
+    "fork_range": [
+      10096,
+      10100
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7790,
+      7795
+    ],
+    "fork_range": [
+      10102,
+      10104
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7797,
+      7797
+    ],
+    "fork_range": [
+      10106,
+      10108
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7836,
+      7836
+    ],
+    "fork_range": [
+      10147,
+      10147
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7852,
+      7852
+    ],
+    "fork_range": [
+      10163,
+      10163
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7857,
+      7857
+    ],
+    "fork_range": [
+      10168,
+      10172
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7923,
+      7927
+    ],
+    "fork_range": [
+      10238,
+      10241
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7929,
+      7928
+    ],
+    "fork_range": [
+      10243,
+      10244
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7930,
+      7929
+    ],
+    "fork_range": [
+      10246,
+      10246
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7935,
+      7934
+    ],
+    "fork_range": [
+      10252,
+      10252
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7936,
+      7936
+    ],
+    "fork_range": [
+      10254,
+      10254
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7943,
+      7942
+    ],
+    "fork_range": [
+      10261,
+      10266
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7944,
+      7943
+    ],
+    "fork_range": [
+      10268,
+      10270
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7945,
+      7945
+    ],
+    "fork_range": [
+      10272,
+      10272
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7971,
+      7971
+    ],
+    "fork_range": [
+      10298,
+      10303
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7974,
+      7974
+    ],
+    "fork_range": [
+      10306,
+      10305
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7977,
+      7976
+    ],
+    "fork_range": [
+      10308,
+      10308
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7981,
+      7982
+    ],
+    "fork_range": [
+      10313,
+      10317
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      7994,
+      7993
+    ],
+    "fork_range": [
+      10329,
+      10337
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      8006,
+      8006
+    ],
+    "fork_range": [
+      10350,
+      10350
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      8014,
+      8013
+    ],
+    "fork_range": [
+      10358,
+      10360
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      8018,
+      8018
+    ],
+    "fork_range": [
+      10365,
+      10365
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      8025,
+      8024
+    ],
+    "fork_range": [
+      10372,
+      10372
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      8036,
+      8037
+    ],
+    "fork_range": [
+      10384,
+      10385
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      8039,
+      8039
+    ],
+    "fork_range": [
+      10387,
+      10387
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      8042,
+      8042
+    ],
+    "fork_range": [
+      10390,
+      10390
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      8046,
+      8046
+    ],
+    "fork_range": [
+      10394,
+      10395
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      8052,
+      8052
+    ],
+    "fork_range": [
+      10401,
+      10401
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      8067,
+      8067
+    ],
+    "fork_range": [
+      10416,
+      10416
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      8069,
+      8069
+    ],
+    "fork_range": [
+      10418,
+      10418
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      8074,
+      8074
+    ],
+    "fork_range": [
+      10423,
+      10423
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      8079,
+      8079
+    ],
+    "fork_range": [
+      10428,
+      10428
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/sessions.js",
+    "base_range": [
+      8198,
+      8200
+    ],
+    "fork_range": [
+      10547,
+      10552
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/skills.js",
+    "base_range": [
+      9009,
+      9008
+    ],
+    "fork_range": [
+      11876,
+      11883
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/skills.js",
+    "base_range": [
+      9043,
+      9042
+    ],
+    "fork_range": [
+      11918,
+      11918
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/skills.js",
+    "base_range": [
+      9054,
+      9054
+    ],
+    "fork_range": [
+      11930,
+      11935
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/skills.js",
+    "base_range": [
+      9064,
+      9064
+    ],
+    "fork_range": [
+      11945,
+      11947
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/skills.js",
+    "base_range": [
+      9083,
+      9082
+    ],
+    "fork_range": [
+      11966,
+      11967
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/skills.js",
+    "base_range": [
+      9110,
+      9109
+    ],
+    "fork_range": [
+      11995,
+      11999
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/skills.js",
+    "base_range": [
+      9115,
+      9114
+    ],
+    "fork_range": [
+      12005,
+      12020
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/skills.js",
+    "base_range": [
+      9122,
+      9130
+    ],
+    "fork_range": [
+      12028,
+      12028
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/skills.js",
+    "base_range": [
+      9139,
+      9139
+    ],
+    "fork_range": [
+      12037,
+      12037
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/skills.js",
+    "base_range": [
+      9153,
+      9152
+    ],
+    "fork_range": [
+      12051,
+      12055
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/skills.js",
+    "base_range": [
+      9154,
+      9154
+    ],
+    "fork_range": [
+      12057,
+      12057
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/skills.js",
+    "base_range": [
+      9161,
+      9161
+    ],
+    "fork_range": [
+      12064,
+      12069
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/skills.js",
+    "base_range": [
+      9165,
+      9165
+    ],
+    "fork_range": [
+      12073,
+      12073
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/skills.js",
+    "base_range": [
+      9172,
+      9175
+    ],
+    "fork_range": [
+      12080,
+      12080
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/skills.js",
+    "base_range": [
+      9180,
+      9179
+    ],
+    "fork_range": [
+      12085,
+      12085
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/skills.js",
+    "base_range": [
+      9181,
+      9180
+    ],
+    "fork_range": [
+      12087,
+      12326
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/tasks.js",
+    "base_range": [
+      12626,
+      12625
+    ],
+    "fork_range": [
+      17069,
+      17074
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/tasks.js",
+    "base_range": [
+      12629,
+      12629
+    ],
+    "fork_range": [
+      17078,
+      17078
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/tasks.js",
+    "base_range": [
+      12653,
+      12653
+    ],
+    "fork_range": [
+      17102,
+      17102
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/tasks.js",
+    "base_range": [
+      12658,
+      12659
+    ],
+    "fork_range": [
+      17107,
+      17107
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/tasks.js",
+    "base_range": [
+      12662,
+      12661
+    ],
+    "fork_range": [
+      17110,
+      17124
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/tasks.js",
+    "base_range": [
+      12677,
+      12676
+    ],
+    "fork_range": [
+      17140,
+      17146
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/tasks.js",
+    "base_range": [
+      12680,
+      12679
+    ],
+    "fork_range": [
+      17150,
+      17150
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/tasks.js",
+    "base_range": [
+      12706,
+      12705
+    ],
+    "fork_range": [
+      17177,
+      17183
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/tasks.js",
+    "base_range": [
+      12718,
+      12717
+    ],
+    "fork_range": [
+      17196,
+      17196
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/tasks.js",
+    "base_range": [
+      12726,
+      12726
+    ],
+    "fork_range": [
+      17205,
+      17205
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/tasks.js",
+    "base_range": [
+      12728,
+      12729
+    ],
+    "fork_range": [
+      17207,
+      17208
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/tasks.js",
+    "base_range": [
+      12732,
+      12732
+    ],
+    "fork_range": [
+      17211,
+      17211
+    ],
+    "status": "skipped",
+    "reason": "splice left the module unparseable"
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/tasks.js",
+    "base_range": [
+      12735,
+      12735
+    ],
+    "fork_range": [
+      17214,
+      17214
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/tasks.js",
+    "base_range": [
+      12740,
+      12740
+    ],
+    "fork_range": [
+      17219,
+      17219
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.js",
+    "module": "channel/web/static/js/views/tasks.js",
+    "base_range": [
+      12771,
+      12771
+    ],
+    "fork_range": [
+      17250,
+      17259
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/agents.css",
+    "base_range": [
+      3242,
+      3241
+    ],
+    "fork_range": [
+      4638,
+      4644
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/agents.css",
+    "base_range": [
+      3268,
+      3267
+    ],
+    "fork_range": [
+      4671,
+      4671
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/agents.css",
+    "base_range": [
+      3378,
+      3377
+    ],
+    "fork_range": [
+      4782,
+      5116
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/agents.css",
+    "base_range": [
+      3394,
+      3393
+    ],
+    "fork_range": [
+      5133,
+      5142
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/agents.css",
+    "base_range": [
+      3410,
+      3409
+    ],
+    "fork_range": [
+      5159,
+      5167
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/agents.css",
+    "base_range": [
+      3518,
+      3517
+    ],
+    "fork_range": [
+      5276,
+      5304
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/agents.css",
+    "base_range": [
+      3537,
+      3536
+    ],
+    "fork_range": [
+      5324,
+      5341
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/agents.css",
+    "base_range": [
+      3672,
+      3671
+    ],
+    "fork_range": [
+      5477,
+      6048
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/base.css",
+    "base_range": [
+      2,
+      2
+    ],
+    "fork_range": [
+      2,
+      2
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/base.css",
+    "base_range": [
+      636,
+      637
+    ],
+    "fork_range": [
+      1988,
+      1989
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/base.css",
+    "base_range": [
+      640,
+      639
+    ],
+    "fork_range": [
+      1992,
+      2036
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/chat.css",
+    "base_range": [
+      1529,
+      1541
+    ],
+    "fork_range": [
+      2939,
+      2938
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/chat.css",
+    "base_range": [
+      1613,
+      1615
+    ],
+    "fork_range": [
+      3010,
+      3012
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/chat.css",
+    "base_range": [
+      1617,
+      1617
+    ],
+    "fork_range": [
+      3014,
+      3013
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/components.css",
+    "base_range": [
+      1043,
+      1042
+    ],
+    "fork_range": [
+      2440,
+      2452
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      66,
+      65
+    ],
+    "fork_range": [
+      66,
+      97
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      72,
+      74
+    ],
+    "fork_range": [
+      104,
+      107
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      76,
+      75
+    ],
+    "fork_range": [
+      109,
+      121
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      77,
+      76
+    ],
+    "fork_range": [
+      123,
+      393
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      78,
+      80
+    ],
+    "fork_range": [
+      395,
+      400
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      82,
+      82
+    ],
+    "fork_range": [
+      402,
+      403
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      84,
+      86
+    ],
+    "fork_range": [
+      405,
+      417
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      88,
+      89
+    ],
+    "fork_range": [
+      419,
+      532
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      93,
+      97
+    ],
+    "fork_range": [
+      536,
+      539
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      99,
+      101
+    ],
+    "fork_range": [
+      541,
+      622
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      103,
+      103
+    ],
+    "fork_range": [
+      624,
+      626
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      105,
+      108
+    ],
+    "fork_range": [
+      628,
+      690
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      112,
+      112
+    ],
+    "fork_range": [
+      694,
+      710
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      114,
+      115
+    ],
+    "fork_range": [
+      712,
+      843
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      117,
+      118
+    ],
+    "fork_range": [
+      845,
+      845
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      120,
+      122
+    ],
+    "fork_range": [
+      847,
+      856
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      124,
+      126
+    ],
+    "fork_range": [
+      858,
+      869
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      128,
+      128
+    ],
+    "fork_range": [
+      871,
+      1160
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      132,
+      132
+    ],
+    "fork_range": [
+      1164,
+      1172
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      135,
+      137
+    ],
+    "fork_range": [
+      1175,
+      1177
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      139,
+      138
+    ],
+    "fork_range": [
+      1179,
+      1179
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      142,
+      141
+    ],
+    "fork_range": [
+      1183,
+      1183
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      143,
+      146
+    ],
+    "fork_range": [
+      1185,
+      1186
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      148,
+      150
+    ],
+    "fork_range": [
+      1188,
+      1190
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      152,
+      155
+    ],
+    "fork_range": [
+      1192,
+      1193
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      157,
+      158
+    ],
+    "fork_range": [
+      1195,
+      1322
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      168,
+      167
+    ],
+    "fork_range": [
+      1332,
+      1338
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      221,
+      221
+    ],
+    "fork_range": [
+      1392,
+      1394
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      223,
+      224
+    ],
+    "fork_range": [
+      1396,
+      1403
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      226,
+      226
+    ],
+    "fork_range": [
+      1405,
+      1409
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      229,
+      230
+    ],
+    "fork_range": [
+      1412,
+      1415
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      234,
+      235
+    ],
+    "fork_range": [
+      1419,
+      1420
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      240,
+      240
+    ],
+    "fork_range": [
+      1425,
+      1425
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      250,
+      250
+    ],
+    "fork_range": [
+      1435,
+      1438
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      258,
+      258
+    ],
+    "fork_range": [
+      1446,
+      1446
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      260,
+      260
+    ],
+    "fork_range": [
+      1448,
+      1448
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      267,
+      267
+    ],
+    "fork_range": [
+      1455,
+      1455
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      269,
+      270
+    ],
+    "fork_range": [
+      1457,
+      1457
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      299,
+      299
+    ],
+    "fork_range": [
+      1486,
+      1486
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      314,
+      315
+    ],
+    "fork_range": [
+      1501,
+      1504
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      349,
+      349
+    ],
+    "fork_range": [
+      1538,
+      1538
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      352,
+      352
+    ],
+    "fork_range": [
+      1541,
+      1541
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      357,
+      359
+    ],
+    "fork_range": [
+      1546,
+      1550
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      361,
+      361
+    ],
+    "fork_range": [
+      1552,
+      1551
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      363,
+      363
+    ],
+    "fork_range": [
+      1553,
+      1553
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      367,
+      367
+    ],
+    "fork_range": [
+      1557,
+      1556
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      369,
+      374
+    ],
+    "fork_range": [
+      1558,
+      1558
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      377,
+      378
+    ],
+    "fork_range": [
+      1561,
+      1561
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      380,
+      382
+    ],
+    "fork_range": [
+      1563,
+      1684
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      385,
+      384
+    ],
+    "fork_range": [
+      1687,
+      1689
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      386,
+      388
+    ],
+    "fork_range": [
+      1691,
+      1697
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      391,
+      392
+    ],
+    "fork_range": [
+      1700,
+      1700
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      394,
+      394
+    ],
+    "fork_range": [
+      1702,
+      1701
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      399,
+      401
+    ],
+    "fork_range": [
+      1706,
+      1708
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      403,
+      487
+    ],
+    "fork_range": [
+      1710,
+      1712
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      506,
+      505
+    ],
+    "fork_range": [
+      1731,
+      1802
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      603,
+      605
+    ],
+    "fork_range": [
+      1900,
+      1903
+    ],
+    "status": "skipped",
+    "reason": "no verified context: upstream rewrote the surrounding code"
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      607,
+      613
+    ],
+    "fork_range": [
+      1905,
+      1908
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      615,
+      616
+    ],
+    "fork_range": [
+      1910,
+      1913
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      618,
+      617
+    ],
+    "fork_range": [
+      1915,
+      1924
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      619,
+      628
+    ],
+    "fork_range": [
+      1926,
+      1928
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      630,
+      631
+    ],
+    "fork_range": [
+      1930,
+      1935
+    ],
+    "status": "applied",
+    "reason": null
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      633,
+      632
+    ],
+    "fork_range": [
+      1937,
+      1943
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  },
+  {
+    "source": "console.css",
+    "module": "channel/web/static/css/sessions.css",
+    "base_range": [
+      634,
+      633
+    ],
+    "fork_range": [
+      1945,
+      1985
+    ],
+    "status": "skipped",
+    "reason": "no verified context around the insertion point"
+  }
+]

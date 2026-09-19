@@ -202,10 +202,32 @@ class ConflictCoverageTests(unittest.TestCase):
         self.assertEqual(self._check(
             "1\tUU\tchannel/web/web_channel.py\tseam:8.3\twhy\n"), [])
 
+    def test_a_seam_named_by_module_passes(self):
+        """The baseline names seams by module (``seam:scheduler``), and by task
+        number only in rows predating that naming -- both are references."""
+        self.assertEqual(self._check(
+            "1\tUU\tchannel/web/web_channel.py\tseam:scheduler\twhy\n"), [])
+
+    def test_a_bare_seam_reference_is_malformed(self):
+        problems = self._check(
+            "1\tUU\tchannel/web/web_channel.py\tseam:\twhy\n")
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("malformed seam reference", problems[0])
+
     def test_an_unrecognised_disposition_is_rejected(self):
         problems = self._check("1\tUU\tsome/file.py\tkeep-both\twhy\n")
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("unrecognised disposition", problems[0])
+
+    def test_the_extended_vocabulary_is_accepted(self):
+        """``merge`` / ``retarget`` / ``take-deletion`` were added with the
+        baseline's two-way ``UD`` semantics; rejecting them would report a gate
+        failure against a correct baseline."""
+        self.assertEqual(self._check(
+            "1\tUU\tsome/file.py\tmerge\tboth sides, in this order\n"
+            "1\tUU\ttests/t.py\tretarget\tkeep the fork's stack\n"
+            "0\tUD\tdesktop/build/notarize-dmg.sh\ttake-deletion\tupstream retired it\n",
+        ), [])
 
     def test_a_seam_file_the_change_never_names_is_rejected(self):
         problems = self._check("1\tUU\tagent/other.py\tseam:6.1\twhy\n")

@@ -181,11 +181,27 @@ Targeted run over the touched and adjacent files: **255 passed, 2 skipped**
 (the two documented skips above), 37 subtests passed.
 
 Full suite, this tree, `pytest tests/ -q -p no:randomly --ignore=tests/e2e`
-(13:34): **30 failed, 5735 passed, 30 skipped, 423 subtests passed**. The merge
-candidate at `163951b5` reported the same **30** failures against a 32-failure
-pre-merge baseline (`4.20` in the task list), so this round adds none and the
-passing count rose from 5717 to 5735 (the ported behaviours now have their
-tests pointing at the code that serves them).
+(13:34): **30 failed, 5735 passed, 30 skipped, 423 subtests passed**.
+
+Re-run at delivery (2026-09-19, after this round's gates were added):
+**30 failed, 5749 passed, 30 skipped, 423 subtests passed** — same 30 failures,
+and the +14 passes are exactly the cases this round added
+(`tests/test_web_module_seams.py` 11, `tests/test_change_delta_check.py` +3),
+so the gate work is covered rather than assumed.
+
+Set-level comparison against the stored pre-merge baseline
+(`/tmp/base_full.fails`, the fork's `65596a99`, 32 failures) — the 30 are exactly
+that set minus two, and neither of the two move in the wrong direction:
+
+    - `tests/test_subagent.py` and `tests/test_knowledge_console_database.py`
+      failed before the merge and pass after it (upstream's shipped guide and
+      the knowledge tenant-admin case);
+    - every remaining failure is one of the six files below, and the merge
+      candidate at `163951b5` reported the same 30.
+
+So this round introduces **no** new failure, and the passing count rose from
+5717 (merge candidate) to 5735 — the ported behaviours now have their tests
+pointing at the code that actually serves them.
 
 All 30 sit in six files, none of which this change touches, and each belongs to
 a divergence already recorded elsewhere:
