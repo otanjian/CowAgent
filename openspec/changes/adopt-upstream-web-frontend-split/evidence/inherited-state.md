@@ -59,8 +59,10 @@
       ./.venv/bin/python scripts/migration/{port_frontend,build_frontend_adjudication,verify_frontend_port}.py
 
 结论：父 change 的 `FORK_FORK_REF` 默认 `HEAD`，故**任何人重跑前都应显式指定这三个
-ref**，否则「零未交代」的分母会随 HEAD 漂移而无法与文档对齐。`verify_frontend_port.py`
-在该三元组上报 `PASS: 6616/6616`、`0 UNACCOUNTED`、`node --check` 全通过。
+ref**。docs-only 提交不改变分母（已实测：`HEAD=b07eaf5d` 与 `fork=c6eb33db` 同为
+6616），风险只在 fork 前端文件被再次改动时兑现——届时三元组必须一并更新。
+`verify_frontend_port.py` 在该三元组上报 `PASS: 6616/6616`、`0 UNACCOUNTED`、
+`node --check` 全通过。
 
 ## 父 change 的前端分歧记录
 
